@@ -18,8 +18,6 @@ INTEGRATION_INFRA_TEST_PACKAGES := "./tests/integration/bootstrap/... ./tests/in
 INTEGRATION_INFRA_PACKAGE_PROCS := env_var_or_default("INTEGRATION_INFRA_PACKAGE_PROCS", "2")
 INTEGRATION_INFRA_GO_TEST_ARGS := "-count=1 -tags=integration -p " + INTEGRATION_INFRA_PACKAGE_PROCS + " " + INTEGRATION_INFRA_TEST_PACKAGES
 GINKGO_FRONTEND_PROCS := env_var_or_default("GINKGO_FRONTEND_PROCS", "2")
-TELEMETRY_LIVE_CHECK_PORT := env_var_or_default("TELEMETRY_LIVE_CHECK_PORT", "14317")
-TELEMETRY_LIVE_CHECK_ADMIN_PORT := env_var_or_default("TELEMETRY_LIVE_CHECK_ADMIN_PORT", "14320")
 E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false")
 
 COMPOSE_CMD := "docker compose"
@@ -264,40 +262,9 @@ _telemetry-generate page_dir settings_dir:
     quiet "$weaver" registry generate -r telemetry/registry -t telemetry/templates --v2 markdown "{{page_dir}}"
     quiet "$weaver" registry generate -r telemetry/registry -t telemetry/templates --v2 live_check "{{settings_dir}}"
 
-# Compare the telemetry that the E2E and PostgreSQL suites emit with telemetry/registry (example: just telemetry-live-check '!performance && !docker')
-telemetry-live-check label_filter="!performance": _e2e-backend-web-build
-    #!/usr/bin/env bash
-    set -euo pipefail
-    weaver="$(bash scripts/install-weaver.sh)"
-    report=test-results/telemetry-live-check
-    rm -rf "$report" && mkdir -p "$report"
-    "$weaver" --quiet --config telemetry/live-check.toml registry live-check -r telemetry/registry --v2 \
-        --advice-policies telemetry/policies --templates telemetry/templates/live_check --format summary \
-        --otlp-grpc-port {{TELEMETRY_LIVE_CHECK_PORT}} --admin-port {{TELEMETRY_LIVE_CHECK_ADMIN_PORT}} \
-        --inactivity-timeout 3600 --no-stream --output "$report" 2>"$report/weaver.log" &
-    weaver_pid=$!
-    trap 'kill "$weaver_pid" 2>/dev/null || true' EXIT
-    admin="http://127.0.0.1:{{TELEMETRY_LIVE_CHECK_ADMIN_PORT}}"
-    for _ in $(seq 1 60); do
-        if curl -sf -m 1 "$admin/health" >/dev/null; then break; fi
-        sleep 0.5
-    done
-    export TELEMETRY_LIVE_CHECK_ENDPOINT="127.0.0.1:{{TELEMETRY_LIVE_CHECK_PORT}}"
-    tests=0
-    go test -count=1 -p 1 -timeout 60m ./tests/e2e/ ./tests/e2e/extproc/ -ginkgo.label-filter="{{label_filter}}" || tests=$?
-    go test -count=1 -timeout 30m -tags integration ./internal/adapters/storage/postgres/ || tests=$?
-    curl -sf -m 120 -X POST "$admin/stop" >/dev/null
-    check=0
-    wait "$weaver_pid" || check=$?
-    cat "$report/summary.txt"
-    if [ "$tests" -ne 0 ]; then
-        echo "A test suite failed, so the telemetry is incomplete."
-        exit "$tests"
-    fi
-    if [ "$check" -ne 0 ]; then
-        echo "The telemetry differs from telemetry/registry. Change the code or the registry (coding-standards/OPENTELEMETRY.md section 9)."
-    fi
-    exit "$check"
+# Compare the telemetry of a test run with telemetry/registry. In a second terminal, run a suite with TELEMETRY_LIVE_CHECK_ENDPOINT=http://127.0.0.1:14317. Stop with Ctrl-C.
+telemetry-live-check:
+    "$(bash scripts/install-weaver.sh)" registry live-check -r telemetry/registry --config telemetry/live-check.toml --otlp-grpc-port 14317 --admin-port 14320 --inactivity-timeout 0
 
 # Run go vet for static analysis
 vet:

@@ -299,14 +299,15 @@ These data classes are prohibited in span names, span attributes, span events, s
 | Give each new span, metric and attribute a `brief` that says what it is. Do not restate the name. | The reference shows the `brief`. |
 | Put the instrumentation scope in `annotations.scope`. For a span, put in `annotations.error_status` whether the span can end with status `Error`. | The semantic convention format has no field for them. The reference shows both, and the live check compares both. |
 | When a span or a metric sets only some values of an enumerated attribute, list them as `examples` on the reference to the attribute. | The reference shows them as the values of that span or metric, and the live check reports any other value. |
-| Run `just telemetry-live-check` after you change telemetry. | It is the only check that compares the code with the registry. |
 
-`just telemetry-live-check` runs the E2E suites and the PostgreSQL integration tests while `weaver registry live-check` receives the telemetry that they emit. It fails when the tests emit a span, a metric, an attribute, or a value of an enumerated attribute that the registry does not list. It also fails when a span kind, an instrumentation scope, a metric instrument, or a unit differs from the registry, and when a span ends with status `Error` although the registry has `error_status: false`. `telemetry/policies/registry.rego` holds the checks that Weaver does not have built in.
+The live check compares the code with the registry. The `Backend E2E tests`, `ExtProc E2E tests` and `Infra integration tests` jobs start `weaver registry live-check` with the [Weaver live-check actions](https://github.com/open-telemetry/weaver#github-actions), and their suites send it the telemetry that they emit. A job fails when its tests emit a span, a metric, an attribute, or a value of an enumerated attribute that the registry does not list. It also fails when a span kind, an instrumentation scope, a metric instrument, or a unit differs from the registry, and when a span ends with status `Error` although the registry has `error_status: false`. `telemetry/policies/registry.rego` holds the checks that Weaver does not have built in. The job summary shows the findings, and the job uploads the full report.
+
+To run the live check on your machine, start `just telemetry-live-check`. Then run a suite in a second terminal with `TELEMETRY_LIVE_CHECK_ENDPOINT=http://127.0.0.1:14317`. The listener does not use port 4317, because the tests point the broker's own exporter at that port and expect no listener there.
 
 The live check has these limits:
 
-- It sees only the telemetry that the tests emit. Its report lists the spans and metrics of the registry that the tests did not emit. A registry entry that the code no longer emits does not fail the check.
+- It sees only the telemetry that the tests emit. It does not check a span or a metric that no test emits, and a registry entry that the code no longer emits does not fail it.
 - A test that sets its own global tracer or meter provider keeps its telemetry to itself. `extproc.token_exchange` and its two metrics are emitted only in such tests, so the live check does not see them.
-- It does not run in CI.
+- It runs in GitHub Actions only. The pipeline in `delivery.yaml` runs `just telemetry-check`, which does not compare the code with the registry.
 
 The registry does not cover the `otelchi` server spans and metrics, metrics that the SDK, the Go runtime, or a library creates, span events, resource attributes, or log records.

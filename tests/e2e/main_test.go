@@ -10,7 +10,7 @@ import (
 )
 
 // TestMain and the BeforeEach node send the telemetry of the suite to Weaver when
-// `just telemetry-live-check` runs it. They do nothing otherwise.
+// TELEMETRY_LIVE_CHECK_ENDPOINT is set. They do nothing otherwise.
 func TestMain(m *testing.M) {
 	os.Exit(livecheck.Run(m))
 }

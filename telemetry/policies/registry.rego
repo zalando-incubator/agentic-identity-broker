@@ -1,4 +1,4 @@
-# Checks that `weaver registry live-check` adds to its own for `just telemetry-live-check`.
+# Checks that the telemetry live check adds to those of `weaver registry live-check`.
 # Weaver itself reports a metric or an attribute that the registry does not list, and a
 # span kind, a metric instrument or a unit that differs from the registry.
 package live_check_advice

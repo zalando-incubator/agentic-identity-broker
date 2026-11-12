@@ -1,12 +1,20 @@
-# Settings of `weaver registry live-check` for `just telemetry-live-check`.
+# Settings of `weaver registry live-check` for the CI jobs and `just telemetry-live-check`.
 # Generated from telemetry/registry. Do not edit. Run `just telemetry-doc`.
+
+[registry]
+v2 = true
+
+# The checks that Weaver does not have built in. The path starts at the repository root.
+[live-check]
+advice_policies = "telemetry/policies"
 
 # A value that an enumerated attribute does not list is a violation.
 [[live-check.finding_level_overrides]]
 ids = ["undefined_enum_variant"]
 level = "violation"
 
-# The registry does not set stability, and it does not say which attributes are always set.
+# Each registry entry has stability `development`, and the registry does not say which
+# attributes are always set.
 [[live-check.finding_filters]]
 exclude = ["not_stable", "recommended_attribute_not_present"]
 

@@ -18,8 +18,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// EndpointEnv names the OTLP gRPC endpoint of `weaver registry live-check`, as
-// host:port. `just telemetry-live-check` sets it.
+// EndpointEnv names the OTLP gRPC endpoint of `weaver registry live-check`, as a URL
+// such as http://127.0.0.1:14317. The CI jobs that run the live check set it.
 const EndpointEnv = "TELEMETRY_LIVE_CHECK_ENDPOINT"
 
 // The providers that export to Weaver. They are nil when the live check is off.
@@ -38,12 +38,12 @@ func Run(m *testing.M) int {
 		return m.Run()
 	}
 	ctx := context.Background()
-	traces, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpoint(endpoint), otlptracegrpc.WithInsecure())
+	traces, err := otlptracegrpc.New(ctx, otlptracegrpc.WithEndpointURL(endpoint))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "live check: trace exporter:", err)
 		return 1
 	}
-	metrics, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpoint(endpoint), otlpmetricgrpc.WithInsecure())
+	metrics, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithEndpointURL(endpoint))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "live check: metric exporter:", err)
 		return 1

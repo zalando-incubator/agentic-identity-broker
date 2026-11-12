@@ -11,10 +11,11 @@ with [OpenTelemetry Weaver](https://github.com/open-telemetry/weaver). Do not ed
 hand. After you change a span or a metric, change the registry and run `just telemetry-doc`.
 `just telemetry-check` fails when the page is out of date.
 
-The registry is written by hand. `just telemetry-live-check` runs the E2E suites and the
-PostgreSQL integration tests, and compares the telemetry that they emit with the registry.
-It reports a span, a metric, an attribute or a value that the tests emit and the registry
-does not list. It does not report a registry entry that the code no longer emits.
+The registry is written by hand. CI runs the backend E2E, ExtProc E2E and PostgreSQL
+integration suites, and compares the telemetry that they emit with the registry. It reports
+a span, a metric, an attribute or a value that the tests emit and the registry does not
+list. It does not check a span or a metric that no test emits, and it does not report a
+registry entry that the code no longer emits.
 
 The page does not list:
 
