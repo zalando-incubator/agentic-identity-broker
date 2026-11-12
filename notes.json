@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 418
+    "investigation_after": 430
   },
   "issues": [
     {
@@ -130,6 +130,18 @@
       "state": "commented",
       "updated_at": "2026-11-11",
       "note": "Verified six audit helpers lack events; posted finite operation/outcome mapping and exact-allowlist/message-selector test seams, including bootstrap rejection/public CIMD/JWKS/refresh. Implement when capacity permits; coordinate #415."
+    },
+    {
+      "number": 427,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-12",
+      "note": "Asked string-set vs key/value, any/all match and end-user delegation UI vs admin catalogue. Include External-ID reconcile omission/empty semantics and order-independent no-op equality; no new PR at capacity."
+    },
+    {
+      "number": 430,
+      "state": "commented",
+      "updated_at": "2026-11-12",
+      "note": "Static-only validation-path assessment; no disclosure exercised. Return finite field/index/reason diagnostics separately from existing HTTP error across all three writes; never parse/log wrapped cause. Candidate awaits capacity; coordinate #347/#415."
     }
   ],
   "fixes": [
@@ -138,8 +150,8 @@
       "pr": 403,
       "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
       "status": "open",
-      "updated_at": "2026-11-11",
-      "note": "#403 has five merge conflicts; attempted merge aborted cleanly. Preserve human-only readiness and agent bypass; migrate two IsExpired calls/fixtures to ADR046 RequiresReauthentication. Align API/spec/ADR and imports. Commented; no partial merge published. Classification label also missing."
+      "updated_at": "2026-11-12",
+      "note": "Accepted main integration (local 5649da78): human-only readiness, agent zero-read bypass, ADR046 usability and session regressions; corrected E2E fixtures. Check/build/test/integration/functional backend pass. Verify blocked by baseline GO-2026-6859; fresh CI pending, label missing."
     },
     {
       "issue": 212,
@@ -154,8 +166,8 @@
       "pr": 432,
       "branch": "repo-assist/fix-issue-416-broker-access-denied-d7b29c16dd0ed650",
       "status": "open",
-      "updated_at": "2026-11-06",
-      "note": "Verified follow-up head 4426935: pipeline, unit, integration, backend, ExtProc and frontend E2E statuses passed after fixture correction. Draft still awaits human review; no further CI push needed."
+      "updated_at": "2026-11-12",
+      "note": "Accepted append-only main merge (local 86ff7b39): combined downstream-status telemetry argument with case-specific recovery URI; retained both ADR entries. Check/ExtProc build/race units/non-Agentgateway E2E pass. Fresh external CI pending; remains draft."
     },
     {
       "issue": 244,
@@ -178,8 +190,8 @@
       "pr": 456,
       "branch": "repo-assist/fix-issue-386-bounded-log-paths-2026-11-10-841036099b11d1f8",
       "status": "open",
-      "updated_at": "2026-11-11",
-      "note": "Accepted append-only #456 correction be1cbff5: access-log E2E selector used old uppercase message. Red 10/20; green 20/20 and 960 functional backend specs after web build. Check/build/affected race tests pass. External CI after push not yet known."
+      "updated_at": "2026-11-12",
+      "note": "Published follow-up head 299e5f5: read both checks/statuses; DCO and pipeline/unit/integration/all E2E pass. Removes stale CI follow-up; draft awaits maintainer review."
     },
     {
       "issue": 414,
@@ -204,57 +216,57 @@
       "follow_up": "Task 8 fell back to Task 9; added high-value context logging regressions with #414 instead of speculative optimization."
     },
     {
-      "area": "code",
-      "checked_at": "2026-11-10",
-      "result": "Committed #414 context threading for state validation, CEL optional-claim logs and all 12 response writers, including nested discovery/error helpers. Log messages, events, attributes, levels and HTTP behavior are unchanged.",
-      "follow_up": "Coordinate nearby #415 event/message normalization; no combined refactor."
-    },
-    {
       "area": "dependencies",
       "checked_at": "2026-11-10",
       "result": "Current web manifest uses TypeScript ^6.0.3. Read #452/#453 compiler/API-consumer migration boundaries; no peer-check bypass, aliases or dependency changes. Full verify security stage failed querying OSV due to TLS certificate validation.",
       "follow_up": "Retain #382 consumer-migration work and existing exception expiry; do not treat failed OSV lookup as a clean scan."
     },
     {
-      "area": "release",
-      "checked_at": "2026-11-10",
-      "result": "Latest release is v0.1.145; existing maintainer PR #460 handles v0.2 version bump. No duplicate release PR warranted.",
-      "follow_up": null
-    },
-    {
       "area": "ci",
-      "checked_at": "2026-11-11",
-      "result": "Read check runs AND commit statuses for all eight open Repo Assist PRs. Seven pipelines pass; #456 original backend/pipeline fail. #403/#420/#448 classification-label failures remain. #456 reproduced failure corrected via append-only update; new CI not queried.",
-      "follow_up": "#403 needs semantic merge plus current policy regression coverage; #456 fresh pipeline pending."
+      "checked_at": "2026-11-12",
+      "result": "Read check runs AND commit statuses for all eight PRs: DCO and all test pipelines pass, including #456 follow-up. #403/#420/#448 classification-label failures remain. #403/#432 were dirty and both integrations accepted; fresh CI not queried.",
+      "follow_up": "Check both updated heads next run; just verify reports baseline GO-2026-6859 (Go 1.27.3, fixed 1.27.4)."
     },
     {
       "area": "repo_assist_prs",
-      "checked_at": "2026-11-11",
-      "result": "Maintenance-only at eight PRs; no new PR. Resolved #414 to draft #461. Updated #456 and commented on #456/#403. #403 merge aborted after inspecting five conflicts; no partial or rewritten history published.",
-      "follow_up": "Prioritize #403 semantic integration over creating new work."
+      "checked_at": "2026-11-12",
+      "result": "Maintenance-only at eight PRs. Resolved #403 five conflicts semantically and #432 two conflicts; append-only updates accepted. Other PRs not dirty. No new PR or rewritten history; #424 remains non-draft.",
+      "follow_up": "Fresh external CI for #403/#432 pending; drafts remain drafts."
     },
     {
       "area": "hygiene",
-      "checked_at": "2026-11-11",
-      "result": "Read all three unlabelled issues and existing labels. Added bug to #446, enhancement to #458/#459; breaking change/refactor labels do not exist, so not applied. Other open PRs already labelled. No redundant label comments.",
+      "checked_at": "2026-11-12",
+      "result": "No unlabelled open issues. Read unlabelled #463 body and changed sources; labelled bug for silently deduplicated follow-up requests. Other PRs already labelled; required minor/bugfix/etc labels outside write allowlist.",
       "follow_up": null
     },
     {
       "area": "tests",
-      "checked_at": "2026-11-11",
-      "result": "#456 context E2E red 10/20 -> green 20/20 using structured access-log selector. Affected HTTP race tests and all 960 functional backend specs pass with race detection. Initial run without assets failed 13 SPA/consent checks; web build resolved all.",
-      "follow_up": "No Docker/browser/full verify run; external pipeline after update not yet known."
+      "checked_at": "2026-11-12",
+      "result": "#403 agent regressions caught four unwanted reads before human guard. Combined E2E 55/67 -> 67/67 after seeding required human sessions. Affected race packages, just test, self-contained integration and entire functional backend pass. #432 ExtProc race units and non-Agentgateway E2E pass.",
+      "follow_up": "No container/browser or full-gate pass. Added rejected delegated/mandatory and refreshable-mandatory coverage; no separate red evidence claimed for those rows."
     },
     {
       "area": "build",
-      "checked_at": "2026-11-11",
-      "result": "Broker just build and just web-build passed on #456 correction branch.",
+      "checked_at": "2026-11-12",
+      "result": "Broker/frontend builds pass on #403 integration; ExtProc build passes on #432 integration.",
       "follow_up": null
     },
     {
       "area": "tooling",
-      "checked_at": "2026-11-11",
-      "result": "just check passed formatting/vet/lint (zero issues) on #456 correction. Compound shell timed out after checks during initial build; separate build and subsequent validation succeeded.",
+      "checked_at": "2026-11-12",
+      "result": "just check passes zero lint issues on both integrations. First full verify timed out at govulncheck; completed retry stopped at GO-2026-6859, not infrastructure. No scan exceptions or dependency edits.",
+      "follow_up": null
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-12",
+      "result": "#403 semantic integration preserves human-only readiness and ADR045 agent bypass, uses ADR046 session usability and aligns branch docs. #432 integration preserves denial/recovery assertions with current telemetry helper. Investigated #427/#430 without new implementation.",
+      "follow_up": "#430 finite diagnostic metadata and #418 event mapping await capacity."
+    },
+    {
+      "area": "release",
+      "checked_at": "2026-11-12",
+      "result": "Latest release v0.1.145. Verified #460 merged to release/v0.2 (not main). No new release PR in maintenance-only mode; avoid duplicating staged release work.",
       "follow_up": null
     }
   ],
@@ -271,23 +283,23 @@
   "priorities": [
     {
       "task": 6,
-      "item": "Semantically merge main into #403",
-      "note": "Five conflicts inspected, merge aborted cleanly. Keep human-only readiness/zero human state for agents; migrate evaluator and fixtures to ADR046 RequiresReauthentication; align API/spec/ADR. Run agent/human/readiness regressions before append-only push."
-    },
-    {
-      "task": 6,
-      "item": "Check #456 follow-up CI",
-      "note": "Accepted be1cbff5 update fixes reproduced stale access-log selector. 960 functional backend scenarios pass locally after frontend build; do not assume future pipeline green."
+      "item": "Check #403 and #432 integration CI",
+      "note": "Both append-only main integrations accepted; local suites pass. Verify external checks AND statuses next run. #403/#420/#448 still need classification labels outside workflow allowlist."
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #418",
-      "note": "#388/#412 and existing fixes remain active; #418 implementable event-mapping candidate awaits capacity. Retain all clarification/approval holds and #356 policy gate."
+      "item": "Resume oldest-first after #430",
+      "note": "#427 awaits tag contract/UI decisions; #430 finite diagnostics candidate at capacity. Preserve existing fixes, clarification holds, #388/#412 and #356 policy gate; implement #418 only below capacity."
     },
     {
       "task": 3,
       "item": "Implement #314 with authentication provenance",
       "note": "Coordinate #431/#381; preserve public/CIMD/RFC8693 behavior and all-mode tests. No incomplete form-normalization patch."
+    },
+    {
+      "task": 4,
+      "item": "Assess Go 1.27.4 baseline update against #143",
+      "note": "just verify reports baseline GO-2026-6859 in Go 1.27.3; scanner lists Go 1.27.4 as fixed. No exception, bypass or reproduction. Check current security work before proposing a duplicate."
     }
   ]
 }
