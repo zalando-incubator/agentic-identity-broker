@@ -97,3 +97,16 @@ func Meters(ctx context.Context, c metric.Int64Counter) {
 	c.Add(ctx, 1)
 	_ = named(ctx)
 }
+
+// mark changes the span that it receives.
+func mark(span trace.Span) { span.SetAttributes(attribute.Bool("gaps.marked", true)) }
+
+// Marked passes the span that it starts, so the generator follows mark.
+func Marked(ctx context.Context) {
+	_, span := tracer.Start(ctx, "gaps.marked")
+	defer span.End()
+	mark(span)
+}
+
+// Lost passes a span that the generator cannot trace to a Start call.
+func Lost(span trace.Span) { mark(span) }

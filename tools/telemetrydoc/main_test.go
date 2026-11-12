@@ -63,8 +63,8 @@ func TestExtractSpans(t *testing.T) {
 		t.Fatalf("unexpected gaps: %v", ref.Gaps)
 	}
 	if got, want := sortedKeys(ref.Spans), []string{
-		"fixture.fetch", "fixture.generic", "fixture.held", "fixture.labeled", "fixture.reopened", "fixture.special",
-		"fixture.wrapped_op",
+		"fixture.direct", "fixture.fetch", "fixture.generic", "fixture.held", "fixture.labeled", "fixture.reopened",
+		"fixture.special", "fixture.wrapped_op",
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("spans = %v, want %v", got, want)
 	}
@@ -132,6 +132,10 @@ func TestExtractSpans(t *testing.T) {
 	if et := held.Attrs["error.type"]; et == nil || !et.Values["close_failed"] {
 		t.Errorf("fixture.held error.type = %+v, want the value close_failed", et)
 	}
+	// The held span is passed to a function. The value of the other caller stays with its own span.
+	if et := held.Attrs["error.type"]; et == nil || !et.Values["abort_failed"] || et.Values["direct_failed"] {
+		t.Errorf("fixture.held error.type = %+v, want the value abort_failed and not direct_failed", et)
+	}
 	// The span is started straight into the same field.
 	if reopened := ref.Spans["fixture.reopened"]; !reopened.ErrorStatus || reopened.Attrs["error.type"] == nil {
 		t.Errorf("fixture.reopened = %+v, want error status and error.type", reopened)
@@ -171,6 +175,8 @@ func TestExtractReportsGaps(t *testing.T) {
 		got = append(got, g.What)
 	}
 	want := []string{
+		// The gaps are in the order of their positions as text, so line 100 and later come first.
+		"passes a span that the generator cannot trace to its Start call",
 		"span name is not a constant",
 		"attribute key is not a constant",
 		"builds an attribute that the generator cannot trace to a span or a metric",

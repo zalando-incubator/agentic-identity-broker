@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -109,6 +110,12 @@ type rename struct {
 	at       token.Pos
 }
 
+// heldSpan is a struct field and a span that it can hold.
+type heldSpan struct {
+	field *types.Var
+	span  *Span
+}
+
 // wrapper is a module function that starts a span with a name it receives.
 type wrapper struct {
 	start  *ast.CallExpr
@@ -131,9 +138,9 @@ type extractor struct {
 	fieldValues map[types.Object][]source
 	// starters records whether each module function returns a context with a
 	// span that it starts.
-	starters   map[*types.Func]bool
-	instrObjs  map[types.Object][]*Metric
-	spanFields map[types.Object][]*Span
+	starters  map[*types.Func]bool
+	instrObjs map[types.Object][]*Metric
+	held      []heldSpan
 	// funcUses counts the references to each module function, and
 	// ifaceMethods names the methods that module interfaces declare.
 	funcUses     map[*types.Func]int
@@ -141,9 +148,9 @@ type extractor struct {
 	wrappers     map[*types.Func]wrapper
 	callSites    map[*types.Func][]callSite
 	renames      []rename
-	// reached holds each call that builds an attribute, changes a span or
-	// records a measurement, and that the extractor followed to a span, a
-	// metric or a resource. Every other such call is a gap.
+	// reached holds each call that builds an attribute, changes a span,
+	// passes a span or records a measurement, and that the extractor followed
+	// to a span, a metric or a resource. Every other such call is a gap.
 	reached map[*ast.CallExpr]bool
 	ref     *Reference
 	current []Gap
@@ -184,7 +191,6 @@ func Extract(dir string, patterns ...string) (*Reference, error) {
 		fieldValues:  map[types.Object][]source{},
 		starters:     map[*types.Func]bool{},
 		instrObjs:    map[types.Object][]*Metric{},
-		spanFields:   map[types.Object][]*Span{},
 		funcUses:     map[*types.Func]int{},
 		ifaceMethods: map[string]bool{},
 		wrappers:     map[*types.Func]wrapper{},
@@ -1230,12 +1236,9 @@ func (x *extractor) span(name string) *Span {
 
 // holdSpan records that the struct field f can hold the span s.
 func (x *extractor) holdSpan(f *types.Var, s *Span) {
-	for _, have := range x.spanFields[f] {
-		if have == s {
-			return
-		}
+	if h := (heldSpan{f, s}); !slices.Contains(x.held, h) {
+		x.held = append(x.held, h)
 	}
-	x.spanFields[f] = append(x.spanFields[f], s)
 }
 
 // trackSpan collects what c does with the span values in objs.
@@ -1277,6 +1280,7 @@ func (x *extractor) spanCalls(objs map[types.Object]bool, c fnCtx, s *Span, k *c
 		if len(at) == 0 {
 			return true
 		}
+		x.reached[call] = true
 		// A module function that receives the span.
 		fc, ours := x.funcs[fn]
 		switch {
@@ -1347,28 +1351,17 @@ func (x *extractor) spanMethod(name string, call *ast.CallExpr, c fnCtx, s *Span
 	}
 }
 
-// fieldSpanCalls collects attributes and error status set on a span through
-// a struct field that holds it, as in b.span.SetAttributes(...).
-func (x *extractor) fieldSpanCalls(c fnCtx) {
-	info := c.info()
-	ast.Inspect(c.decl.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		field, ok := sel.X.(*ast.SelectorExpr)
-		if !ok || !isMethod(callee(info, call), tracePkg) {
-			return true
-		}
-		for _, s := range x.spanFields[objOf(info, field)] {
-			x.spanMethod(sel.Sel.Name, call, c, s, newCollector(x, s.Attrs))
-		}
-		return true
-	})
+// fieldSpans collects what the module does with a span through a struct
+// field that holds it, as in b.span.SetAttributes(...) and finish(b.span).
+// The walk can find another field that holds the span, and the loop walks
+// that field too.
+func (x *extractor) fieldSpans() {
+	for i := 0; i < len(x.held); i++ {
+		h := x.held[i]
+		x.eachFunc(func(c fnCtx) {
+			x.spanCalls(map[types.Object]bool{h.field: true}, c, h.span, newCollector(x, h.span.Attrs), 0)
+		})
+	}
 }
 
 // identify sets the scope and kind of s, and reports a second start site
@@ -1659,7 +1652,7 @@ func (x *extractor) extract() {
 	for _, st := range fromCtx {
 		x.fromContext(st)
 	}
-	x.eachFunc(x.fieldSpanCalls)
+	x.fieldSpans()
 	x.applyRenames()
 	x.metricUses()
 	// Resource attributes describe the process, and the page does not list
@@ -1799,9 +1792,9 @@ func (x *extractor) applyRenames() {
 	}
 }
 
-// checkReached reports each call that builds an attribute, changes a span
-// or records a measurement, and that the extractor did not follow to a
-// span, a metric or a resource.
+// checkReached reports each call that builds an attribute, changes a span,
+// passes a span or records a measurement, and that the extractor did not
+// follow to a span, a metric or a resource.
 func (x *extractor) checkReached() {
 	x.eachBody(func(body ast.Node, c fnCtx) {
 		info := c.info()
@@ -1820,10 +1813,22 @@ func (x *extractor) checkReached() {
 				}
 			case holdsKeyValue(info.TypeOf(call)):
 				x.gap(call.Pos(), "builds an attribute that the generator cannot trace to a span or a metric")
+			case passesSpan(info, call):
+				x.gap(call.Pos(), "passes a span that the generator cannot trace to its Start call")
 			}
 			return true
 		})
 	})
+}
+
+// passesSpan reports whether an argument of call is a span.
+func passesSpan(info *types.Info, call *ast.CallExpr) bool {
+	for _, a := range call.Args {
+		if isSpanType(info.TypeOf(a)) {
+			return true
+		}
+	}
+	return false
 }
 
 // setsError reports whether a SetStatus call can set the status Error.
