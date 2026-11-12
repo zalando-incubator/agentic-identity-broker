@@ -148,10 +148,10 @@ commit, not as validated.
 
 ### Tests first
 
-- [ ] T058 [P] [US3] Add `It()` blocks for US3.1 and US3.2 to `tests/e2e/business_event_ledger_test.go` (Principle XIII)
-- [ ] T059 [P] [US3] Write adapter tests for `DeleteRecordedBefore` (cutoff, limit, oldest first) and `DeleteByPrincipal` (exact match, rows without principal untouched) in the memory test file and in `tests/integration/storage/infra/business_event_test.go` (FR-009, FR-010)
+- [ ] T058 [P] [US3] Add `It()` blocks for US3.1, US3.2, and US3.3 to `tests/e2e/business_event_ledger_test.go` (Principle XIII)
+- [ ] T059 [P] [US3] Write adapter tests for `DeleteRecordedBefore` (cutoff, limit, oldest first) and `EraseByPrincipal` (redacts `actor` and `operator_principal` in other owners' rows, atomic, idempotent; exact match, rows without principal untouched) in the memory test file and in `tests/integration/storage/infra/business_event_test.go` (FR-009, FR-010)
 - [ ] T060 [P] [US3] Write `internal/domain/bizevent/retention_test.go`: repeats until a short batch, stops on context end, logs `rows_expired` only when rows were deleted, logs `retention_failed` on error (contracts/ports.md section 4)
-- [ ] T061 [P] [US3] Write admin handler tests: `200` with `deleted_count`, idempotent repeat, `400` on empty principal, `409` when the ledger is disabled, audit record `business_event.ledger.principal_erased` with typed `principal` and `operator_principal`, and no new ledger row for the erased principal
+- [ ] T061 [P] [US3] Write admin handler tests: `200` with `deleted_count` and `redacted_count`, idempotent repeat, `400` on empty principal, `409` when the ledger is disabled, audit record `business_event.ledger.principal_erased` with typed `principal` and `operator_principal`, and no new ledger row for the erased principal
 - [ ] T062 [P] [US3] Write configuration tests for the three retention keys
 - [ ] T063 [US3] Run the new tests and record their failures in the pull request
 
@@ -214,7 +214,7 @@ Run the items that apply at the end of each step's pull request, and all of them
 - [ ] T095 [P] `TestLoggedPrincipalsAreTyped` and the `forbidigo` rule are unchanged; no linter suppression was added (Principle XV)
 - [ ] T096 [P] Domain packages do not import adapters; `bizevent` imports only the standard library; ExtProc does not import `bizevent` (Principle VI; ADR 027)
 - [ ] T097 [P] The logger and the appender are injected through the builder; no `slog.Default()` (Principle XII)
-- [ ] T098 [P] All eight acceptance scenarios have a passing `It()`; no `XIt`, `PIt`, or `Skip()` (Principle XIII)
+- [ ] T098 [P] All nine acceptance scenarios have a passing `It()`; no `XIt`, `PIt`, or `Skip()` (Principle XIII)
 - [ ] T099 [P] With `business_events.enabled: false`, the full suite passes without a changed assertion outside the onboarded call sites (SC-002)
 - [ ] T100 [P] `docs/operations/business-events.md` states that the ledger is not enabled in production before step 6 is deployed (SR-003)
 - [ ] T101 No endpoint reads the ledger (SR-004)

@@ -7,7 +7,7 @@
 | Concept | Kind | Package | Description |
 |---|---|---|---|
 | Business Event Definition | Value object | `internal/domain/bizevent` | The one declaration of a business event: identifier and owner-visibility flag. Immutable. Used as the `event` value of a log record. |
-| Business Event | Entity (append-only) | `internal/domain/model` | One stored occurrence of a definition. Never updated after it is stored. |
+| Business Event | Entity (append-only) | `internal/domain/model` | One stored occurrence of a definition. Not updated, except by erasure redaction after it is stored. |
 | Business Event ID | Typed ID | `internal/domain/id` | `id.BusinessEventID`, a UUIDv7 (ADR 013, research R6). |
 | Business Event Ledger | Repository | `internal/ports` | Append, list, and delete operations on business events. |
 
@@ -66,7 +66,9 @@ Invariants:
 - `Attributes` does not contain the keys `event`, `principal`, `actor`, or `trace_id`.
 - `Attributes` contains nothing that LOGGING.md section 6.1 prohibits. The invariant holds because
   the event is built only from a log record; the repository does not check content.
-- A stored event is never changed. It is removed only by retention or erasure.
+- A stored event is not changed, with one exception: erasure of a principal clears that principal
+  from `Actor` and from the `operator_principal` attribute of other owners' events (FR-010).
+  An event is removed only by retention or erasure.
 
 `Validate()` checks the first invariant. `Copy()` returns a deep copy, as other models do.
 
@@ -111,9 +113,23 @@ other tables, so apply and rollback can repeat without loss elsewhere.
 No foreign keys. A row must survive the deletion of the grant, session, or agent that it
 describes; that is its purpose.
 
-`operator_principal` stays in `attributes`. Erasure matches the `principal` column only. A row in
-which a person is only the `actor` or the `operator_principal` (an operator who changed another
-user's data) is not erased; retention removes it.
+`operator_principal` stays in `attributes`. LOGGING.md section 5.1 reserves the keys `principal`,
+`operator_principal`, and `actor` for principals, so these are the only places where a row holds
+one. Erasure of a principal P therefore does two things in one transaction:
+
+```sql
+DELETE FROM business_events WHERE principal = $1;
+
+UPDATE business_events
+SET actor = CASE WHEN actor = $1 THEN NULL ELSE actor END,
+    attributes = CASE WHEN attributes->>'operator_principal' = $1
+                      THEN attributes - 'operator_principal' ELSE attributes END
+WHERE actor = $1 OR attributes->>'operator_principal' = $1;
+```
+
+The `UPDATE` scans without an index. Erasure is rare and operator-initiated; if it becomes slow, a
+later migration adds an index on `actor`. An onboarded event must not put a principal under any
+other attribute key (onboarding checklist).
 
 ## Memory adapter
 
@@ -123,8 +139,9 @@ filter the slice. A duplicate ID returns `StorageError{Kind: Conflict}` in both 
 
 ## State
 
-A business event has no state transitions. Its lifecycle is: stored, then deleted by retention
-(`recorded_at` older than the retention period) or by erasure.
+A business event has no state transitions. Its lifecycle is: stored, possibly redacted by the
+erasure of its actor or operator principal, then deleted by retention (`recorded_at` older than
+the retention period) or by the erasure of its principal.
 
 ## Volume estimate
 

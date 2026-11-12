@@ -39,8 +39,8 @@ The feature merges as a sequence of small pull requests. Each one leaves `main` 
 | 3 | Migration for the ledger table, PostgreSQL adapter, migration tests | Not wired |
 | 4 | Ledger handler, builder wiring, configuration flag (default off), failure metric | Wired, no event onboarded |
 | 5 | First use case: `consent.grant.revoked`, with the E2E scenarios of User Story 1 | One event |
-| 6 | Retention and erasure by principal (User Story 3) | Can be enabled in production |
-| 7 | Second use case: `consent.grant.created` and `consent.grant.updated` (User Story 2) | Three events |
+| 6 | Retention and erasure by principal, with the E2E scenarios of User Story 3 | Can be enabled in production |
+| 7 | Second use case: `consent.grant.created` and `consent.grant.updated`, with E2E scenario 1 of User Story 2 (scenario 2 is in step 5) | Three events |
 | 8 and later | One use case per pull request, by the onboarding checklist | Grows |
 
 ## User Scenarios & Testing *(mandatory)*
@@ -112,6 +112,9 @@ retention operation and the deletion by principal. Read the table.
 2. **Given** rows of Alice and of Bob, **When** an operator erases Alice's events through the Admin
    API, **Then** the response reports the number of deleted rows, no row has Alice as principal,
    and Bob's rows are unchanged.
+3. **Given** a row of Bob in which Alice is the actor, and a row of Bob in which Alice is the
+   operator principal, **When** an operator erases Alice's events, **Then** both rows remain, Bob
+   is still their principal, and neither row contains Alice's principal.
 
 ---
 
@@ -195,6 +198,70 @@ The record on stdout, as LOGGING.md prescribes. It is the same with the ledger o
 **Observable result**: The ledger has one row for the revocation. Its identifier and attributes
 equal those of the stdout record and of the OpenTelemetry log record with the same trace ID.
 
+### Journey 2 — An operator erases Alice from the ledger (User Story 3, Scenarios 2 and 3)
+
+**Cast**: Operator Olivia (`olivia@example.com`, asserted by the admin proxy as `X-Remote-User`);
+Alice (`alice@example.com`) and Bob (`bob@example.com`). The ledger is enabled. All times are
+2026-11-20 UTC. All IDs are synthetic.
+
+**Step 1 — Initial ledger rows**
+
+| `id` (short) | `event` | `principal` | `actor` | `attributes` (excerpt) |
+|---|---|---|---|---|
+| `…7e8f` | `consent.grant.revoked` | `alice@example.com` | `alice@example.com` | `{"agent_id": "550e8400-…"}` |
+| `…8a01` | `consent.grant.created` | `alice@example.com` | `alice@example.com` | `{"agent_id": "550e8400-…"}` |
+| `…9b02` | `session.oauth2.session_terminated` | `bob@example.com` | `alice@example.com` | `{"service_id": "880e8400-…"}` |
+| `…9c03` | `consent.grant.revoked` | `bob@example.com` | `bob@example.com` | `{"agent_id": "550e8400-…"}` |
+
+Row `…9b02` stands for a case in which Alice, as an administrator, acted on Bob's data.
+
+**Step 2 — 14:00:00: Olivia sends the erasure request through the admin proxy**
+
+```http
+POST /api/business-events/erasure HTTP/1.1
+Host: broker-admin.internal.example.com
+Content-Type: application/json
+X-Remote-User: olivia@example.com
+
+{"principal": "alice@example.com"}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"deleted_count": 2, "redacted_count": 1}
+```
+
+The operation is proposed in
+[contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml).
+
+**Step 3 — 14:00:00: the broker writes the audit record**
+
+```json
+{
+  "time": "2026-11-20T14:00:00.250Z",
+  "level": "INFO",
+  "msg": "business events erased",
+  "event": "business_event.ledger.principal_erased",
+  "principal": "alice@example.com",
+  "operator_principal": "olivia@example.com",
+  "row_count": 2,
+  "redacted_count": 1,
+  "actor": "olivia@example.com"
+}
+```
+
+The `event` value is a string, so this record is not stored in the ledger.
+
+**Step 4 — Ledger rows after the request**
+
+| `id` (short) | `event` | `principal` | `actor` | `attributes` (excerpt) |
+|---|---|---|---|---|
+| `…9b02` | `session.oauth2.session_terminated` | `bob@example.com` | *(none)* | `{"service_id": "880e8400-…"}` |
+| `…9c03` | `consent.grant.revoked` | `bob@example.com` | `bob@example.com` | `{"agent_id": "550e8400-…"}` |
+
+**Observable result**: No ledger row contains `alice@example.com`. Bob's two rows remain. A second
+identical request returns `{"deleted_count": 0, "redacted_count": 0}`.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -218,7 +285,7 @@ equal those of the stdout record and of the OpenTelemetry log record with the sa
 - **FR-008**: A business event MUST be stored independently of the configured log level.
 - **FR-009**: The broker MUST delete ledger rows older than a configurable retention period, with
   a default of 90 days.
-- **FR-010**: An operator MUST be able to delete all ledger rows whose resource owner is one given principal, through the Admin API. The operation MUST be idempotent and MUST write an audit record that does not create a new ledger row for that principal.
+- **FR-010**: An operator MUST be able to erase one given principal from the ledger through the Admin API. Erasure MUST delete all rows whose resource owner is that principal. In the rows of other resource owners, erasure MUST remove that principal where it is the actor or the operator principal, and MUST leave the rest of the row unchanged. The operation MUST be idempotent and MUST write an audit record that does not create a new ledger row for that principal.
 - **FR-011**: Both storage adapters (memory and PostgreSQL) MUST implement the ledger repository.
 - **FR-012**: Each onboarded event MUST satisfy the [onboarding checklist](./checklists/onboarding.md).
 

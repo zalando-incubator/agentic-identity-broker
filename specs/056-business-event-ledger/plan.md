@@ -36,7 +36,7 @@ onboarded in its own pull request by changing one log call.
 | STD-LOGGING-2.2 | New rule in LOGGING.md section 2.2 for the typed definition, and the guard test in section 9 | Delivery step 2 | Proposed |
 | DB-048 | Table `business_events` and its two indexes | [data-model.md](./data-model.md) | Proposed |
 | CFG-BE | Configuration keys `business_events.*` | [contracts/configuration.md](./contracts/configuration.md) | Proposed |
-| API-ERASURE | Admin API `POST /api/business-events/erasure` (minor version) | [contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml) | Proposed. Needed before delivery step 6 only |
+| API-ERASURE | Admin API `POST /api/business-events/erasure` (minor version), including the redaction of the erased principal as actor and operator principal in other owners' events (FR-010) | [contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml) | Proposed. Needed before delivery step 6 only |
 
 No approval is inferred. A delivery step starts only when the items it depends on are approved.
 
@@ -56,7 +56,7 @@ No approval is inferred. A delivery step starts only when the items it depends o
 - [x] **API Documentation**: `api/admin/openapi.yaml` in step 6. The end-user API is not changed.
 - [ ] **API Changes**: API-ERASURE is not yet confirmed. It blocks step 6 only.
 - [x] **Database Design**: Migration `048_create_business_events` with up and down scripts (T025).
-- [x] **E2E Acceptance Tests**: All eight acceptance scenarios are mapped below. Each E2E test is written first, in the pull request of the step that makes it pass.
+- [x] **E2E Acceptance Tests**: All nine acceptance scenarios are mapped below. Each E2E test is written first, in the pull request of the step that makes it pass.
 - [x] **E2E Test Mapping**: One `It()` per scenario (table in Testing Strategy).
 - [x] **E2E Red Phase**: Each step's pull request records the semantic failure of its new tests before the implementation commit (T015, T036, T048, T063, T074).
 - [x] **Frontend Playwright E2E**: Not applicable. No UI change.
@@ -152,7 +152,7 @@ review; `tasks.md` groups tasks by step.
 | 3 | Migration `048`, PostgreSQL adapter | 3 | 2 | US1 |
 | 4 | Ledger handler, configuration, builder wiring, instruments, example and chart | 6 | 2 | US1 |
 | 5 | First use case `consent.grant.revoked`, E2E scenarios US1.1 to US1.4 and US2.2 | 2 | 3, 4 | US1, US2 |
-| 6 | Retention port and service, erasure endpoint, operations document, E2E scenarios US3.1 and US3.2 | 8 | 5, API-ERASURE | US3 |
+| 6 | Retention port and service, erasure endpoint, operations document, E2E scenarios US3.1 to US3.3 | 8 | 5, API-ERASURE | US3 |
 | 7 | `consent.grant.created` and `consent.grant.updated`, E2E scenario US2.1 | 2 | 5 | US2 |
 | 8 and later | One use case each, by the onboarding checklist. Not tasks of this feature's task list; each is a small follow-up pull request that cites FR-012. | 2 to 3 | 5 | US2 |
 
@@ -202,6 +202,7 @@ enabled, disabled, write failing; retention; erasure) → one `It` per scenario.
 | US2.2 | same file | `It("stores no event for an audit record with a string event identifier")` | 5 |
 | US3.1 | same file | `It("deletes only events older than the retention period")` | 6 |
 | US3.2 | same file | `It("erases all events of one principal and leaves other principals' events")` | 6 |
+| US3.3 | same file | `It("removes an erased principal from actor and operator_principal in other principals' events")` | 6 |
 
 Line numbers are added to this table in the pull request that adds each test.
 

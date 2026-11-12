@@ -36,9 +36,10 @@ type BusinessEventRetention interface {
 	// DeleteRecordedBefore deletes up to limit events with RecordedAt before cutoff and
 	// returns the number deleted.
 	DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error)
-	// DeleteByPrincipal deletes all events whose Principal equals principal and returns the
-	// number deleted.
-	DeleteByPrincipal(ctx context.Context, principal id.Principal) (int64, error)
+	// EraseByPrincipal deletes all events whose Principal equals principal. In other events it
+	// clears Actor and removes the "operator_principal" attribute where they equal principal.
+	// Both changes commit together. It returns the numbers of deleted and of redacted events.
+	EraseByPrincipal(ctx context.Context, principal id.Principal) (deleted, redacted int64, err error)
 }
 
 type BusinessEventFilter struct {
@@ -57,7 +58,7 @@ type BusinessEventCursor struct {
 | Adapter | Location | Notes |
 |---|---|---|
 | Memory | `internal/adapters/storage/memory/business_event.go` | Deep copies in and out. |
-| PostgreSQL | `internal/adapters/storage/postgres/business_event.go` | `sqlx`. `Append` and the delete operations use `a.db`, not `storageExecutor(ctx)` (research R4). `DeleteRecordedBefore` uses `DELETE ... WHERE id IN (SELECT id ... ORDER BY recorded_at, id LIMIT $2)`. |
+| PostgreSQL | `internal/adapters/storage/postgres/business_event.go` | `sqlx`. `Append` and the delete operations use `a.db`, not `storageExecutor(ctx)` (research R4). `EraseByPrincipal` runs its two statements in its own transaction ([data-model.md](../data-model.md)). `DeleteRecordedBefore` uses `DELETE ... WHERE id IN (SELECT id ... ORDER BY recorded_at, id LIMIT $2)`. |
 
 `storage.Adapter` (`internal/adapters/storage/factory.go`) gets the accessors `BusinessEvents()
 ports.BusinessEventAppender`, `BusinessEventReader()`, and, in step 6, `BusinessEventRetention()`.

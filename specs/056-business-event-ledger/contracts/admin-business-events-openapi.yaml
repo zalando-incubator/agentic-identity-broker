@@ -11,9 +11,10 @@ paths:
       operationId: eraseBusinessEvents
       summary: Erase the business events of one principal
       description: |
-        Deletes every business event whose resource owner is the given principal. The operation
-        is idempotent: a second request deletes nothing and returns `deleted_count` 0. Events in
-        which the principal is only the actor are not deleted; retention removes them.
+        Deletes every business event whose resource owner is the given principal. In the events
+        of other resource owners, removes the principal where it is the actor or the operator
+        principal and leaves the rest of the event unchanged. Both changes commit together.
+        The operation is idempotent: a second request returns both counts as 0.
 
         The principal is sent in the body, not in the URL, because proxies log URLs.
 
@@ -64,13 +65,19 @@ components:
           example: alice@example.com
     BusinessEventErasureResponse:
       type: object
-      required: [deleted_count]
+      required: [deleted_count, redacted_count]
       properties:
         deleted_count:
           type: integer
           format: int64
           minimum: 0
           example: 42
+        redacted_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Events of other resource owners from which the principal was removed.
+          example: 3
     ErrorResponse:
       description: The existing ErrorResponse schema of api/admin/openapi.yaml. Not changed.
       type: object

@@ -93,10 +93,13 @@ the metric name are set in the implementing pull requests and their contracts in
 
 **Negative**
 
-- **No atomic guarantee.** If the process stops, or the database rejects the insert, between the
-  commit and the ledger write, the ledger has no row for a state change that happened. The
-  operational log has the record, and the failure metric counts rejected inserts. A process crash
-  in that window is not counted.
+- **No atomic guarantee.** The ledger row is written after the commit, when the log call runs.
+  - If the process stops after the commit and before the log call, the ledger has no row and the
+    operational log has no record of a state change that happened. No metric counts this loss.
+    This window exists on `main` today for the audit record; the ledger inherits it.
+  - If the database rejects the insert or the write times out, the ledger has no row. The
+    operational log has the record, and the failure metric counts the miss.
+  - If the process stops during the log call, either sink can be without the record.
 - Each onboarded state change costs one more database round trip on the request path.
 - The ledger holds personal data (principals) in a new table.
 - ExtProc must not import broker domain packages (ADR 027) and cannot use the typed definition.

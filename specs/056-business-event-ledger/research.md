@@ -146,6 +146,11 @@ idempotent delete; no leader election is needed. Erasure is rare and operator-in
 Admin API is where operators act (`POST /api/sessions/sweep` is the precedent). The principal goes
 in the body because LOGGING.md section 6.1 treats URL queries as sensitive and proxies log them.
 
+Erasure deletes the principal's own events and redacts the principal from `actor` and
+`operator_principal` in other owners' events, because those values are personal data too.
+Deleting the other owners' events instead would remove their history; leaving the values would
+make erasure incomplete.
+
 **Alternatives**: A Helm CronJob that calls an admin endpoint for retention (session sweep
 pattern): more moving parts for a delete that needs no operator decision. A CLI subcommand for
 erasure: the binary has one command today and operators do not have database credentials.

@@ -94,7 +94,7 @@ curl -i -X POST -H 'Content-Type: application/json' -H 'X-Remote-User: operator@
   -d '{"principal":"alice@example.com"}' \
   http://localhost:14000/api/business-events/erasure
 # HTTP/1.1 200 OK
-# {"deleted_count": 3}
+# {"deleted_count": 3, "redacted_count": 0}
 ```
 
 ## 7. Onboard another event (User Story 2)
