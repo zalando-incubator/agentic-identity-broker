@@ -1,6 +1,6 @@
 # Contract: Observability
 
-**Feature**: `056-business-event-ledger` | FR-006, FR-009, SC-004 | `coding-standards/LOGGING.md`, `coding-standards/OPENTELEMETRY.md`
+**Feature**: `048-business-event-ledger` | FR-006, FR-009, SC-004 | `coding-standards/LOGGING.md`, `coding-standards/OPENTELEMETRY.md`
 
 ## New instruments
 

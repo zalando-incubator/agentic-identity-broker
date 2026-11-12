@@ -196,7 +196,7 @@ These data classes are prohibited at all levels, including `Debug`.
 
 Audit records are structured operational logs. An audit record is not a transactional ledger: the write of a record is not atomic with the mutation that it reports.
 
-The business event ledger is a projection of audit records (ADR 048). A handler in the builder chain persists each record whose `event` value is a typed business event definition. A record whose `event` value is a string is not persisted. Do not add a second API that records the same fact. Feature 056 delivers the definition type and the handler; until they merge, no record is persisted.
+The business event ledger is a projection of audit records (ADR 048). A handler in the builder chain persists each record whose `event` value is a typed business event definition. A record whose `event` value is a string is not persisted. Do not add a second API that records the same fact. Feature 048 delivers the definition type and the handler; until they merge, no record is persisted.
 
 - Write the record after the mutation commits. Do not write a success record for an operation that changed nothing.
 - Do not write an audit record inside a storage transaction. The record reaches stdout, OpenTelemetry, and the ledger immediately, and it is false if the transaction rolls back.

@@ -1,6 +1,6 @@
 # Contract: Configuration
 
-**Feature**: `056-business-event-ledger` | FR-007, FR-009 | Research R4, R10
+**Feature**: `048-business-event-ledger` | FR-007, FR-009 | Research R4, R10
 
 ## Keys (`ports.BusinessEventsConfig`, `mapstructure:"business_events"`)
 

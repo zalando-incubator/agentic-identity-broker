@@ -1,8 +1,8 @@
 # Implementation Plan: Business Event Ledger
 
-**Branch**: `056-business-event-ledger` (one branch and pull request per delivery step) | **Date**: 2026-11-12 | **Spec**: [spec.md](./spec.md)
+**Branch**: `048-business-event-ledger` (one branch and pull request per delivery step) | **Date**: 2026-11-12 | **Spec**: [spec.md](./spec.md)
 
-**Input**: Feature specification from `/specs/056-business-event-ledger/spec.md`
+**Input**: Feature specification from `/specs/048-business-event-ledger/spec.md`
 
 ## Summary
 
@@ -85,7 +85,7 @@ the two standard amendments, DB-048, and CFG-BE are approved.
 ### Documentation (this feature)
 
 ```text
-specs/056-business-event-ledger/
+specs/048-business-event-ledger/
 ├── spec.md
 ├── plan.md
 ├── research.md

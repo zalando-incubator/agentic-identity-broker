@@ -1,6 +1,6 @@
 # Quickstart: Business Event Ledger
 
-**Feature**: `056-business-event-ledger` | **Spec**: [spec.md](./spec.md)
+**Feature**: `048-business-event-ledger` | **Spec**: [spec.md](./spec.md)
 
 This guide verifies the feature by hand after delivery step 5 (first use case) and step 6
 (retention). Names follow the [contracts](./contracts/). Container-backed commands

@@ -2,8 +2,8 @@
 
 **Status**: Proposed
 **Date**: 2026-11-12
-**Feature**: 056-business-event-ledger (issue #188)
-**Supersedes**: No ADR. Replaces the design of the closed PR #381 (feature 048, never merged).
+**Feature**: 048-business-event-ledger (issue #188)
+**Supersedes**: No ADR. Replaces the design of the closed PR #381 (the first design of feature 048, never merged).
 
 ## Context
 
@@ -79,7 +79,7 @@ fails. A ledger that is fed from log records therefore cannot also be transactio
 
 The package name of the definition type, the table and column names, the configuration key, and
 the metric name are set in the implementing pull requests and their contracts in
-`specs/056-business-event-ledger/`.
+`specs/048-business-event-ledger/`.
 
 ## Consequences
 

@@ -1,6 +1,6 @@
 # Contract: Definition Type, Ports, and Handler
 
-**Feature**: `056-business-event-ledger` | FR-001 to FR-006, FR-008 to FR-011 | Research R2 to R4, R7 to R13
+**Feature**: `048-business-event-ledger` | FR-001 to FR-006, FR-008 to FR-011 | Research R2 to R4, R7 to R13
 
 ## 1. `internal/domain/bizevent` (delivery step 2)
 

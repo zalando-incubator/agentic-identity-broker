@@ -1,6 +1,6 @@
 # Feature Specification: Business Event Ledger
 
-**Feature Branch**: `056-business-event-ledger`
+**Feature Branch**: `048-business-event-ledger`
 
 **Created**: 2026-11-12
 

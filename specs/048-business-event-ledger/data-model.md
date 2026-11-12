@@ -1,6 +1,6 @@
 # Data Model: Business Event Ledger
 
-**Feature**: `056-business-event-ledger` | **Spec**: [spec.md](./spec.md) | **Research**: [research.md](./research.md)
+**Feature**: `048-business-event-ledger` | **Spec**: [spec.md](./spec.md) | **Research**: [research.md](./research.md)
 
 ## Domain concepts
 

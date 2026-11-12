@@ -1,6 +1,6 @@
 # Tasks: Business Event Ledger
 
-**Input**: Design documents from `specs/056-business-event-ledger/`.
+**Input**: Design documents from `specs/048-business-event-ledger/`.
 **Prerequisites**: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, `quickstart.md`.
 **Status**: Delivery step 1 complete in its pull request, pending approval. No code task has started.
 **Tests**: Mandatory red-green-refactor under Principles VIII and XIII. In each step, write the tests first, record their semantic failure, then implement.
@@ -31,7 +31,7 @@ commit, not as validated.
 - [X] T001 Write `adrs/048-business-events-as-typed-log-records.md` with Context, Decision, Consequences, Alternatives, status Proposed (Principle II)
 - [X] T002 [P] Add ADR 048 to the ADR indexes in `AGENTS.md` and `ARCHITECTURE.md` (Principle II)
 - [X] T003 [P] Amend `coding-standards/LOGGING.md` section 8 and its binding sources (STD-LOGGING-8; Principle XV)
-- [X] T004 Phase 2a: document the domain model and invariants in `specs/056-business-event-ledger/data-model.md` (Principle V)
+- [X] T004 Phase 2a: document the domain model and invariants in `specs/048-business-event-ledger/data-model.md` (Principle V)
 - [X] T005 [P] Phase 2b: document configuration keys with a YAML example in `contracts/configuration.md` (Principle VII)
 - [X] T006 [P] Phase 2c: confirm that the end-user API and the Admin API do not change (Principles IV, X)
 - [X] T007 [P] Phase 2d: document table, indexes, and migration name in `data-model.md` (Principle IX)

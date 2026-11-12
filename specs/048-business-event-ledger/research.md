@@ -1,6 +1,6 @@
 # Research: Business Event Ledger
 
-**Feature**: `056-business-event-ledger` | **Date**: 2026-11-12 | **Spec**: [spec.md](./spec.md)
+**Feature**: `048-business-event-ledger` | **Date**: 2026-11-12 | **Spec**: [spec.md](./spec.md)
 
 Checked against `main` at commit `01da81b8`. Each entry gives the decision, the rationale, and the
 alternatives that were rejected. [ADR 048](../../adrs/048-business-events-as-typed-log-records.md)
