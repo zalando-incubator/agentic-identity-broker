@@ -1,0 +1,23 @@
+{% set stats = ctx.statistics if ctx.statistics is defined else ctx %}
+Telemetry live check against telemetry/registry
+
+Checked {{ stats.total_entities_by_type.span | default(0) }} spans and {{ stats.total_entities_by_type.metric | default(0) }} metrics.
+
+Findings: {{ stats.total_advisories }}
+{% for message, count in stats.advice_message_counts | dictsort %}
+  {{ count }} x {{ message }}
+{% endfor %}
+
+Spans in the registry that the tests did not emit:
+{% for m in stats.matchers | sort(attribute="id") if m.matched == 0 %}
+  {{ m.id[5:] }}
+{% else %}
+  none
+{% endfor %}
+
+Metrics in the registry that the tests did not emit:
+{% for name, count in stats.seen_registry_metrics | dictsort if count == 0 %}
+  {{ name }}
+{% else %}
+  none
+{% endfor %}

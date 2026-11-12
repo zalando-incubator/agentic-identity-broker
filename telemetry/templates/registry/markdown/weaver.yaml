@@ -1,0 +1,10 @@
+# Renders docs/reference/telemetry.md from the registry.
+whitespace_control:
+  trim_blocks: true
+  lstrip_blocks: true
+
+templates:
+  - template: telemetry.md.j2
+    filter: .registry
+    application_mode: single
+    file_name: telemetry.md

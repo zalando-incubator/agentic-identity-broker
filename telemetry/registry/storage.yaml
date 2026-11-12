@@ -1,0 +1,248 @@
+# Telemetry of the instrumentation scope `storage`.
+file_format: definition/2
+
+attributes:
+  - key: db.operation
+    type:
+      members:
+        - {id: approve_tool_approval, value: "ApproveToolApproval", stability: development}
+        - {id: consume_tool_approval, value: "ConsumeToolApproval", stability: development}
+        - {id: count_pending_tool_approvals, value: "CountPendingToolApprovals", stability: development}
+        - {id: create_tool_approval, value: "CreateToolApproval", stability: development}
+        - {id: create_user_grant, value: "CreateUserGrant", stability: development}
+        - {id: deny_tool_approval, value: "DenyToolApproval", stability: development}
+        - {id: get_agent, value: "GetAgent", stability: development}
+        - {id: get_approval_sync_version, value: "GetApprovalSyncVersion", stability: development}
+        - {id: get_tool_approval, value: "GetToolApproval", stability: development}
+        - {id: increment_approval_sync_version, value: "IncrementApprovalSyncVersion", stability: development}
+        - {id: list_all_active_tool_approvals, value: "ListAllActiveToolApprovals", stability: development}
+        - {id: list_by_principal, value: "ListByPrincipal", stability: development}
+        - {id: list_permanent_tool_approvals, value: "ListPermanentToolApprovals", stability: development}
+        - {id: revoke_permanent_tool_approval, value: "RevokePermanentToolApproval", stability: development}
+    brief: "Repository method name."
+    stability: development
+  - key: db.system
+    type:
+      members:
+        - {id: postgresql, value: "postgresql", stability: development}
+    brief: "Database system."
+    stability: development
+  - key: storage.outcome
+    type:
+      members:
+        - {id: canceled, value: "canceled", brief: "The caller canceled the operation.", stability: development}
+        - {id: conflict, value: "conflict", brief: "Operation conflicts with existing data.", stability: development}
+        - {id: connection, value: "connection", brief: "Storage backend connection failed or disconnected.", stability: development}
+        - {id: not_found, value: "not_found", brief: "Requested entity does not exist.", stability: development}
+        - {id: timeout, value: "timeout", brief: "Operation exceeded its timeout deadline.", stability: development}
+        - {id: unknown, value: "unknown", brief: "Error cause is unknown or unexpected.", stability: development}
+        - {id: validation, value: "validation", brief: "Input validation failed.", stability: development}
+    brief: "Result of a storage call that is not a failure. The span status stays unset."
+    stability: development
+
+attribute_groups:
+  - id: attributes.storage.call
+    visibility: internal
+    attributes:
+      - ref: db.system
+      - ref: error.type
+        examples: ["conflict", "connection", "not_found", "timeout", "unknown", "validation"]
+      - ref: storage.outcome
+
+spans:
+  - type: storage.approve.tool_approval
+    name:
+      templates: ["storage.approve.tool_approval"]
+    kind: client
+    brief: "Transitions a pending tool approval to approved in PostgreSQL."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ApproveToolApproval"]
+  - type: storage.consume.tool_approval
+    name:
+      templates: ["storage.consume.tool_approval"]
+    kind: client
+    brief: "Marks an approved tool approval with persistence `once` as consumed in PostgreSQL."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ConsumeToolApproval"]
+  - type: storage.count_pending.tool_approval
+    name:
+      templates: ["storage.count_pending.tool_approval"]
+    kind: client
+    brief: "Counts the pending approvals of a principal and agent pair that are not expired."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["CountPendingToolApprovals"]
+  - type: storage.create.tool_approval
+    name:
+      templates: ["storage.create.tool_approval"]
+    kind: client
+    brief: "Inserts a tool approval, or returns the existing pending duplicate."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["CreateToolApproval"]
+  - type: storage.create.user_grant
+    name:
+      templates: ["storage.create.user_grant"]
+    kind: client
+    brief: "Creates a user grant, or updates the grant of the same principal and agent."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["CreateUserGrant"]
+  - type: storage.deny.tool_approval
+    name:
+      templates: ["storage.deny.tool_approval"]
+    kind: client
+    brief: "Transitions a pending tool approval to denied in PostgreSQL."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["DenyToolApproval"]
+  - type: storage.get.agent
+    name:
+      templates: ["storage.get.agent"]
+    kind: client
+    brief: "Retrieves an agent by ID from PostgreSQL."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["GetAgent"]
+  - type: storage.get.tool_approval
+    name:
+      templates: ["storage.get.tool_approval"]
+    kind: client
+    brief: "Retrieves a tool approval by ID from PostgreSQL."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["GetToolApproval"]
+  - type: storage.get_version.approval_sync
+    name:
+      templates: ["storage.get_version.approval_sync"]
+    kind: client
+    brief: "Retrieves the current approval sync version."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["GetApprovalSyncVersion"]
+  - type: storage.increment_version.approval_sync
+    name:
+      templates: ["storage.increment_version.approval_sync"]
+    kind: client
+    brief: "Increments the approval sync version and issues `NOTIFY`."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["IncrementApprovalSyncVersion"]
+  - type: storage.list.user_grants_by_principal
+    name:
+      templates: ["storage.list.user_grants_by_principal"]
+    kind: client
+    brief: "Retrieves the active grants of a principal across all agents."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ListByPrincipal"]
+  - type: storage.list_active.tool_approval
+    name:
+      templates: ["storage.list_active.tool_approval"]
+    kind: client
+    brief: "Lists the active approvals that are not expired and not consumed."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ListAllActiveToolApprovals"]
+  - type: storage.list_permanent.tool_approval
+    name:
+      templates: ["storage.list_permanent.tool_approval"]
+    kind: client
+    brief: "Lists the permanent approvals and denials of a principal."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ListPermanentToolApprovals"]
+  - type: storage.revoke_permanent.tool_approval
+    name:
+      templates: ["storage.revoke_permanent.tool_approval"]
+    kind: client
+    brief: "Clears a permanent approval or denial."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RevokePermanentToolApproval"]

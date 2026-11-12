@@ -1,0 +1,129 @@
+{#- Escapes characters that break a table cell or MDX. -#}
+{%- macro text(s) -%}
+{{ s | replace("|", "\\|") | replace("{", "\\{") | replace("}", "\\}") | replace("<", "&lt;") | replace(">", "&gt;") }}
+{%- endmacro -%}
+{#- The heading ID that GitHub and Docusaurus generate for a name. -#}
+{%- macro anchor(name) -%}
+{{ name | replace(".", "") }}
+{%- endmacro -%}
+{%- macro codes(values) -%}
+{% for v in values %}`{{ v }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{%- endmacro -%}
+{#- What a span or a metric puts in an attribute. -#}
+{%- macro values(a) -%}
+{% if a.examples %}
+{{ codes(a.examples) }}{% if a.type is not mapping %}, any `{{ a.type }}`{% endif %}
+{%- elif a.type is mapping %}
+{% if a.type.members | length <= 8 %}
+{{ codes(a.type.members | map(attribute="value")) }}
+{%- else %}
+[{{ a.type.members | length }} values](#{{ anchor(a.key) }})
+{%- endif %}
+{% else %}
+any `{{ a.type }}`
+{%- endif %}
+{%- endmacro -%}
+{%- macro attributes(signal) -%}
+{% if signal.attributes %}
+| Attribute | Values |
+|---|---|
+{% for a in signal.attributes | sort(attribute="key") %}
+| `{{ a.key }}` | {{ values(a) }} |
+{% endfor %}
+{% else %}
+No attributes.
+{% endif %}
+{%- endmacro -%}
+---
+title: "Telemetry"
+description: Spans, metrics and attributes that the broker and ExtProc emit through OpenTelemetry. Generated from the telemetry registry.
+---
+
+# Telemetry
+
+This page lists every span, metric and attribute that the broker and ExtProc create through
+the OpenTelemetry API. It is generated from the telemetry registry in `telemetry/registry`
+with [OpenTelemetry Weaver](https://github.com/open-telemetry/weaver). Do not edit it by
+hand. After you change a span or a metric, change the registry and run `just telemetry-doc`.
+`just telemetry-check` fails when the page is out of date.
+
+The registry is written by hand. `just telemetry-live-check` runs the E2E suites and the
+PostgreSQL integration tests, and compares the telemetry that they emit with the registry.
+It reports a span, a metric, an attribute or a value that the tests emit and the registry
+does not list. It does not report a registry entry that the code no longer emits.
+
+The page does not list:
+
+- the HTTP server spans and metrics that `otelchi` creates for each inbound request;
+- metrics that the OpenTelemetry SDK, the Go runtime or a library creates;
+- span events and resource attributes;
+- log records. `coding-standards/LOGGING.md` covers them.
+
+A value list shows the values that the span or the metric sets. `any` means that the value is
+not one of a fixed set. Rules for adding telemetry are in `coding-standards/OPENTELEMETRY.md`.
+
+## Spans
+
+Error status: whether the span can end with status `Error`.
+
+| Span | Kind | Scope | Error status | Description |
+|---|---|---|---|---|
+{% for s in ctx.spans | sort(attribute="type") %}
+| [`{{ s.type }}`](#{{ anchor(s.type) }}) | {{ s.kind | capitalize }} | `{{ s.annotations.scope }}` | {{ "Yes" if s.annotations.error_status else "No" }} | {{ text(s.brief) }} |
+{% endfor %}
+
+## Metrics
+
+| Metric | Instrument | Unit | Scope | Description |
+|---|---|---|---|---|
+{% for m in ctx.metrics | sort(attribute="name") %}
+| [`{{ m.name }}`](#{{ anchor(m.name) }}) | {{ m.instrument }} | {% if m.unit %}`{{ m.unit }}`{% endif %} | `{{ m.annotations.scope }}` | {{ text(m.brief) }} |
+{% endfor %}
+
+## Span attributes
+{% for s in ctx.spans | sort(attribute="type") %}
+
+### {{ s.type }}
+
+{{ text(s.brief) }}{% if s.note %} {{ text(s.note) }}{% endif %}
+
+
+{{ attributes(s) }}
+{%- endfor %}
+
+## Metric attributes
+{% for m in ctx.metrics | sort(attribute="name") %}
+
+### {{ m.name }}
+
+{{ text(m.brief) }}{% if m.note %} {{ text(m.note) }}{% endif %}
+
+
+{{ attributes(m) }}
+{%- endfor %}
+
+## Attributes
+
+| Attribute | Type | Description |
+|---|---|---|
+{% for a in ctx.attributes | sort(attribute="key") %}
+| `{{ a.key }}` | {% if a.type is mapping %}[enumerated](#{{ anchor(a.key) }}){% else %}`{{ a.type }}`{% endif %} | {{ text(a.brief) }}{% if a.note %} {{ text(a.note) }}{% endif %} |
+{% endfor %}
+
+## Attribute values
+
+Each enumerated attribute, with every value that a span or a metric sets.
+{% for a in ctx.attributes | sort(attribute="key") if a.type is mapping %}
+
+### {{ a.key }}
+
+{% if a.type.members | selectattr("brief") | list %}
+| Value | Meaning |
+|---|---|
+{% for m in a.type.members %}
+| `{{ m.value }}` | {{ text(m.brief) if m.brief else "" }} |
+{% endfor %}
+{% else %}
+{{ codes(a.type.members | map(attribute="value")) }}
+{% endif %}
+{%- endfor %}

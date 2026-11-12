@@ -1,0 +1,18 @@
+# Telemetry of the instrumentation scope `upstream`.
+file_format: definition/2
+
+spans:
+  - type: oauth2.token_proxy
+    name:
+      templates: ["oauth2.token_proxy"]
+    kind: internal
+    brief: "Upstream OAuth2 token proxy."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: upstream
+      error_status: false
+    attributes:
+      - ref: http.request.method
+        examples: ["POST"]
+      - ref: http.response.status_code

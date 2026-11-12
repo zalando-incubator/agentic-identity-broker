@@ -1,0 +1,189 @@
+# Telemetry of the instrumentation scope `oauth2session`.
+file_format: definition/2
+
+attributes:
+  - key: dry_run
+    type: string
+    brief: "Whether the sweep is a dry run."
+    stability: development
+  - key: expiry
+    type:
+      members:
+        - {id: expired, value: "expired", brief: "The access token has already expired.", stability: development}
+        - {id: expiring, value: "expiring", brief: "The access token expires within the refresh lookahead.", stability: development}
+        - {id: unknown, value: "unknown", brief: "No access-token expiry is recorded.", stability: development}
+        - {id: valid, value: "valid", brief: "The access token expires after now plus the refresh lookahead.", stability: development}
+    brief: "Access-token expiry class of the stored session."
+    stability: development
+  - key: failure_detail
+    type:
+      members:
+        - {id: access_token_expired, value: "access_token_expired", stability: development}
+        - {id: caller_canceled, value: "caller_canceled", stability: development}
+        - {id: configuration, value: "configuration", stability: development}
+        - {id: credential_source_unavailable, value: "credential_source_unavailable", stability: development}
+        - {id: decryption_failed, value: "decryption_failed", stability: development}
+        - {id: encryption_failed, value: "encryption_failed", stability: development}
+        - {id: internal_unclassified, value: "internal_unclassified", stability: development}
+        - {id: persistence_failed, value: "persistence_failed", stability: development}
+        - {id: provider_client_rejected, value: "provider_client_rejected", stability: development}
+        - {id: provider_rejected, value: "provider_rejected", stability: development}
+        - {id: provider_response_invalid, value: "provider_response_invalid", stability: development}
+        - {id: provider_unavailable, value: "provider_unavailable", stability: development}
+        - {id: refresh_rejected, value: "refresh_rejected", stability: development}
+        - {id: refresh_unavailable, value: "refresh_unavailable", stability: development}
+        - {id: repository_unavailable, value: "repository_unavailable", stability: development}
+        - {id: session_missing, value: "session_missing", stability: development}
+    brief: "Failure detail."
+    stability: development
+  - key: oauth2.refresh.outcome
+    type:
+      members:
+        - {id: failed, value: "failed", stability: development}
+        - {id: not_due, value: "not_due", stability: development}
+        - {id: refreshed, value: "refreshed", stability: development}
+    brief: "Outcome of the background refresh."
+    stability: development
+  - key: oauth2.refresh.triggered_by
+    type:
+      members:
+        - {id: background, value: "background", stability: development}
+    brief: "What triggered the refresh."
+    stability: development
+  - key: refreshable
+    type: string
+    brief: "Whether the stored session can be refreshed."
+    stability: development
+  - key: service_id
+    type: string
+    brief: "Canonical ID of the service when one is set, otherwise its UUID."
+    stability: development
+  - key: triggered_by
+    type:
+      members:
+        - {id: background, value: "background", stability: development}
+        - {id: sweep, value: "sweep", stability: development}
+    brief: "What triggered the refresh."
+    stability: development
+
+spans:
+  - type: oauth2session.background_refresh
+    name:
+      templates: ["oauth2session.background_refresh"]
+    kind: internal
+    brief: "Third-party session refresh in the background."
+    note: "A new root span, with a link to the span of the request that triggered the refresh."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+      error_status: false
+    attributes:
+      - ref: oauth2.refresh.outcome
+      - ref: oauth2.refresh.triggered_by
+
+metrics:
+  - name: oauth2_sessions
+    brief: "Stored third-party sessions by service, access-token expiry class and refreshability."
+    note: "Recorded in each export cycle with a successful health query: one point per service with sessions and per combination of `expiry` and `refreshable`."
+    instrument: gauge
+    unit: "{session}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: expiry
+      - ref: refreshable
+      - ref: service_id
+  - name: proactive_refresh_dropped_total
+    brief: "Background session refreshes dropped because the pool is full."
+    note: "Incremented when a background refresh is rejected because every slot is busy."
+    instrument: counter
+    unit: "{refresh}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: triggered_by
+        examples: ["background"]
+  - name: proactive_refresh_failed_total
+    brief: "Admitted background session refreshes that failed."
+    note: "Incremented when an accepted background refresh ends in an error. A deleted session and a refresh that is not due do not count."
+    instrument: counter
+    unit: "{refresh}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: failure_detail
+      - ref: service_id
+      - ref: triggered_by
+        examples: ["background"]
+  - name: proactive_refresh_triggered_total
+    brief: "Background session refreshes admitted to the pool."
+    note: "Incremented when a background refresh is accepted into the pool."
+    instrument: counter
+    unit: "{refresh}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: service_id
+      - ref: triggered_by
+        examples: ["background"]
+  - name: session_sweep_duration_seconds
+    brief: "Duration of admin session sweep requests by outcome."
+    note: "Recorded for each sweep request with an operator principal."
+    instrument: histogram
+    unit: "s"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: dry_run
+      - ref: outcome
+        examples: ["aborted", "canceled", "completed", "rejected"]
+  - name: session_sweep_failed_total
+    brief: "Admin sweep candidates that could not be refreshed."
+    note: "Incremented when a sweep that is not a dry run classifies a candidate as failed."
+    instrument: counter
+    unit: "{refresh}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: failure_detail
+      - ref: service_id
+      - ref: triggered_by
+        examples: ["sweep"]
+  - name: session_sweep_refreshed_total
+    brief: "Sessions refreshed and committed by an admin sweep."
+    note: "Incremented when a sweep that is not a dry run commits a refreshed session."
+    instrument: counter
+    unit: "{refresh}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: service_id
+      - ref: triggered_by
+        examples: ["sweep"]
+  - name: session_sweep_skipped_total
+    brief: "Admin sweep candidates skipped because they were already refreshed or deleted."
+    note: "Incremented for each skipped candidate in a sweep that is not a dry run."
+    instrument: counter
+    unit: "{refresh}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: oauth2session
+    attributes:
+      - ref: triggered_by
+        examples: ["sweep"]

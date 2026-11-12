@@ -1,0 +1,17 @@
+# Telemetry of the instrumentation scope `jwks`.
+file_format: definition/2
+
+spans:
+  - type: jwks.fetch
+    name:
+      templates: ["jwks.fetch"]
+    kind: internal
+    brief: "JWKS key set fetch or cache lookup."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: jwks
+      error_status: true
+    attributes:
+      - ref: error.type
+        examples: ["jwks_unavailable"]

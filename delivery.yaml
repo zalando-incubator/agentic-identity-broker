@@ -31,7 +31,7 @@ pipeline:
       - desc: "Install pre-requisites"
         cmd: |
           apt-get update
-          apt-get --yes install just curl ca-certificates
+          apt-get --yes install just curl ca-certificates xz-utils
           curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
           apt-get --yes install nodejs
           export GOBIN=/go/bin PATH="/go/bin:$PATH"

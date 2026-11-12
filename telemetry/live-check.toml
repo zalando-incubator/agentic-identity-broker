@@ -1,0 +1,235 @@
+# Settings of `weaver registry live-check` for `just telemetry-live-check`.
+# Generated from telemetry/registry. Do not edit. Run `just telemetry-doc`.
+
+# A value that an enumerated attribute does not list is a violation.
+[[live-check.finding_level_overrides]]
+ids = ["undefined_enum_variant"]
+level = "violation"
+
+# The registry does not set stability, and it does not say which attributes are always set.
+[[live-check.finding_filters]]
+exclude = ["not_stable", "recommended_attribute_not_present"]
+
+# A span has no identifier but its name. Each matcher pairs a span name with its definition.
+
+[[live-check.matchers]]
+id = "span.approval.approve"
+sample_type = "span"
+when = 'name == "approval.approve"'
+signal = "approval.approve"
+
+[[live-check.matchers]]
+id = "span.approval.consume"
+sample_type = "span"
+when = 'name == "approval.consume"'
+signal = "approval.consume"
+
+[[live-check.matchers]]
+id = "span.approval.created"
+sample_type = "span"
+when = 'name == "approval.created"'
+signal = "approval.created"
+
+[[live-check.matchers]]
+id = "span.approval.deny"
+sample_type = "span"
+when = 'name == "approval.deny"'
+signal = "approval.deny"
+
+[[live-check.matchers]]
+id = "span.approval.list_pending"
+sample_type = "span"
+when = 'name == "approval.list_pending"'
+signal = "approval.list_pending"
+
+[[live-check.matchers]]
+id = "span.approval.list_permanent"
+sample_type = "span"
+when = 'name == "approval.list_permanent"'
+signal = "approval.list_permanent"
+
+[[live-check.matchers]]
+id = "span.approval.review"
+sample_type = "span"
+when = 'name == "approval.review"'
+signal = "approval.review"
+
+[[live-check.matchers]]
+id = "span.approval.revoke"
+sample_type = "span"
+when = 'name == "approval.revoke"'
+signal = "approval.revoke"
+
+[[live-check.matchers]]
+id = "span.approval.sync"
+sample_type = "span"
+when = 'name == "approval.sync"'
+signal = "approval.sync"
+
+[[live-check.matchers]]
+id = "span.encryption.decrypt"
+sample_type = "span"
+when = 'name == "encryption.decrypt"'
+signal = "encryption.decrypt"
+
+[[live-check.matchers]]
+id = "span.encryption.encrypt"
+sample_type = "span"
+when = 'name == "encryption.encrypt"'
+signal = "encryption.encrypt"
+
+[[live-check.matchers]]
+id = "span.extproc.approval.gate"
+sample_type = "span"
+when = 'name == "extproc.approval.gate"'
+signal = "extproc.approval.gate"
+
+[[live-check.matchers]]
+id = "span.extproc.client_assertion.refresh"
+sample_type = "span"
+when = 'name == "extproc.client_assertion.refresh"'
+signal = "extproc.client_assertion.refresh"
+
+[[live-check.matchers]]
+id = "span.extproc.opa.evaluate"
+sample_type = "span"
+when = 'name == "extproc.opa.evaluate"'
+signal = "extproc.opa.evaluate"
+
+[[live-check.matchers]]
+id = "span.extproc.token_exchange"
+sample_type = "span"
+when = 'name == "extproc.token_exchange"'
+signal = "extproc.token_exchange"
+
+[[live-check.matchers]]
+id = "span.http.request"
+sample_type = "span"
+when = 'name == "http.request"'
+signal = "http.request"
+
+[[live-check.matchers]]
+id = "span.jwks.fetch"
+sample_type = "span"
+when = 'name == "jwks.fetch"'
+signal = "jwks.fetch"
+
+[[live-check.matchers]]
+id = "span.oauth2.token_proxy"
+sample_type = "span"
+when = 'name == "oauth2.token_proxy"'
+signal = "oauth2.token_proxy"
+
+[[live-check.matchers]]
+id = "span.oauth2session.background_refresh"
+sample_type = "span"
+when = 'name == "oauth2session.background_refresh"'
+signal = "oauth2session.background_refresh"
+
+[[live-check.matchers]]
+id = "span.storage.approve.tool_approval"
+sample_type = "span"
+when = 'name == "storage.approve.tool_approval"'
+signal = "storage.approve.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.consume.tool_approval"
+sample_type = "span"
+when = 'name == "storage.consume.tool_approval"'
+signal = "storage.consume.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.count_pending.tool_approval"
+sample_type = "span"
+when = 'name == "storage.count_pending.tool_approval"'
+signal = "storage.count_pending.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.create.tool_approval"
+sample_type = "span"
+when = 'name == "storage.create.tool_approval"'
+signal = "storage.create.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.create.user_grant"
+sample_type = "span"
+when = 'name == "storage.create.user_grant"'
+signal = "storage.create.user_grant"
+
+[[live-check.matchers]]
+id = "span.storage.deny.tool_approval"
+sample_type = "span"
+when = 'name == "storage.deny.tool_approval"'
+signal = "storage.deny.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.get.agent"
+sample_type = "span"
+when = 'name == "storage.get.agent"'
+signal = "storage.get.agent"
+
+[[live-check.matchers]]
+id = "span.storage.get.tool_approval"
+sample_type = "span"
+when = 'name == "storage.get.tool_approval"'
+signal = "storage.get.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.get_version.approval_sync"
+sample_type = "span"
+when = 'name == "storage.get_version.approval_sync"'
+signal = "storage.get_version.approval_sync"
+
+[[live-check.matchers]]
+id = "span.storage.increment_version.approval_sync"
+sample_type = "span"
+when = 'name == "storage.increment_version.approval_sync"'
+signal = "storage.increment_version.approval_sync"
+
+[[live-check.matchers]]
+id = "span.storage.list.user_grants_by_principal"
+sample_type = "span"
+when = 'name == "storage.list.user_grants_by_principal"'
+signal = "storage.list.user_grants_by_principal"
+
+[[live-check.matchers]]
+id = "span.storage.list_active.tool_approval"
+sample_type = "span"
+when = 'name == "storage.list_active.tool_approval"'
+signal = "storage.list_active.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.list_permanent.tool_approval"
+sample_type = "span"
+when = 'name == "storage.list_permanent.tool_approval"'
+signal = "storage.list_permanent.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.revoke_permanent.tool_approval"
+sample_type = "span"
+when = 'name == "storage.revoke_permanent.tool_approval"'
+signal = "storage.revoke_permanent.tool_approval"
+
+[[live-check.matchers]]
+id = "span.tokenexchange.exchange"
+sample_type = "span"
+when = 'name == "tokenexchange.exchange"'
+signal = "tokenexchange.exchange"
+
+[[live-check.matchers]]
+id = "span.tokenexchange.get_valid_access_token"
+sample_type = "span"
+when = 'name == "tokenexchange.get_valid_access_token"'
+signal = "tokenexchange.get_valid_access_token"
+
+[[live-check.matchers]]
+id = "span.tokenexchange.impersonation"
+sample_type = "span"
+when = 'name == "tokenexchange.impersonation"'
+signal = "tokenexchange.impersonation"
+
+[[live-check.matchers]]
+id = "span.tokenexchange.verify_agent_access"
+sample_type = "span"
+when = 'name == "tokenexchange.verify_agent_access"'
+signal = "tokenexchange.verify_agent_access"

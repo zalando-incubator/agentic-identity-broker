@@ -85,6 +85,7 @@ Check that this selection matches the task. Do not infer the feature from the br
 `docs/STORAGE_EXTENSION_GUIDE.md` | Adding new storage entities
 `docs/STORAGE_TROUBLESHOOTING.md` | Storage debugging
 `docs/configuration.md` | Configuration reference
+`docs/reference/telemetry.md` | Span, metric and attribute reference, generated from `telemetry/registry` (`just telemetry-doc`)
 `docs/deployment/` | Deployment guides (Kubernetes, IRSA)
 `docs/operations/` | Operations runbooks
 `examples/config/` | Example configuration files

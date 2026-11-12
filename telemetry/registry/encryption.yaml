@@ -1,0 +1,36 @@
+# Telemetry of the instrumentation scope `encryption`.
+file_format: definition/2
+
+attributes:
+  - key: encryption.key_type
+    type:
+      members:
+        - {id: aws_kms, value: "aws_kms", stability: development}
+    brief: "Encryption key type."
+    stability: development
+
+spans:
+  - type: encryption.decrypt
+    name:
+      templates: ["encryption.decrypt"]
+    kind: internal
+    brief: "Decrypts ciphertext with AWS KMS envelope encryption."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: encryption
+      error_status: false
+    attributes:
+      - ref: encryption.key_type
+  - type: encryption.encrypt
+    name:
+      templates: ["encryption.encrypt"]
+    kind: internal
+    brief: "Encrypts plaintext with AWS KMS envelope encryption."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: encryption
+      error_status: false
+    attributes:
+      - ref: encryption.key_type

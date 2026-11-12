@@ -1,0 +1,10 @@
+# Renders telemetry/live-check.toml from the registry.
+whitespace_control:
+  trim_blocks: true
+  lstrip_blocks: true
+
+templates:
+  - template: live-check.toml.j2
+    filter: .registry
+    application_mode: single
+    file_name: live-check.toml

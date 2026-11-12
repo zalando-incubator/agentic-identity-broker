@@ -29,6 +29,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/livecheck"
 )
 
 var (
@@ -71,7 +72,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 
-	code := m.Run()
+	code := livecheck.Run(m)
 
 	if sharedTestContainer != nil {
 		_ = sharedTestContainer.Terminate(ctx)

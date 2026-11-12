@@ -7,6 +7,8 @@ Scope: OpenTelemetry traces and metrics. Log records, including log records expo
 Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
 spec `017-opentelemetry-support` (SR-001 to SR-004), `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
+`docs/reference/telemetry.md` lists each span, metric and attribute that the code emits. It is generated from the telemetry registry in `telemetry/registry` (section 9).
+
 ## 1. Provider Plumbing
 
 | Rule | Reason |
@@ -139,7 +141,7 @@ if err != nil {
 | `oauth2.refresh` | Third-party session refresh | `specs/029-proactive-token-refresh/contracts/observability.md` |
 | `encryption` | Encryption operations | ADR 012 |
 | `impersonation` | OAuth2 impersonation | ADR 032 |
-| `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented` |
+| `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented`, `docs/reference/telemetry.md` |
 
 - Use the canonical keys in this table. Do not make synonyms.
 
@@ -283,3 +285,28 @@ These data classes are prohibited in span names, span attributes, span events, s
 - [ ] Principals are set on spans only through `id.Principal.SpanAttribute` under a `.principal` key, and only where section 4.3 permits. No principal is a metric attribute.
 - [ ] The observability contract lists each new instrument.
 - [ ] A test asserts that credentials on this path are not in span attributes, and asserts each new metric's attribute set.
+- [ ] `telemetry/registry` has each new or changed span, metric and attribute, and `just telemetry-doc` has regenerated `docs/reference/telemetry.md` (section 9).
+
+## 9. Telemetry Reference
+
+`telemetry/registry` is the telemetry registry: YAML files that list each span, metric and attribute of the broker and ExtProc, in the format of the OpenTelemetry semantic conventions. It is written by hand. [OpenTelemetry Weaver](https://github.com/open-telemetry/weaver) checks it and generates `docs/reference/telemetry.md`, the reference for operators and agents that query traces and metrics. `scripts/install-weaver.sh` installs the pinned Weaver release.
+
+| Rule | Reason |
+|---|---|
+| After you add, rename, or remove a span, a metric, an attribute, or an enumerated value, make the same change in `telemetry/registry`. | Weaver does not read the code. The registry stays correct only when each pull request changes both. |
+| Then run `just telemetry-doc` and commit the result. `just telemetry-check` fails while a generated file is out of date, and `just check` runs it. | The page and `telemetry/live-check.toml` stay the same as the registry in each pull request. |
+| Do not edit `docs/reference/telemetry.md` or `telemetry/live-check.toml` by hand. Change the registry or the templates in `telemetry/templates`. | The next generation overwrites hand edits. |
+| Give each new span, metric and attribute a `brief` that says what it is. Do not restate the name. | The reference shows the `brief`. |
+| Put the instrumentation scope in `annotations.scope`. For a span, put in `annotations.error_status` whether the span can end with status `Error`. | The semantic convention format has no field for them. The reference shows both, and the live check compares both. |
+| When a span or a metric sets only some values of an enumerated attribute, list them as `examples` on the reference to the attribute. | The reference shows them as the values of that span or metric, and the live check reports any other value. |
+| Run `just telemetry-live-check` after you change telemetry. | It is the only check that compares the code with the registry. |
+
+`just telemetry-live-check` runs the E2E suites and the PostgreSQL integration tests while `weaver registry live-check` receives the telemetry that they emit. It fails when the tests emit a span, a metric, an attribute, or a value of an enumerated attribute that the registry does not list. It also fails when a span kind, an instrumentation scope, a metric instrument, or a unit differs from the registry, and when a span ends with status `Error` although the registry has `error_status: false`. `telemetry/policies/registry.rego` holds the checks that Weaver does not have built in.
+
+The live check has these limits:
+
+- It sees only the telemetry that the tests emit. Its report lists the spans and metrics of the registry that the tests did not emit. A registry entry that the code no longer emits does not fail the check.
+- A test that sets its own global tracer or meter provider keeps its telemetry to itself. `extproc.token_exchange` and its two metrics are emitted only in such tests, so the live check does not see them.
+- It does not run in CI.
+
+The registry does not cover the `otelchi` server spans and metrics, metrics that the SDK, the Go runtime, or a library creates, span events, resource attributes, or log records.
