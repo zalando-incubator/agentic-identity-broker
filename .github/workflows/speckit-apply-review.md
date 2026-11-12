@@ -79,7 +79,7 @@ safe-outputs:
     title-prefix: "[PR follow-up] "
     labels: [automation, follow-up]
     deduplicate-by-title: true
-    max: 1
+    max: 3
   add-comment:
     target: ${{ inputs.pr }}
     discussions: false

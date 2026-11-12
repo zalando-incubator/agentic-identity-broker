@@ -175,3 +175,15 @@ Use safe outputs for every GitHub mutation. If work is inapplicable, call `noop`
 with the reason. If work is blocked or cannot finish an assigned phase, publish
 the actual blocker and call `report_incomplete`; never report success for
 partial work.
+
+## Follow-up issues
+
+Open one follow-up issue per topic, not one per pull request. Before you
+request one, list the repository's open issues labelled `follow-up` that
+reference `#<context.pr>`. When one already tracks the topic, reference that
+issue by number and do not request another. Otherwise request it with
+`create_issue`, titled `#<context.pr>: <topic>`, where `<topic>` names the
+deferred work in a few words. The workflow prefixes the title and drops a
+request whose title an open issue already has, so a reused title silently
+creates nothing. A requested issue gets its number only after this session,
+so link it as a search for its exact title in the repository's issues.

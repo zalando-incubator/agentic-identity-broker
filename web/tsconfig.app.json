@@ -14,17 +14,16 @@
     "noEmit": true,
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
-      "@design-system/*": ["src/design-system/*"],
-      "@components/*": ["src/components/*"],
-      "@hooks": ["src/hooks/index.ts"],
-      "@hooks/*": ["src/hooks/*"],
-      "@services/*": ["src/services/*"],
-      "@types/*": ["src/types/*"],
-      "@utils/*": ["src/utils/*"],
-      "@assets/*": ["src/assets/*"],
-      "@styles/*": ["src/styles/*"]
+      "@design-system/*": ["./src/design-system/*"],
+      "@components/*": ["./src/components/*"],
+      "@hooks": ["./src/hooks/index.ts"],
+      "@hooks/*": ["./src/hooks/*"],
+      "@services/*": ["./src/services/*"],
+      "@types/*": ["./src/types/*"],
+      "@utils/*": ["./src/utils/*"],
+      "@assets/*": ["./src/assets/*"],
+      "@styles/*": ["./src/styles/*"]
     },
     "types": ["node", "vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
