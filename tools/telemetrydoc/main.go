@@ -6,8 +6,8 @@
 // the repository root and replaces the page.
 //
 // It exits with status 1 when it cannot follow a span name, a metric name,
-// an attribute, or a call that changes a span or records a measurement, and
-// lists each place on standard error.
+// an attribute, or a call that changes a span, passes a span or records a
+// measurement, and lists each place on standard error.
 package main
 
 import (

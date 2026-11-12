@@ -95,6 +95,22 @@ func (h *holder) finish(kind string) {
 	h.span.End()
 }
 
+// Abort passes the held span to a function that another span also reaches.
+func (h *holder) Abort() { fail(h.span, "abort_failed") }
+
+// fail sets the error of the span that it receives.
+func fail(span trace.Span, kind string) {
+	span.SetAttributes(attribute.String("error.type", kind))
+	span.SetStatus(codes.Error, "failed")
+}
+
+// Direct passes its own span to fail.
+func Direct(ctx context.Context) {
+	_, span := tracer.Start(ctx, "fixture.direct")
+	defer span.End()
+	fail(span, "direct_failed")
+}
+
 // labeler is an interface, so the callers of its method are not all known.
 type labeler interface {
 	label(ctx context.Context, value string)

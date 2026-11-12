@@ -249,7 +249,7 @@ Error status: whether the span can end with status `Error`.
 
 | Attribute | Values |
 |---|---|
-| `error.type` | `network_error`, `response_close_failed`, `response_read_failed` |
+| `error.type` | `network_error`, `response_close_failed`, `response_read_failed`, any `string` |
 | `http.request.method` | any `string` |
 | `http.response.status_code` | any `int` |
 
