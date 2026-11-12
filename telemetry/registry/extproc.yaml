@@ -8,23 +8,23 @@ attributes:
         - {id: deny, value: "deny", stability: development}
         - {id: elicit, value: "elicit", stability: development}
         - {id: proceed, value: "proceed", stability: development}
-    brief: "Approval outcome."
+    brief: "Decision of the approval gate: the call proceeds, the user is asked to approve it (`elicit`), or it is denied."
     stability: development
   - key: authorization.action
     type: string
-    brief: "Authorization action."
+    brief: "Action of the policy decision, such as `allow`, `deny` or `approval_required`."
     stability: development
   - key: authorization.duration_ms
     type: int
-    brief: "Authorization duration ms."
+    brief: "Duration of the policy evaluation in milliseconds."
     stability: development
   - key: authorization.method
     type: string
-    brief: "Authorization method."
+    brief: "MCP method of the request, such as `tools/call`. A method that is not on the allowlist is `unknown`."
     stability: development
   - key: authorization.protocol
     type: string
-    brief: "Authorization protocol."
+    brief: "Protocol of the request: `mcp`, or `unknown`."
     stability: development
   - key: authorization.result_code
     type:
@@ -35,19 +35,19 @@ attributes:
         - {id: undefined, value: "undefined", stability: development}
         - {id: undefined_action, value: "undefined_action", stability: development}
         - {id: unsupported_action, value: "unsupported_action", stability: development}
-    brief: "Authorization result code."
+    brief: "How the policy evaluation ended: `ok` when the policy returned a supported action, otherwise the reason why it did not."
     stability: development
   - key: authorization.target_server_name
     type: string
-    brief: "Authorization target server name."
+    brief: "Name of the MCP server that the request targets."
     stability: development
   - key: authorization.tool_name
     type: string
-    brief: "Authorization tool name."
+    brief: "Name of the MCP tool that the request calls."
     stability: development
   - key: token_exchange.broker_status_code
     type: int
-    brief: "Token exchange broker status code."
+    brief: "HTTP status code of the broker's response. Set when the broker rejected the exchange."
     stability: development
   - key: token_exchange.dependency
     type:
@@ -55,11 +55,11 @@ attributes:
         - {id: broker, value: "broker", stability: development}
         - {id: local, value: "local", stability: development}
         - {id: oauth_provider, value: "oauth_provider", stability: development}
-    brief: "Token exchange dependency."
+    brief: "Dependency that the operation used: ExtProc itself (`local`), the broker, or the OAuth provider."
     stability: development
   - key: token_exchange.oauth_error_code
     type: string
-    brief: "Token exchange oauth error code."
+    brief: "OAuth error code of the response that rejected the operation, such as `invalid_grant`. Empty when there is none."
     stability: development
   - key: token_exchange.operation
     type:

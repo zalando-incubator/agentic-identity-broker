@@ -4,23 +4,23 @@ file_format: definition/2
 attributes:
   - key: impersonation.target_agent_id
     type: string
-    brief: "Impersonation target agent ID."
+    brief: "ID of the agent that the impersonation request names as its audience."
     stability: development
   - key: token_exchange.agent.id
     type: string
-    brief: "Token exchange agent ID."
+    brief: "ID of the agent that the exchange is for. Set after the broker resolves a registered agent."
     stability: development
   - key: token_exchange.grant.id
     type: string
-    brief: "Token exchange grant ID."
+    brief: "ID of the user grant for the agent. Set when the broker found the grant, also when it is expired."
     stability: development
   - key: token_exchange.grant.updated_at
     type: string
-    brief: "Token exchange grant updated at."
+    brief: "Time of the last change to the grant, in UTC as RFC 3339."
     stability: development
   - key: token_exchange.grant.valid_until
     type: string
-    brief: "Token exchange grant valid until."
+    brief: "Expiry time of the grant, in UTC as RFC 3339. Absent when the grant does not expire."
     stability: development
   - key: token_exchange.service.id
     type: string
@@ -36,7 +36,7 @@ attributes:
         - {id: provider_repository, value: "provider_repository", stability: development}
         - {id: session_repository, value: "session_repository", stability: development}
         - {id: signing, value: "signing", stability: development}
-    brief: "Token exchange session dependency."
+    brief: "Dependency of the failed session operation, such as the provider or the session repository."
     stability: development
   - key: token_exchange.session.detail
     type:
@@ -57,7 +57,7 @@ attributes:
         - {id: refresh_unavailable, value: "refresh_unavailable", stability: development}
         - {id: repository_unavailable, value: "repository_unavailable", stability: development}
         - {id: session_missing, value: "session_missing", stability: development}
-    brief: "Token exchange session detail."
+    brief: "Detail code of the failed session operation."
     stability: development
   - key: token_exchange.session.kind
     type:
@@ -68,11 +68,11 @@ attributes:
         - {id: internal, value: "internal", stability: development}
         - {id: provider, value: "provider", stability: development}
         - {id: session, value: "session", stability: development}
-    brief: "Token exchange session kind."
+    brief: "Class of the session failure, such as a provider or an infrastructure failure."
     stability: development
   - key: token_exchange.session.oauth_code
     type: string
-    brief: "Token exchange session oauth code."
+    brief: "OAuth error code that the provider returned. Set only for codes on the allowlist."
     stability: development
   - key: token_exchange.session.operation
     type:
@@ -82,11 +82,11 @@ attributes:
         - {id: scope_validation, value: "scope_validation", stability: development}
         - {id: session_lookup, value: "session_lookup", stability: development}
         - {id: unknown, value: "unknown", stability: development}
-    brief: "Token exchange session operation."
+    brief: "Session operation that failed."
     stability: development
   - key: token_exchange.session.status_code
     type: int
-    brief: "Token exchange session status code."
+    brief: "HTTP status code that the provider returned. Absent when the failure has none."
     stability: development
 
 attribute_groups:

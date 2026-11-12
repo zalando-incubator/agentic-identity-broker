@@ -895,63 +895,63 @@ Admin sweep candidates skipped because they were already refreshed or deleted. I
 
 | Attribute | Type | Description |
 |---|---|---|
-| `agent_id` | `string` | Agent ID. |
-| `approval.agent_id` | `string` | Approval agent ID. |
-| `approval.count` | `int` | Approval count. |
-| `approval.id` | `string` | Approval ID. |
-| `approval.is_new` | `boolean` | Approval is new. |
-| `approval.outcome` | [enumerated](#approvaloutcome) | Approval outcome. |
-| `approval.pair_count` | `int` | Approval pair count. |
+| `agent_id` | `string` | ID of the agent that requested the approvals. |
+| `approval.agent_id` | `string` | ID of the agent that asked to call the tool. |
+| `approval.count` | `int` | Number of approvals in the list that the call returns. |
+| `approval.id` | `string` | ID of the tool approval. |
+| `approval.is_new` | `boolean` | Whether the call created the approval. It is `false` when the call returned an existing approval for the same request. |
+| `approval.outcome` | [enumerated](#approvaloutcome) | Decision of the approval gate: the call proceeds, the user is asked to approve it (`elicit`), or it is denied. |
+| `approval.pair_count` | `int` | Number of principal and agent pairs in the sync state. |
 | `approval.persistence` | [enumerated](#approvalpersistence) | Persistence scope of the approval decision. |
-| `approval.principal` | `string` | Approval principal. |
+| `approval.principal` | `string` | Principal that the approval belongs to. |
 | `approval.status` | [enumerated](#approvalstatus) | Lifecycle state of the tool approval. |
-| `approval.sync_version` | `int` | Approval sync version. |
-| `approval.tool_name` | `string` | Approval tool name. |
-| `approval.tool_pattern` | `string` | Approval tool pattern. |
-| `authorization.action` | `string` | Authorization action. |
-| `authorization.duration_ms` | `int` | Authorization duration ms. |
-| `authorization.method` | `string` | Authorization method. |
-| `authorization.protocol` | `string` | Authorization protocol. |
-| `authorization.result_code` | [enumerated](#authorizationresult_code) | Authorization result code. |
-| `authorization.target_server_name` | `string` | Authorization target server name. |
-| `authorization.tool_name` | `string` | Authorization tool name. |
+| `approval.sync_version` | `int` | Version of the approval sync state. A change to an approval increments it. |
+| `approval.tool_name` | `string` | Name of the tool that the agent asked to call. |
+| `approval.tool_pattern` | `string` | Tool pattern that the approval covers. |
+| `authorization.action` | `string` | Action of the policy decision, such as `allow`, `deny` or `approval_required`. |
+| `authorization.duration_ms` | `int` | Duration of the policy evaluation in milliseconds. |
+| `authorization.method` | `string` | MCP method of the request, such as `tools/call`. A method that is not on the allowlist is `unknown`. |
+| `authorization.protocol` | `string` | Protocol of the request: `mcp`, or `unknown`. |
+| `authorization.result_code` | [enumerated](#authorizationresult_code) | How the policy evaluation ended: `ok` when the policy returned a supported action, otherwise the reason why it did not. |
+| `authorization.target_server_name` | `string` | Name of the MCP server that the request targets. |
+| `authorization.tool_name` | `string` | Name of the MCP tool that the request calls. |
 | `db.operation` | [enumerated](#dboperation) | Repository method name. |
 | `db.system` | [enumerated](#dbsystem) | Database system. |
 | `dry_run` | `string` | Whether the sweep is a dry run. |
-| `encryption.key_type` | [enumerated](#encryptionkey_type) | Encryption key type. |
+| `encryption.key_type` | [enumerated](#encryptionkey_type) | Kind of key that encrypts the data. The AWS KMS adapter sets `aws_kms`. |
 | `error.type` | [enumerated](#errortype) | Class of the error. Set when the operation fails. |
 | `expiry` | [enumerated](#expiry) | Access-token expiry class of the stored session. |
-| `failure_detail` | [enumerated](#failure_detail) | Failure detail. |
+| `failure_detail` | [enumerated](#failure_detail) | Detail code of the failed refresh, such as `refresh_rejected`. The `session.oauth2.refresh_failed` log has the same code. |
 | `http.request.method` | `string` | HTTP method: an allowlisted method, `_OTHER` otherwise. |
 | `http.response.status_code` | `int` | HTTP status code. |
-| `impersonation.target_agent_id` | `string` | Impersonation target agent ID. |
+| `impersonation.target_agent_id` | `string` | ID of the agent that the impersonation request names as its audience. |
 | `oauth2.refresh.outcome` | [enumerated](#oauth2refreshoutcome) | Outcome of the background refresh. |
 | `oauth2.refresh.triggered_by` | [enumerated](#oauth2refreshtriggered_by) | What triggered the refresh. |
-| `outcome` | [enumerated](#outcome) | Outcome. |
+| `outcome` | [enumerated](#outcome) | Result of the operation that the metric records. Each metric has its own values. |
 | `refreshable` | `string` | Whether the stored session can be refreshed. |
 | `service_id` | `string` | Canonical ID of the service when one is set, otherwise its UUID. |
 | `storage.outcome` | [enumerated](#storageoutcome) | Result of a storage call that is not a failure. The span status stays unset. |
-| `token_exchange.agent.id` | `string` | Token exchange agent ID. |
-| `token_exchange.broker_status_code` | `int` | Token exchange broker status code. |
-| `token_exchange.dependency` | [enumerated](#token_exchangedependency) | Token exchange dependency. |
-| `token_exchange.exchange_kind` | [enumerated](#token_exchangeexchange_kind) | Token exchange exchange kind. |
-| `token_exchange.failure_detail` | [enumerated](#token_exchangefailure_detail) | Token exchange failure detail. |
-| `token_exchange.failure_stage` | [enumerated](#token_exchangefailure_stage) | Token exchange failure stage. |
-| `token_exchange.grant.id` | `string` | Token exchange grant ID. |
-| `token_exchange.grant.updated_at` | `string` | Token exchange grant updated at. |
-| `token_exchange.grant.valid_until` | `string` | Token exchange grant valid until. |
-| `token_exchange.oauth_error_code` | `string` | Token exchange oauth error code. |
+| `token_exchange.agent.id` | `string` | ID of the agent that the exchange is for. Set after the broker resolves a registered agent. |
+| `token_exchange.broker_status_code` | `int` | HTTP status code of the broker's response. Set when the broker rejected the exchange. |
+| `token_exchange.dependency` | [enumerated](#token_exchangedependency) | Dependency that the operation used: ExtProc itself (`local`), the broker, or the OAuth provider. |
+| `token_exchange.exchange_kind` | [enumerated](#token_exchangeexchange_kind) | Kind of exchange: a third-party service token or user impersonation. ExtProc sets `unknown` when it cannot tell. |
+| `token_exchange.failure_detail` | [enumerated](#token_exchangefailure_detail) | Detail code of the failure. An unclassified failure has `internal_unclassified`, and a successful metric observation has `none`. |
+| `token_exchange.failure_stage` | [enumerated](#token_exchangefailure_stage) | Step of the exchange that failed. A successful metric observation has `none`. |
+| `token_exchange.grant.id` | `string` | ID of the user grant for the agent. Set when the broker found the grant, also when it is expired. |
+| `token_exchange.grant.updated_at` | `string` | Time of the last change to the grant, in UTC as RFC 3339. |
+| `token_exchange.grant.valid_until` | `string` | Expiry time of the grant, in UTC as RFC 3339. Absent when the grant does not expire. |
+| `token_exchange.oauth_error_code` | `string` | OAuth error code of the response that rejected the operation, such as `invalid_grant`. Empty when there is none. |
 | `token_exchange.operation` | [enumerated](#token_exchangeoperation) | ExtProc operation that failed. |
-| `token_exchange.outcome` | [enumerated](#token_exchangeoutcome) | Token exchange outcome. |
-| `token_exchange.recovery_action` | [enumerated](#token_exchangerecovery_action) | Token exchange recovery action. |
-| `token_exchange.recovery_target` | [enumerated](#token_exchangerecovery_target) | Token exchange recovery target. |
+| `token_exchange.outcome` | [enumerated](#token_exchangeoutcome) | Result class of the exchange, such as `success`, `authorization_denied` or `reauth_required`. |
+| `token_exchange.recovery_action` | [enumerated](#token_exchangerecovery_action) | Recommended way to repair the failure. It is a diagnostic hint, not an instruction to retry. |
+| `token_exchange.recovery_target` | [enumerated](#token_exchangerecovery_target) | What the recovery action applies to, such as the consent or the provider session. |
 | `token_exchange.service.id` | `string` | Registered ID of the service. |
-| `token_exchange.session.dependency` | [enumerated](#token_exchangesessiondependency) | Token exchange session dependency. |
-| `token_exchange.session.detail` | [enumerated](#token_exchangesessiondetail) | Token exchange session detail. |
-| `token_exchange.session.kind` | [enumerated](#token_exchangesessionkind) | Token exchange session kind. |
-| `token_exchange.session.oauth_code` | `string` | Token exchange session oauth code. |
-| `token_exchange.session.operation` | [enumerated](#token_exchangesessionoperation) | Token exchange session operation. |
-| `token_exchange.session.status_code` | `int` | Token exchange session status code. |
+| `token_exchange.session.dependency` | [enumerated](#token_exchangesessiondependency) | Dependency of the failed session operation, such as the provider or the session repository. |
+| `token_exchange.session.detail` | [enumerated](#token_exchangesessiondetail) | Detail code of the failed session operation. |
+| `token_exchange.session.kind` | [enumerated](#token_exchangesessionkind) | Class of the session failure, such as a provider or an infrastructure failure. |
+| `token_exchange.session.oauth_code` | `string` | OAuth error code that the provider returned. Set only for codes on the allowlist. |
+| `token_exchange.session.operation` | [enumerated](#token_exchangesessionoperation) | Session operation that failed. |
+| `token_exchange.session.status_code` | `int` | HTTP status code that the provider returned. Absent when the failure has none. |
 | `triggered_by` | [enumerated](#triggered_by) | What triggered the refresh. |
 
 ## Attribute values

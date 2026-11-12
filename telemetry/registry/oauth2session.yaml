@@ -34,7 +34,7 @@ attributes:
         - {id: refresh_unavailable, value: "refresh_unavailable", stability: development}
         - {id: repository_unavailable, value: "repository_unavailable", stability: development}
         - {id: session_missing, value: "session_missing", stability: development}
-    brief: "Failure detail."
+    brief: "Detail code of the failed refresh, such as `refresh_rejected`. The `session.oauth2.refresh_failed` log has the same code."
     stability: development
   - key: oauth2.refresh.outcome
     type:

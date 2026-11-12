@@ -6,7 +6,7 @@ attributes:
     type:
       members:
         - {id: aws_kms, value: "aws_kms", stability: development}
-    brief: "Encryption key type."
+    brief: "Kind of key that encrypts the data. The AWS KMS adapter sets `aws_kms`."
     stability: development
 
 spans:

@@ -44,7 +44,7 @@ attributes:
         - {id: elicit, value: "elicit", stability: development}
         - {id: proceed, value: "proceed", stability: development}
         - {id: rejected, value: "rejected", stability: development}
-    brief: "Outcome."
+    brief: "Result of the operation that the metric records. Each metric has its own values."
     stability: development
   - key: token_exchange.exchange_kind
     type:
@@ -52,7 +52,7 @@ attributes:
         - {id: impersonation, value: "impersonation", stability: development}
         - {id: third_party, value: "third_party", stability: development}
         - {id: unknown, value: "unknown", stability: development}
-    brief: "Token exchange exchange kind."
+    brief: "Kind of exchange: a third-party service token or user impersonation. ExtProc sets `unknown` when it cannot tell."
     stability: development
   - key: token_exchange.failure_detail
     type:
@@ -118,7 +118,7 @@ attributes:
         - {id: subject_category_unsupported, value: "subject_category_unsupported", stability: development}
         - {id: subject_expired, value: "subject_expired", stability: development}
         - {id: subject_invalid, value: "subject_invalid", stability: development}
-    brief: "Token exchange failure detail."
+    brief: "Detail code of the failure. An unclassified failure has `internal_unclassified`, and a successful metric observation has `none`."
     stability: development
   - key: token_exchange.failure_stage
     type:
@@ -136,7 +136,7 @@ attributes:
         - {id: scope_validation, value: "scope_validation", stability: development}
         - {id: session_lookup, value: "session_lookup", stability: development}
         - {id: subject_validation, value: "subject_validation", stability: development}
-    brief: "Token exchange failure stage."
+    brief: "Step of the exchange that failed. A successful metric observation has `none`."
     stability: development
   - key: token_exchange.outcome
     type:
@@ -149,7 +149,7 @@ attributes:
         - {id: invalid_request, value: "invalid_request", stability: development}
         - {id: reauth_required, value: "reauth_required", stability: development}
         - {id: success, value: "success", stability: development}
-    brief: "Token exchange outcome."
+    brief: "Result class of the exchange, such as `success`, `authorization_denied` or `reauth_required`."
     stability: development
   - key: token_exchange.recovery_action
     type:
@@ -159,7 +159,7 @@ attributes:
         - {id: reauthenticate, value: "reauthenticate", stability: development}
         - {id: reconsent, value: "reconsent", stability: development}
         - {id: retry, value: "retry", stability: development}
-    brief: "Token exchange recovery action."
+    brief: "Recommended way to repair the failure. It is a diagnostic hint, not an instruction to retry."
     stability: development
   - key: token_exchange.recovery_target
     type:
@@ -170,5 +170,5 @@ attributes:
         - {id: none, value: "none", stability: development}
         - {id: provider_session, value: "provider_session", stability: development}
         - {id: subject_identity, value: "subject_identity", stability: development}
-    brief: "Token exchange recovery target."
+    brief: "What the recovery action applies to, such as the consent or the provider session."
     stability: development
