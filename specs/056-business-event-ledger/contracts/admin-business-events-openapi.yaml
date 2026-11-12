@@ -1,0 +1,76 @@
+# Draft delta for api/admin/openapi.yaml. Status: Proposed (plan.md, Approval Items, API-ERASURE).
+# Delivery step 6 merges it into api/admin/openapi.yaml after approval. It adds one operation and
+# no change to existing operations, so the Admin API version moves by a minor version.
+openapi: 3.0.3
+info:
+  title: Agentic Identity Broker Admin API (business events delta)
+  version: draft
+paths:
+  /api/business-events/erasure:
+    post:
+      operationId: eraseBusinessEvents
+      summary: Erase the business events of one principal
+      description: |
+        Deletes every business event whose resource owner is the given principal. The operation
+        is idempotent: a second request deletes nothing and returns `deleted_count` 0. Events in
+        which the principal is only the actor are not deleted; retention removes them.
+
+        The principal is sent in the body, not in the URL, because proxies log URLs.
+
+        Returns `409` when the business event ledger is disabled.
+      tags: [Business Events]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BusinessEventErasureRequest'
+      responses:
+        '200':
+          description: Erasure completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessEventErasureResponse'
+        '400':
+          description: Missing or empty principal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: The business event ledger is disabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Storage failure; no partial result is reported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    BusinessEventErasureRequest:
+      type: object
+      required: [principal]
+      properties:
+        principal:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: The principal exactly as the end-user server receives it.
+          example: alice@example.com
+    BusinessEventErasureResponse:
+      type: object
+      required: [deleted_count]
+      properties:
+        deleted_count:
+          type: integer
+          format: int64
+          minimum: 0
+          example: 42
+    ErrorResponse:
+      description: The existing ErrorResponse schema of api/admin/openapi.yaml. Not changed.
+      type: object

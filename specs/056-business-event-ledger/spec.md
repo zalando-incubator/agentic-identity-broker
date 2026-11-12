@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-12
 
-**Status**: Draft. [ADR 048](../../adrs/048-business-events-as-typed-log-records.md) is Proposed and awaits maintainer sign-off.
+**Status**: Draft — planned. [ADR 048](../../adrs/048-business-events-as-typed-log-records.md) and the other decisions are registered in [plan.md](./plan.md#approval-items) and await maintainer sign-off. No approval is recorded.
 
 **Input**: Issue #188, "Activity API for the broker UI", reduced to its storage foundation. This
 feature delivers the ledger and the rule to onboard events. The activity API, the activity page,
@@ -15,8 +15,9 @@ and the SSF transmitter are separate features that read the ledger.
 In scope:
 
 - The business event definition type and the ledger handler in the logger chain (ADR 048).
-- One ledger table with a flexible attribute document, a repository port, and both storage adapters.
-- Retention and deletion by principal.
+- One ledger table with a flexible attribute document, repository ports, and both storage adapters.
+- A repository read operation for tests and later consumers. No endpoint uses it in this feature.
+- Retention, and erasure of one principal's events by an operator.
 - The onboarding of events, one use case per pull request, by the
   [onboarding checklist](./checklists/onboarding.md). `consent.grant.revoked` is the first.
 
@@ -34,12 +35,13 @@ The feature merges as a sequence of small pull requests. Each one leaves `main` 
 | Step | Content | Ledger state after merge |
 |---|---|---|
 | 1 | ADR 048, this specification, LOGGING.md section 8 amendment | No code |
-| 2 | Definition type, model, repository port with the append operation, memory adapter, LOGGING.md section 2.2 rule | Not wired |
+| 2 | Definition type, typed ID, model, append and read ports, memory adapter, LOGGING.md section 2.2 rule | Not wired |
 | 3 | Migration for the ledger table, PostgreSQL adapter, migration tests | Not wired |
 | 4 | Ledger handler, builder wiring, configuration flag (default off), failure metric | Wired, no event onboarded |
 | 5 | First use case: `consent.grant.revoked`, with the E2E scenarios of User Story 1 | One event |
-| 6 | Retention and deletion by principal (User Story 3) | Can be enabled in production |
-| 7 and later | One use case per pull request (User Story 2) | Grows |
+| 6 | Retention and erasure by principal (User Story 3) | Can be enabled in production |
+| 7 | Second use case: `consent.grant.created` and `consent.grant.updated` (User Story 2) | Three events |
+| 8 and later | One use case per pull request, by the onboarding checklist | Grows |
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -107,8 +109,9 @@ retention operation and the deletion by principal. Read the table.
 
 1. **Given** rows older and newer than the retention period, **When** the retention operation
    runs, **Then** only the newer rows remain.
-2. **Given** rows of Alice and of Bob, **When** an operator deletes Alice's events, **Then** no row
-   has Alice as principal and Bob's rows are unchanged.
+2. **Given** rows of Alice and of Bob, **When** an operator erases Alice's events through the Admin
+   API, **Then** the response reports the number of deleted rows, no row has Alice as principal,
+   and Bob's rows are unchanged.
 
 ---
 
@@ -142,7 +145,7 @@ business_events:
   enabled: true   # default false; when false the ledger handler is not installed
 ```
 
-The key name is provisional until delivery step 4 fixes it in `contracts/configuration.md`.
+All keys are in [contracts/configuration.md](./contracts/configuration.md).
 
 **Step 2 — 10:15:00: Alice revokes the grant**
 
@@ -215,9 +218,26 @@ equal those of the stdout record and of the OpenTelemetry log record with the sa
 - **FR-008**: A business event MUST be stored independently of the configured log level.
 - **FR-009**: The broker MUST delete ledger rows older than a configurable retention period, with
   a default of 90 days.
-- **FR-010**: An operator MUST be able to delete all ledger rows of one principal.
+- **FR-010**: An operator MUST be able to delete all ledger rows whose resource owner is one given principal, through the Admin API. The operation MUST be idempotent and MUST write an audit record that does not create a new ledger row for that principal.
 - **FR-011**: Both storage adapters (memory and PostgreSQL) MUST implement the ledger repository.
 - **FR-012**: Each onboarded event MUST satisfy the [onboarding checklist](./checklists/onboarding.md).
+
+### Domain Model
+
+Business Event Definition (value object), Business Event (append-only entity), Business Event ID
+(typed ID), and the ledger repository. Invariants are in [data-model.md](./data-model.md).
+
+### Configuration Requirements
+
+One flag that enables the ledger (default off), a write timeout, and three retention settings.
+Keys, defaults, and a YAML example are in [contracts/configuration.md](./contracts/configuration.md).
+
+### API Requirements
+
+- End-user API: no change.
+- Admin API: one new operation, `POST /api/business-events/erasure`, proposed in
+  [contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml).
+  It needs maintainer confirmation before delivery step 6 (plan.md, API-ERASURE).
 
 ### Database Requirements
 
@@ -226,7 +246,7 @@ equal those of the stdout record and of the OpenTelemetry log record with the sa
   All other attributes are one JSON document.
 - One index for per-principal reads in descending time order. One index on storage time for
   retention and for later cursor-based consumers.
-- Table, column, and index names are fixed in `data-model.md` at delivery step 3.
+- Table, column, and index names are in [data-model.md](./data-model.md).
 
 ### Security Requirements *(mandatory for security-critical features)*
 
@@ -237,6 +257,7 @@ equal those of the stdout record and of the OpenTelemetry log record with the sa
 - **SR-003**: The ledger MUST NOT be enabled in a production deployment before FR-009 and FR-010
   are delivered. The deployment documentation MUST state this.
 - **SR-004**: This feature MUST NOT add an endpoint that reads the ledger.
+- **SR-005**: The erasure operation MUST be on the admin server only and MUST take the principal in the request body, not in the URL.
 
 ### Key Entities
 
@@ -269,4 +290,4 @@ equal those of the stdout record and of the OpenTelemetry log record with the sa
   Delegations and Sessions pages show current state from the source tables.
 - The first onboarded events are low volume (grants, sessions, approvals). Token issuance and
   token exchange are onboarded after SC-004 is measured.
-- The retention operation follows the existing session sweep pattern.
+- Retention runs in the broker process on a timer, as the existing OAuth2 record cleanup does. It needs no separate workload.
