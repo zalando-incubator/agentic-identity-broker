@@ -85,6 +85,9 @@ workflows and `justfile` aligned with the library version in `go.mod`.
 `just install-tools` rebuilds golangci-lint with the repository-selected Go toolchain,
 replacing cached binaries even when they have the correct release version.
 Put the Go tool installation directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) first on `PATH`.
+`just lint` builds `bin/golangci-lint-custom` from `.custom-gcl.yml`, which adds the `telemetrylint`
+plugin (`tools/telemetrylint`). It rebuilds the binary only when the plugin or the Go version changes.
+Plain `golangci-lint run` cannot load `.golangci.yml`, because the configuration enables that plugin.
 Security scanner versions are pinned in `scripts/security-scan.sh`.
 
 The frontend and documentation-site manifests use npm overrides for transitive security fixes.

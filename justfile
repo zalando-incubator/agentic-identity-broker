@@ -212,16 +212,24 @@ deps:
     @echo "Verifying Go modules..."
     go mod verify
 
-# Run golangci-lint if available
+# Run golangci-lint with the telemetrylint plugin, then check that each rule rejects its fixture
 lint:
-    @echo "Running linter..."
-    @if command -v golangci-lint > /dev/null; then \
-        golangci-lint run ./...; \
-    else \
-        echo "Warning: golangci-lint is not installed. Install it from: https://golangci-lint.run/usage/install/"; \
-        echo "Running basic go vet instead..."; \
-        go vet ./...; \
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running linter..."
+    if ! command -v golangci-lint > /dev/null; then
+        echo "Warning: golangci-lint is not installed. Install it with: just install-tools"
+        echo "Running basic go vet instead..."
+        go vet ./...
+        exit 0
     fi
+    linter="$(bash scripts/golangci-lint-custom.sh)"
+    "$linter" run ./...
+    go run ./tools/lintrules -bin "$linter"
+
+# Run the telemetrylint analyzer tests (tools/telemetrylint is a separate Go module)
+lint-plugin-test:
+    cd tools/telemetrylint && go test -race ./...
 
 # Format Go code with gofmt
 fmt:
@@ -276,7 +284,7 @@ verify-unit-junit:
     set -u
 
     mkdir -p test-results
-    rm -f test-results/{unit-junit.xml,fast-junit.xml,web-unit-junit.xml,cdk-junit.xml,mock-agent-junit.xml,mock-oauth2-junit.xml,fast-tests-output.json,cdk-tests-output.json,mock-sample-agent-output.json,mock-oauth2-output.json,fast-tests-stderr.log,cdk-tests-stderr.log,mock-sample-agent-stderr.log,mock-oauth2-stderr.log,web-unit.log,web-unit-install.log}
+    rm -f test-results/{unit-junit.xml,fast-junit.xml,web-unit-junit.xml,cdk-junit.xml,mock-agent-junit.xml,mock-oauth2-junit.xml,lint-plugin-junit.xml,fast-tests-output.json,cdk-tests-output.json,mock-sample-agent-output.json,mock-oauth2-output.json,lint-plugin-output.json,fast-tests-stderr.log,cdk-tests-stderr.log,mock-sample-agent-stderr.log,mock-oauth2-stderr.log,lint-plugin-stderr.log,web-unit.log,web-unit-install.log}
 
     WEB_INSTALL_EXIT=0
     if [ ! -d web/node_modules ]; then
@@ -295,6 +303,9 @@ verify-unit-junit:
     (cd mocks/upstream-oauth2-server && go test -json ./internal/handlers/...) \
         > test-results/mock-oauth2-output.json 2> test-results/mock-oauth2-stderr.log &
     MOCK_OAUTH2_PID=$!
+    (cd tools/telemetrylint && go test -json -race ./...) \
+        > test-results/lint-plugin-output.json 2> test-results/lint-plugin-stderr.log &
+    LINT_PLUGIN_PID=$!
     if [ "$WEB_INSTALL_EXIT" -eq 0 ]; then
         (cd web && npm test --silent -- --run --reporter=junit) \
             > test-results/web-unit-junit.xml 2> test-results/web-unit.log &
@@ -302,10 +313,10 @@ verify-unit-junit:
     fi
 
     TEST_FAILED=0
-    go_pids=("$FAST_PID" "$CDK_PID" "$MOCK_AGENT_PID" "$MOCK_OAUTH2_PID")
-    go_outputs=(fast-tests-output.json cdk-tests-output.json mock-sample-agent-output.json mock-oauth2-output.json)
-    go_stderr=(fast-tests-stderr.log cdk-tests-stderr.log mock-sample-agent-stderr.log mock-oauth2-stderr.log)
-    go_reports=(fast-junit.xml cdk-junit.xml mock-agent-junit.xml mock-oauth2-junit.xml)
+    go_pids=("$FAST_PID" "$CDK_PID" "$MOCK_AGENT_PID" "$MOCK_OAUTH2_PID" "$LINT_PLUGIN_PID")
+    go_outputs=(fast-tests-output.json cdk-tests-output.json mock-sample-agent-output.json mock-oauth2-output.json lint-plugin-output.json)
+    go_stderr=(fast-tests-stderr.log cdk-tests-stderr.log mock-sample-agent-stderr.log mock-oauth2-stderr.log lint-plugin-stderr.log)
+    go_reports=(fast-junit.xml cdk-junit.xml mock-agent-junit.xml mock-oauth2-junit.xml lint-plugin-junit.xml)
     for index in "${!go_pids[@]}"; do
         if ! wait "${go_pids[$index]}"; then
             TEST_FAILED=1
@@ -337,7 +348,8 @@ verify-unit-junit:
 
     reports=()
     for report in test-results/fast-junit.xml test-results/web-unit-junit.xml \
-        test-results/cdk-junit.xml test-results/mock-agent-junit.xml test-results/mock-oauth2-junit.xml; do
+        test-results/cdk-junit.xml test-results/mock-agent-junit.xml test-results/mock-oauth2-junit.xml \
+        test-results/lint-plugin-junit.xml; do
         if [ -s "$report" ]; then
             reports+=("$report")
         else
@@ -584,7 +596,7 @@ verify-junit:
     exit "$MERGE_EXIT"
 
 # Run the full local verification gate with security scanning and E2E as the final guard layer
-verify: check security test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e
+verify: check security test lint-plugin-test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all test-e2e
     @echo "Verification suite completed"
 
 # Run non-mutating format, vet, and lint checks (no tests)

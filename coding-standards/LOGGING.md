@@ -36,7 +36,7 @@ s.logger.InfoContext(ctx, "oauth2 session refreshed",
 - Write a short lowercase phrase. Do not add a period. Examples: `"grant revoked"`, `"cimd document fetch failed"`.
 - Use a constant string. Do not use `fmt.Sprintf`. Put all values in attributes.
 - Do not use an event identifier (`TokenIssued`, `provider_created`) as the message. Put it in `event`.
-- The `sloglint` linter (`.golangci.yml`) fails a message that is not a constant (`static-msg`) and a key that is not `snake_case` (`key-naming-case: snake`). Dotted `token_exchange.*` keys are excluded (section 2.3). A helper that forwards each caller's constant message (ExtProc `logDiagnostic`), or a library's message (the OPA SDK logger), carries a `//nolint:sloglint` comment that says why.
+- The `sloglint` linter (`.golangci.yml`) fails a message that is not a constant (`static-msg`) or that starts with a capital letter (`msg-style: lowercased`), and a key that is not `snake_case` (`key-naming-case: snake`). Dotted `token_exchange.*` keys are excluded (section 2.3). A helper that forwards each caller's constant message (ExtProc `logDiagnostic`), or a library's message (the OPA SDK logger), carries a `//nolint:sloglint` comment that says why.
 
 ### 2.2 Event Identifier
 
@@ -221,3 +221,22 @@ Audit records are structured operational logs. They are not a durable ledger.
 - [ ] The record contains no section 6.1 data. Section 6.2 data is in derived form. No full structs are logged.
 - [ ] Each new sensitive type implements `slog.LogValuer`, `fmt.Stringer`, and `fmt.GoStringer`.
 - [ ] A test asserts that credentials on this path are not in the logs.
+
+## 11. Lint Enforcement
+
+`just check` runs `golangci-lint` with `.golangci.yml` and the `telemetrylint` module plugin (`tools/telemetrylint`, built from `.custom-gcl.yml` by `scripts/golangci-lint-custom.sh`). `tools/lintrules/testdata` holds a deliberate violation of each rule, and `just lint` fails when a rule does not report its violation. The lint rules apply to `cmd/` and `internal/`. Test code and `tests/` may use the default logger and capitalized messages.
+
+| Checklist item (section 10) | Lint | Still needs review |
+|---|---|---|
+| `*Context` method with the request `ctx` | `sloglint` `context: scope`. `sloglint` `no-global: all` and `forbidigo` reject the default and global loggers and `slog.Default()` (section 1). | — |
+| Constant lowercase message. `event` on audit and security records | `sloglint` `static-msg` and `msg-style: lowercased` | Presence and name of `event` |
+| `snake_case`, canonical keys. The error key is `error` | `sloglint` `key-naming-case: snake` and `forbidden-keys: [err, cause, action]` | Canonical keys (section 2.3) |
+| Level. The failure is logged one time | — | All |
+| Principals as `id.Principal` under a reserved key | `gocritic` ruleguard (`tools/lintrules/ruleguard/rules.go`) rejects `slog.String` under a reserved key and a principal rendered with `String()` or `string(p)`. `telemetrylint` rejects a principal in `fmt.Errorf` (section 4). `TestLoggedPrincipalsAreTyped` checks every other `log/slog` call (section 9). | Where section 5 permits a principal |
+| No section 6.1 data, section 6.2 data in derived form, no full structs | `telemetrylint` rejects a value of a `credential-types` type (`model.Secret`), or a value derived from one, as a log attribute. | All other data classes |
+| Sensitive types implement `slog.LogValuer`, `fmt.Stringer`, and `fmt.GoStringer` | — | All. Add the type to `credential-types` in `.golangci.yml`. |
+| A test asserts that credentials are not in the logs | — | All |
+
+`forbidigo` also rejects `fmt.Print*`, the `log` package, and `*log.Logger` methods outside `cmd/` and `tools/` (section 7).
+
+A finding that the code cannot avoid carries `//nolint:<linter> // <reason>` at the call. `.golangci.yml` excludes existing violations by path and names the issue that fixes them. Remove the exclusion in the change that fixes the violations, so the rule then holds for the whole repository.

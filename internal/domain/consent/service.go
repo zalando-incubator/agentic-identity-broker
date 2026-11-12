@@ -707,22 +707,22 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 	if err != nil {
 		// Check if it's a NotFound error
 		if errors.Is(err, ports.ErrNotFound) {
-			return nil, fmt.Errorf("%w: user has not granted permission for agent (principal: %s, agent: %s)",
-				ErrAgentAccessDenied, principal, agentID)
+			return nil, fmt.Errorf("%w: user has not granted permission for agent (agent: %s)",
+				ErrAgentAccessDenied, agentID)
 		}
 		return nil, fmt.Errorf("failed to verify user grant: %w", err)
 	}
 
 	// Defensive check: ensure grant is not nil
 	if grant == nil {
-		return nil, fmt.Errorf("%w: user has not granted permission for agent (principal: %s, agent: %s)",
-			ErrAgentAccessDenied, principal, agentID)
+		return nil, fmt.Errorf("%w: user has not granted permission for agent (agent: %s)",
+			ErrAgentAccessDenied, agentID)
 	}
 
 	// Check grant is active (not expired)
 	if grant.ValidUntil != nil && !grant.ValidUntil.UTC().After(s.now().UTC()) {
-		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
-			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
+		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (agent: %s)",
+			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), agentID)
 	}
 
 	// Hard deletion is the revocation mechanism: a missing grant (ports.ErrNotFound) is treated

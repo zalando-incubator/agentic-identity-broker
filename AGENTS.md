@@ -27,6 +27,7 @@ Read the source that governs the change. The summaries here do not replace the c
 
 `coding-standards/LOGGING.md` | Structured logging: plumbing, record shape, levels, principals, permitted data. Read before you add or change a log call.
 `coding-standards/OPENTELEMETRY.md` | Traces and metrics: plumbing, span names and status, attribute keys, instruments, permitted data. Read before you add or change a span or metric.
+`.golangci.yml`, `tools/telemetrylint/` | Lint enforcement of both standards. Each standard's last section lists which checklist items lint covers.
 
 ### Section-Specific Agent Context
 

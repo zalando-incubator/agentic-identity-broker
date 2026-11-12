@@ -108,7 +108,7 @@ func startOTelAgentgwExtProc(
 
 	go func() {
 		if serveErr := grpcSrv.Serve(listener); serveErr != nil {
-			agentgwLogger.Error("OTel ExtProc gRPC error", "err", serveErr)
+			agentgwLogger.Error("OTel ExtProc gRPC error", "error", serveErr)
 		}
 	}()
 
