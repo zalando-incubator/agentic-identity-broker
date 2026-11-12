@@ -6,6 +6,16 @@ attributes:
     type:
       members:
         - {id: approve_tool_approval, value: "ApproveToolApproval", stability: development}
+        - {id: authorization_code_repo_create, value: "AuthorizationCodeRepo.Create", stability: development}
+        - {id: authorization_code_repo_delete_expired, value: "AuthorizationCodeRepo.DeleteExpired", stability: development}
+        - {id: authorization_code_repo_find_by_code_hash, value: "AuthorizationCodeRepo.FindByCodeHash", stability: development}
+        - {id: authorization_code_repo_mark_used, value: "AuthorizationCodeRepo.MarkUsed", stability: development}
+        - {id: client_assertion_replay_repo_consume, value: "ClientAssertionReplayRepo.Consume", stability: development}
+        - {id: client_assertion_replay_repo_delete_expired, value: "ClientAssertionReplayRepo.DeleteExpired", stability: development}
+        - {id: client_credential_repo_create, value: "ClientCredentialRepo.Create", stability: development}
+        - {id: client_credential_repo_delete, value: "ClientCredentialRepo.Delete", stability: development}
+        - {id: client_credential_repo_get_by_agent_id, value: "ClientCredentialRepo.GetByAgentID", stability: development}
+        - {id: client_credential_repo_rotate, value: "ClientCredentialRepo.Rotate", stability: development}
         - {id: consume_tool_approval, value: "ConsumeToolApproval", stability: development}
         - {id: count_pending_tool_approvals, value: "CountPendingToolApprovals", stability: development}
         - {id: create_tool_approval, value: "CreateToolApproval", stability: development}
@@ -18,6 +28,17 @@ attributes:
         - {id: list_all_active_tool_approvals, value: "ListAllActiveToolApprovals", stability: development}
         - {id: list_by_principal, value: "ListByPrincipal", stability: development}
         - {id: list_permanent_tool_approvals, value: "ListPermanentToolApprovals", stability: development}
+        - {id: pkce_session_repo_create, value: "PKCESessionRepo.Create", stability: development}
+        - {id: pkce_session_repo_delete, value: "PKCESessionRepo.Delete", stability: development}
+        - {id: pkce_session_repo_delete_expired, value: "PKCESessionRepo.DeleteExpired", stability: development}
+        - {id: pkce_session_repo_find_by_signature, value: "PKCESessionRepo.FindBySignature", stability: development}
+        - {id: refresh_token_session_repo_create, value: "RefreshTokenSessionRepo.Create", stability: development}
+        - {id: refresh_token_session_repo_delete_expired, value: "RefreshTokenSessionRepo.DeleteExpired", stability: development}
+        - {id: refresh_token_session_repo_find_by_signature, value: "RefreshTokenSessionRepo.FindBySignature", stability: development}
+        - {id: refresh_token_session_repo_mark_used, value: "RefreshTokenSessionRepo.MarkUsed", stability: development}
+        - {id: refresh_token_session_repo_revoke_by_agent, value: "RefreshTokenSessionRepo.RevokeByAgent", stability: development}
+        - {id: refresh_token_session_repo_revoke_by_principal_and_agent, value: "RefreshTokenSessionRepo.RevokeByPrincipalAndAgent", stability: development}
+        - {id: refresh_token_session_repo_revoke_by_request_id, value: "RefreshTokenSessionRepo.RevokeByRequestID", stability: development}
         - {id: revoke_permanent_tool_approval, value: "RevokePermanentToolApproval", stability: development}
     brief: "Repository method name."
     stability: development
@@ -64,6 +85,20 @@ spans:
       - ref_group: attributes.storage.call
       - ref: db.operation
         examples: ["ApproveToolApproval"]
+  - type: storage.consume.client_assertion_replay
+    name:
+      templates: ["storage.consume.client_assertion_replay"]
+    kind: client
+    brief: "Records the `jti` of a client assertion, or reports a conflict when it is already recorded."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ClientAssertionReplayRepo.Consume"]
   - type: storage.consume.tool_approval
     name:
       templates: ["storage.consume.tool_approval"]
@@ -92,6 +127,62 @@ spans:
       - ref_group: attributes.storage.call
       - ref: db.operation
         examples: ["CountPendingToolApprovals"]
+  - type: storage.create.authorization_code
+    name:
+      templates: ["storage.create.authorization_code"]
+    kind: client
+    brief: "Inserts an authorization code."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["AuthorizationCodeRepo.Create"]
+  - type: storage.create.client_credential
+    name:
+      templates: ["storage.create.client_credential"]
+    kind: client
+    brief: "Inserts the client credential of an agent."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ClientCredentialRepo.Create"]
+  - type: storage.create.pkce_session
+    name:
+      templates: ["storage.create.pkce_session"]
+    kind: client
+    brief: "Inserts a PKCE session."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["PKCESessionRepo.Create"]
+  - type: storage.create.refresh_token_session
+    name:
+      templates: ["storage.create.refresh_token_session"]
+    kind: client
+    brief: "Inserts a refresh token session."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RefreshTokenSessionRepo.Create"]
   - type: storage.create.tool_approval
     name:
       templates: ["storage.create.tool_approval"]
@@ -120,6 +211,90 @@ spans:
       - ref_group: attributes.storage.call
       - ref: db.operation
         examples: ["CreateUserGrant"]
+  - type: storage.delete.client_credential
+    name:
+      templates: ["storage.delete.client_credential"]
+    kind: client
+    brief: "Deletes the client credential of an agent."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ClientCredentialRepo.Delete"]
+  - type: storage.delete.pkce_session
+    name:
+      templates: ["storage.delete.pkce_session"]
+    kind: client
+    brief: "Deletes a PKCE session by its signature."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["PKCESessionRepo.Delete"]
+  - type: storage.delete_expired.authorization_code
+    name:
+      templates: ["storage.delete_expired.authorization_code"]
+    kind: client
+    brief: "Deletes the expired authorization codes."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["AuthorizationCodeRepo.DeleteExpired"]
+  - type: storage.delete_expired.client_assertion_replay
+    name:
+      templates: ["storage.delete_expired.client_assertion_replay"]
+    kind: client
+    brief: "Deletes the expired client assertion replay records."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ClientAssertionReplayRepo.DeleteExpired"]
+  - type: storage.delete_expired.pkce_session
+    name:
+      templates: ["storage.delete_expired.pkce_session"]
+    kind: client
+    brief: "Deletes the expired PKCE sessions."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["PKCESessionRepo.DeleteExpired"]
+  - type: storage.delete_expired.refresh_token_session
+    name:
+      templates: ["storage.delete_expired.refresh_token_session"]
+    kind: client
+    brief: "Deletes the expired refresh token sessions."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RefreshTokenSessionRepo.DeleteExpired"]
   - type: storage.deny.tool_approval
     name:
       templates: ["storage.deny.tool_approval"]
@@ -134,6 +309,48 @@ spans:
       - ref_group: attributes.storage.call
       - ref: db.operation
         examples: ["DenyToolApproval"]
+  - type: storage.find.authorization_code
+    name:
+      templates: ["storage.find.authorization_code"]
+    kind: client
+    brief: "Retrieves an authorization code that is not expired by its code hash."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["AuthorizationCodeRepo.FindByCodeHash"]
+  - type: storage.find.pkce_session
+    name:
+      templates: ["storage.find.pkce_session"]
+    kind: client
+    brief: "Retrieves a PKCE session by its signature."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["PKCESessionRepo.FindBySignature"]
+  - type: storage.find.refresh_token_session
+    name:
+      templates: ["storage.find.refresh_token_session"]
+    kind: client
+    brief: "Retrieves a refresh token session by its signature."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RefreshTokenSessionRepo.FindBySignature"]
   - type: storage.get.agent
     name:
       templates: ["storage.get.agent"]
@@ -148,6 +365,20 @@ spans:
       - ref_group: attributes.storage.call
       - ref: db.operation
         examples: ["GetAgent"]
+  - type: storage.get.client_credential
+    name:
+      templates: ["storage.get.client_credential"]
+    kind: client
+    brief: "Retrieves the client credential of an agent."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ClientCredentialRepo.GetByAgentID"]
   - type: storage.get.tool_approval
     name:
       templates: ["storage.get.tool_approval"]
@@ -232,6 +463,76 @@ spans:
       - ref_group: attributes.storage.call
       - ref: db.operation
         examples: ["ListPermanentToolApprovals"]
+  - type: storage.mark_used.authorization_code
+    name:
+      templates: ["storage.mark_used.authorization_code"]
+    kind: client
+    brief: "Marks an unused authorization code as used."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["AuthorizationCodeRepo.MarkUsed"]
+  - type: storage.mark_used.refresh_token_session
+    name:
+      templates: ["storage.mark_used.refresh_token_session"]
+    kind: client
+    brief: "Marks an unused refresh token session as used."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RefreshTokenSessionRepo.MarkUsed"]
+  - type: storage.revoke_by_agent.refresh_token_session
+    name:
+      templates: ["storage.revoke_by_agent.refresh_token_session"]
+    kind: client
+    brief: "Revokes the unused refresh token sessions of an agent."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RefreshTokenSessionRepo.RevokeByAgent"]
+  - type: storage.revoke_by_principal_and_agent.refresh_token_session
+    name:
+      templates: ["storage.revoke_by_principal_and_agent.refresh_token_session"]
+    kind: client
+    brief: "Revokes the unused refresh token sessions of a principal and agent pair."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RefreshTokenSessionRepo.RevokeByPrincipalAndAgent"]
+  - type: storage.revoke_by_request.refresh_token_session
+    name:
+      templates: ["storage.revoke_by_request.refresh_token_session"]
+    kind: client
+    brief: "Revokes the unused refresh token sessions of a token request."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["RefreshTokenSessionRepo.RevokeByRequestID"]
   - type: storage.revoke_permanent.tool_approval
     name:
       templates: ["storage.revoke_permanent.tool_approval"]
@@ -246,3 +547,17 @@ spans:
       - ref_group: attributes.storage.call
       - ref: db.operation
         examples: ["RevokePermanentToolApproval"]
+  - type: storage.rotate.client_credential
+    name:
+      templates: ["storage.rotate.client_credential"]
+    kind: client
+    brief: "Replaces the client credential of an agent in one transaction."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: storage
+      error_status: true
+    attributes:
+      - ref_group: attributes.storage.call
+      - ref: db.operation
+        examples: ["ClientCredentialRepo.Rotate"]

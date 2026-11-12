@@ -133,6 +133,12 @@ when = 'name == "storage.approve.tool_approval"'
 signal = "storage.approve.tool_approval"
 
 [[live-check.matchers]]
+id = "span.storage.consume.client_assertion_replay"
+sample_type = "span"
+when = 'name == "storage.consume.client_assertion_replay"'
+signal = "storage.consume.client_assertion_replay"
+
+[[live-check.matchers]]
 id = "span.storage.consume.tool_approval"
 sample_type = "span"
 when = 'name == "storage.consume.tool_approval"'
@@ -143,6 +149,30 @@ id = "span.storage.count_pending.tool_approval"
 sample_type = "span"
 when = 'name == "storage.count_pending.tool_approval"'
 signal = "storage.count_pending.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.create.authorization_code"
+sample_type = "span"
+when = 'name == "storage.create.authorization_code"'
+signal = "storage.create.authorization_code"
+
+[[live-check.matchers]]
+id = "span.storage.create.client_credential"
+sample_type = "span"
+when = 'name == "storage.create.client_credential"'
+signal = "storage.create.client_credential"
+
+[[live-check.matchers]]
+id = "span.storage.create.pkce_session"
+sample_type = "span"
+when = 'name == "storage.create.pkce_session"'
+signal = "storage.create.pkce_session"
+
+[[live-check.matchers]]
+id = "span.storage.create.refresh_token_session"
+sample_type = "span"
+when = 'name == "storage.create.refresh_token_session"'
+signal = "storage.create.refresh_token_session"
 
 [[live-check.matchers]]
 id = "span.storage.create.tool_approval"
@@ -157,16 +187,76 @@ when = 'name == "storage.create.user_grant"'
 signal = "storage.create.user_grant"
 
 [[live-check.matchers]]
+id = "span.storage.delete.client_credential"
+sample_type = "span"
+when = 'name == "storage.delete.client_credential"'
+signal = "storage.delete.client_credential"
+
+[[live-check.matchers]]
+id = "span.storage.delete.pkce_session"
+sample_type = "span"
+when = 'name == "storage.delete.pkce_session"'
+signal = "storage.delete.pkce_session"
+
+[[live-check.matchers]]
+id = "span.storage.delete_expired.authorization_code"
+sample_type = "span"
+when = 'name == "storage.delete_expired.authorization_code"'
+signal = "storage.delete_expired.authorization_code"
+
+[[live-check.matchers]]
+id = "span.storage.delete_expired.client_assertion_replay"
+sample_type = "span"
+when = 'name == "storage.delete_expired.client_assertion_replay"'
+signal = "storage.delete_expired.client_assertion_replay"
+
+[[live-check.matchers]]
+id = "span.storage.delete_expired.pkce_session"
+sample_type = "span"
+when = 'name == "storage.delete_expired.pkce_session"'
+signal = "storage.delete_expired.pkce_session"
+
+[[live-check.matchers]]
+id = "span.storage.delete_expired.refresh_token_session"
+sample_type = "span"
+when = 'name == "storage.delete_expired.refresh_token_session"'
+signal = "storage.delete_expired.refresh_token_session"
+
+[[live-check.matchers]]
 id = "span.storage.deny.tool_approval"
 sample_type = "span"
 when = 'name == "storage.deny.tool_approval"'
 signal = "storage.deny.tool_approval"
 
 [[live-check.matchers]]
+id = "span.storage.find.authorization_code"
+sample_type = "span"
+when = 'name == "storage.find.authorization_code"'
+signal = "storage.find.authorization_code"
+
+[[live-check.matchers]]
+id = "span.storage.find.pkce_session"
+sample_type = "span"
+when = 'name == "storage.find.pkce_session"'
+signal = "storage.find.pkce_session"
+
+[[live-check.matchers]]
+id = "span.storage.find.refresh_token_session"
+sample_type = "span"
+when = 'name == "storage.find.refresh_token_session"'
+signal = "storage.find.refresh_token_session"
+
+[[live-check.matchers]]
 id = "span.storage.get.agent"
 sample_type = "span"
 when = 'name == "storage.get.agent"'
 signal = "storage.get.agent"
+
+[[live-check.matchers]]
+id = "span.storage.get.client_credential"
+sample_type = "span"
+when = 'name == "storage.get.client_credential"'
+signal = "storage.get.client_credential"
 
 [[live-check.matchers]]
 id = "span.storage.get.tool_approval"
@@ -205,10 +295,46 @@ when = 'name == "storage.list_permanent.tool_approval"'
 signal = "storage.list_permanent.tool_approval"
 
 [[live-check.matchers]]
+id = "span.storage.mark_used.authorization_code"
+sample_type = "span"
+when = 'name == "storage.mark_used.authorization_code"'
+signal = "storage.mark_used.authorization_code"
+
+[[live-check.matchers]]
+id = "span.storage.mark_used.refresh_token_session"
+sample_type = "span"
+when = 'name == "storage.mark_used.refresh_token_session"'
+signal = "storage.mark_used.refresh_token_session"
+
+[[live-check.matchers]]
+id = "span.storage.revoke_by_agent.refresh_token_session"
+sample_type = "span"
+when = 'name == "storage.revoke_by_agent.refresh_token_session"'
+signal = "storage.revoke_by_agent.refresh_token_session"
+
+[[live-check.matchers]]
+id = "span.storage.revoke_by_principal_and_agent.refresh_token_session"
+sample_type = "span"
+when = 'name == "storage.revoke_by_principal_and_agent.refresh_token_session"'
+signal = "storage.revoke_by_principal_and_agent.refresh_token_session"
+
+[[live-check.matchers]]
+id = "span.storage.revoke_by_request.refresh_token_session"
+sample_type = "span"
+when = 'name == "storage.revoke_by_request.refresh_token_session"'
+signal = "storage.revoke_by_request.refresh_token_session"
+
+[[live-check.matchers]]
 id = "span.storage.revoke_permanent.tool_approval"
 sample_type = "span"
 when = 'name == "storage.revoke_permanent.tool_approval"'
 signal = "storage.revoke_permanent.tool_approval"
+
+[[live-check.matchers]]
+id = "span.storage.rotate.client_credential"
+sample_type = "span"
+when = 'name == "storage.rotate.client_credential"'
+signal = "storage.rotate.client_credential"
 
 [[live-check.matchers]]
 id = "span.tokenexchange.exchange"
