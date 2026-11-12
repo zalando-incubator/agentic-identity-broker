@@ -526,7 +526,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
 - **Session-service identity (NFR-001)**: The context handler adds request `actor` and optional `calling_peer` when present. On a sweep, `actor` is the operator, not the session owner. Per-session refresh logs include the owner `principal`; the aggregate audit records `operator_principal` without an owner.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
-- **Principal policy**: the Principal Policy Handler in `internal/adapters/telemetry` renders every principal in a log record. The broker chain is context handler → principal policy handler → stdout/OTel fan-out; ExtProc wraps its stdout/OTel fan-out the same way, so every sink receives the same output. `SecurityContext.Actor` is an `id.Principal`.
+- **Principal policy**: the Principal Policy Handler in `internal/adapters/telemetry` renders every principal in a log record. The broker chain is context handler → principal policy handler → sink fan-out, including the proposed ledger branch under ADR 048; ExtProc wraps its stdout/OTel fan-out the same way, so every sink receives the same output. The policy must preserve the typed business-event marker while rendering principals. `SecurityContext.Actor` is an `id.Principal`.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
 - **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
@@ -1346,6 +1346,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) | Accepted | Self-agent issuance without human delegation. Partly supersedes ADR 032 |
 | [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
+| [048-business-events-as-typed-log-records.md](adrs/048-business-events-as-typed-log-records.md) | Accepted | Business events are typed audit log records. A slog handler persists them to the ledger after commit |
 
 ## 11. Project Identification
 
@@ -1493,7 +1494,7 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 
 **User Grant**: A record of a user (principal) delegating specific OAuth2 scopes to an agent for one or more third-party services. Grants have an optional expiration time (valid_until) and can be revoked at any time. Each user can have at most one active grant per agent (upsert semantics).
 
-**GrantRevoked** — Domain event representing a user's explicit deletion of their grant for an agent. Emitted as a structured audit log entry carrying principal, agent_id, grant_id, and revoked_at.
+**GrantRevoked**: Domain event representing a user's explicit deletion of their grant for an agent. Its audit record carries principal, agent_id, and grant_id. Feature 048 onboards it as the typed business event `consent.grant.revoked`. Grant deletion ends refresh authority even if session-row cleanup fails; `refresh_cleanup=failed` reports that cleanup failure, not continuing authorization.
 
 **Delegated Token**: Component of a grant specifying which OAuth2 service and which scopes from that service are delegated to the agent. A single grant can contain multiple delegated tokens for different services. Format: {thirdparty_oauth2_service_id, scopes[]}.
 
@@ -1608,7 +1609,17 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
 
-**Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a successful grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation; unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields represent state read before a write, not a transactionally guaranteed predecessor. These logs are not a durable audit ledger, outbox, protocol field or metric label.
+**Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a committed grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation; unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields represent state read before a write, not a transactionally guaranteed predecessor. Under LOGGING.md section 8 and ADR 048, records marked by a typed Business Event Definition are projected into the enabled Business Event Ledger after commit. That projection is not atomic with the mutation and is not an outbox, protocol field, or metric label. String event records are not projected.
+
+**Domain Event**: A security-relevant fact in a bounded context, such as GrantRevoked or ApprovalApproved. This term describes meaning, not a second event bus, recorder API, or persistence guarantee. A domain event becomes a Business Event only when its emitting service uses a typed Business Event Definition in its audit log record. The existing Approval* and JWTValidationFailed glossary entries do not imply ledger onboarding; feature 048 onboards only GrantRevoked.
+
+**Business Event Definition**: The one immutable declaration in the emitting service of an audit event identifier and its resource-owner visibility permission. Future owner-facing consumers must resolve the current definition and require that permission, supported projection, and authenticated ownership. Unknown identifiers and non-owner-visible definitions are denied; consumer allow-lists cannot override the definition.
+
+**Business Event**: An audit or security log record whose top-level `event` value is a Business Event Definition. Its stored occurrence contains a Business Event ID, identifier, record and storage times, policy-rendered principals, trace ID, and permitted attributes. Domain events without a typed definition remain outside the ledger.
+
+**Business Event ID**: The typed UUIDv7 identity of one stored Business Event occurrence, minted by the ledger handler. It identifies an occurrence, not the event definition or commit order.
+
+**Business Event Ledger**: The append-only projection of typed Business Events specified by ADR 048 and feature 048, disabled by default. The handler writes after commit outside the mutation transaction; a crash can lose a row, and a write timeout has an unknown outcome. Retention removes whole rows. Only append and retention ports are in the foundation; read ports and disclosure authorization belong to production consumer features. The current design and implementation gates are in `specs/048-business-event-ledger/plan.md`.
 
 **Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
 

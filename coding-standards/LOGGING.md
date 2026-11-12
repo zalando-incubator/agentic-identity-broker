@@ -4,7 +4,7 @@ This standard applies to all Go code in `cmd/` and `internal/`. Read it before y
 
 Scope: log records only. OpenTelemetry traces and metrics follow `coding-standards/OPENTELEMETRY.md`.
 
-Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
+Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context), ADR 048 (business events),
 `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
 ## 1. Logger Plumbing
@@ -194,9 +194,12 @@ These data classes are prohibited at all levels, including `Debug`.
 
 ## 8. Audit Records
 
-Audit records are structured operational logs. They are not a durable ledger.
+Audit records are structured operational logs. An audit record is not a transactional ledger: the write of a record is not atomic with the mutation that it reports.
+
+The business event ledger is a projection of audit records (ADR 048). When the ledger is enabled, a handler in the builder chain stores each record whose `event` value is a typed business event definition. The ledger is disabled by default. A failed or timed-out write is counted and logged. A confirmed insert failure leaves no row. A timed-out write has an unknown outcome: the database can still commit the insert, so the row can exist. A record whose `event` value is a string is not stored. Do not add a second API that records the same fact. Feature 048 delivers the definition type and the handler; until they merge, no record is persisted.
 
 - Write the record after the mutation commits. Do not write a success record for an operation that changed nothing.
+- Do not write an audit record inside a storage transaction. The record reaches stdout, OpenTelemetry, and the ledger immediately, and it is false if the transaction rolls back.
 - Each audit record contains `event`, the IDs of the affected resources, and `principal` or `operator_principal`.
 - Use a `*Context` method. The context supplies `trace_id`, `actor`, and `calling_peer`.
 - Use the prefix `previous_observed_` for state that the operation read before the write.
