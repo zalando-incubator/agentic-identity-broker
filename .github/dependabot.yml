@@ -11,6 +11,7 @@ updates:
       - "/"
       - "/infra/cdk"
       - "/mocks/*"
+      - "/tools/telemetrylint"
     schedule:
       interval: "monthly"
       day: "monday"
