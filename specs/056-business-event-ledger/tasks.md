@@ -149,9 +149,9 @@ commit, not as validated.
 ### Tests first
 
 - [ ] T058 [P] [US3] Add `It()` blocks for US3.1, US3.2, and US3.3 to `tests/e2e/business_event_ledger_test.go` (Principle XIII)
-- [ ] T059 [P] [US3] Write adapter tests for `DeleteRecordedBefore` (cutoff, limit, oldest first) and `EraseByPrincipal` (redacts `actor` and `operator_principal` in other owners' rows, atomic, idempotent; exact match, rows without principal untouched) in the memory test file and in `tests/integration/storage/infra/business_event_test.go` (FR-009, FR-010)
+- [ ] T059 [P] [US3] Write adapter tests for `DeleteRecordedBefore` (cutoff, limit, oldest first) and `EraseByPrincipal` (other owners' rows that name the principal as `actor` or `operator_principal` are unchanged; idempotent; exact match, rows without principal untouched) in the memory test file and in `tests/integration/storage/infra/business_event_test.go` (FR-009, FR-010)
 - [ ] T060 [P] [US3] Write `internal/domain/bizevent/retention_test.go`: repeats until a short batch, stops on context end, logs `rows_expired` only when rows were deleted, logs `retention_failed` on error (contracts/ports.md section 4)
-- [ ] T061 [P] [US3] Write admin handler tests: `200` with `deleted_count` and `redacted_count`, idempotent repeat, `400` on empty principal, `409` when the ledger is disabled, audit record `business_event.ledger.principal_erased` with typed `principal` and `operator_principal`, and no new ledger row for the erased principal
+- [ ] T061 [P] [US3] Write admin handler tests: `200` with `deleted_count`, idempotent repeat, `400` on empty principal, `409` when the ledger is disabled, audit record `business_event.ledger.principal_erased` with typed `principal` and `operator_principal`, and no new ledger row for the erased principal
 - [ ] T062 [P] [US3] Write configuration tests for the three retention keys
 - [ ] T063 [US3] Run the new tests and record their failures in the pull request
 
@@ -162,7 +162,7 @@ commit, not as validated.
 - [ ] T066 [US3] Implement `internal/domain/bizevent/retention.go` and the `business_events.retention.deleted` counter
 - [ ] T067 [US3] Start the retention service in `internal/app/builder.go` when the ledger is enabled; stop it on shutdown
 - [ ] T068 [US3] Implement `internal/adapters/http/handlers/admin/business_events_handler.go` and its route on the admin server
-- [ ] T069 [P] [US3] Write `docs/operations/business-events.md`: enabling, retention, erasure, the loss window of ADR 048, and the production rule of SR-003; add the retention keys to `docs/configuration.md` and to `examples/config/business-events.yaml`
+- [ ] T069 [P] [US3] Write `docs/operations/business-events.md`: enabling, retention, erasure and its limit for actor and operator principal values (FR-010), the loss window of ADR 048, and the production rule of SR-003; add the retention keys to `docs/configuration.md` and to `examples/config/business-events.yaml`
 - [ ] T070 [P] [US3] Add the retention values to the Helm chart (values, configmap, schema, README, tests)
 - [ ] T071 Run `just check`, `just test`, `just test-integration`, `just test-e2e-backend`; report the container suites as deferred to CI
 

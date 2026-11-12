@@ -146,10 +146,12 @@ idempotent delete; no leader election is needed. Erasure is rare and operator-in
 Admin API is where operators act (`POST /api/sessions/sweep` is the precedent). The principal goes
 in the body because LOGGING.md section 6.1 treats URL queries as sensitive and proxies log them.
 
-Erasure deletes the principal's own events and redacts the principal from `actor` and
-`operator_principal` in other owners' events, because those values are personal data too.
-Deleting the other owners' events instead would remove their history; leaving the values would
-make erasure incomplete.
+Erasure deletes the principal's own events and changes no other row. A stored event is immutable
+(ADR 048, Decision 9, a maintainer decision). An event of another resource owner that names the
+erased principal as `actor` or `operator_principal` therefore stays until retention deletes it,
+at most one retention period after it was recorded. Redacting these values was rejected because
+it updates stored events. Deleting these events was rejected because it removes the history of
+other resource owners.
 
 **Alternatives**: A Helm CronJob that calls an admin endpoint for retention (session sweep
 pattern): more moving parts for a delete that needs no operator decision. A CLI subcommand for
@@ -175,7 +177,7 @@ twice.
 
 **Rationale**: A consumer that serves resource owners needs to know which events it may show; the
 service that emits the event knows that. Other consumer concerns (sentence, SSF mapping) belong to
-the consumer (ADR 048, Decision 9). A duplicate or malformed identifier is a programming error and
+the consumer (ADR 048, Decision 10). A duplicate or malformed identifier is a programming error and
 must fail at start, as `regexp.MustCompile` does.
 
 **Alternatives**: Store the flag on each row: old rows keep an outdated flag when the declaration

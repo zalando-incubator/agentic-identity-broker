@@ -36,10 +36,9 @@ type BusinessEventRetention interface {
 	// DeleteRecordedBefore deletes up to limit events with RecordedAt before cutoff and
 	// returns the number deleted.
 	DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error)
-	// EraseByPrincipal deletes all events whose Principal equals principal. In other events it
-	// clears Actor and removes the "operator_principal" attribute where they equal principal.
-	// Both changes commit together. It returns the numbers of deleted and of redacted events.
-	EraseByPrincipal(ctx context.Context, principal id.Principal) (deleted, redacted int64, err error)
+	// EraseByPrincipal deletes all events whose Principal equals principal and returns the
+	// number deleted. It changes no other event: a stored event is immutable.
+	EraseByPrincipal(ctx context.Context, principal id.Principal) (int64, error)
 }
 
 type BusinessEventFilter struct {

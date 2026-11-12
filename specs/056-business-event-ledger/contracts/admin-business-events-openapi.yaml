@@ -65,19 +65,13 @@ components:
           example: alice@example.com
     BusinessEventErasureResponse:
       type: object
-      required: [deleted_count, redacted_count]
+      required: [deleted_count]
       properties:
         deleted_count:
           type: integer
           format: int64
           minimum: 0
           example: 42
-        redacted_count:
-          type: integer
-          format: int64
-          minimum: 0
-          description: Events of other resource owners from which the principal was removed.
-          example: 3
     ErrorResponse:
       description: The existing ErrorResponse schema of api/admin/openapi.yaml. Not changed.
       type: object

@@ -113,8 +113,9 @@ retention operation and the deletion by principal. Read the table.
    API, **Then** the response reports the number of deleted rows, no row has Alice as principal,
    and Bob's rows are unchanged.
 3. **Given** a row of Bob in which Alice is the actor, and a row of Bob in which Alice is the
-   operator principal, **When** an operator erases Alice's events, **Then** both rows remain, Bob
-   is still their principal, and neither row contains Alice's principal.
+   operator principal, **When** an operator erases Alice's events, **Then** both rows remain and
+   are unchanged, because a stored event is immutable. The retention operation deletes them when
+   they are older than the retention period.
 
 ---
 
@@ -213,7 +214,8 @@ Alice (`alice@example.com`) and Bob (`bob@example.com`). The ledger is enabled. 
 | `…9b02` | `session.oauth2.session_terminated` | `bob@example.com` | `alice@example.com` | `{"service_id": "880e8400-…"}` |
 | `…9c03` | `consent.grant.revoked` | `bob@example.com` | `bob@example.com` | `{"agent_id": "550e8400-…"}` |
 
-Row `…9b02` stands for a case in which Alice, as an administrator, acted on Bob's data.
+Row `…9b02` stands for a case in which Alice, as an administrator, acted on Bob's data. It was
+recorded on 2026-11-18.
 
 **Step 2 — 14:00:00: Olivia sends the erasure request through the admin proxy**
 
@@ -228,7 +230,7 @@ X-Remote-User: olivia@example.com
 HTTP/1.1 200 OK
 Content-Type: application/json
 
-{"deleted_count": 2, "redacted_count": 1}
+{"deleted_count": 2}
 ```
 
 The operation is proposed in
@@ -245,7 +247,6 @@ The operation is proposed in
   "principal": "alice@example.com",
   "operator_principal": "olivia@example.com",
   "row_count": 2,
-  "redacted_count": 1,
   "actor": "olivia@example.com"
 }
 ```
@@ -256,11 +257,13 @@ The `event` value is a string, so this record is not stored in the ledger.
 
 | `id` (short) | `event` | `principal` | `actor` | `attributes` (excerpt) |
 |---|---|---|---|---|
-| `…9b02` | `session.oauth2.session_terminated` | `bob@example.com` | *(none)* | `{"service_id": "880e8400-…"}` |
+| `…9b02` | `session.oauth2.session_terminated` | `bob@example.com` | `alice@example.com` | `{"service_id": "880e8400-…"}` |
 | `…9c03` | `consent.grant.revoked` | `bob@example.com` | `bob@example.com` | `{"agent_id": "550e8400-…"}` |
 
-**Observable result**: No ledger row contains `alice@example.com`. Bob's two rows remain. A second
-identical request returns `{"deleted_count": 0, "redacted_count": 0}`.
+**Observable result**: No ledger row has `alice@example.com` as its principal. Bob's two rows are
+unchanged. Row `…9b02` still names Alice as the actor, because a stored event is immutable
+(ADR 048, Decision 9). With the default retention period of 90 days, the retention operation
+deletes it on 2027-02-16. A second identical request returns `{"deleted_count": 0}`.
 
 ## Requirements *(mandatory)*
 
@@ -285,7 +288,7 @@ identical request returns `{"deleted_count": 0, "redacted_count": 0}`.
 - **FR-008**: A business event MUST be stored independently of the configured log level.
 - **FR-009**: The broker MUST delete ledger rows older than a configurable retention period, with
   a default of 90 days.
-- **FR-010**: An operator MUST be able to erase one given principal from the ledger through the Admin API. Erasure MUST delete all rows whose resource owner is that principal. In the rows of other resource owners, erasure MUST remove that principal where it is the actor or the operator principal, and MUST leave the rest of the row unchanged. The operation MUST be idempotent and MUST write an audit record that does not create a new ledger row for that principal.
+- **FR-010**: An operator MUST be able to erase one given principal from the ledger through the Admin API. Erasure MUST delete all rows whose resource owner is that principal, and MUST NOT change or delete any other row. A stored row MUST NOT be updated by any operation. A row of another resource owner that names the erased principal as actor or operator principal stays until FR-009 deletes it; the operations documentation MUST state this limit. The operation MUST be idempotent and MUST write an audit record that does not create a new ledger row for that principal.
 - **FR-011**: Both storage adapters (memory and PostgreSQL) MUST implement the ledger repository.
 - **FR-012**: Each onboarded event MUST satisfy the [onboarding checklist](./checklists/onboarding.md).
 

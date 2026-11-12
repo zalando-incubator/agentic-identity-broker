@@ -11,7 +11,7 @@ value as an attribute (OPENTELEMETRY.md section 5.3).
 |---|---|---|---|---|---|
 | `business_events.write.duration` | `Float64Histogram` | `s` | `outcome` (`stored`, `failed`) | Each ledger write attempt | 4 |
 | `business_events.write_failures` | `Int64Counter` | `{event}` | `error_kind` (the `storage.ErrorKind` values, and `timeout`) | Each failed or timed-out ledger write | 4 |
-| `business_events.retention.deleted` | `Int64Counter` | `{event}` | `reason` (`retention`, `erasure`) | Each retention batch and each erasure, by the number of rows deleted. Redacted rows are not counted. | 6 |
+| `business_events.retention.deleted` | `Int64Counter` | `{event}` | `reason` (`retention`, `erasure`) | Each retention batch and each erasure, by the number of rows deleted. | 6 |
 
 The event identifier is not a metric attribute in this feature. Its value set is closed (the
 declared definitions), so a later feature can add it with a contract change.
@@ -26,7 +26,7 @@ none enters the ledger.
 | `business event write failed` | `Error` | `business_event.ledger.write_failed` | `failed_event` (identifier), `error_kind`, `duration_ms` | A ledger write fails or times out. Written to the operational sinks only. | 4 |
 | `business events expired` | `Info` | `business_event.ledger.rows_expired` | `row_count`, `duration_ms` | A retention run deleted at least one row | 6 |
 | `business event retention failed` | `Error` | `business_event.ledger.retention_failed` | `error_kind` | A retention run fails | 6 |
-| `business events erased` | `Info` | `business_event.ledger.principal_erased` | `principal` (the erased principal), `operator_principal`, `row_count` (deleted), `redacted_count` | An erasure request completes | 6 |
+| `business events erased` | `Info` | `business_event.ledger.principal_erased` | `principal` (the erased principal), `operator_principal`, `row_count` (deleted) | An erasure request completes | 6 |
 
 `business event write failed` has no `principal` and no `error` value: a storage error can quote
 the row. `trace_id` and `actor` come from the context handler.

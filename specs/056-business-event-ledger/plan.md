@@ -31,12 +31,12 @@ onboarded in its own pull request by changing one log call.
 
 | ID | Item | Where | Status |
 |---|---|---|---|
-| ADR-048 | Business events are typed log records; the ledger row is written after the commit, with the loss window that Decision 5 accepts | [ADR 048](../../adrs/048-business-events-as-typed-log-records.md) | Proposed |
+| ADR-048 | Business events are typed log records; the ledger row is written after the commit, with the loss window that Decision 5 accepts | [ADR 048](../../adrs/048-business-events-as-typed-log-records.md) | Decision 5 (after-commit write) and Decision 9 (immutable events) approved by jbspeakr on 2026-11-12. The ADR status stays Proposed until the maintainer accepts the ADR as a whole |
 | STD-LOGGING-8 | Amendment of LOGGING.md section 8 (ledger as projection; no audit record inside a transaction) | Delivery step 1 | Proposed |
 | STD-LOGGING-2.2 | New rule in LOGGING.md section 2.2 for the typed definition, and the guard test in section 9 | Delivery step 2 | Proposed |
 | DB-048 | Table `business_events` and its two indexes | [data-model.md](./data-model.md) | Proposed |
 | CFG-BE | Configuration keys `business_events.*` | [contracts/configuration.md](./contracts/configuration.md) | Proposed |
-| API-ERASURE | Admin API `POST /api/business-events/erasure` (minor version), including the redaction of the erased principal as actor and operator principal in other owners' events (FR-010) | [contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml) | Proposed. Needed before delivery step 6 only |
+| API-ERASURE | Admin API `POST /api/business-events/erasure` (minor version), which deletes the rows of the erased principal and changes no other row (FR-010) | [contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml) | Proposed. Needed before delivery step 6 only |
 
 No approval is inferred. A delivery step starts only when the items it depends on are approved.
 
@@ -202,7 +202,7 @@ enabled, disabled, write failing; retention; erasure) → one `It` per scenario.
 | US2.2 | same file | `It("stores no event for an audit record with a string event identifier")` | 5 |
 | US3.1 | same file | `It("deletes only events older than the retention period")` | 6 |
 | US3.2 | same file | `It("erases all events of one principal and leaves other principals' events")` | 6 |
-| US3.3 | same file | `It("removes an erased principal from actor and operator_principal in other principals' events")` | 6 |
+| US3.3 | same file | `It("does not change another principal's events that name the erased principal as actor or operator principal")` | 6 |
 
 Line numbers are added to this table in the pull request that adds each test.
 
