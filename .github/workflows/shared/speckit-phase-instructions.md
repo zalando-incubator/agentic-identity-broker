@@ -153,9 +153,8 @@ run every recipe of `just verify` that needs no container. In place of
 root: the workflow prepared the default branch's scan with prebuilt scanners
 before this session, and the branch's own recipe cannot build them here.
 Resolve failures caused by the change, and mark only completed tasks `[X]`.
-When tasks call for follow-up issues, open one issue with `create_issue`,
-titled `Follow-ups for #<context.pr>`, that covers all of them, and reference
-its URL in each of those tasks.
+When tasks call for follow-up issues, follow the follow-up issue rules
+below and reference each issue in the tasks it covers.
 
 The sandbox has no Docker or Podman, by design. Do not run or try to enable
 container-backed suites, such as `just test-integration-infra` and
