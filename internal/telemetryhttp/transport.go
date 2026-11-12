@@ -16,9 +16,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// outcomeCanceled is the telemetryhttp.outcome value for a caller that canceled the request.
-const outcomeCanceled = "canceled"
-
 // NewTransport traces requests without serializing URLs, headers, bodies or
 // errors. Propagation uses the actual child span; network requests retain their
 // original URL, payload and existing headers. Providers resolve at request time.
@@ -96,11 +93,10 @@ func (b *spanBody) finish(err error, kind string) {
 	})
 }
 
-// recordFailure marks the span as failed, unless the caller canceled the request. A timeout stays
-// a failure because it does not wrap context.Canceled.
+// recordFailure marks the span as failed. A caller that canceled the request is not a failure, so
+// the span stays as it is. A timeout stays a failure because it does not wrap context.Canceled.
 func recordFailure(span trace.Span, err error, errorType, description string) {
 	if errors.Is(err, context.Canceled) {
-		span.SetAttributes(attribute.String("telemetryhttp.outcome", outcomeCanceled))
 		return
 	}
 	span.SetAttributes(attribute.String("error.type", errorType))

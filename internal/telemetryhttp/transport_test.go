@@ -307,7 +307,6 @@ func TestTransportCallerCancellationIsNotAnError(t *testing.T) {
 				assert.Equal(t, trace.SpanKindClient, spans[0].SpanKind())
 				assert.Equal(t, codes.Unset, spans[0].Status().Code)
 				assert.NotContains(t, attributes, "error.type")
-				assert.Equal(t, "canceled", attributes["telemetryhttp.outcome"])
 			})
 		}
 	}
@@ -334,7 +333,6 @@ func TestTransportCancellationKeepsErrorResponseStatus(t *testing.T) {
 			attributes := spanAttributes(spans[0])
 			assert.Equal(t, codes.Error, spans[0].Status().Code)
 			assert.Equal(t, fmt.Sprint(status), attributes["error.type"])
-			assert.Equal(t, "canceled", attributes["telemetryhttp.outcome"])
 		})
 	}
 }
@@ -386,7 +384,6 @@ func TestTransportTimeoutIsAnError(t *testing.T) {
 					attributes := spanAttributes(spans[0])
 					assert.Equal(t, codes.Error, spans[0].Status().Code)
 					assert.Equal(t, test.wantErrorType, attributes["error.type"])
-					assert.NotContains(t, attributes, "telemetryhttp.outcome")
 				})
 			}
 		}

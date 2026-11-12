@@ -1909,7 +1909,7 @@ When tracing is enabled, the following operations emit child spans:
 | `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
 | `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
 | `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
-| `http.request` | Outbound HTTP call through `telemetryhttp` | `http.request.method`, `http.response.status_code`, `error.type` on failure, `telemetryhttp.outcome` on cancellation |
+| `http.request` | Outbound HTTP call through `telemetryhttp` | `http.request.method`, `http.response.status_code`, `error.type` on failure |
 
 `http.request` spans have span kind `Client`. A failed call sets the error status and `error.type`:
 
@@ -1920,7 +1920,7 @@ When tracing is enabled, the following operations emit child spans:
 | `_OTHER` | A status code above 599 |
 | `response_read_failed`, `response_close_failed` | The response body failed, including a timeout |
 
-If the caller cancels the request, the status stays unset and `telemetryhttp.outcome` is `canceled`. A 4xx or 5xx response received before the cancellation stays an error, with both attributes set.
+If the caller cancels the request, the status stays unset and `error.type` is not set. A 4xx or 5xx response received before the cancellation stays an error.
 
 `storage.*` spans have span kind `Client`. A failed database call, or a stored value that cannot be decoded, sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
 

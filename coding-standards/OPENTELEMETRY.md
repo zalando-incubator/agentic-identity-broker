@@ -111,6 +111,7 @@ if err != nil {
 - Do not call `span.RecordError`. A wrapped cause can contain a URL with its query, a provider body, or a SQL fragment. Record typed metadata instead (section 4).
 - Do not mark a client error (4xx) as an error on a `Server` span. `otelchi` derives the status from the response code. The ExtProc request span sets the error status only for the 5xx responses it sends.
 - Record caller cancellation as an outcome, for example `canceled`. Do not set `codes.Error`.
+  - Exception: the `http.request` span sets no outcome. The OpenTelemetry HTTP conventions leave the status unset on cancellation and define no attribute for it.
 
 ### 3.5 Background Work
 
@@ -141,7 +142,6 @@ if err != nil {
 | `encryption` | Encryption operations | ADR 012 |
 | `impersonation` | OAuth2 impersonation | ADR 032 |
 | `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented` |
-| `telemetryhttp` | Results of outbound HTTP calls | `docs/configuration.md#what-is-instrumented` |
 
 - Use the canonical keys in this table. Do not make synonyms.
 
