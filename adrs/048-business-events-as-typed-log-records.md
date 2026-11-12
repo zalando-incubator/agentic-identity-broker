@@ -67,13 +67,12 @@ fails. A ledger that is fed from log records therefore cannot also be transactio
    stdout and OpenTelemetry.
 7. **The ledger stores the principal that the service logged.** The handler takes the typed
    `id.Principal` before the principal policy renders it. A later change of the log policy, for
-   example pseudonymisation, does not break queries or deletion by principal. Retention and
-   deletion by principal must exist before the ledger is enabled in a production deployment.
-8. **The ledger is off by default** until the retention and deletion operations are merged. A
+   example pseudonymisation, does not break queries by principal. Retention must exist before the
+   ledger is enabled in a production deployment.
+8. **The ledger is off by default** until the retention operation is merged. A
    configuration flag enables it.
-9. **A stored event is immutable.** No operation updates a ledger row. Retention and erasure by
-   principal delete whole rows. Erasure deletes the rows whose `principal` is the erased
-   principal and changes no other row.
+9. **A stored event is immutable.** No operation updates a ledger row. Retention deletes
+   whole rows when they are older than the retention period.
 10. **Consumers read the table.** The activity API and the SSF transmitter read the ledger table.
    They do not read the log stream. Each consumer projects an allow-list of events. A user-facing
    sentence or an SSF event mapping belongs to the consumer and is keyed by the event identifier.
@@ -105,9 +104,9 @@ the metric name are set in the implementing pull requests and their contracts in
   - If the process stops during the log call, either sink can be without the record.
 - Each onboarded state change costs one more database round trip on the request path.
 - The ledger holds personal data (principals) in a new table.
-- Erasure of a principal is complete only when the retention period ends. A row of another
-  resource owner that names the erased principal as `actor` or `operator_principal` is not
-  changed (Decision 9) and stays until retention deletes it.
+- The ledger has no operation that erases the events of one principal. A row stays until
+  retention deletes it. If a deployment needs erasure on request, that is a later decision, and
+  the operation must delete whole rows (Decision 9).
 - ExtProc must not import broker domain packages (ADR 027) and cannot use the typed definition.
   Events from ExtProc and agentgateway need a different ingest path and are not part of this
   decision.

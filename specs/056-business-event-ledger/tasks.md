@@ -33,7 +33,7 @@ commit, not as validated.
 - [X] T003 [P] Amend `coding-standards/LOGGING.md` section 8 and its binding sources (STD-LOGGING-8; Principle XV)
 - [X] T004 Phase 2a: document the domain model and invariants in `specs/056-business-event-ledger/data-model.md` (Principle V)
 - [X] T005 [P] Phase 2b: document configuration keys with a YAML example in `contracts/configuration.md` (Principle VII)
-- [X] T006 [P] Phase 2c: draft the only API change in `contracts/admin-business-events-openapi.yaml`; confirm that the end-user API does not change (Principles IV, X)
+- [X] T006 [P] Phase 2c: confirm that the end-user API and the Admin API do not change (Principles IV, X)
 - [X] T007 [P] Phase 2d: document table, indexes, and migration name in `data-model.md` (Principle IX)
 - [X] T008 [P] Phase 2g: read both coding standards; list every new log record and instrument in `contracts/observability.md` (Principle XV)
 - [X] T009 Phase 2f: map all acceptance scenarios to `It()` descriptions in `plan.md` Testing Strategy and review Journey 1 against `api/enduser/openapi.yaml` (Principles XIII, XIV)
@@ -139,19 +139,15 @@ commit, not as validated.
 
 ---
 
-## Step 6 — User Story 3: retention and erasure (Phase 5, P3)
+## Step 6 — User Story 3: retention (Phase 5, P3)
 
-**Pull request**: about 8 production files. **Needs**: step 5, API-ERASURE. Parallel with step 7. Split the erasure endpoint into its own pull request if the diff grows.
-
-- [ ] T056 [US3] Record the supplied approval of API-ERASURE in `plan.md`; stop if it is not supplied
-- [ ] T057 [US3] Merge the draft into `api/admin/openapi.yaml`, raise the Admin API minor version, and render the admin reference in `docs/api/` (Principles IV, X)
+**Pull request**: about 6 production files. **Needs**: step 5. Parallel with step 7.
 
 ### Tests first
 
-- [ ] T058 [P] [US3] Add `It()` blocks for US3.1, US3.2, and US3.3 to `tests/e2e/business_event_ledger_test.go` (Principle XIII)
-- [ ] T059 [P] [US3] Write adapter tests for `DeleteRecordedBefore` (cutoff, limit, oldest first) and `EraseByPrincipal` (other owners' rows that name the principal as `actor` or `operator_principal` are unchanged; idempotent; exact match, rows without principal untouched) in the memory test file and in `tests/integration/storage/infra/business_event_test.go` (FR-009, FR-010)
+- [ ] T058 [P] [US3] Add the `It()` block for US3.1 to `tests/e2e/business_event_ledger_test.go` (Principle XIII)
+- [ ] T059 [P] [US3] Write adapter tests for `DeleteRecordedBefore` (cutoff, limit, oldest first) in the memory test file and in `tests/integration/storage/infra/business_event_test.go` (FR-009)
 - [ ] T060 [P] [US3] Write `internal/domain/bizevent/retention_test.go`: repeats until a short batch, stops on context end, logs `rows_expired` only when rows were deleted, logs `retention_failed` on error (contracts/ports.md section 4)
-- [ ] T061 [P] [US3] Write admin handler tests: `200` with `deleted_count`, idempotent repeat, `400` on empty principal, `409` when the ledger is disabled, audit record `business_event.ledger.principal_erased` with typed `principal` and `operator_principal`, and no new ledger row for the erased principal
 - [ ] T062 [P] [US3] Write configuration tests for the three retention keys
 - [ ] T063 [US3] Run the new tests and record their failures in the pull request
 
@@ -161,8 +157,7 @@ commit, not as validated.
 - [ ] T065 [P] [US3] Add the retention keys to `internal/ports/config.go`, loader defaults, and validator
 - [ ] T066 [US3] Implement `internal/domain/bizevent/retention.go` and the `business_events.retention.deleted` counter
 - [ ] T067 [US3] Start the retention service in `internal/app/builder.go` when the ledger is enabled; stop it on shutdown
-- [ ] T068 [US3] Implement `internal/adapters/http/handlers/admin/business_events_handler.go` and its route on the admin server
-- [ ] T069 [P] [US3] Write `docs/operations/business-events.md`: enabling, retention, erasure and its limit for actor and operator principal values (FR-010), the loss window of ADR 048, and the production rule of SR-003; add the retention keys to `docs/configuration.md` and to `examples/config/business-events.yaml`
+- [ ] T069 [P] [US3] Write `docs/operations/business-events.md`: enabling, retention, the absence of an erasure operation, the loss window of ADR 048, and the production rule of SR-003; add the retention keys to `docs/configuration.md` and to `examples/config/business-events.yaml`
 - [ ] T070 [P] [US3] Add the retention values to the Helm chart (values, configmap, schema, README, tests)
 - [ ] T071 Run `just check`, `just test`, `just test-integration`, `just test-e2e-backend`; report the container suites as deferred to CI
 
@@ -195,15 +190,13 @@ Run the items that apply at the end of each step's pull request, and all of them
 - [ ] T079 All four domain terms are in the `ARCHITECTURE.md` Glossary (after steps 2 and 4)
 - [X] T080 Configuration keys are documented with a YAML example in `contracts/configuration.md` (Principle VII)
 - [ ] T081 `examples/config/business-events.yaml` and its README entry exist (after step 4)
-- [X] T082 The API change is designed in `contracts/` before implementation; the end-user API has no change (Principle X)
-- [ ] T083 API-ERASURE approval is recorded (before step 6)
+- [X] T082 No API changes: the end-user API and the Admin API are unchanged (Principle X)
 - [X] T084 The schema is documented with go-migrate file names (Principle IX)
 - [X] T085 Every acceptance scenario is mapped to one `It()` (Principle XIII)
 - [X] T086 Journey 1 uses real paths, headers, and status codes of `api/enduser/openapi.yaml` (Principle XIV)
 
 ### Implementation Phase Verification [MANDATORY]
 
-- [ ] T087 [P] `api/admin/openapi.yaml` matches the implemented erasure operation exactly (Principle IV)
 - [ ] T088 [P] ADR 048 status and the implementation agree before the first code step merges (Principle II)
 - [ ] T089 [P] Configuration uses the broker's configuration system; no key is read from the environment directly (Principle VII)
 - [ ] T090 [P] Migration `048` follows sequential numbering and has apply, rollback, and repeat tests (Principle IX)
@@ -214,7 +207,7 @@ Run the items that apply at the end of each step's pull request, and all of them
 - [ ] T095 [P] `TestLoggedPrincipalsAreTyped` and the `forbidigo` rule are unchanged; no linter suppression was added (Principle XV)
 - [ ] T096 [P] Domain packages do not import adapters; `bizevent` imports only the standard library; ExtProc does not import `bizevent` (Principle VI; ADR 027)
 - [ ] T097 [P] The logger and the appender are injected through the builder; no `slog.Default()` (Principle XII)
-- [ ] T098 [P] All nine acceptance scenarios have a passing `It()`; no `XIt`, `PIt`, or `Skip()` (Principle XIII)
+- [ ] T098 [P] All seven acceptance scenarios have a passing `It()`; no `XIt`, `PIt`, or `Skip()` (Principle XIII)
 - [ ] T099 [P] With `business_events.enabled: false`, the full suite passes without a changed assertion outside the onboarded call sites (SC-002)
 - [ ] T100 [P] `docs/operations/business-events.md` states that the ledger is not enabled in production before step 6 is deployed (SR-003)
 - [ ] T101 No endpoint reads the ledger (SR-004)
@@ -228,7 +221,7 @@ Run the items that apply at the end of each step's pull request, and all of them
 
 ```text
 1 ──► 2 ──► 3 ──┐
-        └─► 4 ──┴─► 5 ──► 6 (needs API-ERASURE)
+        └─► 4 ──┴─► 5 ──► 6
                       └─► 7 ──► further use cases, one pull request each
 ```
 
@@ -267,6 +260,7 @@ impersonation decision, operator events. Token issuance and exchange wait for th
 
 ## Notes
 
-- A task with `[X]` is complete in the pull request of its step, not approved. Approval is recorded by T010 and T056 only.
+- A task with `[X]` is complete in the pull request of its step, not approved. Approval is recorded by T010 only.
+- Task IDs T056, T057, T061, T068, T083, and T087 are not used. They belonged to an erasure operation that was removed from the feature.
 - If `main` takes migration number `048` or ADR number `048` before a step merges, renumber in that step and update every reference in this directory.
 - Commit after each task or logical group. Do not mix two delivery steps in one pull request.

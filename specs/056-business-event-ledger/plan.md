@@ -36,7 +36,6 @@ onboarded in its own pull request by changing one log call.
 | STD-LOGGING-2.2 | New rule in LOGGING.md section 2.2 for the typed definition, and the guard test in section 9 | Delivery step 2 | Proposed |
 | DB-048 | Table `business_events` and its two indexes | [data-model.md](./data-model.md) | Proposed |
 | CFG-BE | Configuration keys `business_events.*` | [contracts/configuration.md](./contracts/configuration.md) | Proposed |
-| API-ERASURE | Admin API `POST /api/business-events/erasure` (minor version), which deletes the rows of the erased principal and changes no other row (FR-010) | [contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml) | Proposed. Needed before delivery step 6 only |
 
 No approval is inferred. A delivery step starts only when the items it depends on are approved.
 
@@ -52,11 +51,11 @@ No approval is inferred. A delivery step starts only when the items it depends o
 - [x] **Configuration Design**: [contracts/configuration.md](./contracts/configuration.md) lists every key with a YAML example.
 - [x] **Config Examples**: `examples/config/business-events.yaml` and the README entry (T040).
 - [x] **Helm Deployment Contract**: `broker.businessEvents.*` values, configmap template, schema, and README (T041, T070). No new workload.
-- [x] **API Design First**: The only API change is the erasure operation. Its draft is in `contracts/` and is merged into `api/admin/openapi.yaml` in step 6 before the handler (T057).
-- [x] **API Documentation**: `api/admin/openapi.yaml` in step 6. The end-user API is not changed.
-- [ ] **API Changes**: API-ERASURE is not yet confirmed. It blocks step 6 only.
+- [x] **API Design First**: No API change. No endpoint is added or changed.
+- [x] **API Documentation**: Not applicable. The end-user API and the Admin API are not changed.
+- [x] **API Changes**: None.
 - [x] **Database Design**: Migration `048_create_business_events` with up and down scripts (T025).
-- [x] **E2E Acceptance Tests**: All nine acceptance scenarios are mapped below. Each E2E test is written first, in the pull request of the step that makes it pass.
+- [x] **E2E Acceptance Tests**: All seven acceptance scenarios are mapped below. Each E2E test is written first, in the pull request of the step that makes it pass.
 - [x] **E2E Test Mapping**: One `It()` per scenario (table in Testing Strategy).
 - [x] **E2E Red Phase**: Each step's pull request records the semantic failure of its new tests before the implementation commit (T015, T036, T048, T063, T074).
 - [x] **Frontend Playwright E2E**: Not applicable. No UI change.
@@ -68,8 +67,8 @@ No approval is inferred. A delivery step starts only when the items it depends o
 - [x] **Architecture Docs**: `ARCHITECTURE.md` gets the ADR index row (step 1), the glossary entries (steps 2, 4), and a revised "Grant and Definition Lifecycle Audit" entry when the first grant event is onboarded (step 5).
 - [x] **ADRs**: ADR 048.
 - [x] **Library-First Security**: No cryptography.
-- [x] **Zalando Guidelines**: The erasure operation follows the Admin API conventions (`POST` action resource, as `POST /api/sessions/sweep`).
-- [x] **End-User Docs**: `docs/configuration.md` and `docs/operations/business-events.md`; `docs/api/` admin reference in step 6.
+- [x] **Zalando Guidelines**: Not applicable. No API change.
+- [x] **End-User Docs**: `docs/configuration.md` and `docs/operations/business-events.md`.
 - [x] **Migration Testing**: Apply, rollback, and repeat in `tests/integration/migrations/` (T026).
 - [x] **Hexagonal Architecture**: Definition type in the domain, three small ports, two storage adapters, the handler as a telemetry adapter. Domain services do not import the handler.
 - [x] **Persistence Patterns**: Follows `specs/004-persistence-layer/quickstart.md`: ISP ports in `internal/ports/storage.go`, both adapters, `sqlx`, `StorageError`, factory accessors.
@@ -78,8 +77,8 @@ No approval is inferred. A delivery step starts only when the items it depends o
 [contracts/observability.md](./contracts/observability.md). LOGGING.md is amended in steps 1 and 2
 (approval items above). `TestLoggedPrincipalsAreTyped` is not narrowed; a second guard test is added.
 
-**Result**: One open gate (API-ERASURE), which blocks step 6 only. Steps 1 to 5 can proceed after
-ADR-048, the two standard amendments, DB-048, and CFG-BE are approved.
+**Result**: No open gate besides the approval items. The code steps can proceed after ADR-048,
+the two standard amendments, DB-048, and CFG-BE are approved.
 
 ## Project Structure
 
@@ -96,8 +95,7 @@ specs/056-business-event-ledger/
 ├── contracts/
 │   ├── ports.md
 │   ├── configuration.md
-│   ├── observability.md
-│   └── admin-business-events-openapi.yaml
+│   └── observability.md
 └── checklists/
     ├── requirements.md
     └── onboarding.md
@@ -127,9 +125,7 @@ internal/adapters/telemetry/
 internal/app/builder.go                                     # steps 4, 6
 internal/config/{loader.go,validator.go}                    # steps 4, 6
 internal/domain/consent/{events.go,service.go}              # step 5 and later use cases
-internal/adapters/http/handlers/admin/business_events_handler.go  # step 6
 migrations/048_create_business_events.{up,down}.sql         # step 3
-api/admin/openapi.yaml                                      # step 6
 examples/config/business-events.yaml                        # steps 4, 6
 charts/agentic-identity-broker/                             # steps 4, 6
 docs/configuration.md, docs/operations/business-events.md   # steps 4, 6
@@ -152,7 +148,7 @@ review; `tasks.md` groups tasks by step.
 | 3 | Migration `048`, PostgreSQL adapter | 3 | 2 | US1 |
 | 4 | Ledger handler, configuration, builder wiring, instruments, example and chart | 6 | 2 | US1 |
 | 5 | First use case `consent.grant.revoked`, E2E scenarios US1.1 to US1.4 and US2.2 | 2 | 3, 4 | US1, US2 |
-| 6 | Retention port and service, erasure endpoint, operations document, E2E scenarios US3.1 to US3.3 | 8 | 5, API-ERASURE | US3 |
+| 6 | Retention port and service, operations document, E2E scenario US3.1 | 6 | 5 | US3 |
 | 7 | `consent.grant.created` and `consent.grant.updated`, E2E scenario US2.1 | 2 | 5 | US2 |
 | 8 and later | One use case each, by the onboarding checklist. Not tasks of this feature's task list; each is a small follow-up pull request that cites FR-012. | 2 to 3 | 5 | US2 |
 
@@ -188,7 +184,7 @@ per step.
 **Framework**: Ginkgo/Gomega BDD framework following patterns in [tests/e2e/README.md](../../tests/e2e/README.md)
 
 **Test Organization**: `Describe("Business event ledger")` → `Context` per precondition (ledger
-enabled, disabled, write failing; retention; erasure) → one `It` per scenario.
+enabled, disabled, write failing; retention) → one `It` per scenario.
 
 **Scenario Mapping**:
 
@@ -201,8 +197,6 @@ enabled, disabled, write failing; retention; erasure) → one `It` per scenario.
 | US2.1 | same file | `It("stores a consent.grant.created event whose attributes equal the audit record's attributes")` | 7 |
 | US2.2 | same file | `It("stores no event for an audit record with a string event identifier")` | 5 |
 | US3.1 | same file | `It("deletes only events older than the retention period")` | 6 |
-| US3.2 | same file | `It("erases all events of one principal and leaves other principals' events")` | 6 |
-| US3.3 | same file | `It("does not change another principal's events that name the erased principal as actor or operator principal")` | 6 |
 
 Line numbers are added to this table in the pull request that adds each test.
 
@@ -224,7 +218,7 @@ status, the log buffer, and the metric reader.
 - Production bootstrap through `tests/e2e/bootstrap/` with the memory adapter. The test reads
   stored events through `storage.Adapter.BusinessEventReader()`.
 - US1.3 and US1.4 assert the log output through a buffer logger injected with `WithLogger`.
-- US1.4 runs only in the container E2E suite (`just test-e2e-docker`). US1.1, US3.1, and US3.2
+- US1.4 runs only in the container E2E suite (`just test-e2e-docker`). US1.1 and US3.1
   run on the memory adapter and again on PostgreSQL in the container suite.
 
 **Helper Utilities**:

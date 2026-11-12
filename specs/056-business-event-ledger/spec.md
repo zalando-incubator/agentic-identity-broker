@@ -17,7 +17,7 @@ In scope:
 - The business event definition type and the ledger handler in the logger chain (ADR 048).
 - One ledger table with a flexible attribute document, repository ports, and both storage adapters.
 - A repository read operation for tests and later consumers. No endpoint uses it in this feature.
-- Retention, and erasure of one principal's events by an operator.
+- Retention: the broker deletes rows that are older than a configured period.
 - The onboarding of events, one use case per pull request, by the
   [onboarding checklist](./checklists/onboarding.md). `consent.grant.revoked` is the first.
 
@@ -26,6 +26,7 @@ Out of scope:
 - An API or UI that reads the ledger (issue #188 presentation requirements).
 - SSF streams, Security Event Tokens, and their delivery guarantee.
 - Events from ExtProc and agentgateway.
+- Erasure of the events of one principal on request. Retention limits how long a row stays.
 - A transactional guarantee between a state change and its ledger row (ADR 048, Decision 5).
 
 ## Delivery
@@ -39,7 +40,7 @@ The feature merges as a sequence of small pull requests. Each one leaves `main` 
 | 3 | Migration for the ledger table, PostgreSQL adapter, migration tests | Not wired |
 | 4 | Ledger handler, builder wiring, configuration flag (default off), failure metric | Wired, no event onboarded |
 | 5 | First use case: `consent.grant.revoked`, with the E2E scenarios of User Story 1 | One event |
-| 6 | Retention and erasure by principal, with the E2E scenarios of User Story 3 | Can be enabled in production |
+| 6 | Retention, with the E2E scenario of User Story 3 | Can be enabled in production |
 | 7 | Second use case: `consent.grant.created` and `consent.grant.updated`, with E2E scenario 1 of User Story 2 (scenario 2 is in step 5) | Three events |
 | 8 and later | One use case per pull request, by the onboarding checklist | Grows |
 
@@ -97,25 +98,18 @@ pull request. This story is the rule that keeps it so.
 ### User Story 3 - An operator limits how long events are kept (Priority: P3)
 
 An operator must not keep personal data longer than needed. The broker removes ledger rows that
-are older than the retention period, and an operator can remove all rows of one principal.
+are older than the retention period. The operator sets the period.
 
 **Why this priority**: The ledger holds principals. It must not be enabled in production without
 this story (ADR 048, Decision 7).
 
-**Independent Test**: Insert rows with old and new timestamps for two principals. Run the
-retention operation and the deletion by principal. Read the table.
+**Independent Test**: Insert rows with old and new timestamps. Run the retention operation. Read
+the table.
 
 **Acceptance Scenarios**:
 
 1. **Given** rows older and newer than the retention period, **When** the retention operation
    runs, **Then** only the newer rows remain.
-2. **Given** rows of Alice and of Bob, **When** an operator erases Alice's events through the Admin
-   API, **Then** the response reports the number of deleted rows, no row has Alice as principal,
-   and Bob's rows are unchanged.
-3. **Given** a row of Bob in which Alice is the actor, and a row of Bob in which Alice is the
-   operator principal, **When** an operator erases Alice's events, **Then** both rows remain and
-   are unchanged, because a stored event is immutable. The retention operation deletes them when
-   they are older than the retention period.
 
 ---
 
@@ -199,72 +193,6 @@ The record on stdout, as LOGGING.md prescribes. It is the same with the ledger o
 **Observable result**: The ledger has one row for the revocation. Its identifier and attributes
 equal those of the stdout record and of the OpenTelemetry log record with the same trace ID.
 
-### Journey 2 — An operator erases Alice from the ledger (User Story 3, Scenarios 2 and 3)
-
-**Cast**: Operator Olivia (`olivia@example.com`, asserted by the admin proxy as `X-Remote-User`);
-Alice (`alice@example.com`) and Bob (`bob@example.com`). The ledger is enabled. All times are
-2026-11-20 UTC. All IDs are synthetic.
-
-**Step 1 — Initial ledger rows**
-
-| `id` (short) | `event` | `principal` | `actor` | `attributes` (excerpt) |
-|---|---|---|---|---|
-| `…7e8f` | `consent.grant.revoked` | `alice@example.com` | `alice@example.com` | `{"agent_id": "550e8400-…"}` |
-| `…8a01` | `consent.grant.created` | `alice@example.com` | `alice@example.com` | `{"agent_id": "550e8400-…"}` |
-| `…9b02` | `session.oauth2.session_terminated` | `bob@example.com` | `alice@example.com` | `{"service_id": "880e8400-…"}` |
-| `…9c03` | `consent.grant.revoked` | `bob@example.com` | `bob@example.com` | `{"agent_id": "550e8400-…"}` |
-
-Row `…9b02` stands for a case in which Alice, as an administrator, acted on Bob's data. It was
-recorded on 2026-11-18.
-
-**Step 2 — 14:00:00: Olivia sends the erasure request through the admin proxy**
-
-```http
-POST /api/business-events/erasure HTTP/1.1
-Host: broker-admin.internal.example.com
-Content-Type: application/json
-X-Remote-User: olivia@example.com
-
-{"principal": "alice@example.com"}
-
-HTTP/1.1 200 OK
-Content-Type: application/json
-
-{"deleted_count": 2}
-```
-
-The operation is proposed in
-[contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml).
-
-**Step 3 — 14:00:00: the broker writes the audit record**
-
-```json
-{
-  "time": "2026-11-20T14:00:00.250Z",
-  "level": "INFO",
-  "msg": "business events erased",
-  "event": "business_event.ledger.principal_erased",
-  "principal": "alice@example.com",
-  "operator_principal": "olivia@example.com",
-  "row_count": 2,
-  "actor": "olivia@example.com"
-}
-```
-
-The `event` value is a string, so this record is not stored in the ledger.
-
-**Step 4 — Ledger rows after the request**
-
-| `id` (short) | `event` | `principal` | `actor` | `attributes` (excerpt) |
-|---|---|---|---|---|
-| `…9b02` | `session.oauth2.session_terminated` | `bob@example.com` | `alice@example.com` | `{"service_id": "880e8400-…"}` |
-| `…9c03` | `consent.grant.revoked` | `bob@example.com` | `bob@example.com` | `{"agent_id": "550e8400-…"}` |
-
-**Observable result**: No ledger row has `alice@example.com` as its principal. Bob's two rows are
-unchanged. Row `…9b02` still names Alice as the actor, because a stored event is immutable
-(ADR 048, Decision 9). With the default retention period of 90 days, the retention operation
-deletes it on 2027-02-16. A second identical request returns `{"deleted_count": 0}`.
-
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -288,7 +216,7 @@ deletes it on 2027-02-16. A second identical request returns `{"deleted_count": 
 - **FR-008**: A business event MUST be stored independently of the configured log level.
 - **FR-009**: The broker MUST delete ledger rows older than a configurable retention period, with
   a default of 90 days.
-- **FR-010**: An operator MUST be able to erase one given principal from the ledger through the Admin API. Erasure MUST delete all rows whose resource owner is that principal, and MUST NOT change or delete any other row. A stored row MUST NOT be updated by any operation. A row of another resource owner that names the erased principal as actor or operator principal stays until FR-009 deletes it; the operations documentation MUST state this limit. The operation MUST be idempotent and MUST write an audit record that does not create a new ledger row for that principal.
+- **FR-010**: A stored ledger row MUST NOT be updated by any operation. A row is removed only by FR-009.
 - **FR-011**: Both storage adapters (memory and PostgreSQL) MUST implement the ledger repository.
 - **FR-012**: Each onboarded event MUST satisfy the [onboarding checklist](./checklists/onboarding.md).
 
@@ -305,9 +233,7 @@ Keys, defaults, and a YAML example are in [contracts/configuration.md](./contrac
 ### API Requirements
 
 - End-user API: no change.
-- Admin API: one new operation, `POST /api/business-events/erasure`, proposed in
-  [contracts/admin-business-events-openapi.yaml](./contracts/admin-business-events-openapi.yaml).
-  It needs maintainer confirmation before delivery step 6 (plan.md, API-ERASURE).
+- Admin API: no change.
 
 ### Database Requirements
 
@@ -323,11 +249,10 @@ Keys, defaults, and a YAML example are in [contracts/configuration.md](./contrac
 - **SR-001**: A ledger row MUST NOT contain data that LOGGING.md section 6.1 prohibits. A test
   MUST assert that a credential on an onboarded path is absent from the stored row.
 - **SR-002**: The ledger MUST store the principal that the service logged, taken before the
-  principal log policy renders it, so that deletion by principal is exact.
-- **SR-003**: The ledger MUST NOT be enabled in a production deployment before FR-009 and FR-010
-  are delivered. The deployment documentation MUST state this.
+  principal log policy renders it, so that reads by principal are exact.
+- **SR-003**: The ledger MUST NOT be enabled in a production deployment before FR-009 is
+  delivered. The deployment documentation MUST state this.
 - **SR-004**: This feature MUST NOT add an endpoint that reads the ledger.
-- **SR-005**: The erasure operation MUST be on the admin server only and MUST take the principal in the request body, not in the URL.
 
 ### Key Entities
 

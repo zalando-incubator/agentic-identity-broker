@@ -3,7 +3,7 @@
 **Feature**: `056-business-event-ledger` | **Spec**: [spec.md](./spec.md)
 
 This guide verifies the feature by hand after delivery step 5 (first use case) and step 6
-(retention and erasure). Names follow the [contracts](./contracts/). Container-backed commands
+(retention). Names follow the [contracts](./contracts/). Container-backed commands
 need Docker; do not run them in a sandbox without it.
 
 ## 1. Enable the ledger (after step 5)
@@ -71,7 +71,7 @@ Stop PostgreSQL access to the table only (for example `REVOKE INSERT ON business
 `business event write failed` record with `event=business_event.ledger.write_failed`, and
 `business_events.write_failures` increased by one. Grant the privilege again afterwards.
 
-## 6. Retention and erasure (after step 6)
+## 6. Retention (after step 6)
 
 ```yaml
 business_events:
@@ -86,16 +86,6 @@ UPDATE business_events SET recorded_at = now() - interval '2 days' WHERE princip
 ```
 
 Within one minute the rows are gone and stdout has `business events expired` with `row_count`.
-
-Erasure through the admin server (send it through the admin proxy in a real deployment):
-
-```sh
-curl -i -X POST -H 'Content-Type: application/json' -H 'X-Remote-User: operator@example.com' \
-  -d '{"principal":"alice@example.com"}' \
-  http://localhost:14000/api/business-events/erasure
-# HTTP/1.1 200 OK
-# {"deleted_count": 3}
-```
 
 ## 7. Onboard another event (User Story 2)
 

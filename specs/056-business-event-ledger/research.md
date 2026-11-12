@@ -42,7 +42,7 @@ ledger handler is a sibling of the principal policy handler, behind the context 
 **Rationale**: Behind the context handler, the record already has `trace_id` and `actor`. Beside
 the policy handler, the ledger receives the typed `id.Principal`, not the policy output. Today the
 policy is identity. If it becomes a pseudonymisation, the ledger still stores the value that
-deletion by principal and per-user reads need (ADR 048, Decision 7). `NewMultiHandler` clones the
+per-user reads need (ADR 048, Decision 7). `NewMultiHandler` clones the
 record for each branch, so the branches cannot change each other's attributes.
 
 **Alternatives**: Behind the policy handler: the ledger would store the rendered principal and
@@ -133,32 +133,22 @@ The operational branch keeps its own level.
 checks each branch separately. With `log.level=warn`, an `Info` business event reaches the ledger
 branch and not stdout (FR-008). `Debug` records never carry a business event (LOGGING.md section 3).
 
-## R10. Retention and erasure
+## R10. Retention
 
 **Decision**: Retention runs in the broker process on a ticker, as `oauth2server.SessionCleanup`
 does (`internal/domain/oauth2server/session_cleanup.go`). Each run deletes rows with
-`recorded_at` older than the retention period in batches. Erasure by principal is an Admin API
-operation, `POST /api/business-events/erasure`, with the principal in the JSON body.
+`recorded_at` older than the retention period in batches. Retention is the only operation that
+removes rows. No operation updates a row (ADR 048, Decision 9).
 
 **Rationale**: An in-process ticker needs no CronJob and works with the memory adapter. A batched
 `DELETE ... WHERE id IN (SELECT ... LIMIT n)` keeps lock time short. Several replicas run the same
-idempotent delete; no leader election is needed. Erasure is rare and operator-initiated; the
-Admin API is where operators act (`POST /api/sessions/sweep` is the precedent). The principal goes
-in the body because LOGGING.md section 6.1 treats URL queries as sensitive and proxies log them.
+idempotent delete; no leader election is needed.
 
-Erasure deletes the principal's own events and changes no other row. A stored event is immutable
-(ADR 048, Decision 9, a maintainer decision). An event of another resource owner that names the
-erased principal as `actor` or `operator_principal` therefore stays until retention deletes it,
-at most one retention period after it was recorded. Redacting these values was rejected because
-it updates stored events. Deleting these events was rejected because it removes the history of
-other resource owners.
-
-**Alternatives**: A Helm CronJob that calls an admin endpoint for retention (session sweep
-pattern): more moving parts for a delete that needs no operator decision. A CLI subcommand for
-erasure: the binary has one command today and operators do not have database credentials.
-
-**Approval**: The erasure endpoint is a new Admin API operation and needs maintainer confirmation
-(plan.md, Approval Items, API-ERASURE).
+**Alternatives**: A Helm CronJob that calls an admin endpoint (session sweep pattern): more moving
+parts for a delete that needs no operator decision. An Admin API operation that erases the events
+of one principal: not necessary for the first iteration (maintainer decision, 2026-11-12).
+Retention limits how long a row stays. If erasure on request is needed later, it must delete
+whole rows.
 
 ## R11. Reading the ledger in this feature
 
@@ -199,5 +189,4 @@ domain. `internal/adapters/telemetry` already imports `internal/domain/id` and
 | Point | Resolved in |
 |---|---|
 | Approval of ADR 048, Decision 5 (after-commit write) | Delivery step 1 review |
-| Approval of the erasure endpoint (API-ERASURE) | Before delivery step 6 |
 | Measured write latency against SC-004 | Delivery step 5 |

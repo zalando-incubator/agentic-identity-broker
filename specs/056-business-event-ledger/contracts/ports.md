@@ -36,9 +36,6 @@ type BusinessEventRetention interface {
 	// DeleteRecordedBefore deletes up to limit events with RecordedAt before cutoff and
 	// returns the number deleted.
 	DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error)
-	// EraseByPrincipal deletes all events whose Principal equals principal and returns the
-	// number deleted. It changes no other event: a stored event is immutable.
-	EraseByPrincipal(ctx context.Context, principal id.Principal) (int64, error)
 }
 
 type BusinessEventFilter struct {
@@ -57,7 +54,7 @@ type BusinessEventCursor struct {
 | Adapter | Location | Notes |
 |---|---|---|
 | Memory | `internal/adapters/storage/memory/business_event.go` | Deep copies in and out. |
-| PostgreSQL | `internal/adapters/storage/postgres/business_event.go` | `sqlx`. `Append` and the delete operations use `a.db`, not `storageExecutor(ctx)` (research R4). `EraseByPrincipal` runs its two statements in its own transaction ([data-model.md](../data-model.md)). `DeleteRecordedBefore` uses `DELETE ... WHERE id IN (SELECT id ... ORDER BY recorded_at, id LIMIT $2)`. |
+| PostgreSQL | `internal/adapters/storage/postgres/business_event.go` | `sqlx`. `Append` and `DeleteRecordedBefore` use `a.db`, not `storageExecutor(ctx)` (research R4). `DeleteRecordedBefore` uses `DELETE ... WHERE id IN (SELECT id ... ORDER BY recorded_at, id LIMIT $2)`. |
 
 `storage.Adapter` (`internal/adapters/storage/factory.go`) gets the accessors `BusinessEvents()
 ports.BusinessEventAppender`, `BusinessEventReader()`, and, in step 6, `BusinessEventRetention()`.
@@ -98,8 +95,3 @@ is true and the storage adapter has no appender.
 until a call deletes fewer rows than the batch size or the context ends. It logs one `Info` record
 for a run that deleted rows and one `Error` record for a failed run
 ([observability.md](./observability.md)).
-
-## 5. Admin API (delivery step 6, needs approval API-ERASURE)
-
-Draft in [admin-business-events-openapi.yaml](./admin-business-events-openapi.yaml).
-`api/admin/openapi.yaml` changes only in step 6, after approval.

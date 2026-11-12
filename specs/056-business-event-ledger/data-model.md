@@ -67,7 +67,7 @@ Invariants:
 - `Attributes` contains nothing that LOGGING.md section 6.1 prohibits. The invariant holds because
   the event is built only from a log record; the repository does not check content.
 - A stored event is immutable (ADR 048, Decision 9). No port has an update operation. An event is
-  removed only as a whole, by retention or by the erasure of its principal.
+  removed only as a whole, by retention.
 
 `Validate()` checks the first invariant. `Copy()` returns a deep copy, as other models do.
 
@@ -104,7 +104,7 @@ other tables, so apply and rollback can repeat without loss elsewhere.
 | `event` | `event` attribute, `Definition.Name()` | Filter by event |
 | `occurred_at` | `slog.Record.Time` | Order of per-principal reads |
 | `recorded_at` | Database clock | Retention, later consumer cursors |
-| `principal` | `principal` attribute (`id.Principal`) | Per-principal reads, erasure |
+| `principal` | `principal` attribute (`id.Principal`) | Per-principal reads |
 | `actor` | `actor` attribute from the context handler | Display, investigation |
 | `trace_id` | `trace_id` attribute from the context handler | Correlation with traces and logs |
 | `attributes` | All other attributes | Consumers, by the canonical keys of LOGGING.md section 2.3 |
@@ -117,16 +117,6 @@ describes; that is its purpose.
 one. An onboarded event must not put a principal under any other attribute key (onboarding
 checklist).
 
-Erasure of a principal P is one statement:
-
-```sql
-DELETE FROM business_events WHERE principal = $1;
-```
-
-Erasure does not change a row of another resource owner in which P is `actor` or
-`operator_principal`, because a stored event is immutable. Such a row stays until retention
-deletes it, at most one retention period after it was recorded (FR-010).
-
 ## Memory adapter
 
 A slice ordered by insertion, guarded by the adapter's lock. `Append` stores a deep copy and sets
@@ -136,7 +126,7 @@ filter the slice. A duplicate ID returns `StorageError{Kind: Conflict}` in both 
 ## State
 
 A business event has no state transitions. Its lifecycle is: stored, then deleted by retention (`recorded_at` older than
-the retention period) or by the erasure of its principal.
+the retention period).
 
 ## Volume estimate
 

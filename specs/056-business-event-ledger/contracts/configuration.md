@@ -34,6 +34,6 @@ business_events:
 - `charts/agentic-identity-broker/`: `broker.businessEvents.*` values, `templates/configmap.yaml`,
   `values.schema.json`, and the chart README, in the step that adds the key. No new workload:
   retention runs in the broker Deployment.
-- `docs/operations/business-events.md` (step 6): enabling, retention, erasure, the accepted loss
+- `docs/operations/business-events.md` (step 6): enabling, retention, the accepted loss
   window (ADR 048), and the rule that the ledger is not enabled in production before step 6 is
   deployed (SR-003).
