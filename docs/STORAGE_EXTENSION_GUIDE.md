@@ -415,8 +415,8 @@ Before you submit a PR, run:
 # Format code
 gofmt -s -w internal/adapters/storage/mybackend/
 
-# Run linter
-golangci-lint run internal/adapters/storage/mybackend/
+# Run linter (the repository configuration needs the custom binary with the telemetrylint plugin)
+"$(bash scripts/golangci-lint-custom.sh)" run ./internal/adapters/storage/mybackend/...
 
 # Run tests with race detection
 go test -race ./internal/adapters/storage/mybackend/...

@@ -23,15 +23,16 @@ if ! go vet ./...; then
     exit 1
 fi
 
-# Check if golangci-lint passes (if installed)
+# Check if golangci-lint passes (if installed). The repository's .golangci.yml needs the
+# custom binary with the telemetrylint plugin, which `just lint` builds.
 if command -v golangci-lint > /dev/null; then
-    if ! golangci-lint run ./...; then
+    if ! just lint; then
         echo -e "${RED}✗ Linting failed${NC}"
         exit 1
     fi
 else
     echo -e "${YELLOW}⚠ golangci-lint not installed, skipping advanced linting${NC}"
-    echo "  Install it with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+    echo "  Install it with: just install-tools"
 fi
 
 echo -e "${GREEN}✓ All pre-commit checks passed${NC}"

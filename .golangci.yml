@@ -1,10 +1,66 @@
 version: "2"
 
+# Enforces the lint-checkable rules of coding-standards/LOGGING.md and
+# coding-standards/OPENTELEMETRY.md (issue #357). `just lint` runs this configuration with the
+# custom binary from .custom-gcl.yml, which adds the telemetrylint module plugin.
+# `just lint-rules` proves that a deliberate violation of each rule fails the lint
+# (tools/lintrules/testdata).
+
 linters:
   enable:
+    - depguard
     - forbidigo
+    - gocritic
     - sloglint
+    - telemetrylint
   settings:
+    depguard:
+      rules:
+        # OPENTELEMETRY.md section 1: only the telemetry adapter and the binaries' composition
+        # roots import the SDK, exporters, and contrib packages. The builder holds the SDK
+        # TracerProvider that tests inject (section 7).
+        otel-sdk:
+          files:
+            - "**/internal/**"
+            - "!$test"
+            - "!**/internal/adapters/telemetry/**"
+            - "!**/internal/app/builder.go"
+          deny:
+            - pkg: go.opentelemetry.io/otel/sdk
+              desc: Only internal/adapters/telemetry, internal/app/builder.go and cmd/ use the OpenTelemetry SDK (coding-standards/OPENTELEMETRY.md section 1).
+            - pkg: go.opentelemetry.io/otel/exporters
+              desc: Only internal/adapters/telemetry creates exporters (coding-standards/OPENTELEMETRY.md section 1).
+            - pkg: go.opentelemetry.io/contrib
+              desc: Only internal/adapters/telemetry, internal/app/builder.go and cmd/ use OpenTelemetry contrib packages (coding-standards/OPENTELEMETRY.md section 1).
+        # OPENTELEMETRY.md section 1: domain packages use only the OpenTelemetry API.
+        domain-otel-api:
+          list-mode: lax
+          files:
+            - "**/internal/domain/**"
+            - "!$test"
+          allow:
+            - go.opentelemetry.io/otel$
+            - go.opentelemetry.io/otel/attribute
+            - go.opentelemetry.io/otel/codes
+            - go.opentelemetry.io/otel/metric
+            - go.opentelemetry.io/otel/propagation
+            - go.opentelemetry.io/otel/trace
+          deny:
+            - pkg: go.opentelemetry.io
+              desc: Domain packages import only the OpenTelemetry API (coding-standards/OPENTELEMETRY.md section 1).
+            - pkg: github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry
+              desc: Domain packages must not import the telemetry adapter (coding-standards/OPENTELEMETRY.md section 1).
+        # ADR 027: only cmd/extproc-token-exchange bridges ExtProc to the broker packages.
+        extproc-boundary:
+          files:
+            - "**/internal/extproc/**"
+          deny:
+            - pkg: github.com/agentic-identity-broker/agentic-identity-broker/internal/ports
+              desc: ExtProc must not import internal/ports (ADR 027, coding-standards/OPENTELEMETRY.md section 1).
+            - pkg: github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry
+              desc: ExtProc must not import internal/adapters/telemetry (ADR 027, coding-standards/OPENTELEMETRY.md section 1).
+            - pkg: github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id
+              desc: ExtProc must not import internal/domain/id (ADR 027, coding-standards/LOGGING.md section 5.1).
     forbidigo:
       analyze-types: true
       forbid:
@@ -20,19 +76,139 @@ linters:
         - pattern: log\.Logger\)?\.(Print|Fatal|Panic|Output)(f|ln)?$
           pkg: ^log$
           msg: Log through the injected *slog.Logger (coding-standards/LOGGING.md section 1).
+        - pattern: ^slog\.Default$
+          pkg: ^log/slog$
+          msg: Require a *slog.Logger in the constructor instead (coding-standards/LOGGING.md section 1).
+        - pattern: \.RecordError$
+          pkg: ^go\.opentelemetry\.io/otel/trace$
+          msg: Set codes.Error and error.type with typed metadata instead (coding-standards/OPENTELEMETRY.md section 3.4).
+        - pattern: ^otelhttp\.(NewTransport|DefaultClient|Get|Head|Post|PostForm)$
+          pkg: ^go\.opentelemetry\.io/contrib/instrumentation/net/http/otelhttp$
+          msg: Instrument outbound HTTP only with telemetryhttp.NewTransport (coding-standards/OPENTELEMETRY.md section 1).
+    gocritic:
+      disable-all: true
+      enabled-checks:
+        - ruleguard
+      settings:
+        ruleguard:
+          rules: ${base-path}/tools/lintrules/ruleguard/rules.go
+          failOn: all
     sloglint:
       context: scope
       static-msg: true
+      msg-style: lowercased
       key-naming-case: snake
+      forbidden-keys:
+        - err
+        - cause
+        - action
+      no-global: all
+    custom:
+      telemetrylint:
+        type: module
+        description: Checks span, metric, attribute, principal, and credential rules of the OpenTelemetry and logging standards.
+        original-url: github.com/agentic-identity-broker/agentic-identity-broker/tools/telemetrylint
+        settings:
+          # OPENTELEMETRY.md section 2.
+          scopes:
+            - storage
+            - encryption
+            - jwks
+            - upstream
+            - telemetryhttp
+            - approval
+            - oauth2session
+            - tokenexchange
+            - extproc
+          principal-type: github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id.Principal
+          # ExtProc must not import id.Principal and sets the raw principal under a reserved key
+          # (OPENTELEMETRY.md section 4.3, rule 4).
+          principal-key-exempt-packages:
+            - /internal/extproc(/|$)
+          credential-types:
+            - github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model.Secret
   exclusions:
     paths:
       - web/node_modules
     rules:
-      - path: ^(cmd|tools)/
+      # LOGGING.md section 7: binaries and developer tools may write to stdout. Lint fixtures
+      # under tools/*/testdata are checked.
+      - path: ^(cmd/|tools/[^/]+/[^/]+\.go$)
         linters:
           - forbidigo
+        text: LOGGING\.md section 1
+      # LOGGING.md and OPENTELEMETRY.md apply to cmd/ and internal/ production code. Test code
+      # may use the default logger and capitalized messages.
+      - path: (^(tests|mocks)/|_test\.go$)
+        linters:
+          - sloglint
+        text: (message should be lowercased|global logger should not be used|default logger should not be used)
+      - path: (^(tests|mocks)/|_test\.go$)
+        linters:
+          - forbidigo
+        text: Require a \*slog\.Logger in the constructor
+      # Tests of the principal policy handler log a plain string under a reserved key on
+      # purpose: the handler's safety net must render it (LOGGING.md section 5.1, rule 5).
+      - path: ^internal/adapters/telemetry/.*_test\.go$
+        linters:
+          - gocritic
+        text: slog.String under a reserved principal key
       # LOGGING.md section 2.3: a namespaced family joins snake_case segments with dots.
       - linters:
           - sloglint
         text: keys should be written in snake_case
         source: '"token_exchange(\.[a-z0-9_]+)+"'
+      # `action` here is a value of the OPA decision (spec 020) or the authorize decision, not
+      # an event discriminator (LOGGING.md section 2.2).
+      - path: ^internal/(extproc/authorization/authorizer|adapters/http/enduser/oauth2_authorize)\.go$
+        linters:
+          - sloglint
+        text: '"action" key is forbidden'
+
+      # Existing violations. Remove each rule when the change that fixes it lands, so that the
+      # rule then holds for the whole repository.
+
+      # LOGGING.md section 1: these adapters log through the global logger because their
+      # constructors do not take a *slog.Logger yet.
+      - path: ^internal/(adapters/encryption/aws/(adapter|keystore)|adapters/storage/postgres/adapter|extproc/approval/(cache|gate))\.go$
+        linters:
+          - sloglint
+        text: default logger should not be used
+      # #349: approval spans set approval.principal as a plain string until #356 provides
+      # id.Principal.SpanAttribute.
+      - path: ^internal/domain/approval/service\.go$
+        linters:
+          - gocritic
+          - telemetrylint
+        text: (principal rendered as a string attribute|principal-key:)
+      # #350: manual spans without trace.WithSpanKind.
+      - path: ^internal/(domain/(approval|tokenexchange)/service|domain/oauth2session/background_refresh|adapters/encryption/aws/adapter|adapters/http/enduser/(oauth2_token|token_grant_strategy)|adapters/jwks/adapter|extproc/approval/gate|extproc/authorization/authorizer|extproc/server/exchanger)\.go$
+        linters:
+          - telemetrylint
+        text: "span-kind:"
+      # OPENTELEMETRY.md section 3.2: a span rename is a breaking change for trace queries and
+      # needs a changelog entry, so these names change in their own pull request.
+      - path: ^internal/(telemetryhttp/transport|adapters/http/enduser/token_grant_strategy)\.go$
+        linters:
+          - telemetrylint
+        text: 'span-name: span name "(http\.request|oauth2\.token_proxy)"'
+      # #352: metric names outside the <scope>.<noun>[.<qualifier>] scheme.
+      - path: ^internal/(domain/oauth2session/(background_refresh|health_metrics|sweep)|domain/approval/service|adapters/http/handlers/(admin/session_sweep_handler|approval/sync_handler)|extproc/approval/gate)\.go$
+        linters:
+          - telemetrylint
+        text: "metric-name:"
+      # #353: instruments without a description or unit, or with a discarded constructor error.
+      - path: ^internal/extproc/(approval/gate|server/server)\.go$
+        linters:
+          - telemetrylint
+        text: "metric-metadata:"
+      - path: ^internal/(adapters/http/handlers/(admin/session_sweep_handler|approval/sync_handler)|domain/approval/service|domain/oauth2session/(background_refresh|sweep))\.go$
+        linters:
+          - gocritic
+        text: instrument constructor error discarded
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Report every rule that a line breaks, not only the first.
+  uniq-by-line: false

@@ -34,6 +34,7 @@ require (
 	github.com/open-policy-agent/opa v1.21.4
 	github.com/open-policy-agent/opa-envoy-plugin v1.21.2-envoy-3
 	github.com/ory/fosite v0.49.0
+	github.com/quasilyte/go-ruleguard/dsl v0.3.23
 	github.com/riandyrn/otelchi v0.12.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sony/gobreaker/v2 v2.4.0
