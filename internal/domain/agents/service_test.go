@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,14 +24,15 @@ type mockAgentRepo struct {
 	ports.AgentRepository
 	agents map[id.AgentID]*storage.Agent
 
-	createFn         func(ctx context.Context, agent *storage.Agent) error
-	getFn            func(ctx context.Context, id id.AgentID) (*storage.Agent, error)
-	updateFn         func(ctx context.Context, agent *storage.Agent) error
-	deleteFn         func(ctx context.Context, id id.AgentID) (bool, error)
-	listFn           func(ctx context.Context) ([]*storage.Agent, error)
-	getByClientIDFn  func(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
-	existsOtherFn    func(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
-	getByClientURIFn func(ctx context.Context, uri string) (*storage.Agent, error)
+	createFn           func(ctx context.Context, agent *storage.Agent) error
+	getFn              func(ctx context.Context, id id.AgentID) (*storage.Agent, error)
+	updateFn           func(ctx context.Context, agent *storage.Agent) error
+	deleteFn           func(ctx context.Context, id id.AgentID) (bool, error)
+	listFn             func(ctx context.Context) ([]*storage.Agent, error)
+	listByExternalIDFn func(ctx context.Context, externalID id.ExternalID) ([]*storage.Agent, error)
+	getByClientIDFn    func(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
+	existsOtherFn      func(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
+	getByClientURIFn   func(ctx context.Context, uri string) (*storage.Agent, error)
 }
 
 func newMockAgentRepo() *mockAgentRepo {
@@ -78,6 +80,22 @@ func (m *mockAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) {
 		return m.listFn(ctx)
 	}
 	return nil, nil
+}
+
+func (m *mockAgentRepo) GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error) {
+	if m.listByExternalIDFn != nil {
+		matches, err := m.listByExternalIDFn(ctx, externalID)
+		if err != nil {
+			return nil, err
+		}
+		if len(matches) > 1 {
+			return nil, storage.NewStorageError("GetByExternalID", storage.ErrorKindUnknown, nil, "invalid mock response")
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
+	}
+	return nil, storage.NewStorageError("GetByExternalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
 }
 
 func (m *mockAgentRepo) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
@@ -131,7 +149,7 @@ func (m *mockServiceReqValidator) ValidateServiceRequirements(_ context.Context,
 }
 
 func newTestService(repo ports.AgentRepository, multiAgent bool) *Service {
-	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent)
+	return NewService(repo, &mockServiceReqValidator{}, slog.Default(), multiAgent, nil)
 }
 
 func testPermissionSets() []storage.AgentPermissionSetEntry {
@@ -269,7 +287,7 @@ func TestUpdate_PreservesExistingClientID(t *testing.T) {
 		UpdatedAt:      time.Now().UTC(),
 	}
 
-	err := svc.Update(context.Background(), agentID, update, false)
+	err := svc.Update(context.Background(), agentID, update, UpdateInput{})
 	require.NoError(t, err)
 	assert.Equal(t, ptr.To(id.ClientID("original-client")), update.ClientID)
 	assert.Equal(t, existing.CreatedAt, update.CreatedAt, "CreatedAt should be preserved")
@@ -289,15 +307,15 @@ func TestUpdate_ClearsCanonicalID(t *testing.T) {
 	}
 
 	update := &storage.Agent{
-		ClearCanonicalID: true,
-		DisplayName:      "Updated",
-		Description:      "Updated description",
-		PermissionSets:   testPermissionSets(),
-		UpdatedAt:        time.Now().UTC(),
+		DisplayName:    "Updated",
+		Description:    "Updated description",
+		PermissionSets: testPermissionSets(),
+		UpdatedAt:      time.Now().UTC(),
 	}
 
-	require.NoError(t, svc.Update(context.Background(), agentID, update, false))
+	require.NoError(t, svc.Update(context.Background(), agentID, update, UpdateInput{CanonicalIDPresent: true}))
 	assert.Nil(t, update.CanonicalID)
+	assert.Nil(t, repo.agents[agentID].CanonicalID)
 }
 
 func TestUpdate_EnforcesUniquenessOnClientIDChange(t *testing.T) {
@@ -331,7 +349,7 @@ func TestUpdate_EnforcesUniquenessOnClientIDChange(t *testing.T) {
 		UpdatedAt:      time.Now().UTC(),
 	}
 
-	err := svc.Update(context.Background(), agentB.ID, update, false)
+	err := svc.Update(context.Background(), agentB.ID, update, UpdateInput{})
 	require.Error(t, err)
 
 	var storageErr *storage.StorageError
@@ -403,6 +421,36 @@ func TestResolveIDAcceptsUUIDCanonicalAndRejectsUnknown(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestListByExternalIDRejectsInvalidValuesBeforeStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		value   id.ExternalID
+		message string
+	}{
+		{name: "empty", value: "", message: "1 to 255 characters"},
+		{name: "too many ASCII code points", value: id.ExternalID(strings.Repeat("x", 256)), message: "1 to 255 characters"},
+		{name: "too many Unicode code points", value: id.ExternalID(strings.Repeat("é", 256)), message: "1 to 255 characters"},
+		{name: "invalid UTF-8", value: id.ExternalID(string([]byte{0xff})), message: "UTF-8"},
+		{name: "NUL", value: "a\x00b", message: "NUL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockAgentRepo()
+			called := false
+			repo.listByExternalIDFn = func(context.Context, id.ExternalID) ([]*storage.Agent, error) {
+				called = true
+				return []*storage.Agent{}, nil
+			}
+			agents, err := newTestService(repo, false).ListByExternalID(context.Background(), tc.value)
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, storage.ErrorKindValidation, storageErr.Kind)
+			assert.Contains(t, storageErr.Message, tc.message)
+			assert.Nil(t, agents)
+			assert.False(t, called, "invalid filter must not reach storage")
+		})
+	}
+}
+
 func TestDeleteLogsOnlyActualDeletion(t *testing.T) {
 	t.Parallel()
 	deleteCause := errors.New("agent delete failed")
@@ -426,7 +474,7 @@ func TestDeleteLogsOnlyActualDeletion(t *testing.T) {
 				repo.deleteFn = func(context.Context, id.AgentID) (bool, error) { return false, tc.err }
 			}
 			var logs bytes.Buffer
-			svc := NewService(repo, nil, slog.New(slog.NewJSONHandler(&logs, nil)), false)
+			svc := NewService(repo, nil, slog.New(slog.NewJSONHandler(&logs, nil)), false, nil)
 			err := svc.Delete(context.Background(), agentID)
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
@@ -479,7 +527,7 @@ func agentAuditFields(t *testing.T, record slog.Record) map[string]any {
 func TestCreateAuditContainsOnlyDefensiveTypedDefinitions(t *testing.T) {
 	repo := newMockAgentRepo()
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true, nil)
 	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
 	agent := &storage.Agent{
 		ID: id.NewAgentID(), ClientID: ptr.To(id.ClientID("PRIVATE_AGENT_METADATA")),
@@ -495,6 +543,7 @@ func TestCreateAuditContainsOnlyDefensiveTypedDefinitions(t *testing.T) {
 		},
 	}
 	want := agent.Copy()
+	svc.permissionSets = coveredPermissionSets(agent.ServiceRequirements)
 	require.NoError(t, svc.Create(ctx, agent))
 	require.Len(t, capture.records, 1)
 	assert.Equal(t, "agent created", capture.records[0].Message)
@@ -542,9 +591,10 @@ func TestUpdateAuditPreservesObservedBeforeAndNewDefinitions(t *testing.T) {
 		return nil
 	}
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true, nil)
 	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
-	require.NoError(t, svc.Update(ctx, previous.ID, agent, false))
+	svc.permissionSets = coveredPermissionSets(agent.ServiceRequirements)
+	require.NoError(t, svc.Update(ctx, previous.ID, agent, UpdateInput{}))
 	assert.Equal(t, 1, writes)
 	require.Len(t, capture.records, 1)
 	assert.Equal(t, "agent updated", capture.records[0].Message)
@@ -569,8 +619,8 @@ func TestUpdateAuditsSuccessfulUnchangedDefinition(t *testing.T) {
 	writes := 0
 	repo.updateFn = func(context.Context, *storage.Agent) error { writes++; return nil }
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true)
-	require.NoError(t, svc.Update(context.Background(), agent.ID, agent, false))
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(capture), true, nil)
+	require.NoError(t, svc.Update(context.Background(), agent.ID, agent, UpdateInput{}))
 	assert.Equal(t, 1, writes)
 	require.Len(t, capture.records, 1)
 	assert.Equal(t, "agent_updated", agentAuditFields(t, capture.records[0])["action"])
@@ -607,13 +657,13 @@ func TestFailedAgentMutationsEmitNoSuccessfulAudit(t *testing.T) {
 				agent.DisplayName = ""
 			}
 			capture := &agentAuditCapture{}
-			svc := NewService(repo, &mockServiceReqValidator{err: tc.validationErr}, slog.New(capture), true)
+			svc := NewService(repo, &mockServiceReqValidator{err: tc.validationErr}, slog.New(capture), true, nil)
 			var err error
 			switch tc.operation {
 			case "create":
 				err = svc.Create(context.Background(), agent)
 			case "update":
-				err = svc.Update(context.Background(), agent.ID, agent, false)
+				err = svc.Update(context.Background(), agent.ID, agent, UpdateInput{})
 			case "delete":
 				err = svc.Delete(context.Background(), agent.ID)
 			}
@@ -633,7 +683,7 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	agentID := id.NewAgentID()
 	repo.agents[agentID] = &storage.Agent{ID: agentID}
 	capture := &agentAuditCapture{}
-	svc := NewService(repo, nil, slog.New(capture), true)
+	svc := NewService(repo, nil, slog.New(capture), true, nil)
 	ctx := context.WithValue(context.Background(), agentAuditContextKey{}, "operation-context")
 	require.NoError(t, svc.Delete(ctx, agentID))
 	require.NoError(t, svc.Delete(ctx, agentID))

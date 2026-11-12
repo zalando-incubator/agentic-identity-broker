@@ -120,7 +120,8 @@ func (r *inputRejection) Diagnostic() Diagnostic {
 	if detail == "" {
 		detail = DetailRequestMalformed
 	}
-	return NewDiagnostic(StageRequestValidation, detail)
+	// inputRejectionResponse answers every rejected input with a 503.
+	return NewDiagnostic(StageRequestValidation, detail).asServerError(KindRejected)
 }
 
 type requestLoggerKey struct{}
@@ -289,7 +290,7 @@ func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Con
 	metricsEnabled := s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Metrics.Enabled
 	var span trace.Span
 	if tracesEnabled {
-		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange")
+		ctx, span = otel.Tracer("extproc").Start(ctx, "extproc.token_exchange", trace.WithSpanKind(trace.SpanKindServer))
 	}
 	finished := false
 	return ctx, func(diagnostic Diagnostic) {
@@ -304,7 +305,8 @@ func (s *Server) beginTokenExchangeObservation(ctx context.Context) (context.Con
 				n = 4
 			}
 			span.SetAttributes(attrs[:n]...)
-			if diagnostic.Outcome() != OutcomeSuccess {
+			if diagnostic.serverError != "" && diagnostic.Outcome() != OutcomeCanceled {
+				span.SetAttributes(attribute.String("error.type", string(diagnostic.serverError)))
 				span.SetStatus(otelcodes.Error, "token exchange failed")
 			}
 			span.End()
@@ -446,14 +448,10 @@ func (s *Server) processRequestHeaders(ctx context.Context, req *extprocv3.Proce
 		logDiagnostic(ctx, logger, slog.LevelWarn, "extproc: token-exchange metadata rejected", diagnostic)
 		return inputRejectionResponse(rejection)
 	}
-	protocol, _ := extractProtocolFromMetadata(req)
-	if protocol == "" {
-		protocol = "mcp"
-	}
 	result, err := s.exchanger.Exchange(ctx, input.subjectToken, input.resourceURI)
 	if err != nil {
 		var response *extprocv3.ProcessingResponse
-		response, diagnostic = s.exchangeErrorResponse(ctx, protocol, err)
+		response, diagnostic = s.exchangeErrorResponse(ctx, err)
 		return response
 	}
 	logDiagnostic(ctx, logger, slog.LevelDebug, "token exchanged successfully", diagnostic)
@@ -526,7 +524,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 
 	exchangeResult, exchErr := s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
 	if exchErr != nil {
-		response, failure := s.exchangeErrorResponse(ctx, protocol, exchErr)
+		response, failure := s.exchangeErrorResponse(ctx, exchErr)
 		diagnostic = failure
 		return response, nil
 	}
@@ -659,7 +657,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 
 	exchangeResult, exchErr := s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
 	if exchErr != nil {
-		response, failure := s.exchangeErrorResponse(ctx, state.protocol, exchErr)
+		response, failure := s.exchangeErrorResponse(ctx, exchErr)
 		diagnostic = failure
 		return response
 	}
@@ -886,7 +884,7 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 	return immediateResponse(httpv3.StatusCode_Forbidden, string(body403))
 }
 
-func (s *Server) exchangeErrorResponse(ctx context.Context, protocol string, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
+func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
 	metadata := metadataFromError(ctx, err)
 	diagnostic := diagnosticFromError(ctx, err)
 	var brokerErr *BrokerExchangeError
@@ -894,29 +892,24 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, protocol string, err
 	if s.cfg.Telemetry.Enabled && s.cfg.Telemetry.Traces.Enabled {
 		span := trace.SpanFromContext(ctx)
 		span.SetAttributes(
-			attribute.String("operation", string(metadata.Operation())),
-			attribute.String("error.kind", string(metadata.Kind())),
-			attribute.String("dependency", string(metadata.Dependency())),
+			attribute.String("token_exchange.operation", string(metadata.Operation())),
+			attribute.String("error.type", string(metadata.Kind())),
+			attribute.String("token_exchange.dependency", string(metadata.Dependency())),
 		)
 		if hasBrokerError {
 			span.SetAttributes(
 				attribute.Int("token_exchange.broker_status_code", metadata.StatusCode()),
-				attribute.String("token_exchange.broker_error_code", metadata.OAuthCode()),
+				attribute.String("token_exchange.oauth_error_code", metadata.OAuthCode()),
 			)
 		}
 	}
 	logger := loggerFromContext(ctx, s.logger)
 	if hasBrokerError && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
-		if protocol == "mcp" {
-			logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning URLElicitationRequiredError", metadata, diagnostic)
-			return urlElicitationResponse(brokerErr.ErrorURI, brokerErr.Description, nil), diagnostic
-		}
-		logOperationError(ctx, logger, slog.LevelWarn, "token exchange requires re-authentication but protocol is non-MCP — returning 503", metadata, diagnostic)
-		return immediateResponse(httpv3.StatusCode_ServiceUnavailable,
-			`{"error":"service_unavailable","error_description":"token exchange requires re-authentication"}`), diagnostic
+		logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning 403 insufficient_scope challenge", metadata, diagnostic)
+		return reauthChallengeResponse(brokerErr.ErrorURI, brokerErr.Description), diagnostic
 	}
 
-	return s.tokenExchangeErrorResponse(ctx, err), diagnostic
+	return s.tokenExchangeErrorResponse(ctx, err), diagnostic.asServerError(metadata.Kind())
 }
 
 func extractTokenExchangeInput(req *extprocv3.ProcessingRequest) (tokenExchangeInput, *inputRejection) {
@@ -1276,8 +1269,8 @@ func immediateResponse(code httpv3.StatusCode, body string) *extprocv3.Processin
 	}
 }
 
-// immediateResponseWithHeaders builds an ImmediateResponse with extra response headers
-// in addition to the standard content-type. Used for 405 responses that require Allow.
+// immediateResponseWithHeaders adds headers to the standard JSON content type for
+// 405 Allow and 403 WWW-Authenticate responses.
 func immediateResponseWithHeaders(code httpv3.StatusCode, body string, extra map[string]string) *extprocv3.ProcessingResponse {
 	headers := []*corev3.HeaderValueOption{
 		{Header: &corev3.HeaderValue{Key: "content-type", RawValue: []byte("application/json")}},
@@ -1300,14 +1293,18 @@ func immediateResponseWithHeaders(code httpv3.StatusCode, body string, extra map
 
 // urlElicitationResponse builds an MCP URL elicitation JSON-RPC response.
 func urlElicitationResponse(approvalURL, message string, rawID json.RawMessage) *extprocv3.ProcessingResponse {
-	elicitErr := mcp.URLElicitationRequiredError{Elicitations: []mcp.ElicitationParams{{Mode: mcp.ElicitationModeURL, ElicitationID: uuid.New().String(), URL: approvalURL, Message: message}}}
+	return immediateResponse(httpv3.StatusCode_OK, urlElicitationBody(approvalURL, message, rawID))
+}
+
+func urlElicitationBody(url, message string, rawID json.RawMessage) string {
+	elicitErr := mcp.URLElicitationRequiredError{Elicitations: []mcp.ElicitationParams{{Mode: mcp.ElicitationModeURL, ElicitationID: uuid.New().String(), URL: url, Message: message}}}
 	jsonRPCErr := elicitErr.JSONRPCError()
 	if rawID != nil {
 		jsonRPCErr.ID = mcp.NewRequestId(rawID)
 	}
 	jsonRPCErr.Error.Message = message
 	body, _ := json.Marshal(jsonRPCErr)
-	return immediateResponse(httpv3.StatusCode_OK, string(body))
+	return string(body)
 }
 
 func configuredHeader(headers map[string]string, name string) string {

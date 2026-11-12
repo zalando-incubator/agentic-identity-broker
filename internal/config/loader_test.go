@@ -328,6 +328,8 @@ func TestTokenExchangeExpectedAudienceConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "token-exchange-broker", cfg.TokenExchange.ExpectedAudience,
 			"expected_audience should default to token-exchange-broker via Viper SetDefault")
+		assert.Empty(t, cfg.TokenExchange.ClientAssertion.ExpectedAudience,
+			"client assertion audience should inherit the token exchange audience when omitted")
 	})
 
 	t.Run("expected_audience is overridden by environment variable", func(t *testing.T) {
@@ -341,6 +343,19 @@ func TestTokenExchangeExpectedAudienceConfiguration(t *testing.T) {
 		assert.Equal(t, "my-custom-gateway-audience", cfg.TokenExchange.ExpectedAudience,
 			"expected_audience should be overridden by IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE env var")
 	})
+
+	t.Run("client assertion expected_audience is overridden independently", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_EXPECTED_AUDIENCE", "subject-token-audience")
+		t.Setenv("IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE", "client-assertion-audience")
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, "subject-token-audience", cfg.TokenExchange.ExpectedAudience)
+		assert.Equal(t, "client-assertion-audience", cfg.TokenExchange.ClientAssertion.ExpectedAudience)
+	})
 }
 
 func TestSigningKeyBootstrapTimeoutConfiguration(t *testing.T) {
@@ -353,6 +368,29 @@ func TestSigningKeyBootstrapTimeoutConfiguration(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, 37*time.Second, cfg.OAuth2AuthServer.Local.SigningKeys.BootstrapTimeout)
+	})
+}
+
+func TestClientSecretHashingConfiguration(t *testing.T) {
+	t.Run("max_concurrent defaults to 2", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, 2, cfg.OAuth2AuthServer.Local.ClientSecretHashing.MaxConcurrent)
+	})
+
+	t.Run("max_concurrent is overridden by environment variable", func(t *testing.T) {
+		setMinimalConfigEnv(t)
+		t.Setenv("IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT", "5")
+
+		loader := NewLoader()
+		cfg, err := loader.GetConfig(context.Background())
+
+		require.NoError(t, err)
+		assert.Equal(t, 5, cfg.OAuth2AuthServer.Local.ClientSecretHashing.MaxConcurrent)
 	})
 }
 
@@ -1014,6 +1052,8 @@ func tokenRefreshCommand(t *testing.T, args ...string) *cobra.Command {
 	cmd.Flags().Duration("token_refresh.lookahead_duration", 0, "")
 	cmd.Flags().Int("token_refresh.background_workers", 0, "")
 	cmd.Flags().Int("token_refresh.sweep.default_page_size", 0, "")
+	cmd.Flags().Bool("token_refresh.health_metrics.enabled", false, "")
+	cmd.Flags().Duration("token_refresh.health_metrics.query_timeout", 0, "")
 	require.NoError(t, cmd.ParseFlags(args))
 	return cmd
 }
@@ -1069,6 +1109,54 @@ func TestTokenRefreshConfigurationPrecedence(t *testing.T) {
 	}
 }
 
+func TestTokenRefreshHealthMetricsConfigurationPrecedence(t *testing.T) {
+	const file = "token_refresh:\n  health_metrics:\n    enabled: false\n    query_timeout: 7s\n"
+	tests := []struct {
+		name         string
+		file         string
+		env          bool
+		cli          bool
+		enabled      bool
+		queryTimeout time.Duration
+	}{
+		{name: "defaults", enabled: true, queryTimeout: 5 * time.Second},
+		{name: "file overrides defaults", file: file, enabled: false, queryTimeout: 7 * time.Second},
+		{name: "environment overrides file", file: file, env: true, enabled: true, queryTimeout: 8 * time.Second},
+		{name: "CLI overrides environment and file", file: file, env: true, cli: true, enabled: false, queryTimeout: 9 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMinimalConfigEnv(t)
+			contents := tt.file
+			if contents == "" {
+				contents = "{}\n"
+			}
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+			t.Setenv("IDENTITY_BROKER_CONFIG_PATH", path)
+
+			if tt.env {
+				t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED", "true")
+				t.Setenv("IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT", "8s")
+			}
+
+			loader := NewLoader()
+			if tt.cli {
+				loader.SetCommand(tokenRefreshCommand(t,
+					"--token_refresh.health_metrics.enabled=false",
+					"--token_refresh.health_metrics.query_timeout=9s",
+				))
+			}
+
+			cfg, err := loader.GetConfig(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, tt.enabled, cfg.TokenRefresh.HealthMetrics.Enabled)
+			assert.Equal(t, tt.queryTimeout, cfg.TokenRefresh.HealthMetrics.QueryTimeout)
+		})
+	}
+}
+
 func TestTokenRefreshConfigurationRejectsInvalidSettings(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -1079,6 +1167,7 @@ func TestTokenRefreshConfigurationRejectsInvalidSettings(t *testing.T) {
 		{"zero lookahead", "IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION", "0s", "token_refresh.lookahead_duration"},
 		{"workers above pool cap", "IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS", "21", "token_refresh.background_workers"},
 		{"page size above maximum", "IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE", "1001", "token_refresh.sweep.default_page_size"},
+		{"zero health query timeout", "IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT", "0s", "token_refresh.health_metrics.query_timeout"},
 	}
 
 	for _, tt := range tests {

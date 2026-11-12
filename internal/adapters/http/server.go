@@ -167,11 +167,13 @@ func NewHandler(config ServerConfig, routeSetup func(chi.Router), logger *slog.L
 			otelchi.WithChiRoutes(router),
 			otelchi.WithRequestMethodInSpanName(true),
 			otelchi.WithPropagators(otel.GetTextMapPropagator()),
+			// Probes hit /health every few seconds; tracing them only adds noise.
+			otelchi.WithFilter(func(r *http.Request) bool { return r.URL.Path != "/health" }),
 		)))
 	}
 	router.Use(middleware.OptionalPrincipalMiddleware(config.Authentication, config.JWTAuthenticator, logger))
 	router.Use(middleware.SecurityContextMiddleware(requestContext, config.Telemetry.Enabled && config.Telemetry.Traces.Enabled))
-	router.Use(LoggingMiddleware(logger, "/api/", "/oauth2/", "/.well-known/", "/health"))
+	router.Use(LoggingMiddleware(logger, "/api/", "/oauth2/", "/.well-known/"))
 	router.Use(ContextRecoveryMiddleware(logger, requestContext.Trace.ResponseEnabled))
 	routeSetup(router)
 	return router
@@ -197,7 +199,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 	atomic.StoreInt32(&s.healthState, int32(HealthStateHealthy))
 	s.startTime = time.Now()
 
-	s.logger.Info("Server started serving requests",
+	s.logger.InfoContext(ctx, "Server started serving requests",
 		"address", listener.Addr().String())
 
 	// Start serving (blocking call)
@@ -212,7 +214,7 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener) error {
 // Shutdown initiates graceful shutdown of the server.
 // Sets health state to shutting down, then calls http.Server.Shutdown with timeout.
 func (s *Server) Shutdown(parentCtx context.Context, timeout time.Duration) error {
-	s.logger.Info("Initiating graceful shutdown",
+	s.logger.InfoContext(parentCtx, "Initiating graceful shutdown",
 		"timeout", timeout)
 
 	// Set health state to shutting down
@@ -224,11 +226,11 @@ func (s *Server) Shutdown(parentCtx context.Context, timeout time.Duration) erro
 
 	// Shutdown with timeout
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		s.logger.Error("Shutdown error", "error", err)
+		s.logger.ErrorContext(parentCtx, "Shutdown error", "error", err)
 		return fmt.Errorf("shutdown failed: %w", err)
 	}
 
-	s.logger.Info("Server shut down successfully")
+	s.logger.InfoContext(parentCtx, "Server shut down successfully")
 	return nil
 }
 

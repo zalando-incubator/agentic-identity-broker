@@ -1,309 +1,147 @@
 # Architecture Overview
 
-This document serves as a critical, living template designed to equip agents with a rapid and comprehensive understanding of the codebase's architecture, enabling efficient navigation and effective contribution from day one. Update this document as the codebase evolves.
+This document describes the broker, its standalone ExtProc service, and their trust boundaries.
+The [constitution](.specify/memory/constitution.md) and accepted decisions in [the ADR index](#10-architecture-decision-records-adrs) govern changes.
+Source links identify the implementation or contract behind each overview.
 
 ## 1. Project Structure
 
-This section provides a high-level overview of the project's directory and file structure, categorised by architectural layer or major functional area. It is essential for quickly navigating the codebase, locating relevant files, and understanding the overall organization and separation of concerns.
+| Path | Responsibility |
+|---|---|
+| [cmd/](cmd/) | Broker and ExtProc executable entry points |
+| [internal/domain/](internal/domain/) | Broker domain models and services |
+| [internal/ports/](internal/ports/) | Configuration and infrastructure contracts |
+| [internal/adapters/](internal/adapters/) | HTTP, storage, encryption, and external-service adapters |
+| [internal/app/](internal/app/) | Broker dependency construction |
+| [internal/config/](internal/config/) | Broker configuration loading and validation |
+| [internal/extproc/](internal/extproc/) | Standalone ExtProc configuration and request processing |
+| [web/src/](web/src/) | React pages, hooks, API clients, and shared design system |
+| [api/](api/) | End-user and administrative OpenAPI contracts |
+| [migrations/](migrations/) | PostgreSQL up and down migrations |
+| [tests/](tests/) | Backend, ExtProc, browser, and integration suites |
+| [configs/](configs/) and [examples/config/](examples/config/) | Environment configuration and operator examples |
+| [build/docker/](build/docker/) | Broker, ExtProc, migration, and development container definitions |
+| [charts/agentic-identity-broker/](charts/agentic-identity-broker/) | Broker Helm deployment |
+| [infra/cdk/](infra/cdk/) | AWS encryption infrastructure |
+| [mocks/](mocks/) | Local OAuth2, CIMD, gateway, and MCP services |
+| [scripts/](scripts/) and [justfile](justfile) | Development and verification commands |
+| [docs/](docs/) and [assets/docusaurus/](assets/docusaurus/) | Operator documentation and documentation-site tooling |
+| [specs/](specs/) and [adrs/](adrs/) | Feature artifacts and architecture decisions |
+| [.github/workflows/](.github/workflows/) | CI, security, coverage, and release workflows |
 
-```
-[Project Root]/
-
-├── cmd/                  # Main source code for backend services
-├── internal/             # Code that is internal
-├── pkg/                  # Code that is ok to be used when this is
-├── config/               # Backend configuration files
-├── test/                 # Backend unit and integration tests
-├── build/Dockerfile      # Dockerfile for backend deployment
-├── web/                  # Single Page Application (Consent Frontend)
-│   ├── src/              # Main source code for React application
-│   │   ├── components/   # Reusable UI components
-│   │   │   ├── consent/  # Consent-specific components (DelegationCard, ServiceCard, etc.)
-│   │   │   ├── layout/   # Layout components (AppLayout)
-│   │   │   └── ui/       # Generic UI components (Button, Switch, DatePicker, etc.)
-│   │   ├── pages/        # Application pages/views (ConsentOverviewPage, AgentGrantDetailPage)
-│   │   ├── hooks/        # Custom React hooks (useConsent, useAgentGrants, useToggleGrant)
-│   │   ├── services/     # Frontend services
-│   │   │   ├── api/      # API client and service layer (axios-based)
-│   │   │   └── storage/  # Client-side storage utilities
-│   │   ├── types/        # TypeScript type definitions
-│   │   ├── utils/        # Utility functions (validation, formatting)
-│   │   ├── assets/       # Images, fonts, and other static assets
-│   │   └── styles/       # Global styles (Tailwind CSS)
-│   ├── public/           # Publicly accessible assets (favicon, etc.)
-│   ├── dist/             # Build output directory (served by Go backend)
-│   ├── tests/            # Frontend unit and integration tests (Vitest)
-│   ├── package.json      # Frontend dependencies and scripts
-│   ├── vite.config.ts    # Vite build configuration
-│   ├── tsconfig.json     # TypeScript solution references
-│   ├── tsconfig.app.json # App TypeScript configuration
-│   ├── tsconfig.test.json # Test TypeScript configuration
-│   ├── tsconfig.build.json # Build TypeScript configuration
-│   └── tailwind.config.ts # Tailwind CSS v4.0 configuration
-├── docs/                 # Project documentation (e.g., API docs, setup guides)
-├── ARCHITECTURE.md       # Internal system design and domain glossary
-├── infra/                # Infrastructure as Code
-│   └── cdk/              # AWS CDK (Go) – encryption infrastructure (KMS, DynamoDB, IAM)
-├── scripts/              # Automation scripts (e.g., deployment, data seeding)
-├── .github/              # GitHub Actions or other CI/CD configurations
-├── .gitignore            # Specifies intentionally untracked files to ignore
-├── README.md             # Project overview and quick start guide
-└── ARCHITECTURE.md       # This document
-```
+Generated outputs are not source packages. The [build recipes](justfile) produce binaries in `bin/` and the [Vite build](web/vite.config.ts) produces `web/dist/`.
+Dependency versions belong to [go.mod](go.mod), [web/package.json](web/package.json), [web/package-lock.json](web/package-lock.json), and [infra/cdk/go.mod](infra/cdk/go.mod).
 
 ## 2. High-Level System Diagram
 
-Provide a simple block diagram (e.g., a C4 Model Level 1: System Context diagram, or a basic component diagram) or a clear text-based description of the major components and their interactions. Focus on how data flows, services communicate, and key architectural boundaries.
+```mermaid
+flowchart LR
+    Browser[User browser] --> Proxy[Trusted authentication proxy]
+    Proxy --> EndUser[Broker end-user server]
+    Admin[Administrative client] --> AdminServer[Broker admin server]
+    EndUser --> Domain[Broker domain services]
+    AdminServer --> Domain
+    Domain --> Ports[Ports and adapters]
+    Ports --> Postgres[(PostgreSQL)]
+    Ports --> Encryption[AWS KMS and DynamoDB]
+    Ports --> OAuth[Third-party OAuth2 providers]
+    Agent[Agent client] --> Gateway[Gateway]
+    Gateway <-->|ExtProc gRPC| ExtProc[Standalone ExtProc]
+    ExtProc -->|Token exchange and approval API| EndUser
+    Gateway --> Target[Protected service]
+```
 
-```
-[User] <--> [Frontend Application] <--> [Backend Service 1] <--> [Database 1]
-                                    |
-                                    +--> [Backend Service 2] <--> [External API]
-```
+The diagram shows the trusted-header deployment model, not a universal authentication configuration.
+The end-user and administrative listeners have separate routing and authentication configuration.
+The deployment must restrict administrative access and prevent clients from forging trusted proxy headers.
+Sources: [004-dual-server-isolation.md](adrs/004-dual-server-isolation.md), [end-user routing](internal/adapters/http/routing/enduser.go), [admin routing](internal/adapters/http/routing/admin.go), and [security assurance case](docs/resources/assurance-case.md).
+
+The [builder](internal/app/builder.go) connects broker domain services to their ports and adapters.
+Production persistence uses the [PostgreSQL adapter](internal/adapters/storage/postgres/).
+The [memory adapter](internal/adapters/storage/memory/) provides process-local development and test storage.
+ExtProc has its own process and configuration under accepted [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md).
+Its metadata trust boundary is defined by accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md).
 
 ## 3. Core Components
 
-(List and briefly describe the main components of the system. For each, include its primary responsibility and key technologies used.)
-
 ### 3.1. Identity Broker Service
 
-Name: Agentic Identity Broker
-
-Description: Core service providing secure identity management, authentication, and authorization for AI agents and autonomous systems. Implements hexagonal architecture with clear separation of domain logic, ports, and adapters.
-
-Technologies: Go 1.27.2+, Viper (configuration), Cobra (CLI)
-
-Deployment: Containerized service (Docker), deployable to Kubernetes, AWS ECS, or standalone
+The broker manages agent delegation, third-party OAuth2 sessions, token exchange, and tool approvals.
+The [end-user contract](api/enduser/openapi.yaml) and [admin contract](api/admin/openapi.yaml) define its HTTP surfaces.
+Its Go dependencies and toolchain are declared in [go.mod](go.mod), rather than copied into this overview.
 
 #### 3.1.1. Configuration Subsystem
 
-**Purpose**: Flexible multi-source configuration management with environment-specific support, security-first design, and clear precedence rules.
+The [configuration port](internal/ports/config.go) defines broker configuration.
+The [loader](internal/config/loader.go) applies defaults, loads environment files and YAML, expands environment references, binds CLI flags, and validates the result.
+Explicit environment bindings override YAML. Bound CLI flags have higher precedence.
+The loader rejects invalid configuration instead of starting with an unvalidated result.
+The [configuration reference](docs/configuration.md) documents supported inputs and environment variables.
 
-**Architecture**: Hexagonal (ports and adapters pattern)
-
-**Components**:
-
-- **Port** (internal/ports/config.go): ConfigPort interface defining domain boundary
-- **Adapter** (internal/config/loader.go): Viper-based implementation loading from multiple sources
-- **Domain Types** (internal/domain/config/): LogLevel, LogFormat enums with validation
-- **Domain Errors** (internal/domain/config/errors.go): ConfigError with error wrapping support
-- **Shared Utility** (internal/configutil/viper.go): Viper construction and structural paths for both services, using `::` to preserve literal dots in map keys. Each service owns its defaults and loading policy.
-
-**Configuration Sources** (in precedence order, lowest to highest):
-
-1. **Defaults**: Built-in default values (log.level=info, log.format=text)
-2. **.env Files**: Environment-specific files (.env → .env.local → .env.{GO_ENV} → .env.{GO_ENV}.local)
-3. **YAML File**: config.yaml with ${VAR} environment variable substitution
-4. **CLI Flags**: Command-line flags (--log-level, --log-format, --config)
-
-**Security Features**:
-
-- Sensitive value redaction (IDENTITY_BROKER_* prefix and keywords: password, secret, token, key)
-- Command injection prevention (rejects $(cmd), backticks, shell metacharacters)
-- Circular reference detection (max depth: 10)
-- Fail-closed on errors (graceful termination with clear messages)
-- AWS TLS certificate verification bypass (`encryption.aws_kms.disable_ssl`) requires explicit `GO_ENV=development`; every other environment, including unset, rejects it before AWS clients are initialized.
-- File permission validation
-- Structured audit logging (JSON to stdout)
-
-**Flow**:
-
-```
-Application Startup
-  → Load Defaults
-  → Load .env Files (godotenv)
-  → Load YAML (Viper)
-  → Expand ${VAR} References (with security validation)
-  → Bind CLI Flags (Cobra)
-  → Unmarshal to Config struct
-  → Validate (custom validators)
-  → Emit Audit Log
-  → Display Startup Summary
-  → Return Config to Application
-```
-
-**Performance**: Configuration loading completes in <250ms (within 5s startup budget)
-
-**Technologies**:
-
-- Viper v1.19.0+ (unified configuration management)
-- Cobra v1.8.1+ (CLI framework)
-- godotenv v1.5.1+ (.env file support)
-- Custom validators (fast, zero-allocation validation)
-
-**Future Extensions**: Hot-reloading (Reload method defined but not implemented), additional config categories (server, database, auth)
+Runtime reload is not available: `Loader.Reload` returns an error.
+Server, storage, authentication, encryption, and telemetry configuration already exist in the [configuration schema](internal/ports/config.go).
+The separate [ExtProc loader](internal/extproc/config/loader.go) owns `EXTPROC_*` configuration, as required by accepted [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md).
+Both loaders use [configutil](internal/configutil/viper.go) to preserve literal dots in map keys. Each service owns its defaults and loading policy.
+AWS TLS verification bypass (`encryption.aws_kms.disable_ssl`) requires explicit `GO_ENV=development`. Every other environment, including unset, rejects it before AWS client initialization.
 
 #### 3.1.2. Single Page Application (Consent Frontend)
 
-**Purpose**: User-facing web interface for managing OAuth2 consent delegations to AI agents.
+The frontend manages delegations, third-party sessions, and tool approvals.
+It uses React, TypeScript, React Router, Axios, and Tailwind CSS.
+Exact dependencies and scripts belong to [web/package.json](web/package.json) and [its lockfile](web/package-lock.json).
 
-**Architecture**: React 18 Single Page Application with TypeScript, served from Go backend
+**Source map**:
 
-**Technology Stack**:
+| Source | Responsibility |
+|---|---|
+| [App.tsx](web/src/App.tsx) | Root router, lazy page imports, error boundary, and toast provider |
+| [pages/](web/src/pages/) | Delegation, session, and approval views |
+| [components/](web/src/components/) | Application components |
+| [design-system/](web/src/design-system/) | Shared components, semantic tokens, and design guidance |
+| [hooks/](web/src/hooks/) | Page data and interaction hooks |
+| [services/api/](web/src/services/api/) | Typed API calls and response handling |
+| [vite.config.ts](web/vite.config.ts) | Development proxy, aliases, and production build |
+| [vitest.config.ts](web/vitest.config.ts) | Frontend unit-test configuration |
+| [tests/e2e/frontend/](tests/e2e/frontend/) | Ginkgo browser journeys through Playwright |
 
-- **Frontend Framework**: React 18.2+ with TypeScript 5.3+
-- **Build Tool**: Vite 5.0+ (fast ESM-based bundler)
-- **Styling**: Tailwind CSS v4.0 (utility-first CSS framework)
-- **UI Components**: Headless UI 1.7+ (accessible, unstyled components)
-- **HTTP Client**: Axios 1.6+ (promise-based HTTP client)
-- **Router**: React Router DOM 6.20+ (client-side routing)
-- **Testing**: Vitest 1.0+ (fast unit test framework)
-- **State Management**: React hooks + Context API (no external state library)
+**Routing and serving**:
 
-**Directory Structure**:
+The [root-mounted SPA decision](adrs/035-root-mounted-spa.md) replaces the mount and build-path portions of [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md).
+The broker serves `web/dist` from its working directory.
+The [end-user router](internal/adapters/http/routing/enduser.go) reserves `/api`, `/oauth2`, `/.well-known`, and `/health` before the SPA fallback.
+It mounts the SPA for browser `GET` and `HEAD` requests.
 
-```
-web/
-├── src/
-│   ├── components/       # React components
-│   │   ├── consent/      # Consent-specific components
-│   │   │   ├── DelegationCard.tsx        # Agent delegation card
-│   │   │   ├── DelegationList.tsx        # List of delegations
-│   │   │   ├── ServiceCard.tsx           # OAuth2 service card
-│   │   │   ├── ServiceGrantList.tsx      # List of service grants
-│   │   │   ├── ScopeList.tsx             # Scope selection UI
-│   │   │   ├── GrantStatusBadge.tsx      # Grant status indicator
-│   │   │   └── GrantValidityControl.tsx  # Expiration date control
-│   │   ├── layout/       # Layout components
-│   │   │   └── AppLayout.tsx             # Main app layout
-│   │   └── ui/           # Reusable UI components
-│   │       ├── Button.tsx                # Button component
-│   │       ├── Switch.tsx                # Toggle switch
-│   │       ├── DatePicker.tsx            # Date picker
-│   │       ├── ErrorBoundary.tsx         # Error boundary
-│   │       ├── InlineError.tsx           # Error display
-│   │       ├── EmptyState.tsx            # Empty state UI
-│   │       └── Skeleton.tsx              # Loading skeleton
-│   ├── pages/            # Application pages
-│   │   ├── ConsentOverviewPage.tsx       # List of all agent delegations
-│   │   ├── AgentGrantDetailPage.tsx      # Agent-specific grant management
-│   │   └── ErrorPage.tsx                 # Error page
-│   ├── hooks/            # Custom React hooks
-│   │   ├── useConsent.ts                 # Fetch agent delegations
-│   │   ├── useAgentGrants.ts             # Fetch agent grants
-│   │   ├── useToggleGrant.ts             # Toggle grant scopes
-│   │   ├── useUpdateValidity.ts          # Update grant expiration
-│   │   └── useRetry.ts                   # Retry with exponential backoff
-│   ├── services/         # Service layer
-│   │   ├── api/          # API clients
-│   │   │   ├── client.ts                 # Axios client configuration
-│   │   │   ├── consent.ts                # Consent API methods
-│   │   │   └── index.ts                  # API exports
-│   │   └── storage/      # Client-side storage
-│   │       └── session.ts                # Session storage utilities
-│   ├── types/            # TypeScript types
-│   │   ├── consent.ts                    # Consent domain types
-│   │   └── index.ts                      # Type exports
-│   ├── utils/            # Utility functions
-│   │   └── validation.ts                 # Input validation
-│   ├── App.tsx           # Root component
-│   └── main.tsx          # Application entry point
-├── dist/                 # Build output (served by Go)
-├── vite.config.ts        # Vite configuration
-├── tsconfig.json         # TypeScript solution references
-├── tsconfig.app.json     # App TypeScript configuration
-├── tsconfig.test.json    # Test TypeScript configuration
-├── tsconfig.build.json   # Build TypeScript configuration
-├── tailwind.config.ts    # Tailwind CSS configuration
-└── package.json          # Dependencies and scripts
-```
+The [React router](web/src/App.tsx) redirects `/` to `/delegations` with history replacement.
+It also serves `/agents/:agentId`, `/sessions`, `/approvals`, and `/approvals/:id`.
+The [API client](web/src/services/api/client.ts) uses the relative base URL `/api` and normalizes error responses.
 
-**Build Pipeline**:
+**Development and build**:
 
-1. **Development**: `npm run dev` runs Vite dev server (<http://localhost:3000>)
-2. **Build**: `npm run build` compiles TypeScript and bundles with Vite
-3. **Output**: Static files written to `dist/` directory
-4. **Deployment**: Go backend serves files from `dist/` at `/`
+The [Vite configuration](web/vite.config.ts) uses base `/`, output directory `dist`, and Terser minification.
+Its development server requests port 3000 but permits a fallback port.
+It proxies backend namespaces to `VITE_API_URL`, or `http://localhost:8000` by default, and injects the development principal `dev@example.com`.
+This proxy identity is development behavior, not a production authentication control.
+The [justfile](justfile) provides `just web-dev`, `just web-build`, `just web-test`, and `just test-e2e-frontend`.
 
-**SPA Serving Pattern**:
+**Security and accessibility**:
 
-```
-User Request: /agents/123
-  ↓
-Go HTTP Server (Port 8080)
-  ↓
-Static File Handler (/*)
-  ↓ (404 fallback for client-side routes)
-Serve index.html
-  ↓
-Browser loads React app
-  ↓
-React Router handles /agents/:agentId route
-  ↓
-Component fetches data from /api/consent/agents
-  ↓
-Go API Handler returns JSON
-```
+The [end-user routing](internal/adapters/http/routing/enduser.go) applies `http.CrossOriginProtection` to consent mutations and browser approval decisions.
+These protections do not use the previously documented CSRF cookie and request-token scheme.
+Authentication belongs to the configured server middleware, not the React client.
 
-**Key Features**:
+The [constitution, Principle XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency) requires semantic tokens and WCAG 2.1 AA checks in both themes.
+Component-library selection alone does not prove accessibility compliance.
+The [design-system index](web/src/design-system/docs/INDEX.md) routes contributors to component and accessibility guidance.
 
-- **Client-Side Routing**: React Router handles root-mounted view routes without page reloads
-- **History API Fallback**: Go backend serves `index.html` for all non-API view paths (SPA fallback)
-- **API Integration**: Frontend makes requests to `/api/consent/*` endpoints on same domain
-- **CSRF Protection**: All mutating requests include CSRF token from cookie
-- **Session Management**: Principal extracted from `X-Principal` header (set by reverse proxy)
-- **Type Safety**: Full TypeScript coverage with strict mode enabled
-- **Responsive Design**: Tailwind CSS utilities for mobile-first responsive UI
-- **Accessibility**: Headless UI components ensure WCAG 2.1 compliance
-- **Error Handling**: Error boundaries and retry logic for resilient UX
+**Verification**:
 
-**Component Hierarchy**:
+Vitest runs through [web/package.json](web/package.json).
+Browser acceptance tests already exist in the [frontend suite](tests/e2e/frontend/frontend_suite_test.go).
+The [E2E guide](tests/e2e/README.md) distinguishes built-bundle tests from development-server tests.
+The [frontend suite instructions](tests/e2e/frontend/AGENTS.md#running-frontend-e2e-tests) document the development-worker and proxy-identity constraints.
 
-```
-App
-├── ErrorBoundary
-│   └── AppLayout
-│       ├── ConsentOverviewPage
-│       │   └── DelegationList
-│       │       └── DelegationCard (per agent)
-│       │           └── GrantStatusBadge
-│       └── AgentGrantDetailPage
-│           ├── ServiceGrantList
-│           │   └── ServiceCard (per OAuth2 service)
-│           │       ├── Switch (toggle grant)
-│           │       └── ScopeList (scope checkboxes)
-│           └── GrantValidityControl
-│               └── DatePicker (expiration date)
-```
-
-**State Management**:
-
-- **Local State**: React `useState` for component-level state
-- **Server State**: Custom hooks with axios for API data fetching
-- **Context**: React Context API for global UI state (theme, error messages)
-- **OAuth Redirect Selections**: `AgentGrantDetailPage` stores current-tab `ConsentSelections` and the original return URL (including `session_token`, if present) under an opaque UUID in `sessionStorage`. It sends the UUID in a same-origin form POST with a clean return path; the provider-facing JWE state seals only the UUID and that path, not nested return-page query data. A successful callback appends the verified `consent_state_id`; the page restores only the matching tab, service, and path, then replaces the URL without the ID so reloads do not replay selections. Records expire after 15 minutes, covering the maximum configurable state TTL (10 minutes by default). All provider-facing state tokens must be shorter than 6,000 bytes or initiation fails. See [ADR 037](adrs/037-consent-selection-oauth-redirect-state.md) and [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md).
-- **No Redux/MobX**: Hooks + Context sufficient for current requirements
-
-**API Communication**:
-
-- **Base URL**: `/api` (relative, same origin)
-- **Authentication**: Session-based (X-Principal header from proxy)
-- **CSRF**: X-CSRF-Token header required for POST/PUT/DELETE
-- **Error Handling**: Axios interceptors for global error handling
-- **Retry Logic**: Exponential backoff for transient failures
-
-**Testing Strategy**:
-
-- **Unit Tests**: Vitest for component and hook testing
-- **Integration Tests**: Test component + API interactions with mocked backend
-- **E2E Tests**: (Future) Playwright for full user flows
-- **Coverage Target**: >80% for critical paths
-
-**Performance Optimizations**:
-
-- **Code Splitting**: Lazy loading of routes with React.lazy()
-- **Tree Shaking**: Vite removes unused code automatically
-- **Minification**: Terser minification in production builds
-- **Caching**: Immutable asset URLs with content hashing
-- **Bundle Size**: Target <200KB gzipped for initial load
-
-**Security Considerations**:
-
-- **XSS Prevention**: React escapes all user input by default
-- **CSRF Protection**: Go 1.25 `http.CrossOriginProtection` rejects cross-origin mutating requests via `Sec-Fetch-Site` / `Origin` header validation (zero config, no cookies or tokens)
-- **Content Security Policy**: (Future) CSP headers from Go backend
-- **Dependency Scanning**: Regular npm audit for vulnerabilities
-- **TypeScript**: Compile-time type checking prevents runtime errors
+Consent selections across OAuth redirects have implementation and specification evidence, but their ADR remains proposed.
+Sources: [AgentGrantDetailPage.tsx](web/src/pages/AgentGrantDetailPage.tsx), [Feature 008](specs/008-thirdparty-oauth2-sessions/spec.md), and proposed [037-consent-selection-oauth-redirect-state.md](adrs/037-consent-selection-oauth-redirect-state.md).
 
 #### 3.1.3. Builder Pattern and Dependency Injection
 
@@ -346,78 +184,37 @@ The builder composes one `App.Shutdown` function. It stops the local/hybrid `Ses
 
 Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
+**Service-specific session recovery ([ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
+
 #### 3.1.4. End-to-End Testing Architecture
 
-**Purpose**: Comprehensive E2E acceptance tests that validate the complete OAuth2 Authorization Server functionality through real HTTP requests and production code paths.
+The E2E suites exercise backend HTTP contracts, ExtProc processing, and browser journeys.
+Accepted [007-e2e-testing-with-ginkgo.md](adrs/007-e2e-testing-with-ginkgo.md) defines the Ginkgo acceptance-test pattern.
+The [constitution, Principle XIII](.specify/memory/constitution.md#xiii-end-to-end-acceptance-testing--spec-traceability) requires traceability from acceptance scenarios to complete journeys.
 
-**Architecture**: Ginkgo BDD-style tests with separation of stable test scenarios (HTTP contract) and volatile setup code (production bootstrap wrappers).
+The [bootstrap](tests/e2e/bootstrap/) wraps production construction and server routing.
+Each [test server](tests/e2e/bootstrap/test_server.go) exposes one base URL and serves either end-user or admin routes.
+Tests that need both route types require separate end-user and admin `TestServer` instances.
+The [frontend suite](tests/e2e/frontend/frontend_suite_test.go) adds Playwright browser setup.
+Fixtures and helpers belong to [tests/e2e/fixtures/](tests/e2e/fixtures/) and [tests/e2e/helpers/](tests/e2e/helpers/).
 
-**Key Design Principles** (see [ADR 007](adrs/007-e2e-testing-with-ginkgo.md)):
+The [justfile](justfile) defines the maintained commands:
 
-1. **Use Production Bootstrap**: Tests use production `app.Builder`, `httpAdapter.Server`, and `storage.Adapter` - no custom test implementations
-2. **Stability Through Separation**: Test scenarios focus on HTTP contracts (stable), setup code wraps production bootstrap (volatile)
-3. **Real HTTP Testing**: Tests use `httptest.Server` with full routing, middleware, and handler stack
-4. **Test Isolation**: Each test gets fresh storage and server via `BeforeEach` - no shared state
-5. **BDD Organization**: `Describe`/`Context`/`It` blocks map to acceptance scenarios (Given/When/Then)
+| Command | Scope |
+|---|---|
+| `just test` | Fast Go/package tests, excluding E2E and integration suites |
+| `just test-e2e-backend` | Backend functional E2E, after a frontend build |
+| `just test-e2e-docker` | Docker-tagged backend E2E; requires Docker |
+| `just test-e2e-extproc` | ExtProc E2E |
+| `just test-e2e-frontend` | Browser E2E against the built frontend |
+| `just test-e2e` | Backend, Docker-tagged backend, ExtProc, and browser E2E; requires Docker |
+| `just test-e2e-performance` | Separate performance-labelled measurement |
+| `just test-integration` | Default self-contained integration suites |
+| `just test-integration-infra` | Tagged infrastructure-backed suites |
+| `just test-integration-all` | Both integration layers |
 
-**Test Structure**:
-
-```
-tests/e2e/
-├── e2e_suite_test.go              # Ginkgo test suite entry point
-├── bootstrap/                      # VOLATILE - Wraps production bootstrap
-│   ├── server_factory.go          # Uses app.Builder from production
-│   ├── test_server.go             # Wraps production HTTP server
-│   └── storage.go                 # Uses production storage.Adapter
-├── fixtures/                       # STABLE - Test data (domain model)
-│   ├── agents.go, grants.go, principals.go, config.go
-├── helpers/                        # STABLE - Test utilities
-│   ├── http_helpers.go, mock_upstream.go
-├── matchers/                       # STABLE - Custom Gomega matchers
-│   └── oauth2_matchers.go
-└── Test scenarios (62 scenarios total)
-    ├── oauth2_authorize_test.go   # Authorization endpoint (23 scenarios)
-    ├── oauth2_token_test.go       # Token endpoint (12 scenarios)
-    ├── oauth2_metadata_test.go    # Metadata endpoint (8 scenarios)
-    ├── oauth2_security_test.go    # Security tests (12 scenarios)
-    └── oauth2_edge_cases_test.go  # Edge cases (7 scenarios)
-```
-
-**Running E2E Tests**:
-
-```bash
-# Run the backend E2E suite
-just test-e2e-backend
-
-# Run the backend suite with coverage report
-just test-e2e-backend-coverage
-
-# Watch the backend suite (auto-rerun on changes)
-just test-e2e-backend-watch
-
-# Run all backend, ExtProc, and frontend E2E suites
-just test-e2e
-
-# Run specific scenarios
-ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
-```
-
-**Key Benefits**:
-
-- **Refactoring-Resistant**: Tests survive routing/DI changes because they use production bootstrap
-- **Fast Execution**: In-memory storage, no database containers (< 60 seconds for full suite)
-- **Clear Mapping**: Each `It()` block maps to one acceptance scenario in spec.md
-- **Readable Output**: Ginkgo output is hierarchical and understandable by non-developers
-- **Production Parity**: Tests exercise the same code path as production (DI, routing, middleware)
-
-**Documentation**: Comprehensive E2E testing guide with examples, patterns, and anti-patterns in [tests/e2e/README.md](tests/e2e/README.md)
-
-**Technologies**:
-
-- Ginkgo v2 (BDD test framework)
-- Gomega (assertion library)
-- `net/http/httptest` (HTTP test server)
-- Production `app.Builder` and `httpAdapter.Server` (no custom test implementations)
+Current test totals and timings come from each run, not a historical scenario count.
+The [E2E guide](tests/e2e/README.md) and [storage integration guide](tests/integration/storage/README.md) document harness boundaries and prerequisites.
 
 #### 3.1.5. Tool Approval Domain
 
@@ -426,6 +223,7 @@ ginkgo -v --focus="Authorization Endpoint" ./tests/e2e/
 **Domain Model**:
 - **ToolApproval**: Aggregate root representing an approval record with lifecycle status (pending → approved/denied), persistence scope (once/session/permanent), consumption tracking, and an exact server-derived tool matcher with editable parameter constraints.
 - **ApprovalService**: Core business logic (`internal/domain/approval/service.go`) — create, get, approve, deny, consume, list permanent, revoke, sync state. Enforces principal-matching, expiry checks, rate limiting, idempotency, and server-owned exact tool coverage.
+- **Permanent denial**: Blocks the exact tool for one principal-agent pair until revocation, independent of arguments and session. Both storage adapters clear parameter constraints. ExtProc enforces existing denials with constrained parameters as tool-wide blocks, ahead of approved records.
 
 **API Endpoints** (8 routes on end-user server):
 ```
@@ -457,6 +255,7 @@ POST   /api/approvals/{id}/revoke  # Revoke permanent approval
 - **ApprovalSyncBroadcaster**: In-process fan-out with configurable coalesce window (default 1s). Subscribers register buffered channels; broadcast wakes all subscribers after coalesce delay.
 - **ApprovalSyncSubscriber**: One goroutine per broker instance holds a dedicated `pgx.Conn` for `LISTEN approval_sync`. On notification receipt, triggers broadcaster.
 - **Cross-Instance**: PostgreSQL `NOTIFY approval_sync` issued in the same transaction as `approval_sync_state.version` increment. All broker instances receive the notification and wake their local long-poll connections.
+- **ExtProc snapshot ordering**: The cache retains the highest version from global and principal-filtered reads, including empty snapshots. Older responses cannot replace decisions or extend global freshness. Principal-filtered reads leave the global polling ETag unchanged.
 
 **Components**:
 ```
@@ -474,14 +273,14 @@ internal/adapters/storage/postgres/
 
 **API Specifications**:
 
-- **[/api/enduser/openapi.yaml](/api/enduser/openapi.yaml)** - End-user server (Port 8000)
+- **[api/enduser/openapi.yaml](api/enduser/openapi.yaml)** - End-user server (Port 8000)
   - Canonical OpenAPI documentation for all end-user facing APIs
   - Endpoints: Health check, user info, consent management (agent delegations, service grants)
   - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT) + session-based
   - Response envelope: Consistent `{"data": ...}` structure for resource endpoints
   - Error handling: Standardized error response format with code and message
 
-- **[/api/admin/openapi.yaml](/api/admin/openapi.yaml)** - Admin server (Port 14000)
+- **[api/admin/openapi.yaml](api/admin/openapi.yaml)** - Admin server (Port 14000)
   - Canonical OpenAPI documentation for all administrative APIs
   - Endpoints: Health check, agent management (CRUD), service management (CRUD), and operator-triggered session sweep
   - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT); admin access controlled upstream
@@ -512,6 +311,7 @@ Admin Server (Port 14000):
   ├── GET /health
   ├── /api/agents/*
   │   ├── POST / (create)
+  │   ├── PUT /?external_id={value} (create/update/no-op)
   │   ├── GET / (list)
   │   ├── GET /{id}
   │   ├── PUT /{id}
@@ -535,7 +335,34 @@ origin exceptions. POST, PUT, and PATCH require `application/json` even without
 a body; any other request carrying a body also requires JSON. Host/cross-origin
 rejections return 403; media-type rejections return 415. `/health` is excluded.
 
-**Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external operator schedule calls this route through the authenticated admin proxy. The proxy supplies the operator principal. The request must carry the configured admin Host and `application/json` content type.
+**Agent external-ID reconciliation (feature 055, ADR 047)**:
+A non-nil External ID is valid UTF-8 with 1–255 Unicode code points and no NUL,
+and identifies at most one Agent by exact, case-sensitive
+comparison; nil is allowed on any number of agents. UUIDs remain stable relationship keys, while
+canonical IDs and client IDs retain their separate existing rules. Collection
+`PUT /api/agents?external_id={value}` selects only by external ID, creates with `201` and a
+UUID-addressed relative `Location`, or returns `200` on update/no-op. The domain applies one shared update-candidate policy
+for ID-addressed updates and reconcile, validates permission-set service coverage (FR-019) on
+every write path, and compares the effective definition before
+writing; a replay preserves timestamps and emits no mutation audit. Client URIs are compared as a
+set and presented byte-sorted on a copy. All Admin Agent responses keep whole-second UTC
+RFC 3339 timestamps. Reconcile creation sets both stored times to the same current UTC instant;
+a real update preserves CreatedAt and assigns current UTC time to UpdatedAt, as existing writes
+do. Two changes within one second may display the same updated_at; it is not an ETag or a
+concurrent revision guarantee. No-op preserves exact stored times without a write.
+
+Both adapters enforce external-ID uniqueness atomically; memory maintains a locked lookup index
+and PostgreSQL uses a partial unique index. Reconcile adds one indexed read to a normal write and
+no-op performs only reads. `GetByExternalID` returns one Agent or not-found; any create conflict
+triggers one reread for a lost create race, and an agent deleted before its update is created once;
+different concurrent definitions remain last-writer-wins with coherent, atomic writes. Invalid selectors fail
+closed. The new route inherits the existing admin proxy, Host, cross-origin and JSON boundaries.
+Migration `047` uses atomic, bounded NOWAIT locking on the low-cardinality administrative registry,
+blocks on duplicate/empty values without changing rows, and preserves UUIDs/grants through rollback.
+See [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) and the
+[upgrade runbook](docs/operations/agent-external-id-uniqueness.md).
+
+**Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external schedule calls this route, either the optional chart-managed CronJob (`sessionSweep.*`) or another operator job. The recommended path goes through the authenticated admin proxy, which supplies the operator principal. The chart CronJob only transports the request with operator-supplied headers, header files, or TLS client files; it adds no identity model. The request must carry the configured admin Host and `application/json` content type.
 
 The optional `lookahead_duration` accepts a positive ISO 8601 duration in days, hours, minutes, or seconds. `dry_run` previews classifications without provider calls or writes. `page_size` accepts 1 through 1000. Omitted values use configuration defaults. Invalid JSON or unknown fields return 400. A missing operator principal or repository failure returns 500. A completed sweep returns 200 counts even when all candidates fail. The count invariant is `refreshed + skipped + failed = total_evaluated`.
 
@@ -564,15 +391,15 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 - `OAuth2TokenHandler` always exists; the builder injects `proxyTokenGrantStrategy`, `localGrantStrategy`, or `hybridTokenGrantStrategy` based on the selected mode.
 - When local issuance is part of the active mode (`local` or `hybrid`), the local strategies are backed by `internal/domain/oauth2server.Provider`, which contains all fosite-specific authorization-server logic.
 
-**Inbound CIMD client authentication (Feature 051)**: In local and hybrid modes with CIMD enabled, the provider verifies `private_key_jwt` assertions before fosite processes authorization-code and refresh-token grants. It accepts RS256 and ES256 keys from the client document. A separate key-set cache refreshes once for an unknown `kid` after the configured minimum interval. A replay repository consumes each `(client_id, jti)` atomically across replicas. Fetch and replay-store failures fail closed as `server_error`. Refresh sessions persist `client_auth_method`; refresh authentication uses the stricter of the stored method and the current document method. Metadata advertises `private_key_jwt` and its signing algorithms only in local or hybrid mode with CIMD enabled.
+**Client secret hashing**: Each confidential client authentication and credential generation runs one Argon2id hash, which allocates 64 MiB. The builder creates one `Argon2Hasher` for the token endpoint and the credential service, so they share one limit of `local.client_secret_hashing.max_concurrent` hashes (default 2). Further requests wait for a free slot and stop waiting when the request ends. This bounds peak memory. Throughput depends on CPU, not on this limit.
 
 **Authorization code expiry**: Locally issued codes expire after 60 seconds. Repository lookups exclude expired records in PostgreSQL and memory storage. `FositeStorage` checks the stored expiry before replay handling and hydrates the caller's session for `RandomCodeStrategy` to check again. Expired codes return `invalid_grant` without replay revocation. Unexpired, previously used codes retain replay protection.
 
 **Authorization-code exchange reads**: The provider authenticates the client once and passes it through the request context to fosite's storage handler. Each code-session hydration still reads the code and checks its original client ID and agent ID; invalidation retains its atomic single-use update. No authorization-code record is cached across validation steps, so replay and expiry checks observe current state.
 
-**OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, refresh-token sessions, and client assertion replay records at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success. Migration 040 creates the replay table. Migration 041 adds the nullable, constrained `client_auth_method` column to `refresh_token_sessions`.
+**OAuth2 record retention**: In local and hybrid modes, the builder starts `SessionCleanup` after successful application construction. It deletes expired authorization codes, PKCE sessions, and refresh-token sessions at startup and every minute. A repository error does not stop the remaining deletions or future sweeps. Application shutdown cancels the worker and waits for its current operation to finish. Expiry enforcement does not depend on cleanup success.
 
-**Third-party session maintenance**: In every OAuth2 server mode, the builder creates `OAuth2SessionService`, its bounded background refresh pool, and the admin sweep handler. This work is separate from local/hybrid `SessionCleanup`. The broker does not start a session-sweep timer.
+**Third-party session maintenance**: In every OAuth2 server mode, the builder creates `OAuth2SessionService`, its bounded background refresh pool, and the admin sweep handler. This work is separate from local/hybrid `SessionCleanup`. The broker does not start a session-sweep timer; the chart can render a CronJob that calls the sweep. When `token_refresh.health_metrics.enabled` is true, the builder also registers `SessionHealthMetrics` and unregisters it during shutdown before telemetry stops.
 
 **Continuing consent for local refresh (Feature 049)**: Initial refresh issuance binds the active grant ID to the existing refresh row. Before rotation, Fosite storage verifies continuing consent and the grant identity. Legacy rows use UTC creation-time comparison for one rotation. Consent denial revokes the request chain and returns the existing `invalid_grant` response. Infrastructure errors leave the token unchanged.
 
@@ -604,11 +431,23 @@ End-User Server (Port 8000):
   └── POST /oauth2/token                                              (proxy, local, hybrid, and token-exchange flows)
 ```
 
-**Public JWK trust surfaces**: `/oauth2/jwks.json` publishes only mode-appropriate `token_signing` and upstream verification sources. It never publishes CIMD client-authentication keys. `/.well-known/oauth-client/{service-id}/jwks.json` publishes only public ES256 keys from `cimd_client_authentication`. It never publishes token-signing keys, upstream keys, private key material, or secrets.
+**Public JWK trust surfaces**: `/oauth2/jwks.json` publishes only mode-appropriate `token_signing` and upstream verification sources. It never publishes CIMD client-authentication keys. `/.well-known/oauth-client/{service-id}/jwks.json` publishes only public ES256 keys from `cimd_client_authentication` for a CIMD confidential service. A CIMD public service receives the uniform JSON `404` from that route, even if keys exist for other services. Neither JWK Set publishes unrelated keys, private material, or secrets.
 
 **Upstream JWKS bootstrap policy**: In `proxy` and `hybrid` modes the upstream JWKS remains required by the public `/oauth2/jwks.json` publisher and multi-agent upstream-token verification. The builder resolves upstream OAuth2 metadata at startup for those surfaces, so proxy/hybrid mode does not start with an unknown upstream verifier configuration. If that metadata discovery fails, startup fails. RFC 8693 client-assertion validation instead uses the dedicated `token_exchange.client_assertion.issuer_uri` trust anchor: it defaults to the proxy upstream in `proxy` and `hybrid` modes and works independently in `proxy`, `local`, and `hybrid` modes. A configured anchor without an explicit `jwks_uri` is discovered at startup; discovery or verifier initialization failure prevents startup. An explicit `jwks_uri` supports IdPs without discovery. After startup, upstream JWKS refresh failures return HTTP 503 from `/oauth2/jwks.json`, and client-assertion or other verification-dependent flows fail closed until their required JWKS source recovers.
 
 **Multi-issuer JWT validation**: Token exchange fetches the role-specific JWKS and verifies the signature once per credential, then applies issuer, audience, and time-claim validation for each permitted issuer. The client assertion retains its separate trust anchor; a failed signature never yields claims for authorization.
+
+**Trust-anchor key sources (Feature 052, [ADR 040](adrs/040-trust-anchor-local-key-sets.md))**: Each trust anchor (the client-assertion anchor, every impersonation trusted issuer, and JWT pre-authentication on each of the end-user and admin servers) accepts at most one explicit Key Set Source: `jwks_uri` (remote), `jwks` (inline), or `jwks_file` (file). The sources are mutually exclusive with no precedence, and more than one fails startup. The domain package `internal/domain/trustanchor/` resolves the source before any discovery or adapter creation. A local source performs no discovery and no outbound request. A trust anchor with no explicit source keeps its existing behavior, including discovery and ADR 029 upstream reuse. A local key set is used only by the trust anchor that declares it. It is never published at `/oauth2/jwks.json` and never validates subject tokens. Impersonation entries share an adapter only when every source attribute matches. The ADR 029 self-trust check applies to every source.
+
+**Resolution order for one trust anchor**: The builder rejects conflicting sources, refresh bounds with `jwks`, and `verification: none` with any key source. For `jwks_file`, it requires an absolute path, a configured Trust Directory, and a path inside that directory. It then selects the one declared source, or the existing discovery behavior when none is declared. A failed local source never falls back to discovery or to another source.
+
+**Local key set validation**: `trustanchor.ParseLocalKeySet` applies the Local Key Set rules to inline and file documents. It rejects documents over 1 MiB, non-JWK-Set documents, empty sets, symmetric keys, private key material, algorithms outside the approved asymmetric set, missing or empty `kid` values, and duplicate `kid` values. A present `alg` must be approved; absent `alg` is allowed. Missing or empty `kid` reports `missing_kid` with `key at index <zero-based index> requires a non-empty kid`. An unapproved `alg` on a key without `kid` reports `unapproved_algorithm` first, using its index. Errors never quote document content. Remote JWKS acceptance and verifier configuration remain unchanged. `jwks.StaticAdapter` serves an inline set and is always healthy. `jwks.FileAdapter` serves a file set. Both implement `ports.JWKSPort`, so token exchange and impersonation validation do not change.
+
+**Trust directory**: `security.trust_material_dir` has no default and is required by any `jwks_file`. At startup the broker resolves it with symbolic links and opens it once with `os.Root`. On startup and on every re-read, the cleaned `jwks_file` path must lie under the cleaned directory. The broker opens the relative name through the root, so a path that leaves the directory through `..` or a symbolic link is refused. The regular-file check and the read use the same file descriptor. Absolute symbolic links inside the directory are rejected; relative links (Kubernetes Secret, ConfigMap, and projected volumes) are accepted.
+
+**File re-read and staleness**: A `FileAdapter` re-reads its file every `jwks_min_refresh` in a background goroutine. A valid re-read replaces the whole set. A failed re-read keeps the last valid set and reports degraded health. After `jwks_max_refresh` has elapsed since the last successful read, the trust anchor fails closed until a valid re-read succeeds. The file minimum defaults to 15 minutes. If the file maximum is unset or below the minimum, it defaults to `max(3 × jwks_min_refresh, 1 hour)`; an explicit maximum at least as large as the minimum is honored. Remote and implicit sources retain `max(jwks_min_refresh, 1 hour)`. JWT pre-authentication uses fixed 5- and 15-minute bounds. Inline sets never reload.
+
+**Key-file health**: `GET /health` on the end-user server reports the optional component `trust_anchor_key_files` (`healthy` or `degraded`) when at least one trust anchor uses `jwks_file`, in any OAuth2 mode. It is `degraded` when the latest re-read of any key-set file failed, including after the staleness window. It merges with `upstream_jwks` and never changes the HTTP status or the top-level `status`. Inline sets never contribute. The admin server's `/health` is unchanged.
 
 **Local issuance admin endpoints** (served only when local issuance is active: `local` or `hybrid`):
 
@@ -687,6 +526,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
 - **Session-service identity (NFR-001)**: The context handler adds request `actor` and optional `calling_peer` when present. On a sweep, `actor` is the operator, not the session owner. Per-session refresh logs include the owner `principal`; the aggregate audit records `operator_principal` without an owner.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
+- **Principal policy**: the Principal Policy Handler in `internal/adapters/telemetry` renders every principal in a log record. The broker chain is context handler → principal policy handler → stdout/OTel fan-out; ExtProc wraps its stdout/OTel fan-out the same way, so every sink receives the same output. `SecurityContext.Actor` is an `id.Principal`.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
 - **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
@@ -751,23 +591,80 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - **Listing reads**: Consent delegations and session/consent requirements batch-load existing agents and providers by ID; missing records are omitted. Batch provider reads decrypt static confidential secrets and leave public and CIMD confidential providers unchanged. Consent connection status uses a narrow active-service-ID query instead of loading encrypted tokens per requirement. User-visible session summaries include expired sessions and derive refresh-token presence in PostgreSQL without selecting token ciphertext. PostgreSQL session repository reads and writes use configured read/write timeouts; refresh's row-lock transaction retains separate bounded acquisition and query phases.
 - **Refresh concurrency**: Automatic refresh coalesces calls per `(principal, service_id)` with in-process `singleflight`. The session service loads provider metadata before `UserSessionRefreshRepository.WithLockedSession`. Under that operation, background, on-demand, and sweep refreshes re-read the current session and check whether it is still due. On-demand and background refreshes read the clock for that check after acquiring the lock; the sweep keeps its fixed start threshold. PostgreSQL holds a row lock through the provider exchange and commits encrypted, rotated tokens before releasing it. The operation updates an existing row only, so deletion cannot recreate a session. Across replicas, a second refresh waits for the lock and skips its provider call when the first already renewed the token. Database acquisition, reads, and writes have separate configured timeouts. The in-memory adapter serializes refresh, upsert, and deletion per session.
 - **Proactive refresh**: If token exchange serves a valid access token within `token_refresh.lookahead_duration`, it submits refresh work without waiting. A token with no expiry is never due. Each replica deduplicates in-flight submissions before acquiring a nonblocking pool slot. A full pool drops new work while the exchange still returns the valid token. Expired tokens retain the synchronous on-demand path.
-- **Refresh-token retention and rotation**: For a successful `grant_type=refresh_token` response, the broker follows [RFC 6749 §6](https://www.rfc-editor.org/rfc/rfc6749#section-6). If `refresh_token` is absent, it stores the new access token and retains the existing refresh token and its recorded expiry. If a new refresh token is present, it replaces the stored token and clears the old token's recorded expiry. Omission does not imply revocation or extend the refresh token's lifetime.
-- **Authorization-code reconnects**: This broker policy applies only to a new `grant_type=authorization_code` exchange, not a refresh-token grant. Reconnects replace both credentials under the refresh lock. If the response omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and its recorded expiry. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. A subsequent reconnect with a new refresh token restores automatic refresh.
+- **Refresh-token retention and rotation**: For a successful `grant_type=refresh_token` response, the broker follows [RFC 6749 §6](https://www.rfc-editor.org/rfc/rfc6749#section-6). If `refresh_token` is absent, it stores the new access token and retains the existing refresh token. If a new refresh token is present, it replaces the stored token and clears any recorded rejection. Omission does not imply revocation or extend the refresh token's lifetime.
+- **Authorization-code reconnects**: This broker policy applies only to a new `grant_type=authorization_code` exchange, not a refresh-token grant. Reconnects replace both credentials under the refresh lock. If the response omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and any recorded rejection. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. A subsequent reconnect with a new refresh token restores automatic refresh.
 - **Callback precedence**: Authorize seals the observed session ID and private callback generation into JWE state. Initial callbacks use `CreateIfAbsent`, not the general-purpose upsert. Reconnects compare the sealed baseline under the refresh lock and advance `callback_id` only when replacing credentials. The first committed callback from a shared baseline wins; a later deliberate reconnect can replace it. Refresh preserves this generation, and a reconnect cannot recreate a deleted session. Migration `038` adds `callback_id` with an empty default for existing sessions. Session IDs and initiation timestamps retain their existing meaning.
-- **Session usability**: The domain owns `SessionIsUsable`. A session is usable while its access token is valid or a stored refresh token is usable. `is_expired` is the inverse. Both storage adapters use this rule for consent connection status and active-session queries. An access-only reconnect becomes expired when its access token expires. A refresh token with unknown expiry remains refreshable, but unknown expiry does not mean indefinite validity.
+- **Refresh rejection and reauthentication**: The broker never predicts a refresh token's lifetime. `UserSession.RefreshRejectedAt` records an observed HTTP 4xx `invalid_grant` (except 429) from the provider; it lives in the legacy `refresh_token_expires_at` column and is never exposed as an expiry ([ADR 046](adrs/046-observed-refresh-token-rejection.md)). `CanRefresh` is a stored refresh token without a recorded rejection. The domain owns `RequiresReauthentication`: a recorded rejection, or an expired access token without a stored refresh token. A recorded rejection refuses token issuance even while the stored access token is valid, and excludes the session from background and sweep refresh. Both storage adapters use this rule for consent connection status and active-session queries. The session API exposes it as `requires_reauthentication`, with `is_expired` as a deprecated alias. A successful reconnect or a rotated refresh token clears the rejection.
 - **Refresh retries and metadata**: Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts. Backoff delays are 1s and 2s; `Retry-After` values above 10 seconds, including numeric overflow, stop retries. Dial retries require no sent request headers, including across redirects. Incomplete response bodies, timeouts, and ambiguous post-send failures are not retried. A lost response can lose a provider rotation; stored credentials remain unchanged, and a later provider rejection can require login. Retry waits retain the row lock and database connection within the bounded refresh context. Refresh accepts numeric or numeric-string `expires_in` and commits explicit token type and scope with the credentials. Omitted scope retains the stored scope; explicit empty scope clears it. Scope parsing uses the provider flavor's separator.
 - **Refresh cancellation and audit**: Automatic refresh uses a bounded operation context that covers the upstream HTTP timeout and storage work. Caller cancellation stops that caller's wait without aborting a shared refresh that may already have rotated the provider token. Success audit events follow committed session persistence.
 - **Session sweep**: `SessionSweepService` reads due sessions in bounded keyset pages through `UserSessionExpiryRepository`. It fixes one threshold at sweep start and orders rows by access-token expiry, then UUID. A `SessionExpiryCursor` stores the last raw row's pair. A per-invocation ID set prevents a row whose expiry moves forward from receiving a second outcome. This set uses O(unique candidates) memory; the page buffer remains bounded by `page_size`. A real sweep re-checks the current session under `WithLockedSession`. For a listed row with no usable refresh token, a read-only locked recheck skips deleted or already-renewed rows. It reports a still-unrefreshable row as failed without fetching provider credentials. If the user reauthorized after listing, the sweep releases the read-only lock and follows the normal locked refresh path. A terminal row can fail on every invocation until the user reauthorizes or ends the session. Normal refreshes commit encrypted new tokens or report per-session failures. A repository failure aborts the sweep. A dry run classifies listed snapshots without a row lock, provider call, or write.
-- **Refresh configuration**: `token_refresh.lookahead_duration` defaults to `5m` and must be positive. `token_refresh.background_workers` defaults to 10 and accepts 1 through 20. This limit applies only to background work, not distinct on-demand sessions or concurrent sweeps. `token_refresh.sweep.default_page_size` defaults to 100 and accepts 1 through 1000. Keep the lookahead shorter than the provider access-token lifetime to prevent a refresh attempt on every exchange.
+- **Refresh configuration**: `token_refresh.lookahead_duration` defaults to `5m` and must be positive. `token_refresh.background_workers` defaults to 10 and accepts 1 through 20. This limit applies only to background work, not distinct on-demand sessions or concurrent sweeps. `token_refresh.sweep.default_page_size` defaults to 100 and accepts 1 through 1000. `token_refresh.health_metrics.enabled` defaults to `true`, and `token_refresh.health_metrics.query_timeout` defaults to `5s` and must be positive. Keep the lookahead shorter than the provider access-token lifetime to prevent a refresh attempt on every exchange.
 - **Locked-session capacity**: The PostgreSQL adapter admits at most 20 `WithLockedSession` operations across all repository instances that share its 25-connection pool. Background, on-demand, sweep, and reconnect operations share this limit. Excess operations wait before acquiring a database connection. Admission and connection acquisition share the `storage.timeouts.write` budget and respect earlier caller cancellation. The slot remains occupied through commit or rollback and connection release. This leaves five pool connections outside locked-session work, even during provider outages. Other request traffic can still consume those connections.
 - **Session telemetry and privacy**: The context handler preserves request `trace_id`, `actor`, and optional `calling_peer`. Per-session refresh success, failure, and saturation logs include the session owner's `principal`, session ID, and service ID without token material. `session.oauth2.sweep_aborted` and the aggregate sweep audit have no session owner; the audit uses `operator_principal`. `SessionTokensRefreshed` emits `session.oauth2.token_refreshed` only after commit, with `triggered_by` set to `on-demand`, `background`, or `sweep`. A background refresh starts a new root span linked to the triggering request span, not a child of that request.
-- **Session metrics**: OpenTelemetry `Int64Counter` instruments `proactive_refresh_triggered_total`, `proactive_refresh_dropped_total`, and `proactive_refresh_failed_total` use only `triggered_by=background`. Instruments `session_sweep_refreshed_total` and `session_sweep_failed_total` use only `triggered_by=sweep`. A deduplicated or closed submission and a dry-run result do not increment these counters. No counter uses principal, session ID, or service ID as an attribute.
+- **Session metrics**: OpenTelemetry `Int64Counter` instruments `proactive_refresh_triggered_total`, `proactive_refresh_dropped_total`, and `proactive_refresh_failed_total` use `triggered_by=background`. Instruments `session_sweep_refreshed_total`, `session_sweep_skipped_total`, and `session_sweep_failed_total` use `triggered_by=sweep`. The triggered, refreshed, and failed counters also carry `service_id`, and both failed counters carry the failure's `failure_detail`. The skipped and dropped counters carry only `triggered_by`. `service_id` on the counters and the gauge is the service's canonical ID when one is set, otherwise its UUID. The counters look the canonical ID up once per service and sweep run, and once per background refresh in the worker, which therefore records the triggered counter. The gauge looks it up once per export cycle for the services in its snapshot. A failed lookup falls back to the UUID. A deduplicated or closed submission and a dry-run result do not increment these counters. No counter uses principal or session ID as an attribute. The sweep handler records `session_sweep_duration_seconds`, a histogram attributed by `outcome` and `dry_run`, next to its audit event; a request without an operator principal records nothing. The `oauth2_sessions` observable gauge, attributed by `service_id`, `expiry`, and `refreshable`, comes from one `UserSessionHealthRepository.CountSessionsByExpiry` query per export cycle. The domain classifies each group into a Session Health State and zero-fills all eight `(expiry, refreshable)` combinations per service. A failed query exports no points for that cycle and logs a WARN with the storage error kind.
 - **Session-expiry index**: Migration `037` creates the B-tree index `idx_user_sessions_access_token_expires_at` on `user_sessions(access_token_expires_at, id)` with `CREATE INDEX CONCURRENTLY`. The key order matches the expiry-then-UUID sweep cursor. DOWN uses `DROP INDEX CONCURRENTLY`. The separate migration image invokes `golang-migrate` directly. Both SQL files retain `-- migrate:no-transaction` as an informational comment, not an enforced directive. [ADR 039](adrs/039-concurrent-session-expiry-index.md) accepts this named non-atomic exception with direct execution. No preflight checks the SQL pair: a missing DOWN can go unnoticed until after UP. A failed build can leave an invalid index and a dirty `schema_migrations` version. Recovery inspects `pg_index.indisvalid`, both ordered keys, and the migration version before any change. After stopping competing migration Jobs, operators drop only a confirmed invalid index with schema-qualified `DROP INDEX CONCURRENTLY` outside a transaction. They use `migrate force 36` or `migrate force 37` only after reviewing actual schema state. Force changes metadata, not the index. See [the runbook](docs/operations/session-sweep.md).
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
 - **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange and refresh retry transient failures, but not permanent OAuth errors.
-- **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of confidential provider `client_secret` values via the `Secret` value object. Public services have no client secret. No other layer touches `EncryptionPort` for provider secrets.
-- Protected-resource resolution leaves confidential provider secrets encrypted and public-provider secrets absent. Token exchange uses only the provider ID and display name; a refresh retrieves credentials separately through `ThirdpartyOAuth2ProviderService.Get()`. Successful secret decryption is logged at Debug.
+- **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of stored confidential provider `client_secret` values via the `Secret` value object. Filesystem, public, and CIMD services use an absent secret. No other layer touches `EncryptionPort` for provider secrets.
+- Protected-resource resolution leaves stored confidential secrets encrypted and filesystem/public/CIMD secrets absent. Token exchange uses only the provider ID and display name. Refresh retrieves the service through `ThirdpartyOAuth2ProviderService.Get()` and selects operation credentials in the session domain. Successful stored-secret decryption is logged at Info with structured fields.
 - No manual encryption steps required in calling code - encryption is transparent
+
+**Implemented credential sources and operation boundaries (`051-oauth2-secret-file-overrides`, unreleased)**:
+
+**Approval, 2026-10-08**: The user explicitly selected “Accept ADR 038” and “Major contract bump to 2.0.0”. [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md) is Accepted. Source selection, file acquisition, identity checks, and both-store persistence are implemented. Historical design approval and semantic-red evidence remain in the [quickstart](specs/051-oauth2-secret-file-overrides/quickstart.md#status-and-prerequisites). This feature is unreleased. No registry publication or live deployment occurred.
+
+The registered service owns `credential_source: stored | filesystem`. Creation omission selects stored. Update omission preserves the source without changing unrelated PUT semantics. Stored mode ignores bindings. Public clients, CIMD confidential clients, and Google-flavor services reject filesystem selection and retain existing behavior without file access.
+
+Filesystem mode requires a canonical ID and rejects either supplied inline credential field, including null or empty input. The service stores no file client ID or secret placeholder and uses `NewAbsentSecret()`. Administrative, consent, and session metadata operations never resolve files. Filesystem administrative responses omit both inline credentials and expose no paths or internal transition evidence.
+
+**Administrative API approval and versioning (`051-oauth2-secret-file-overrides`)**:
+
+Published release `v0.1.81` contains Admin API `1.0.0`. Its `Service` response requires `client_id`, so filesystem omission is a breaking contract change. Admin API `2.0.0` replaces that contract on the existing `/api/services` and `/api/services/{service-id}` routes. No versioned route, compatibility endpoint, shim, or alias is introduced. The OpenAPI contract version is separate from the broker release tag.
+
+The approved contract appears in [`api/admin/openapi.yaml`](api/admin/openapi.yaml). OpenAPI 3.0 `oneOf`, `required`, and `not` schemas define the source-specific request and response shapes. List, get, create, and update responses always report the source. Stored responses always include the stored client ID and preserve applicable `REDACTED` secret output. Filesystem responses forbid both inline fields, including null values or a synthetic redaction placeholder.
+
+Creation omission selects stored. Update omission preserves the current source. Explicit null, unknown selectors, and filesystem inline-field presence are invalid. Filesystem mode requires a valid canonical ID and rejects public, CIMD confidential, and Google-flavor services. Administrative inputs cannot supply credential-file paths or internal transition evidence.
+
+PUT remains a full replacement with existing documented omission exceptions. Source transitions update the source, credentials, and irreversible transition evidence atomically. The reverse transition requires both explicit non-empty inline credentials, never imported file values. Existing error envelopes, ETags, protected-resource preconditions, methods, endpoints, and unrelated validation remain unchanged. End-user API and operational error contracts remain unchanged.
+
+An OpenAPI request cannot inspect the previous service record. The domain enforces omitted-source updates, the resulting canonical ID, and stricter reverse-transition credentials against that record. Repository administrative consumers use the source-aware contract. External consumers must migrate as documented in the [Admin API 2.0.0 migration guide](docs/guides/manage-agents-and-services.md#migrate-administrative-consumers-to-admin-api-200). The Admin API version does not announce a broker release.
+
+The relationships and ownership are:
+
+| Concept | Owner and relationship |
+|---|---|
+| Credential source | The existing service model defines the source. `ThirdpartyOAuth2ProviderService` validates source changes and owns stored-secret encryption. |
+| Transition evidence | The service owns internal `credential_source_transitioned`. Both stores persist it atomically with source and credential changes. |
+| Filesystem credential binding | Operator configuration maps an exact, case-sensitive canonical ID to two absolute paths. Builder injects the immutable snapshot. A binding never selects a source. |
+| Operation credentials | `OAuth2SessionService` selects required values through one shared path. `ports.CredentialFileReader` separates file I/O from domain rules. |
+| Client-identity association | Existing JWE authorization context and `UserSession` retain the established non-secret identity. The session domain enforces it before provider authentication. |
+| Credential-source error | The domain model owns the safe category. The file adapter translates OS errors. The session domain supplies binding and identity errors. |
+
+The three operation boundaries are:
+
+| Boundary | Filesystem action | Eligible stored action and identity rule |
+|---|---|---|
+| Authorization initiation | Call `ReadClientID(path string) (string, error)` once. Never access the secret path. | Select the stored client ID without file access. Both modes seal their effective identity in the existing JWE. |
+| Code exchange | Call `ReadPair(clientIDPath, clientSecretPath string) (clientID, clientSecret string, err error)` once per broker-owned exchange attempt. | Select stored credentials without file access. Both modes compare the selected ID with the sealed initiating ID before provider authentication. |
+| Token refresh | Call `ReadPair` once per logical refresh operation; safe HTTP retries reuse the validated pair. | Select stored credentials without file access. Both modes compare the selected ID with the established session ID before provider authentication. |
+
+`ReadPair` opens both current targets before either bounded read. After both reads, it revalidates both configured paths against their open descriptors with `os.SameFile`. A changed target produces `generation_changed`, no partial pair, and no acquisition retry. Both descriptors close before return on every path. The reader follows current symlink targets, rejects non-regular files without blocking, and enforces 65,536 bytes per file before whitespace removal. It trims surrounding whitespace and rejects empty results.
+
+Pair coherence requires complete publication through fresh immutable targets. Providers never modify published targets or reuse retired targets during acquisition. Publication after validation can leave an in-flight operation using its validated pair. Later acquisitions use current targets. Identity checks and provider validity still apply. Credentials, descriptors, and last-known values never persist across operations.
+
+New eligible authorizations in both modes capture `OAuth2StateTokenClaims.UpstreamClientID` as `upstream_client_id,omitempty`. Successful exchange copies that verified identity to `UserSession.UpstreamClientID`. Both stores preserve nullable session `upstream_client_id`, including locked refresh copies. Public session JSON excludes the field. File secrets and paths never persist. Client identity is not encryption AAD.
+
+The internal transition marker starts false on creation and legacy backfill. An actual source change atomically sets it true with credential removal or replacement. It never resets. No-op selections and metadata updates preserve it. Source transitions never rewrite established identities. Mismatches stop before provider authentication and require a new connection. Matching identities can continue, subject to provider validity.
+
+Legacy missing identity remains usable only for stored services whose transition marker is false. Filesystem mode or a prior transition produces `identity_missing`, including after returning to stored. The broker never infers legacy identity from current credentials. Excluded flows remain unchanged.
+
+Missing bindings and unusable required files fail closed without stored or last-known fallback. Source errors remain distinct from provider rejection and retain existing generic client-facing responses. Credential-free events identify service UUID, operation, outcome, and a closed reason. Successful selection does not prove provider acceptance.
+
+RFC 8693 distinguishes identity association failures from credential-file availability failures. Missing or mismatched required identities use `credential_identity_changed` and `reauth_required`. They return `invalid_grant` with the service-specific third-party authorization `error_uri` before provider authentication (ADR 044). Other source failures retain `credential_source_unavailable`, `infrastructure_error`, and no recovery URI. Provider-rejection audits occur once per operation, only for HTTP 401 or 4xx `invalid_client`/`unauthorized_client`, never 429/5xx.
+
+Both stores preserve existing indexes, version checks, and atomic updates. PostgreSQL constraints represent absent filesystem credentials as SQL NULL. Existing migration 040 backfills stored/false service state and leaves legacy session identities NULL. Its guarded DOWN refuses filesystem rows, retained transition evidence, and other incompatible records. Compatible DOWN discards non-secret session identity associations.
+
+Stored-secret encryption remains domain-owned. Session-token AAD remains exactly `service_id`. Public PKCE, confidential auth-style negotiation, CIMD trust domains, provider retry policy, refresh locking, and singleflight remain unchanged.
 
 **Secret Value Object** (`internal/domain/model/secret.go`):
 
@@ -868,11 +765,12 @@ OAuth2 /authorize request
   ↓  ├─ URL detected → AgentClientResolver (cimdService != nil)
   ↓  │    ↓ Validate URL (scheme, path, no credentials, no dot-segments, no wildcard, no literal or encoded path separators)
   ↓  │    ↓ AgentRepository.GetByClientURI → exact URI, then whole-segment URI pattern
-  ↓  │    ↓ CIMDService.FetchAndValidate(url, agent)
-  ↓  │         ↓ Cache hit? → return cached document
-  ↓  │         ↓ CIMDFetcher.Fetch (SSRF blocklist enforced at dial time)
-  ↓  │         ↓ Validate: client_id match, redirect_uris present, auth_method safe
-  ↓  │         ↓ Cache store with HTTP-header-derived TTL (clamped to operator bounds)
+  ↓  │    ↓ CIMDService.Resolve(url, agent)
+  ↓  │         ↓ Cache hit? → use cached document
+  ↓  │         ↓ Cache miss → CIMDFetcher.Fetch (SSRF blocklist enforced at dial time)
+  ↓  │         ↓ Validate: client_id match, redirect_uris present and permitted (FR-004a), auth_method safe
+  ↓  │         ↓ Agent allowlist: every private-use redirect_uri must be in Agent.redirect_uris (hit or miss)
+  ↓  │         ↓ Cache store on miss with HTTP-header-derived TTL (clamped to operator bounds)
   ↓  │    ↓ Return ClientResolution{Agent, CIMDDocument}
 
   ↓  └─ UUID detected → AgentClientResolver (opaque path, cimdService may be nil)
@@ -888,29 +786,29 @@ OAuth2 /authorize request
 
 **CIMD bypass configuration**: The configuration loader rejects `security.skip_cimd_ssrf_validation: true` unless `GO_ENV` is explicitly `development`. This check runs before application initialization, even when CIMD is disabled. The flag disables both the dial-time IP blocklist and TLS certificate verification for local CIMD mock testing. The startup configuration summary reports its effective value and source for configuration audits.
 
-**Redirect URI Matching**: `urivalidation.MatchesRedirectURI` (`internal/domain/urivalidation/redirect.go`) compares a registered URI against the runtime request URI. For loopback hosts (`localhost`, `127.0.0.1`, `::1`) the port component is ignored per RFC 8252 §7.3 and OAuth 2.1 §2.3.1 — any ephemeral port is accepted as long as scheme, host, and path match exactly. For all other hosts all four URI components (scheme, host, port, path) must match exactly. This rule applies to both CIMD clients (redirect_uris from the fetched document) and opaque clients (redirect_uris registered on the Agent entity).
+**Redirect URI Matching**: `urivalidation.IsRegisteredRedirectURI` (`internal/domain/urivalidation/redirect.go`) decides registration. For CIMD clients, the client list comes from the fetched document. Otherwise, it comes from the Agent's `redirect_uris`. Web URIs retain `MatchesRedirectURI` behavior: loopback HTTP ports are ignored, while every other component must match exactly. A private-use URI must pass `IsValidPrivateUseRedirectURI` and equal an entry in both the client list and the Agent's `redirect_uris` byte for byte. A CIMD document alone cannot enable a custom-scheme callback (ADR 042).
 
-**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations. The CIMD timeout, response limit, cache, and validation rules remain unchanged.
+**See Also**: [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) defines the binding CIMD fetch policy. [ADR 040](adrs/040-protected-resource-discovery-and-dcr.md) changes only its package locations. That relocation leaves the timeout, response limit, and cache policy unchanged. [ADR 042](adrs/042-agent-allowlisted-private-use-redirect-uris.md) defines the private-use redirect exception and Agent allowlist.
 
 #### 3.1.z. Outbound CIMD Client Authentication (Feature 046)
 
-**Purpose**: Authenticate the broker to a third-party OAuth2 token endpoint for a CIMD confidential service. This outbound client-authentication feature does not change **inbound CIMD client resolution**, where the broker fetches and validates an agent's client metadata document before authorization.
+**Purpose**: Identify the broker as a hosted client of a third-party OAuth2 service, with or without token-endpoint authentication. CIMD confidential uses `private_key_jwt`; CIMD public explicitly uses `none`. This outbound feature does not change inbound CIMD client resolution.
 
-**Service modes**: Manual and discovery-backed third-party OAuth2 services use these token-endpoint authentication methods:
+**Service modes**: `client_registration` independently selects `static` (operator client identity) or `cimd` (broker-hosted client identifier URL). Token-endpoint authentication selects a shared secret, `none`, or a signed assertion. The four valid manual combinations and discovery-backed methods are:
 
-| `token_endpoint_auth_method` | Eligible service | Token endpoint credential |
-|---|---|---|
-| Omitted or `null` | Manual static confidential | Operator-supplied client ID and encrypted shared secret with automatic authentication-style detection |
-| `none` | Manual public or public DCR | Client ID and no client credential with PKCE S256 on authorization-code flows |
-| `private_key_jwt` | Manual or discovered hosted CIMD | Broker-hosted HTTPS client ID URL and a fresh ES256 client assertion |
-| `client_secret_basic` | Discovery-backed confidential DCR only | Provider-issued client ID and encrypted secret, sent by HTTP Basic only |
-| `client_secret_post` | Discovery-backed confidential DCR only | Provider-issued client ID and encrypted secret, sent in the form body only |
+| `client_registration` | `token_endpoint_auth_method` | Eligible service | Token endpoint credential |
+|---|---|---|---|
+| `static` | Omitted or `null` | Manual static confidential | Operator-supplied client ID and encrypted shared secret with automatic authentication-style detection |
+| `static` | `none` | Manual static public | Operator client ID, no credential, PKCE S256 |
+| `cimd` | `private_key_jwt` | Manual or discovered CIMD confidential | Broker-hosted HTTPS client ID URL and a fresh ES256 assertion |
+| `cimd` | `none` | Manual CIMD public only | Broker-hosted HTTPS client ID URL, no credential, PKCE S256 |
+| `static` | `client_secret_basic`, `client_secret_post`, or `none` | Discovery-backed DCR only | Provider-issued client ID and the discovered method; secrets are encrypted if present |
 
-`private_key_jwt` is confidential authentication. For hosted CIMD, the broker generates the stable client ID URL and stores no shared secret. A manual CIMD service request with a caller client ID or non-empty secret fails before provider traffic. Discovery-backed DCR pins its selected method for code exchange and refresh. It does not use authentication-style probing. This DCR-only extension supersedes ADR 036 decision 2. Manual confidential services retain their existing negotiated behavior.
+`private_key_jwt` remains recommended for CIMD because it authenticates the broker to the provider. CIMD public is an explicit per-service choice for providers that require `none`; the broker never infers it or selects it through protected-resource discovery. An omitted registration resolves to `cimd` only for `private_key_jwt` and to `static` otherwise. Requests with `static` plus `private_key_jwt`, or `cimd` plus an absent or null method, fail before provider traffic. Discovery-backed DCR pins its selected method without authentication-style probing. Manual confidential services retain their existing negotiated behavior.
 
 **Key-domain boundary (ADR 037)**: Each signing-key record has a required `key_domain`. `token_signing` signs broker-issued access tokens. `cimd_client_authentication` signs outbound CIMD client assertions. The domains share encrypted storage and lifecycle mechanics, but each has separate selection, publication, and lifecycle operations. `kid` values are globally unique, and each domain has at most one active current key.
 
-CIMD client-authentication keys use ES256 only. Their private material uses a CIMD branch-key namespace and an encryption context with one `kid` subject. The token issuer uses only `token_signing`. `/oauth2/jwks.json` uses `token_signing` and mode-appropriate upstream sources. It never uses `cimd_client_authentication`. The CIMD metadata service, public JWK publisher, and assertion signer use only `cimd_client_authentication`.
+CIMD client-authentication keys use ES256 only. Their private material uses a CIMD branch-key namespace and an encryption context with one `kid` subject. The token issuer uses only `token_signing`. `/oauth2/jwks.json` uses `token_signing` and mode-appropriate upstream sources. It never uses `cimd_client_authentication`. Only CIMD confidential metadata, public JWK publication, and assertion signing depend on the CIMD key set. CIMD public metadata is keyless.
 
 On create and update, the broker provisions a service-scoped branch key before it stores the service configuration. This includes CIMD services without shared secrets. The token vault encrypts their session tokens with the service ID as authenticated context. The broker-global CIMD assertion key uses a separate `kid` subject.
 
@@ -928,17 +826,23 @@ The assertion has `iss` and `sub` equal to the broker-hosted client ID URL. Its 
 
 CIMD token refresh emits a credential-free token-acquisition audit record with the service ID, operation `refresh`, and outcome `rejected` on failure, including response-drain read errors and responses over the 1 MiB limit. Other client modes do not emit CIMD token-acquisition events.
 
-**Public documents**: The anonymous metadata route returns the broker-hosted Client ID Metadata Document only for an existing CIMD confidential service with a usable published key. Its JWK route publishes public CIMD verification keys only. Both routes use `Cache-Control: public, max-age=300`. All unavailable service states return the existing JSON `404` response without a redirect, partial document, or key material.
+CIMD public token acquisition follows the existing public-client session audit path (`public_client: true`). Service lifecycle records say `CIMD public service`. The existing `CIMD metadata access` event covers public document serving without a second record for the same request.
 
-An advertised CIMD key can remain pending during its activation grace period. Metadata and JWK routes require an effective signing key whose `kid` appears in the public JWK set. The set still includes pending and retained prior keys. A pending-only set produces JSON `404` responses.
+**Broker-hosted Client ID Metadata Document**: The anonymous metadata route returns a seven-member confidential document only when a usable published CIMD key exists. Its keyless CIMD public variant has exactly `client_id`, one callback URI in `redirect_uris`, `grant_types` (`authorization_code`, `refresh_token`), `response_types` (`code`), and `token_endpoint_auth_method: none`. It omits `jwks_uri` and `token_endpoint_auth_signing_alg`. Both successful documents use `200`, `application/json`, and `Cache-Control: public, max-age=300`. An unavailable document or public-mode JWK request returns the same JSON `404` without a redirect or partial data.
+
+An advertised CIMD key can remain pending during its activation grace period. Confidential metadata and JWK routes require an effective signing key whose `kid` appears in the public JWK set. The set includes pending and retained prior keys. A pending-only set produces JSON `404` for confidential requests. It does not block CIMD public metadata.
 
 The broker caches only the public CIMD JWK set for 45 seconds per process. Each read checks the database-backed key-set revision. A revision change rebuilds the set, so another replica sees a committed key removal on its next read. Concurrent rebuilds share one bounded operation. Revision or rebuild errors never return a stale set.
 
-**SC-008 normal load**: After one warm-up request per route, ten concurrent clients send 100 anonymous requests to each public metadata and CIMD JWK route. Each request must return `200 OK`. The p95 retrieval latency for each route, measured through reading and closing the response body, must be less than one second.
+**SC-008 normal load**: For an eligible CIMD confidential service, ten concurrent clients send 100 anonymous requests to each metadata and CIMD JWK route after one warm-up request per route. Each request must return `200 OK`. The p95 retrieval latency for each route, including reading and closing the response body, must be less than one second. CIMD public JWK requests intentionally return `404` and are not part of that baseline.
 
-**Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity before key bootstrap or route serving. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
+**Client-ID continuity**: The broker persists the complete HTTPS client ID derived from `server.enduser.public_url` and the immutable service ID. Startup validates every persisted outbound CIMD identity, including CIMD public, before key bootstrap or route serving. Only CIMD confidential services trigger key bootstrap and published-key readiness. A changed public origin fails startup rather than rewriting an identity or returning metadata from a fallback location. Restore the prior origin for immediate recovery; any re-registration or identity migration is an explicit, separately approved operation.
 
-**See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md)
+PostgreSQL reads check stored client registration and authentication without repeating write-time discovery URL validation. An unsafe persisted discovery URL does not block service lists or startup. New writes validate that URL, and the guarded outbound client rejects unsafe destinations. Invalid stored client authentication reports the service ID. The startup check still rejects a CIMD client ID that differs from the configured public origin.
+
+**Identity switches and rollout**: A full replacement keeps the URL between CIMD methods. Static-to-CIMD assigns the hosted URL; CIMD-to-static requires an operator client ID and ends metadata serving. Provider caches can retain an old document for 300 seconds, and a provider can reject old refresh tokens after the client ID changes. During rollout after migration 044, pre-upgrade replicas fail closed on CIMD confidential creates and CIMD identity rewrites. Retry those writes after all replicas upgrade. See ADR 044 for the guarded rollback procedure.
+
+**See Also**: [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) and [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md).
 
 #### 3.1.z.1. Protected-Resource Discovery and Dynamic Client Registration (Feature 050)
 
@@ -987,7 +891,7 @@ Discovery and registration send no service credentials, user tokens, cookies, or
 
 #### 3.1.y. User Impersonation Domain (Feature 037)
 
-**Purpose**: Orchestrate the broker's user-impersonation capability on `POST /oauth2/token` so a privileged client can mint a broker-issued access token that represents a specified subject while explicitly attributing the acting party via the standard `act` claim. Because the issued token carries both `sub` and `act`, this is *delegation* in RFC 8693 §1.1 terms, not impersonation; the broker keeps **impersonation** as the operator-facing capability name but implements RFC 8693 delegation semantics for actor accountability. It separately requires the repo's user-consented `UserGrant` delegation before minting. Available only in `local` mode.
+**Purpose**: Orchestrate the broker's user-impersonation capability on `POST /oauth2/token` so a privileged client can mint a broker-issued access token that represents a specified subject while explicitly attributing the acting party via the standard `act` claim. Because the issued token carries both `sub` and `act`, this is *delegation* in RFC 8693 §1.1 terms, not impersonation; the broker keeps **impersonation** as the operator-facing capability name but implements RFC 8693 delegation semantics for actor accountability. Human-category issuance separately requires the repo's user-consented `UserGrant` delegation before minting. Accepted [ADR 045](adrs/045-agent-subject-impersonation.md) adds signed self-agent issuance without delegation. Available only in `local` mode.
 
 **New Bounded Context**: `internal/domain/impersonation/` independently orchestrates credential validation, authorization, audience-target resolution, user-delegation enforcement, and local minting. It depends only on ports and domain; `ports.ImpersonationTokenIssuer` insulates it from the fosite signer and `ports.UserDelegationVerifier` insulates it from the consent bounded context. It resolves existing registered target agents through `ports.AgentRepository`; no new persistence exists.
 
@@ -1000,10 +904,13 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
   ↓ Walk oauth2_authorization_server.impersonation.rules in configured order, first-match:
   ↓   ├─ Validate signed client_assertion, actor, and subject against the rule's per-issuer JWKS
   ↓   │    (signature, algorithm allow-list, iss, per-role expected audience, exp, nbf)
-  ↓   ├─ Extract privileged-client, actor-token issuer, actor, and subject identities (+ optional subject email)
+  ↓   ├─ Extract privileged-client, actor-token issuer, actor, and subject identities (all mandatory)
+  ↓   ├─ Classify: raw sub exactly equal to target UUID and (signed and verified, or unverified with a predicate binding subject_token.sub) → agent; otherwise human
+  ↓   ├─ Gate on allowed_subject_categories (omitted → [human]); ineligible → next rule
   ↓   └─ Evaluate the rule's single CEL authorization predicate (ADR-009 pattern)
-  ↓ Verify an active UserGrant for (extracted subject principal, target agent)
+  ↓ Human: extract optional email; verify active UserGrant for (extracted subject principal, target agent)
   ↓   missing/expired → terminal access_denied + error_uri=<public-url>/agents/<target-id>; lookup failure → server_error
+  ↓ Agent: use target UUID as represented subject, skip email extraction and delegation; create no human state
   ↓ Mint through normal local access-token path: target agent_id + local CEL agent.*, sub=subject, act.iss=validated actor-token issuer, act.sub=actor, granted scope
   ↓ Local token_claims_expression alone emits aud (or omits it); RFC 8693 response returns non-empty granted scope; audit target and privileged client
 ```
@@ -1014,19 +921,30 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 - Impersonation keeps verified signed credentials in a request-local memo by role, token, and JWKS provider instance. The builder shares one provider for identical issuer and JWKS settings across rules; independently refreshed providers never share verification results, even when their configured URIs match. Each rule still enforces its own authorized signing roles, algorithm allow-list, audience policy, issuer, expiration, and not-before checks. No verification result is reused across requests, and the unsigned subject exception is unchanged.
 - `actor == subject` is permitted and yields `act.sub == sub`; `act.iss` remains the validated actor-token issuer.
 - The issued token uses normal local issuer, lifetime, signing-key, base claims, token-claims policy, and JWT `scope` claim. The target supplies minted `agent_id`, CEL `agent.*`, request `agent_id`, audit identity, and `AllowedScopes`: empty is unrestricted, listed values are exact, and reserved refresh-token scopes retain normal handling. A rejected scope returns credential-free `invalid_scope`; absent scope yields JWT `scope == ""` and no response field. The assertion supplies privileged-client authorization/audit identity only. `aud` remains policy-owned.
-- A rule-authorized request mints only when the extracted subject (as `id.Principal`) has an active `UserGrant` for the target agent. This check is mandatory for signed and unverified subjects, terminal rather than rule fall-through, and has no configuration opt-out. Missing or expired delegation returns generic `access_denied` with the existing token-error `error_uri`; its credential-free audit category distinguishes the cases. An unavailable verifier fails closed with `server_error`.
+- An eligible human request mints only when the extracted subject (as `id.Principal`) has an active `UserGrant` for the target agent. This remains mandatory for signed and unverified humans, terminal rather than rule fall-through, and has no configuration opt-out. Missing or expired delegation returns generic `access_denied` with the existing token-error `error_uri`; its credential-free audit category distinguishes the cases. An unavailable verifier fails closed with `server_error`.
+- Subject classification is independent of eligibility. Only a raw string `sub` byte-for-byte equal to the canonical target UUID is `agent`, and only when the subject is signed and verified or, for an unverified subject, when the rule's predicate binds `subject_token.sub` (ADR 045 decision 2a). No alias resolution, UUID normalization, principal-expression mapping, or request category input selects agent issuance. Signed exact equality on human-only/omitted rules is ineligible even with active same-text human delegation. Unsigned subjects whose predicate does not bind `subject_token.sub` are always human. A signed (or predicate-bound unverified) `sub` or extracted subject principal that is another registered agent's canonical UUID is a cross-agent request: ineligible on every rule, with no human delegation fallback or consent link (ADR 045 decision 2b).
+- For eligible agents, all principal extractions and authorization must succeed, but the represented/minted subject is target-derived and need not equal the extracted principal. Only ADR 032 decisions 1 and 2 are superseded for agents. The mint input has `Email=nil`; email extraction is not evaluated. This removes credential-derived email input, not policy-owned output: existing CEL exposes `principal.email` as an empty string, and policy may still emit email. No mint-strategy or base-claims change is required.
+- `impersonation_decision` adds credential-free `subject_category` after classification; `subject_identity` is the represented subject. Rule, target, privileged client, actor, issuer roles, outcome, and OAuth error retain their existing meanings. No tokens or wholesale claims are logged.
 - Fail-closed on validation, extraction, predicate denial, delegation verification, or CEL timeout; no-match precedence is `access_denied` > `invalid_request` > `invalid_client`.
 - Local-mode only; proxy and hybrid modes reject impersonation and never forward upstream.
 
 **Reused Machinery**: the JWKS adapter (`internal/adapters/jwks`), the ADR-009 CEL evaluator pattern (`internal/domain/tokenexchange/cel_evaluator.go`), the signed-JWT validation pattern, and the local issuer's signing key + `token_claims_expression` principal context (`internal/domain/oauth2server`).
 
-**See Also**: ADR 032 (accepted) — mandatory user delegation for impersonation; spec `037-oauth2-user-impersonation` (FR-013–019, CR-001–010).
+**Agent-subject third-party boundary (Feature 054)**: After validated principal extraction and request-security capture finalization, but before agent extraction, authorization, resources, grants or sessions, third-party exchange evaluates `token_exchange.claim_extraction.agent_subject_expression`. Its default is `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`. A match returns `403 access_denied` without consent recovery (`identity_resolution/subject_category_unsupported`). Evaluation errors/timeouts return `500 server_error` (`cel_evaluation_failed`); dynamic non-boolean results use `cel_configuration`. Compilation errors, static non-boolean/non-dynamic output types, and expressions that do not reference `subject_token.sub` fail startup. Detection failures never become false. Default detection also rejects equal-claim legacy, mapped/unsigned human and trusted external tokens.
+
+A configured detector fully replaces the default and must reference `subject_token.sub` (ADR 045 decision 6, A12). Operators must retain broker agent-token matching, for example with the default as a disjunct. A non-matching override that references `sub` removes categorical rejection and same-text human-credential isolation; existing checks may read human grants/sessions and return consent errors. No unconditional exchange success is promised. No third-party agent identity is introduced.
+
+**Human-state observation boundary**: Under the existing ADR 011 provider pattern, child spans `tokenexchange.verify_agent_access` and `tokenexchange.get_valid_access_token` surround the corresponding read-capable consent/session calls, passing their child context and ending before error mapping. They add no credential attributes/events, SDK import, constructor parameter, telemetry port or test-only production API. Negative E2E evidence requires sampled request-correlated HTTP completion plus positive human controls that exercise the grant/session boundaries. Unchanged storage alone does not demonstrate zero reads.
+
+**State and performance**: Reuses existing Agent, UserGrant and UserSession storage; no new entity, repository or migration. Agent issuance removes the delegation lookup. Classification is one string comparison per evaluated rule; third-party detection adds one startup-compiled CEL evaluation within the existing timeout. Existing latency budgets remain unchanged. The feature's implementation and verification status is recorded in its [quickstart](specs/054-agent-subject-impersonation/quickstart.md); these are the approved design invariants, not a declaration of completed delivery.
+
+**See Also**: ADR 032 — mandatory human delegation; [ADR 045](adrs/045-agent-subject-impersonation.md) — narrow agent-only supersession; specs `037-oauth2-user-impersonation` and `054-agent-subject-impersonation`.
 
 ### 3.2. Envoy External Processor (ExtProc) Token Exchange Service
 
 **Name**: extproc-token-exchange
 
-**Purpose**: Standalone gRPC microservice that implements the Envoy External Processor protocol for transparent OAuth2 token exchange. When deployed alongside agentgateway, the service intercepts incoming HTTP requests via Envoy's ExtProc filter, extracts Bearer tokens from request headers, performs RFC 8693 token exchange against the identity broker, and replaces the Authorization header with the exchanged token. Exchanged tokens are cached in-memory with singleflight deduplication to optimize performance.
+**Purpose**: A standalone gRPC service performs RFC 8693 token exchange for gateway requests. Agentgateway validates the inbound JWT and supplies its raw token and configured resource URI as trusted `aib.tokenexchange` metadata. ExtProc replaces the downstream `Authorization` header after a successful exchange. Accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) governs this boundary. The [exchanger](internal/extproc/server/exchanger.go) caches results and deduplicates concurrent refreshes.
 
 **Architecture**: Hexagonal (ports and adapters)
 
@@ -1045,12 +963,13 @@ POST /oauth2/token (grant_type=urn:ietf:params:oauth:grant-type:token-exchange)
 
 **Broker HTTP Transport**: ExtProc clones Go's default transport, preserving proxy and keep-alive behavior while enabling HTTP/2 with its configured TLS trust. Each client allows up to 100 idle and 100 total connections per host. New connections have a 1s TCP dial timeout and, for HTTPS, a 2s TLS handshake timeout. These are failure ceilings, not the <200ms typical cache-miss target. The separately configured `oauth2.exchange_timeout` defaults to 5s as an overall failure bound for token exchange and client-credentials grants.
 
-**CachedToken**: Value object representing a cached token with:
+**CachedToken**: The [cache entry](internal/extproc/server/exchanger.go) holds the token, broker-issued identity and permission metadata, expiry, and a separate stale deadline. It can instead hold a short-lived re-authentication error. The [ExtProc token-cache reference](docs/reference/extproc-token-cache.md) separates the implemented lifecycle from unresolved policy conflicts.
 
-- `accessToken`: The exchanged token value
-- `expiresAt`: Absolute expiration timestamp
-- For positive `expires_in`, the fresh lifetime is `max(lifetime - max(10s, lifetime / 10), lifetime / 2)`, capped at `cache.max_ttl`. Only absent or null expiry uses `cache.default_ttl`. Known nonpositive lifetime is not cached, including for outage fallback. The broker serializes known subsecond lifetime as zero instead of omitting it.
-- Transient outages can serve a previously cached token until its reported lifetime plus five seconds, capped at `cache.max_ttl`. This can exceed reported expiry; the fresh-cache margin does not guarantee validity in transit.
+For positive `expires_in`, the fresh lifetime is `max(lifetime - max(10s, lifetime / 10), lifetime / 2)`, capped at `cache.max_ttl`.
+Only absent or null expiry uses `cache.default_ttl`. Known nonpositive lifetime is not cached, including for outage fallback.
+The broker serializes known subsecond lifetime as zero instead of omitting it.
+Transient outages can serve a cached token until its reported lifetime plus five seconds, capped at `cache.max_ttl`.
+This can exceed reported expiry. The fresh-cache margin does not guarantee validity in transit.
 
 **TokenCacheKey**: Struct used as Go map key: `{subjectToken, resourceURI}`. Using struct keys prevents separator-injection attacks compared to string concatenation.
 
@@ -1079,28 +998,21 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 **Server**: Implements Envoy's `ExternalProcessorServer` interface with:
 
 - **Process RPC**: Streaming bidirectional RPC handling all Envoy ExtProc phases (RequestHeaders, RequestBody, ResponseHeaders, ResponseBody, RequestTrailers, ResponseTrailers)
-- **RequestHeaders Phase**: Primary processing phase where Bearer token extraction and exchange occurs
-- **Other Phases**: Pass-through responses with phase-specific response types
-- **ImmediateResponse**: Error response mechanism (500 on exchange failure, 503 on invalid URI)
+- **RequestHeaders Phase**: Validates exchange metadata and exchanges tokens before the request body is available
+- **Other Phases**: Pass-through responses with phase-specific response types; OPA evaluates buffered request bodies after a successful headers-phase exchange
+- **ImmediateResponse**: A non-transient broker exchange error with `error_uri` returns HTTP 403. The response has `WWW-Authenticate: Bearer error="insufficient_scope"` and the existing JSON-RPC `-32042` URL elicitation body (`id: null`). All protocols and OPA modes use this response. The challenge includes `error_description` and `error_uri` only when their bytes match RFC 6750 §3. Other exchange failures return 500, except expired assertions and open circuits, which return 503. Missing or invalid exchange metadata also returns 503. No failure mutates downstream `Authorization`.
 
 #### 3.2.3. Request Processing
 
 **RequestHeaders Processing**:
 
-1. Extract Bearer token from Authorization header (pass through if absent or non-Bearer)
-2. Extract resource URI from `:path` pseudo-header
-3. Validate URI (absolute, http/https scheme, non-empty host) — SSRF mitigation
-4. Call `Exchanger.Exchange()` with (token, uri)
-5. On success: replace Authorization header with `"Bearer " + exchangedToken`
-6. On failure: return 500 ImmediateResponse, reject request, log failure
+1. Read `subject_token` and `resource_uri` only from `aib.tokenexchange` metadata. Reject missing or invalid values without raw-header fallback.
+2. With OPA enabled, validate protocol metadata and MCP transport. For body-bearing requests, exchange before buffering the body. For header-only requests, allow OPA to decide before exchange.
+3. Call `Exchanger.Exchange()` with the validated metadata values.
+4. On success, replace `Authorization` with `Bearer <exchanged token>`.
+5. On a non-transient broker error with `error_uri`, return the 403 challenge from the request-headers phase. A client that supports MCP step-up can discover protected-resource metadata at `/.well-known/oauth-protected-resource/mcp` when the gateway serves that separate route.
 
-**Helper Functions**:
-
-- `extractBearerToken()`: Parse "Bearer <token>" format
-- `extractHeader()`: Case-insensitive header lookup
-- `validateResourceURI()`: URI parsing and scheme validation
-- `replaceAuthorizationHeader()`: Build HeadersResponse with header mutation
-- `immediateResponse()`: Build ImmediateResponse with status code and JSON body
+See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 023](specs/023-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.
 
 #### 3.2.4. Configuration
 
@@ -1152,7 +1064,7 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 
 #### 3.2.5. Security Features
 
-**Fail-Closed**: Exchange failures return 500 ImmediateResponse; original bearer token is never forwarded.
+**Exchange outcomes**: Accepted [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) defines rejection, re-authentication, and forwarding outcomes. The [exchanger](internal/extproc/server/exchanger.go) can return a cached token after a transient refresh failure. The [token-cache policy conflict](docs/reference/extproc-token-cache.md#unresolved-policy-conflict) remains unresolved.
 
 **SSRF Mitigation**: `validateResourceURI()` enforces absolute URIs with http/https schemes only.
 
@@ -1160,20 +1072,20 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 
 **Client Secret Protection**: client_secret stored in memory only (config), never logged (logged as `[REDACTED]`), redacted from error responses.
 
-**Client Assertion Refresh**: Background goroutine acquires ID token from client_credentials grant at startup (fail-fast), refreshes proactively within 30s of expiry, retries on failure.
+**Client Assertion Refresh**: [`TokenExchanger.maybeRefreshAssertion`](internal/extproc/server/exchanger.go) refreshes assertions when remaining lifetime falls below the larger of 20% of total lifetime and 30 seconds.
 
-**Cache Expiry**: Tokens automatically expired and evicted; background goroutine sweeps every `cache.default_ttl / 2`.
+**Cache Expiry**: [`TokenExchanger.runEviction` and `TokenExchanger.evictExpired`](internal/extproc/server/exchanger.go) sweep every `max(cache.default_ttl / 2, 1s)`. Success entries remain through their stale deadline. Expiry does not guarantee immediate deletion, and no capacity eviction exists. See [retention, capacity, and cleanup](docs/reference/extproc-token-cache.md#retention-capacity-and-cleanup).
 
 **TLS Enforcement**: Token endpoint and issuer must use https:// unless `oauth2.tls.allow_http: true` (development only).
 
 #### 3.2.6. Performance
 
-- **RequestHeaders processing**: <10ms typical (cache hit)
-- **Token exchange**: <200ms typical (cache miss, includes HTTP RPC)
-- **Singleflight deduplication**: Concurrent requests for same key trigger exactly one exchange
-- **Cache eviction**: Background goroutine runs non-blocking
-
-**Throughput**: Handles 1000s of requests/sec at typical latencies.
+The [exchanger](internal/extproc/server/exchanger.go) avoids broker calls for fresh cache hits and deduplicates concurrent refreshes through singleflight.
+Its background sweep takes the cache write lock, so eviction can delay concurrent cache access.
+This design does not establish a universal latency or throughput guarantee.
+The [ExtProc specification](specs/015-extproc-token-exchange/spec.md#success-criteria-mandatory) defines startup criteria.
+The [approval-sync specification](specs/026-extproc-approval-sync/spec.md#measurable-outcomes) defines gate latency and propagation targets.
+Reported performance requires measurement under the relevant workload.
 
 #### 3.2.7. Deployment
 
@@ -1285,9 +1197,9 @@ Name: Broker transactional store
 
 Type: PostgreSQL, accessed through sqlx repositories
 
-Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, client assertion replay records, and tool approvals. The `refresh_token_sessions` table stores the optional `client_auth_method`. The runtime account has data permissions; the separate migration job has schema permissions.
+Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
 
-Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `client_assertion_replays`, `refresh_token_sessions`, `tool_approvals`, `approval_sync_state`.
+Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
 
 ### 4.2. DynamoDB branch-key store
 
@@ -1299,109 +1211,153 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
-(List any third-party services or external APIs the system interacts with.)
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 044](adrs/044-service-specific-session-recovery-url.md) records the recovery decision.
 
-Service Name 1: [e.g., Stripe, SendGrid, Google Maps API]
+The broker's external integrations have distinct owners:
 
-Purpose: [Briefly describe its function, e.g., "Payment processing."]
+| Integration | Contract and source |
+|---|---|
+| Third-party OAuth2 providers | Session authorization and token exchange in the [end-user API](api/enduser/openapi.yaml) |
+| Upstream OAuth2 authorization server | Proxy and hybrid modes under [014-oauth2-server-mode.md](adrs/014-oauth2-server-mode.md) |
+| JWKS endpoints | Key retrieval and caching under [008-token-exchange-jwks-adapter-pattern.md](adrs/008-token-exchange-jwks-adapter-pattern.md) |
+| Client ID Metadata Documents | Metadata retrieval under [015-cimd-fetcher-architecture.md](adrs/015-cimd-fetcher-architecture.md) |
+| AWS KMS and DynamoDB | Encryption resources under [010-cdk-encryption-infrastructure.md](adrs/010-cdk-encryption-infrastructure.md) |
+| Gateway ExtProc protocol | Standalone gRPC processing under [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md) |
+| Open Policy Agent | Embedded ExtProc authorization under [028-opa-extproc-authorization.md](adrs/028-opa-extproc-authorization.md) |
+| OpenTelemetry collector | Configurable export under [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) |
 
-Integration Method: [e.g., REST API, SDK]
+The [end-user](api/enduser/openapi.yaml) and [admin](api/admin/openapi.yaml) OpenAPI files define public HTTP contracts.
+The [constitution, Principles IV and X](.specify/memory/constitution.md) requires stakeholder approval before API changes.
+Released breaking changes require a major version bump or a new endpoint, not an undocumented route change.
+
+**Admin API 3.0.0 (feature 055, approved)** replaces released `2.1.0`
+on the existing routes. Unique/non-empty external IDs introduce intentional `409 conflict` and
+`400 validation failed` outcomes on existing writes; filtered GET keeps its array shape with
+zero or one result. Shared URI ordering is also an approved contract change; timestamps keep
+the whole-second presentation of 2.1.0. No versioned compatibility route is added, and the end-user and ExtProc contracts are
+unchanged. Migration `047` and consumer adaptation precede deployment. The contract version is
+not a broker release announcement. [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) cites the
+maintainer approval.
 
 ## 6. Deployment & Infrastructure
 
-Cloud Provider: [e.g., AWS, GCP, Azure, On-premise]
+The [broker Helm chart](charts/agentic-identity-broker/templates/deployment.yaml) deploys the broker, not ExtProc.
+Its [migration job](charts/agentic-identity-broker/templates/job-migrate.yaml) uses a separate image when PostgreSQL migrations are enabled.
+Accepted [009-separate-migration-docker-image.md](adrs/009-separate-migration-docker-image.md) defines this separation.
 
-Key Services Used: [e.g., EC2, Lambda, S3, RDS, Kubernetes, Cloud Functions, App Engine]
+The container definitions are [Dockerfile](build/docker/Dockerfile), [Dockerfile.migrate](build/docker/Dockerfile.migrate), and [Dockerfile.extproc](build/docker/Dockerfile.extproc).
+The [justfile](justfile) owns build recipes.
+The [Compose configuration](docker-compose.yml) provides the local multi-service environment.
+The [CDK stack](infra/cdk/stack.go) defines encryption resources, not a complete broker hosting platform.
+Accepted [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) governs its OIDC trust configuration.
 
-CI/CD Pipeline: [e.g., GitHub Actions, GitLab CI, Jenkins, CircleCI]
+The [CI workflow](.github/workflows/ci.yml), [release workflow](.github/workflows/release.yml), and [delivery configuration](delivery.yaml) define automation.
+The [telemetry configuration reference](docs/configuration.md) and [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) describe optional OpenTelemetry export.
+The repository does not prescribe a universal monitoring backend.
 
-Monitoring & Logging: [e.g., Prometheus, Grafana, CloudWatch, Stackdriver, ELK Stack]
+Workload-identity verification must cover the [deployment guide](docs/deployment/kubernetes-irsa.md), [service-account template](charts/agentic-identity-broker/templates/serviceaccount.yaml), and [CDK trust policy](infra/cdk/stack.go).
+Configuration alone does not prove that a deployed pod can assume the intended role.
 
 ## 7. Security Considerations
 
 The [security assurance case](docs/resources/assurance-case.md) records the assets, attackers, trust boundaries, secure design controls, and weakness-to-verification mapping. [Security posture](docs/resources/security.md) gives the operator-facing summary.
 
 - **Authentication:** The trusted proxy authenticates end users and injects `X-Remote-User`. It restricts port 14000 to administrators. The broker validates signed machine client assertions and subject tokens for token exchange.
-- **Authorization:** Domain services check principal ownership and active delegation. Machine and browser approval endpoints have distinct authentication rules under ADR 018.
+- **Authorization:** Domain services check principal ownership and active delegation. Machine and browser approval endpoints have distinct authentication rules under ADR 018. Subject-token approval endpoints reject agent-subject tokens with `403 forbidden` through the same detector as third-party exchange (ADR 045 decision 6a).
 - **Encryption:** Production uses AWS KMS and DynamoDB branch keys to encrypt secrets, sessions, and signing-key material before PostgreSQL storage. Failed encryption or decryption has no plaintext fallback. TLS termination and private backend connectivity are deployment responsibilities.
 - **Outbound discovery:** The guarded client validates public HTTPS destinations, disables redirects and proxies, and blocks private resolved addresses before connection. It handles resource discovery, registration, and discovery-backed token calls. Direct `metadata_url` selects an administrator-provided authorization-server metadata endpoint and retains the older shared transport and fallback. The 10-second attempt deadline and 256-KiB response limit apply to resource discovery and registration. Audit events contain no credentials or raw remote bodies.
 - **Verification:** The required `CI gate` runs E2E suites for consent, approval, OAuth2, and token exchange, plus dependency review on pull requests. CodeQL analyzes Go and JavaScript/TypeScript on pull requests. A separate scheduled security workflow runs gosec, govulncheck, and OSV-Scanner. Parser fuzzing is scheduled separately.
 
 ## 8. Development & Testing Environment
 
-Local Setup Instructions: [Link to CONTRIBUTING.md or brief steps]
+The [contributor guide](CONTRIBUTING.md) documents local startup and prerequisites.
+The [justfile](justfile) defines commands and their dependencies, including the full `just verify` gate.
+The [Go manifest](go.mod) and [frontend manifest](web/package.json) define test and quality-tool dependencies.
+The [E2E guide](tests/e2e/README.md) explains acceptance suites.
+The [storage integration guide](tests/integration/storage/README.md) distinguishes self-contained tests from container-backed tests.
 
-Testing Frameworks: [e.g., Jest, Pytest, JUnit]
+## 9. Open Architecture Questions
 
-Code Quality Tools: [e.g., ESLint, Black, SonarQube]
+These items require review or evidence, not approval by documentation cleanup:
 
-## 9. Future Considerations / Roadmap
-
-(Briefly note any known architectural debts, planned major changes, or significant future features that might impact the architecture.)
-
-[e.g., "Migrate from monolith to microservices."]
-
-[e.g., "Implement event-driven architecture for real-time updates."]
+- **JWT pre-authentication policy:** The [unsigned-subject exception](adrs/031-unverified-subject-unsigned-jwt.md) does not authorize unsigned end-user pre-authentication. [Constitution I](.specify/memory/constitution.md#i-security-first-development) governs signature verification.
+- **Workload identity:** Deployment evidence must prove the [CDK-to-pod identity contract](docs/deployment/kubernetes-irsa.md), not only infrastructure configuration.
+- **Frontend verification:** The [frontend suite instructions](tests/e2e/frontend/AGENTS.md) document development-test constraints. [Constitution XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency) requires evidence for both themes.
+- **Pending decisions:** The proposed ADRs in the index remain proposals, even where implementation exists. Maintainers must resolve their status through review under [Constitution II](.specify/memory/constitution.md#ii-architecture-documentation--decision-records).
 
 ## 10. Architecture Decision Records (ADRs)
 
-This section lists all architectural decisions made for this project. ADRs document important technical choices, their rationale, alternatives considered, and consequences.
+Full filenames identify decisions because ADR numbers are not unique.
+The status column reflects each linked file's decision status, not its implementation progress.
+Only accepted decisions are binding under [Constitution II](.specify/memory/constitution.md#ii-architecture-documentation--decision-records).
+Partial supersessions and amendments apply only to the subjects named in those decisions.
 
-### Core Infrastructure
-
-- [ADR 002: Configuration Libraries](adrs/002-configuration-libraries.md) - Multi-source configuration with Viper, Cobra, and godotenv
-- [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
-- [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
-- [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
-
-### Frontend & User Interface
-
-- [ADR 005: SPA Serving Pattern](adrs/005-spa-serving-pattern.md) - Serving React SPA from Go backend
-- [ADR 006: Frontend Stack](adrs/006-frontend-stack.md) - React 18 + Vite + Tailwind CSS v4
-
-### Testing & Quality
-
-- [ADR 007: E2E Testing with Ginkgo](adrs/007-e2e-testing-with-ginkgo.md) - BDD-style E2E tests using production bootstrap
-
-### RFC 8693 Token Exchange
-
-- [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
-
-### Security & Encryption
-
-- [ADR 008: Encryption Context Optimization](adrs/008-encryption-context-optimization.md) - Service-ID-only context binding performance optimization
-- [ADR 009: Envelope Encryption Design](adrs/009-envelope-encryption-design.md) - DEK-per-session with AWS KMS and context binding
-- [ADR 010: CDK Encryption Infrastructure](adrs/010-cdk-encryption-infrastructure.md) - AWS CDK (Go) for KMS, DynamoDB, and IAM provisioning
-- [ADR 012: Encryption Layer Separation](adrs/012-encryption-layer-separation.md) - Domain service encryption pattern for hexagonal architecture
-
-### Observability
-
-- [ADR 011: OpenTelemetry Provider Pattern](adrs/011-opentelemetry-provider-pattern.md) - App-layer OTel provider, otelchi middleware choice, context-based span propagation
-- [ADR 033: Request Security Context Propagation](adrs/033-request-security-context-propagation.md) - Perimeter security-context capture, additive `traceresponse` response header, and delegated `calling_peer` semantics
-
-### Client ID Metadata Document (CIMD)
-
-- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - Binding CIMD fetch, cache, validation, and strategy pattern. ADR 040 supersedes its package locations only.
-- [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
-- [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. ADR 040 extends decision 2 only for discovery-backed DCR.
-- [ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md) - Discovery, client selection, guarded HTTP, and status design. Supersedes only ADR 015's package locations and ADR 036 decision 2 for discovery-backed DCR clients.
-
-### Tool Approval
-- [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
+| Decision file | Status | Scope or later decision |
+|---|---|---|
+| [002-configuration-libraries.md](adrs/002-configuration-libraries.md) | Accepted | Viper, Cobra, and godotenv |
+| [003-chi-framework.md](adrs/003-chi-framework.md) | Accepted | HTTP routing |
+| [004-dual-server-isolation.md](adrs/004-dual-server-isolation.md) | Accepted | Separate end-user and admin listeners |
+| [004-storage-layer-architecture.md](adrs/004-storage-layer-architecture.md) | Accepted | Segregated storage ports and sqlx adapters |
+| [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md) | Accepted, partly superseded | Mount, build paths, and SPA configuration replaced by [035-root-mounted-spa.md](adrs/035-root-mounted-spa.md) |
+| [006-frontend-stack.md](adrs/006-frontend-stack.md) | Accepted | Frontend stack decision. Current versions are in [web/package.json](web/package.json) |
+| [007-e2e-testing-with-ginkgo.md](adrs/007-e2e-testing-with-ginkgo.md) | Accepted | Ginkgo acceptance tests |
+| [008-encryption-context-optimization.md](adrs/008-encryption-context-optimization.md) | Accepted, amended | Single-subject context. Amendment adds `kid` for non-session assets |
+| [008-token-exchange-jwks-adapter-pattern.md](adrs/008-token-exchange-jwks-adapter-pattern.md) | Accepted | JWKS retrieval and caching |
+| [009-cel-for-authorization-policies.md](adrs/009-cel-for-authorization-policies.md) | Accepted | CEL authorization and claim extraction |
+| [009-envelope-encryption-design.md](adrs/009-envelope-encryption-design.md) | Accepted, configuration clarified | Original configuration is historical. See its implementation note and the amendment in [008-encryption-context-optimization.md](adrs/008-encryption-context-optimization.md) |
+| [009-separate-migration-docker-image.md](adrs/009-separate-migration-docker-image.md) | Accepted | Separate migration image |
+| [010-cdk-encryption-infrastructure.md](adrs/010-cdk-encryption-infrastructure.md) | Accepted | Encryption infrastructure. OIDC trust clarified by [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) |
+| [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md) | Accepted | Separate ExtProc process and configuration |
+| [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) | Accepted | Broker telemetry lifecycle |
+| [012-encryption-layer-separation.md](adrs/012-encryption-layer-separation.md) | Accepted, partly superseded | Two-state `Secret` description replaced by [036-public-client-token-endpoint-auth.md](adrs/036-public-client-token-endpoint-auth.md) |
+| [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md) | Accepted | In-memory token cache, singleflight refresh, periodic eviction, and maximum TTL |
+| [013-strongly-typed-entity-ids.md](adrs/013-strongly-typed-entity-ids.md) | Accepted | Typed entity identifiers |
+| [014-long-poll-listen-notify.md](adrs/014-long-poll-listen-notify.md) | Accepted | Broker approval long polling and PostgreSQL notifications |
+| [014-oauth2-server-mode.md](adrs/014-oauth2-server-mode.md) | Accepted | Proxy, local, and hybrid OAuth2 modes |
+| [015-cimd-fetcher-architecture.md](adrs/015-cimd-fetcher-architecture.md) | Accepted | CIMD fetch boundary |
+| [016-authorization-session-anti-spoofing.md](adrs/016-authorization-session-anti-spoofing.md) | Accepted, amended | Amendment extends sealed authorization sessions to all modes |
+| [017-optional-agent-client-id.md](adrs/017-optional-agent-client-id.md) | Accepted | Optional agent client ID |
+| [018-approval-endpoint-auth-boundaries.md](adrs/018-approval-endpoint-auth-boundaries.md) | Accepted | Browser and machine approval authentication |
+| [027-extproc-telemetry-shared-dependency.md](adrs/027-extproc-telemetry-shared-dependency.md) | Accepted | ExtProc telemetry dependencies |
+| [028-opa-extproc-authorization.md](adrs/028-opa-extproc-authorization.md) | Accepted, amended | Amendment requires MCP `target_server_name` |
+| [029-token-exchange-client-assertion-trust-anchor.md](adrs/029-token-exchange-client-assertion-trust-anchor.md) | Proposed | Dedicated client-assertion trust anchor |
+| [030-normalize-protected-resources.md](adrs/030-normalize-protected-resources.md) | Accepted | Normalized protected-resource children |
+| [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) | Accepted | Parameterized OIDC trust |
+| [031-unverified-subject-unsigned-jwt.md](adrs/031-unverified-subject-unsigned-jwt.md) | Accepted | Bounded local-impersonation subject exception under Constitution I |
+| [032-impersonation-requires-user-delegation.md](adrs/032-impersonation-requires-user-delegation.md) | Accepted, partly superseded | Human delegation required. Decisions 1–2 partly superseded by [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) for agent-category requests |
+| [033-request-security-context-propagation.md](adrs/033-request-security-context-propagation.md) | Proposed | Request security context and audit identity |
+| [034-audience-absent-impersonation-credentials.md](adrs/034-audience-absent-impersonation-credentials.md) | Accepted | Explicit absent-audience policy |
+| [035-root-mounted-spa.md](adrs/035-root-mounted-spa.md) | Accepted | Partly supersedes [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md) |
+| [035-shared-tool-pattern-matching.md](adrs/035-shared-tool-pattern-matching.md) | Accepted | Shared matcher in [internal/domain/approval/toolpattern/](internal/domain/approval/toolpattern/) |
+| [036-extproc-approval-cache-and-gate.md](adrs/036-extproc-approval-cache-and-gate.md) | Accepted | Approval snapshots, cache, and request gate |
+| [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) | Accepted | Supersedes Feature 015 raw-input descriptions, not its standalone or cache decisions |
+| [036-public-client-token-endpoint-auth.md](adrs/036-public-client-token-endpoint-auth.md) | Accepted | Explicit public clients and absent secrets. CIMD key domain extended by [037-cimd-client-authentication-key-domain.md](adrs/037-cimd-client-authentication-key-domain.md) |
+| [037-cimd-client-authentication-key-domain.md](adrs/037-cimd-client-authentication-key-domain.md) | Accepted | Separate CIMD authentication keys |
+| [037-consent-selection-oauth-redirect-state.md](adrs/037-consent-selection-oauth-redirect-state.md) | Proposed | Claims a replacement for Feature 008 selection transport. Acceptance remains unresolved |
+| [038-proactive-token-refresh.md](adrs/038-proactive-token-refresh.md) | Accepted, partly superseded | Background refresh and synchronous session sweep. Terminal rejection consequence superseded by [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) |
+| [039-concurrent-session-expiry-index.md](adrs/039-concurrent-session-expiry-index.md) | Accepted | Migration `037` non-atomic exception and recovery |
+| [040-trust-anchor-local-key-sets.md](adrs/040-trust-anchor-local-key-sets.md) | Accepted | Inline and file key sources, trust directory, and health |
+| [040-protected-resource-discovery-and-dcr.md](adrs/040-protected-resource-discovery-and-dcr.md) | Accepted | Discovery and DCR. Supersedes ADR 015 package locations and ADR 036 decision 2 for discovery-backed DCR |
+| [041-oauth2-client-secret-file-overrides.md](adrs/041-oauth2-client-secret-file-overrides.md) | Accepted | Stored and filesystem credential sources |
+| [042-agent-allowlisted-private-use-redirect-uris.md](adrs/042-agent-allowlisted-private-use-redirect-uris.md) | Accepted | Agent-allowlisted private-use redirects with CIMD document validation |
+| [043-inbound-cimd-private-key-jwt.md](adrs/043-inbound-cimd-private-key-jwt.md) | Accepted | CIMD assertion validation, replay protection, and refresh authentication strength |
+| [044-service-specific-session-recovery-url.md](adrs/044-service-specific-session-recovery-url.md) | Accepted | Service-specific OAuth2 recovery URL with same-origin `/sessions` return URI |
+| [044-client-registration-independent-of-authentication.md](adrs/044-client-registration-independent-of-authentication.md) | Accepted | Independent registration and authentication, keyless CIMD public clients, and guarded migration |
+| [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) | Accepted | Self-agent issuance without human delegation. Partly supersedes ADR 032 |
+| [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
+| [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
 
 ## 11. Project Identification
 
 Project Name: Agentic Identity Broker
 
-Repository URL: [Insert Repository URL]
+Repository: [zalando-incubator/agentic-identity-broker](https://github.com/zalando-incubator/agentic-identity-broker), also linked from [README.md](README.md).
 
-Primary Contact/Team: [Insert Lead Developer/Team Name]
-
-Date of Last Update: 2026-06-02
+Maintainer contacts: [MAINTAINERS](MAINTAINERS).
 
 ## 12. Glossary / Acronyms
 
-Define any project-specific terms or acronyms.)
+The terms that follow describe domain models and their relationships.
 
 ### Configuration Domain
 
@@ -1411,7 +1367,7 @@ Define any project-specific terms or acronyms.)
 
 **Environment Variable Reference**: A placeholder in configuration (using ${VAR_NAME} syntax) that references an environment variable for runtime substitution. Supports nested expansion with circular reference detection.
 
-**Source Precedence**: The priority order determining which configuration value wins when multiple sources provide the same key. Order (lowest to highest): Defaults < .env Files < YAML < CLI Flags.
+**Source Precedence**: The [configuration loader](internal/config/loader.go) normally applies defaults, YAML, explicit environment bindings, and bound CLI flags in increasing priority. Before YAML loading, `loadEnvFile` overwrites existing process environment values and calls Viper `Set` for each `.env` entry. Thus `.env` files can replace deployment-provided environment values, rather than merely fill missing values. Later `.env` files override earlier files, and explicitly changed CLI flags apply last.
 
 **Sensitive Value**: Configuration value that should be redacted in logs and output. Identified by IDENTITY_BROKER_ prefix or keywords (password, secret, token, key, credential, auth).
 
@@ -1445,7 +1401,9 @@ Define any project-specific terms or acronyms.)
 
 **SecurityContext**: Immutable request-scoped value object carrying the request Trace ID, Actor, optional CallingPeer, client IP, user agent, request method, request target, and receipt timestamp. Built exactly once at the perimeter, propagated through `context.Context`, never persisted, and never mutated after construction.
 
-**Actor**: Authenticated identity on whose behalf the request is acting. Always populated on `SecurityContext`; when no authenticated identity is available, the broker uses the sentinel `anonymous`.
+**Actor**: Authenticated identity on whose behalf the request is acting. Typed as `id.Principal`. Always populated on `SecurityContext`; when no authenticated identity is available, the broker uses the sentinel `anonymous`.
+
+**Principal Policy Handler**: The single `slog.Handler` that renders principals in log records. It applies the principal policy to every attribute whose value is an `id.Principal` (including inside groups and `WithAttrs`), and to plain string values under the reserved keys `principal`, `operator_principal`, and `actor`. The current policy is identity. OpenTelemetry span attributes and metrics are not covered.
 
 **CallingPeer**: Authenticated peer that directly wielded the request when it is distinct from `Actor` (for example, a validated token-exchange `client_assertion.sub`). Omitted when unavailable or equal to `Actor`.
 
@@ -1473,6 +1431,10 @@ Define any project-specific terms or acronyms.)
 
 **Canonical ID**: Optional case-sensitive administrative identifier for an Agent, ThirdpartyOAuth2Provider, or PermissionSet. It is a 1–128-character URL-safe, non-UUID token, unique only within its resource type. Canonical IDs are resolved at the administrative boundary and never replace UUID primary keys, foreign keys, JSONB references, or encryption contexts.
 
+**External ID**: An optional opaque Agent identifier from an external governance system, such as a URN. Under approved ADR 047 it is non-empty when set and identifies at most one Agent by exact, case-sensitive equality. It is distinct from UUID, Canonical ID, Client ID, and Stable Identifier. Any number of Agents may have no External ID. All Agent writes and Admin filter/reconcile selectors accept 1–255 valid Unicode code points with no NUL and never select another identity namespace. Feature 055 supersedes feature 054's shared-ID behavior.
+
+**Agent Reconciliation**: Reconcile is the canonical term for applying the desired definition of an Agent selected by its External ID, creating it when absent or updating it while preserving UUID identity. Upsert and create-or-update are aliases for this Agent operation, distinct from UserGrant upsert. The `ReconcileUnchanged` outcome means no-op/replay: the effective definition already matches, so no write or mutation audit occurs and stored timestamps are preserved.
+
 **Stable Identifier**: The UUID primary key of a managed resource. It remains the `id` in every API representation and is the only identifier persisted in relationships; a canonical ID is optional metadata and a valid administrative input alias.
 
 **Agent**: An AI agent registered in the identity broker system. Each agent has a unique client_id (the `ClientID` field — a short opaque identifier used in existing OAuth2/consent flows via `GetByClientID`; optional in the Admin API, and when omitted there is no auto-generation fallback per ADR 017, so `client_id` remains NULL), display name, description, and optional URLs for governance documentation and user interface. Agents may additionally register one or more **client_uris** (Client ID Metadata Document URLs per IETF draft-parecki-oauth-client-id-metadata-document) which provide an alternative resolution path via `GetByClientURI` for CIMD-aware clients. The `client_id` remains the canonical primary identifier when present; client_uris are supplementary discovery handles that resolve to the same Agent entity. Agents request delegated OAuth2 permissions from users through the consent flow. Optionally, agents may specify service requirements (mandatory and optional third-party services with required scopes).
@@ -1485,9 +1447,9 @@ Define any project-specific terms or acronyms.)
 
 **Mandatory Service**: A third-party OAuth2 service marked with requirement_type="mandatory" in an agent's service requirements. Authorization flow validates that user has an active, non-expired OAuth2 session with all mandatory services and that session scopes are a superset of required_scopes (case-sensitive). If validation fails, user is redirected to consent screen to establish missing sessions before authorization continues.
 
-**Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization flow - if user lacks session or scopes, authorization proceeds anyway. Allows agents to degrade gracefully when optional integrations unavailable.
+**Optional Service**: A third-party OAuth2 service marked with requirement_type="optional" in an agent's service requirements. Displayed in consent UI with visual distinction (neutral badge vs trust-deep for mandatory). Does not block authorization while the user has not included it in their grant. Once the user includes it, it is required for that user: a missing or unusable session redirects authorization to the consent screen, where the user reconnects or deselects it ([Feature 019](specs/019-permission-sets/spec.md) FR-022). Allows agents to degrade gracefully when optional integrations are unavailable.
 
-**ThirdpartyOAuth2Provider**: An operator-managed third-party OAuth2 service with scopes, a display name, and one client identity. Manual services retain their existing credentials and methods. A discovery-backed service also owns its configured resource URL, issuer, effective resource, client bootstrap method, and discovery status. A confidential DCR secret uses the existing `Secret` value object. Public and hosted CIMD services have no shared secret. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
+**ThirdpartyOAuth2Provider**: An operator-managed third-party OAuth2 service with scopes, a display name, and one client identity. Static confidential providers in stored mode retain a client ID and an encrypted `Secret` value object. Eligible filesystem mode stores neither credential and acquires the current pair for each exchange or refresh attempt. A discovery-backed service also owns its configured resource URL, issuer, effective resource, client bootstrap method, and discovery status. A confidential DCR secret uses the existing `Secret` value object. Public and hosted CIMD services have no shared secret. The Go entity is `model.ThirdpartyOAuth2ProviderEntity` in `internal/domain/model/`. `ThirdpartyOAuth2ProviderService` in `internal/domain/thirdparty/` exclusively owns client-secret encryption and decryption.
 
 **Provider Authorization Parameters**: Administrator-managed OAuth2 request parameters on a `ThirdpartyOAuth2Provider`, not end-user input. Other parameters keep their existing authorization-URL behavior. For a discovery-backed service, `authorization_params.resource` is the single effective RFC 8707 token audience on authorization, code exchange, and refresh. It does not claim ownership of a protected resource. The source of this value appears only in the response field `discovery.authorization_param_resource_strategy`.
 
@@ -1495,7 +1457,7 @@ Define any project-specific terms or acronyms.)
 
 **Public client**: A manual or DCR service with `token_endpoint_auth_method: none`. It stores no client credential. Authorization-code requests use PKCE S256. Its token requests send its client ID but no client credential.
 
-**Static confidential client**: A manual service with an omitted or `null` authentication method. It stores an encrypted client secret. It retains the existing upstream authentication-style negotiation for code exchange and token refresh.
+**Static confidential client**: A manual service with an omitted or `null` authentication method. Stored mode retains an encrypted client credential. Eligible filesystem mode stores neither credential and acquires the current pair for each exchange or refresh attempt. Both modes use the existing upstream client-authentication negotiation.
 
 **Configured discovery URL**: `discovery.resource_url` is the protected-resource identifier that an administrator supplies for an unauthenticated probe. It can derive the effective audience but does not itself claim an RFC 8693 routing resource. In contrast, `discovery.metadata_url` selects an authorization-server metadata endpoint directly and keeps the older transport and fallback.
 
@@ -1513,7 +1475,19 @@ Define any project-specific terms or acronyms.)
 
 **Broker client name**: The optional deployment-wide `third_party_oauth2.client_name` sent as DCR `client_name`. It identifies the broker or platform, not the service's `display_name`. An absent or blank value blocks DCR before registration but does not block startup, manual services, or hosted CIMD.
 
-**Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a secretless public or CIMD confidential service. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
+**Secret**: Immutable value object in `internal/domain/` with exclusive plaintext, encrypted, or absent state. `NewPlaintextSecret(value)`, `NewEncryptedSecret(ciphertext)`, and `NewAbsentSecret()` construct these states. The absent state represents a filesystem, public, or CIMD confidential service without a stored secret. `GetPlaintext()` fails on encrypted or absent state. `GetCiphertext()` fails on plaintext or absent state. `Redacted()` always returns `"REDACTED"`. The zero value remains plaintext-uninitialized, never absent. This prevents accidental plaintext persistence because `GetCiphertext()` errors until encryption occurs.
+
+The next five entries describe the implemented, unreleased model from `051-oauth2-secret-file-overrides` under [ADR 041](adrs/041-oauth2-client-secret-file-overrides.md), accepted on 2026-10-08.
+
+**Credential source**: The service-owned choice of `stored` or `filesystem` credentials. The third-party domain validates it, and both stores persist it. Internal `credential_source_transitioned` starts false on creation/backfill, becomes true atomically on an actual transition, and never resets. It prevents legacy missing-identity reuse after a source round trip. No-op selections and metadata updates preserve it. The administrative API never exposes the marker.
+
+**Filesystem credential binding**: Operator configuration that associates one exact, case-sensitive service canonical ID with `client_id_file` and `client_secret_file` absolute paths. Builder supplies the immutable snapshot to the session domain. A binding never selects the service source or persists on the service. An absent binding stops a filesystem operation. Pair acquisition depends on fresh immutable targets and no retired-target reuse during acquisition.
+
+**Operation credentials**: Normalized file values that the session domain obtains through `CredentialFileReader` for one operation. Initiation obtains only the client ID. Exchange and refresh obtain one coherent pair per attempt. The reader opens both descriptors before reads and revalidates both paths with `os.SameFile` after both reads. Target changes return `generation_changed` without partial values or acquisition retries. File secrets, descriptors, and last-known values never persist across operations.
+
+**Client-identity association**: The established non-secret client ID in an eligible authorization's JWE and its resulting `UserSession`. New eligible stored and filesystem flows capture `UpstreamClientID`. Both modes compare it with selected credentials before exchange or refresh, including after source transitions. A mismatch requires a new connection. Missing legacy identity is usable only for never-transitioned stored services. Transitions never rewrite it, and it is neither public metadata nor encryption AAD.
+
+**Credential-source error**: A safe domain failure that stops mandatory-source use before provider authentication. The reader supplies file reasons. The session domain supplies binding and identity reasons. Closed reasons include `missing_binding`, `identity_missing`, `identity_mismatch`, and `generation_changed`. Errors expose no file contents, paths, or raw OS chains. They retain generic client-facing responses and remain distinct from provider rejection.
 
 **OAuth Scope**: A specific permission defined by an OAuth2 provider (e.g., "repo", "user:email"). Each scope has a scope_value (the OAuth scope string) and a human-readable description. Scopes are defined per service and validated during grant creation.
 
@@ -1525,7 +1499,7 @@ Define any project-specific terms or acronyms.)
 
 **Grant Expiration**: The point at which a grant becomes inactive (valid_until < NOW()). Expired grants are filtered out when listing grants. Grants with valid_until=null never expire (indefinite grants). Users must specify future timestamps when creating grants.
 
-**Consent Flow**: The process where a user reviews agent metadata and available OAuth2 services, then decides which permissions to grant. Implemented via GET /api/consent/agent/:agent-id (view info) and POST /api/consent/agent/:agent-id/grants (grant permissions).
+**Consent Flow**: The process where a user reviews agent metadata and available OAuth2 services, then decides which permissions to grant. Implemented via GET /api/consent/agent/:agent-id (view info) and POST /api/consent/agent/:agent-id/grants (grant permissions). Authorization returns the user to this flow when the grant is missing or expired, or when a service included in the grant has no usable session.
 
 **Scope Validation**: Business rule (FR-018) enforcing that all requested scopes in a grant must exist in the corresponding service's scope configuration. Invalid scopes are rejected with a 400 error listing which scopes are not defined.
 
@@ -1571,7 +1545,9 @@ Define any project-specific terms or acronyms.)
 
 **UserSession**: An authenticated OAuth2 session between a user (principal) and a third-party service. Contains encrypted access/refresh tokens, scope, and expiration metadata. One session per (principal, service_id) pair enforced by database unique constraint. Aggregate root that owns the encrypted tokens and manages session lifecycle.
 
-**Session Usability**: A `UserSession` has usable access credentials or a usable stored refresh token. The domain predicate controls expired status, consent connection status, and active-session reads. Unknown refresh-token expiry permits refresh attempts but does not guarantee indefinite validity.
+**Refresh Rejection**: An observed terminal provider `invalid_grant` for a stored refresh token, recorded as `UserSession.RefreshRejectedAt`. The broker never predicts refresh-token expiry; a stored, not-rejected refresh token permits refresh attempts but does not guarantee acceptance.
+
+**Requires Reauthentication**: A `UserSession` with a recorded refresh rejection, or with an expired access token and no stored refresh token. The domain predicate controls token issuance, consent connection status, active-session reads, and the `requires_reauthentication` API field.
 
 **Callback Generation**: The private `UserSession.CallbackID` identifying the last successful authorization-code credential write. OAuth2 state seals the generation observed when authorization starts. A reconnect compares and replaces it atomically; refresh preserves it. This distinguishes deliberate reconnects from callbacks competing for the same connection state without relying on clock ordering.
 
@@ -1591,17 +1567,24 @@ Define any project-specific terms or acronyms.)
 
 **SessionTokensRefreshed**: The structured `session.oauth2.token_refreshed` log event after a `UserSession` refresh commits. It records the session owner's `principal`, session ID, service ID, and `RefreshTrigger` without token material. The broker has no event bus.
 
+**Session Health State**: The classification of a stored `UserSession` by access-token expiry (`valid` after the Refresh Lookahead Window, `expiring` within it, `expired` once passed, or `unknown` when not recorded) and by refresh-token usability (`refreshable` true or false). It is derived at query time and never stored.
+
+**Session Health Snapshot**: Per-service counts of `UserSession` records in each Session Health State, computed by one grouped query in each metric export cycle and published as the `oauth2_sessions` gauge. Every combination of expiry class and refreshability is reported for a service with sessions, with zero when empty. It is not retained between cycles.
+
+**Session Sweep Schedule**: The optional chart-managed CronJob that calls the Session Sweep endpoint on a schedule with request credentials the operator supplies. The chart adds no identity model and the broker still runs no scheduler.
+
 **OAuth2StateToken**: A JWE-encrypted ephemeral token that binds an OAuth2 callback to the initiating request. It contains principal, PKCE verifier, service ID, and redirect URI claims. For resource discovery, it also seals the issuer and effective RFC 8707 audience from the initiating service snapshot. A mismatch with the current service rejects the callback before token exchange. The state lasts 10 minutes (15 minutes at most). Authenticated encryption (A256GCMKW + A256GCM) detects changes.
 
 **AuthorizationSessionToken**: A JWE-encrypted ephemeral token that binds a consent session to the initiating authorization request (ADR 016). Contains agent_id, principal, original authorize URL, and optional CIMD metadata snapshot. Short-lived (10 min TTL). Prevents consent screen spoofing by ensuring all displayed metadata originates from server-attested claims. Used for all authorization modes (local, proxy, CIMD).
 
 **PKCE**: Proof Key for Code Exchange (RFC 7636). Security extension for OAuth2 that prevents authorization code interception attacks. Uses code_verifier (random 32-128 byte secret, base64url-encoded) and code_challenge (SHA256 hash of verifier). Mandatory for all OAuth2 flows with no bypass allowed.
 
-**Upstream Client Authentication**: Third-party OAuth2 services use three explicit modes:
+**Upstream Client Authentication**: Four manual modes combine registration and token-endpoint authentication:
 
-- **Static confidential clients** leave `Endpoint.AuthStyle` at `AuthStyleAutoDetect` and keep the existing client-secret negotiation.
-- **Public clients** use an empty `ClientSecret` and pin `Endpoint.AuthStyle` to `AuthStyleInParams`. This sends `client_id` in the request body and sends no client credential.
-- **CIMD confidential services** use `private_key_jwt`, a broker-hosted client ID URL, and no shared secret. The broker uses the dedicated broker-global `cimd_client_authentication` key set.
+- **Static confidential services** leave `Endpoint.AuthStyle` at `AuthStyleAutoDetect` and keep existing client-secret negotiation.
+- **Static public services** use an operator client ID, empty `ClientSecret`, and `AuthStyleInParams`. They send no client credential.
+- **CIMD confidential services** use `private_key_jwt`, a broker-hosted client ID URL, and the broker-global `cimd_client_authentication` key set.
+- **CIMD public services** use the hosted URL, empty `ClientSecret`, and `AuthStyleInParams`. They send no client credential or assertion and require no CIMD key.
 
 For a CIMD confidential service, code exchange uses `AuthStyleInParams`, an empty `ClientSecret`, and one fresh JWT-bearer assertion pair inside the retry loop. Refresh uses the manual form post with one fresh assertion pair. The assertion uses ES256, an advertised `kid`, and the exact client ID URL for `iss` and `sub`. Its sole audience is the configured token endpoint. It expires within five minutes and has a new `jti` for every request attempt. The broker never sends a shared secret or HTTP Basic credential for this mode. A metadata, key, assertion, or provider-validation error fails closed without fallback to public or static authentication.
 
@@ -1621,6 +1604,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
 
+**Session Recovery URL**: Broker-built RFC 8693 `error_uri` for a recoverable `UserSession`. The resolved `ThirdpartyOAuth2Service` ID selects the authorization route; configured `PublicURL` supplies the origin and encoded `/sessions` return URI. The route starts `OAuth2SessionService` authorization with PKCE. It is separate from the broker authorization server's `/oauth2/authorize` and from grant consent links.
+
 **AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
 
 **Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a successful grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation; unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields represent state read before a write, not a transactionally guaranteed predecessor. These logs are not a durable audit ledger, outbox, protocol field or metric label.
@@ -1631,13 +1616,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **ClientAssertion**: JWT authenticating the privileged client (API gateway or reverse proxy) making the token exchange request. Contains privileged client identifier in the `sub` claim. Validated against the external client-assertion trust anchor's JWKS, not against broker-minted credentials. Represents the privileged client's identity and authorization to perform token exchange.
 
-**ClientAssertion Trust Anchor**: The external identity provider configured by `token_exchange.client_assertion.issuer_uri` whose issuer and JWKS validate privileged-client `ClientAssertion` JWTs. It may use an explicit `token_exchange.client_assertion.jwks_uri` when the IdP has no discovery endpoint. It defaults to the proxy upstream in `proxy` and `hybrid` modes; `local` mode has no proxy upstream and therefore requires an explicit external issuer. The broker's own issuer is rejected as this anchor so broker-minted tokens can never authenticate as privileged-client assertions.
-
-**CIMD Client Assertion**: A short-lived JWT signed by a CIMD client to authenticate at the broker token endpoint. It is distinct from the privileged-client `ClientAssertion` used for RFC 8693 token exchange.
-
-**Client Key Set**: The public verification keys published by a CIMD client and cached in process for inbound `private_key_jwt` authentication.
-
-**Assertion Replay Record**: A durable `(client_id, jti)` marker that makes a valid CIMD client assertion single-use across broker instances.
+**ClientAssertion Trust Anchor**: The external identity provider configured by `token_exchange.client_assertion.issuer_uri` whose issuer and JWKS validate privileged-client `ClientAssertion` JWTs. It may use an explicit `token_exchange.client_assertion.jwks_uri` when the IdP has no discovery endpoint. Alternatively, `token_exchange.client_assertion.jwks` (inline JWK Set) or `token_exchange.client_assertion.jwks_file` (file in the Trust Directory) supplies the keys with no discovery and no outbound request. At most one of `jwks_uri`, `jwks`, and `jwks_file` may be set (Key Set Source, ADR 040). It defaults to the proxy upstream in `proxy` and `hybrid` modes; `local` mode has no proxy upstream and therefore requires an explicit external issuer. The broker's own issuer is rejected as this anchor so broker-minted tokens can never authenticate as privileged-client assertions.
 
 **SubjectToken**: JWT containing both user principal and agent identifier from the upstream OAuth2 server. Principal extracted via configurable CEL expression (default: sub claim). Agent identifier extracted via configurable CEL expression (default: azp claim). Identifies the end-user and agent on whose behalf token exchange is requested.
 
@@ -1655,17 +1634,25 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **Impersonation Rule**: An ordered, self-contained configuration entry (`oauth2_authorization_server.impersonation.rules[]`) bundling per-role semantics keyed by role name (`client_assertion`, `actor`, `subject`) — each declaring its expected audience and CEL identity extraction — a non-empty list of trusted-issuer anchors that declare which roles they may sign (`signs_roles`), and exactly one CEL authorization predicate. Rules are evaluated first-match; a rule matches only when every required credential validates against its issuers AND its predicate returns true, otherwise evaluation falls through to the next rule. The same issuer identifier may appear across multiple rules. Represented by `ImpersonationRuleConfig` in `internal/ports/config.go`.
 
-**Trusted Token Issuer**: An operator-configured external identity authority, scoped within a single rule, that specifies how its signing keys are trusted (`issuer_uri`, optional `jwks_uri`, `jwks_min_refresh`/`jwks_max_refresh` bounds), its explicit non-empty permitted signing-algorithm allow-list (`allowed_algorithms` — asymmetric only; `none` and `HS*` always rejected, CR-007), and which signed credential roles it is permitted to sign (`signs_roles`, CR-008). Identity extraction and expected audience are declared per role on the rule, not on the issuer. Within a rule each `issuer_uri` MUST be unique; the broker's local issuer is rejected for the `client_assertion` role. Represented by `TrustedTokenIssuerConfig` in `internal/ports/config.go`.
+**Trusted Token Issuer**: An operator-configured external identity authority, scoped within a single rule, that specifies how its signing keys are trusted (`issuer_uri`; an optional key source, which is at most one of `jwks_uri`, an inline `jwks`, or a `jwks_file` in the Trust Directory; `jwks_min_refresh`/`jwks_max_refresh` bounds, which are not allowed with `jwks`), its explicit non-empty permitted signing-algorithm allow-list (`allowed_algorithms` — asymmetric only; `none` and `HS*` always rejected, CR-007), and which signed credential roles it is permitted to sign (`signs_roles`, CR-008). Identity extraction and expected audience are declared per role on the rule, not on the issuer. Within a rule each `issuer_uri` MUST be unique; the broker's local issuer is rejected for the `client_assertion` role. Represented by `TrustedTokenIssuerConfig` in `internal/ports/config.go`.
 
 **Privileged Client Identity**: The non-empty identity extracted from a cryptographically validated client assertion. It is used only for rule authorization and audit; it is never presented to local issuance as a broker Agent.
 
 **Actor Identity**: The non-empty identity extracted from the validated actor token via the selected rule's `actor` role `principal_expression`, represented with its validated issuer as the standardized `act.iss` and `act.sub` claims in a successful impersonated broker token.
 
-**Subject Identity**: The non-empty user identity extracted from a validated signed subject token or an allowed unverified subject JWT via the selected rule's `subject` role `principal_expression`. It is represented as the `sub` claim and, byte-for-byte, as `id.Principal` for the mandatory `(principal, target agent)` user-delegation check. It may be accompanied by an optional `email` claim produced from the role's optional `email_expression`, fed through the existing local-token `principal` CEL context so `token_claims_expression` mints it unchanged.
+**Subject Category**: Per-rule classification: `agent` only when the raw string `sub` exactly equals the audience-selected target UUID and the subject is signed and verified or, if unverified, the rule's predicate binds `subject_token.sub`; a `sub` that is another registered agent's UUID is a rejected cross-agent request (ADR 045 decision 2b); otherwise `human`. Classification precedes and is independent of eligibility.
+
+**Allowed Subject Categories**: Per-rule eligibility list containing one or two distinct values from `human` and `agent`; omitted means `[human]`. A classified ineligible request falls through; a human delegation denial remains terminal.
+
+**Agent-Subject Token**: An Impersonated Broker Token produced by Self-Agent Issuance: reserved `sub == agent_id == target UUID` and the existing `act`, without a category claim. Third-party exchange and subject-token approval authentication detect it with the boolean CEL detector `token_exchange.claim_extraction.agent_subject_expression` (default: guarded `sub == agent_id`; a replacement must reference `subject_token.sub`) and reject it before human state access; a non-matching replacement removes that guarantee.
+
+**Self-Agent Issuance**: Agent-category impersonation (ADR 045): an eligible, CEL-authorized request whose signed subject `sub` equals the target UUID mints a token for the target agent itself, without user delegation.
+
+**Subject Identity**: For humans, the non-empty identity extracted from a validated signed subject token or an allowed unverified subject JWT via the selected rule's `subject` role `principal_expression`. It is represented as the `sub` claim and, byte-for-byte, as `id.Principal` for the mandatory `(principal, target agent)` user-delegation check. For eligible agents, the represented subject is the target UUID, even though principal extraction must still succeed. The impersonation audit `subject_identity` field records this represented identity. It may be accompanied by an optional `email` claim produced from the role's optional `email_expression`, fed through the existing local-token `principal` CEL context so `token_claims_expression` mints it unchanged.
 
 **Impersonated Broker Token**: A locally issued token minted by the normal local access-token path, carrying target-derived `agent_id`, subject identity, protected `act.iss`/`act.sub`, optional email, granted JWT `scope`, and normal local-policy claims. The routing URI never forces `aud`; local token policy may emit it or omit it.
 
-**User Delegation (UserGrant)**: The active existing delegation from a subject principal to a target agent. After rule authorization and before minting, impersonation checks it through `ports.UserDelegationVerifier`; it never creates, changes, or infers a delegation. A missing or expired delegation returns `access_denied` with an `error_uri` to the target's consent-management page; the token-error body intentionally does not distinguish the two states.
+**User Delegation (UserGrant)**: The active existing delegation from a subject principal to a target agent. After rule authorization and before human minting, impersonation checks it through `ports.UserDelegationVerifier`; eligible agent requests skip this check under ADR 045; it never creates, changes, or infers a delegation. A missing or expired delegation returns `access_denied` with an `error_uri` to the target's consent-management page; the token-error body intentionally does not distinguish the two states.
 
 ### ExtProc (Envoy External Processor) Domain
 
@@ -1677,7 +1664,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **Singleflight Refresh**: Deduplication pattern preventing concurrent duplicate token exchange requests for identical (subjectToken, resourceURI) pairs. Uses `golang.org/x/sync/singleflight` to ensure exactly one exchange request completes while others wait for the result. Improves performance and reduces load on identity broker.
 
-**Client Assertion**: JWT containing privileged client credentials (API gateway or reverse proxy) used to authenticate the token exchange request to the identity broker. Generated via client_credentials grant at ExtProc startup. Automatically refreshed in background goroutine within 30 seconds of expiry.
+**Client Assertion**: JWT containing privileged client credentials (API gateway or reverse proxy) used to authenticate the token exchange request to the identity broker. ExtProc obtains it through the `client_credentials` grant at startup. The background goroutine refreshes it when remaining lifetime is less than the greater of 20% of total lifetime and 30 seconds.
 
 **MCP Streamable HTTP**: Model Context Protocol transport mode allowing JSON-RPC communication over HTTP with streaming capabilities. Used by ExtProc to forward tool calls to MCP servers while maintaining transparent token exchange for authentication.
 
@@ -1691,7 +1678,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 ### OAuth2 Server Mode
 
-**BrokerClientCredential**: OAuth2 client credentials generated by the broker and bound to exactly one Agent. Contains hashed client secret (Argon2id, PHC format). `client_id` equals the agent's UUID string — no separate field needed. One credential per agent enforced by UNIQUE on `client_credentials.client_id`. Lifecycle: generated on demand via Admin API, replaced atomically on rotation, cascade-deleted with agent. Located in `internal/domain/storage/broker_client_credential.go`.
+**BrokerClientCredential**: OAuth2 client credentials generated by the broker and bound to exactly one Agent. Contains hashed client secret (Argon2id, PHC format). `client_id` equals the agent's UUID string — no separate field needed. One credential per agent enforced by UNIQUE on `client_credentials.client_id`. Lifecycle: generated on demand via Admin API, replaced atomically on rotation, cascade-deleted with agent. Source: [client_credential.go](internal/domain/storage/client_credential.go).
 
 **CredentialService**: Domain service in `internal/domain/oauth2server/credential_service.go` that owns broker credential creation, rotation, and revocation. It checks agent existence and selects creation or replacement through repository ports. The builder injects it into the admin handler through `ClientCredentialManager`. The handler retains HTTP response formatting and existing success logs.
 
@@ -1716,6 +1703,8 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 **SigningKeyBootstrapCoordinator**: Port in `internal/ports/oauth2server.go` that serializes `EnsureInitialKey` across broker replicas sharing a backend. Memory uses an in-process lock; PostgreSQL uses an advisory transaction lock. Callers must perform all bootstrap work with the callback context supplied by the coordinator.
 
 **AuthorizationCode**: Ephemeral, single-use code issued by the authorization endpoint and exchanged for an access token. Stored as SHA-256 hash. Expires after 60 seconds. Invalidated atomically on first use via `UPDATE ... SET used_at WHERE used_at IS NULL`. PKCE (S256) always required. Located in `internal/domain/storage/authorization_code.go`.
+
+**PrivateUseRedirectURI**: A native-app redirect URI with a private-use scheme (RFC 8252 §7.1), such as `com.example.app:/oauth2redirect/example-provider` or `github-app://oauth/callback`. `urivalidation.IsValidPrivateUseRedirectURI` enforces R1–R6: a restricted ASCII character set, canonical form, no opaque URI or userinfo, a safe scheme, a valid single-slash path or lowercase authority, and no dot path segments. Only an Agent's `redirect_uris` can authorize it; a CIMD client also needs the URI in its document. Match it byte for byte (ADR 042).
 
 **ClientID** (credential): String-typed identifier for broker-issued OAuth2 client credentials. Always equals the agent's UUID string. Globally unique. Bound to authorization codes for rotation safety. Located in `internal/domain/id/string_ids.go`.
 
@@ -1757,9 +1746,17 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **JWKSPublisher**: Domain service (`JWKSPublisherService` in `internal/domain/oauth2/jwks_publisher.go`) implementing the `JWKSPublisherPort` interface. On each request it reads the current mode-appropriate key sources, merges them, enforces kid-uniqueness across local and upstream keys, tracks upstream freshness, and returns `ErrUpstreamUnavailable` or `ErrKidConflict` sentinel errors when the verification surface is incomplete. Mapped to HTTP 503 at the handler layer.
 
+### Trust Anchor Key Sets (Feature 052)
+
+**Key Set Source**: The origin of one trust anchor's public verification keys: `remote` (explicit or discovered `jwks_uri`, or ADR 029 upstream reuse), `inline` (`jwks`), or `file` (`jwks_file`). Exactly one per trust anchor, immutable after startup, never shared with another trust anchor's verification. It is distinct from the JWKS Aggregation domain's **KeySource**, which describes inputs to the broker's *published* key set.
+
+**Local Key Set**: A startup-validated JWK Set from an inline or file Key Set Source. It contains at least one public asymmetric key, a unique non-empty `kid` on every key, approved algorithms when `alg` is present, and at most 1 MiB of data. It is never published.
+
+**Trust Directory**: The operator-designated directory (`security.trust_material_dir`) that is the only place from which the broker reads key-set files. It is absolute, resolves to an existing directory, and is not the filesystem root. The broker opens files beneath it through `os.Root`.
+
 ### Inbound Client ID Metadata Document (CIMD) Domain
 
-**ClientIDMetadataDocument**: Immutable value object representing a parsed and validated CIMD JSON document fetched from a client's registered HTTPS URL. Validated at construction time: `client_id` field must exactly match the fetch URL, `redirect_uris` must not be empty, `token_endpoint_auth_method` must not be a client-secret variant, and `client_name` must not match the keyword blocklist. Located in `internal/domain/oauth2/cimd/`.
+**ClientIDMetadataDocument**: Immutable value object representing a parsed CIMD JSON document fetched from a client's registered HTTPS URL. At construction, `client_id` must match the fetch URL, `redirect_uris` must not be empty, `token_endpoint_auth_method` must not use a client secret, and `client_name` must not match the keyword blocklist. Each redirect URI must be same-origin HTTPS, loopback, or a structurally valid private-use URI. `ValidatePrivateUseRedirectURIs` checks private-use entries against the resolved Agent's `redirect_uris` on every resolution, including cache hits. Located in `internal/domain/oauth2/cimd/`.
 
 **CIMDCacheEntry**: In-process (non-persisted) cache record keyed by the Client ID Metadata Document URL. Fields: URL (cache key), parsed Document, FetchedAt timestamp, ExpiresAt (computed from HTTP cache headers clamped to operator TTL bounds). Stored in a `sync.RWMutex`-protected map; expired entries are lazily evicted on next access. Located in `internal/domain/oauth2/cimd/`.
 
@@ -1785,11 +1782,17 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 ### Outbound CIMD Client-Authentication Domain
 
-**CIMD confidential service**: A third-party OAuth2 service that uses `private_key_jwt`. It has a broker-hosted HTTPS client ID URL and no shared secret.
+**CIMD confidential service**: A third-party OAuth2 service with `client_registration: cimd` and `token_endpoint_auth_method: private_key_jwt`. It has a broker-hosted HTTPS client identifier URL and no shared secret. Its assertion depends on the CIMD client-authentication key set.
+
+**Client registration**: The service setting `client_registration` selects who supplies its client ID. `static` uses an operator or DCR-issued ID. `cimd` uses a broker-hosted URL. Token-endpoint authentication remains a separate choice.
+
+**Static public service**: A `static` service with `token_endpoint_auth_method: none`. It keeps its operator client ID and has no hosted document or client credential.
+
+**CIMD public service**: A `cimd` service with `token_endpoint_auth_method: none`. It uses the hosted URL and PKCE S256 without a client credential or CIMD client-authentication key.
 
 **CIMD client-authentication key**: A broker-global ES256 key in the `cimd_client_authentication` key domain. It signs outbound client assertions only. Its public JWK appears only through a CIMD service JWK route.
 
-**Broker-hosted Client ID Metadata Document**: The public document at a CIMD confidential service's client ID URL. It identifies the broker client, its callback URI, `private_key_jwt`, ES256, and its CIMD JWK URL. It never contains private material, secrets, user data, or token data.
+**Broker-hosted Client ID Metadata Document**: The public document at a CIMD service's client identifier URL. Both variants bind the broker URL, one callback, and the selected authentication method. The confidential variant also publishes `ES256` and a public JWK URL. The public variant omits both key members and needs no CIMD key. Neither variant contains private material, secrets, user data, or tokens.
 
 **Client assertion**: An ephemeral ES256 JWT that authenticates the broker to one configured third-party token endpoint. It uses a CIMD client-authentication key. It is distinct from the RFC 8693 `ClientAssertion` that authenticates a privileged token-exchange client.
 
@@ -1809,17 +1812,17 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 ### JWT Pre-Authentication
 
-At startup the application builder constructs an authenticator independently for each configured `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each HTTP server receives only its own authenticator and claim-extraction settings; shutdown closes both authenticator caches. The common optional-principal middleware never falls back to a plain principal header when JWT authentication is configured. Admin CIMD key mutations require an extracted operator principal before key generation.
+At startup the application builder constructs an authenticator independently for each configured `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each HTTP server receives only its own authenticator and claim-extraction settings; shutdown closes both authenticator caches. For either server, an inline `jwks` or a `jwks_file` in the Trust Directory replaces the remote fetch: the builder creates a `jwks.StaticAdapter` or `jwks.FileAdapter` and injects it into the jwx authenticator as its key-set port, so the authenticator skips the remote cache and the startup fetch. It verifies with the same options as the remote path. A file set uses the fixed 5-minute re-read and 15-minute staleness window of the authenticator's remote cache. Each server is a separate trust anchor with its own adapter, never shared ([ADR 040](adrs/040-trust-anchor-local-key-sets.md)). The common optional-principal middleware never falls back to a plain principal header when JWT authentication is configured. Admin CIMD key mutations require an extracted operator principal before key generation.
 
 `verification: none` trusts the identity-bearing header without a signature. Its trust boundary is the authenticated gateway or mesh: only it can reach the broker ports, and it must remove every inbound client-supplied copy of the JWT header before setting the verified user's claims. The bearer token used to authenticate at the gateway is not a broker operator principal. Without these deployment controls, a caller could forge an unsigned JWT and become an operator.
 
 **PrincipalProfile**: Enriched user identity value object containing principal identifier, display name, email, and picture URL. Extracted from pre-authentication source (JWT or plain header). Request-scoped, immutable. Stored in request context via `principal.WithProfile()` alongside the string principal. Located in `internal/domain/principal/profile.go`.
 
-**JWTAuthConfig**: Configuration value object defining JWT-based pre-authentication behavior: HTTP header name, verification mode (`jwks` or `none`), JWKS endpoint, audience/issuer constraints, and CEL claim extraction expressions. Validated at startup with mutual exclusivity rules (`verification: none` + `jwks_uri` → startup error). Located in `internal/ports/config.go` as `JWTConfig`.
+**JWTAuthConfig**: Configuration value object defining JWT-based pre-authentication behavior: HTTP header name, verification mode (`jwks` or `none`), key source (at most one of `jwks_uri`, an inline `jwks`, or a `jwks_file` in the Trust Directory), audience/issuer constraints, and CEL claim extraction expressions. Validated at startup with mutual exclusivity rules (`verification: none` + any key source → startup error). `jwks` and `jwks_file` are accepted on both `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`; each server is a separate trust anchor. Located in `internal/ports/config.go` as `JWTConfig`.
 
 **JWTAuthenticator**: Port interface for JWT authentication in the pre-auth layer. Abstracts JWT parsing, signature verification (JWKS or none), temporal validation, and CEL-based claim extraction. Returns `AuthResult` containing extracted principal and optional profile attributes. Implemented by jwx adapter in `internal/adapters/jwtauth/`. Located in `internal/domain/jwtauth/authenticator.go`.
 
-**JWTVerificationMode**: String enum (`"jwks"` or `"none"`) controlling JWT signature verification behavior. `"jwks"` (default) requires JWKS URI and validates cryptographic signatures against published key sets. `"none"` accepts unsigned JWTs (alg: "none") for trusted upstream environments such as service meshes. Unsigned mode requires explicit opt-in and is mutually exclusive with `jwks_uri`.
+**JWTVerificationMode**: String enum (`"jwks"` or `"none"`) controlling JWT signature verification behavior. `"jwks"` (default) requires a key source (`jwks_uri`, `jwks`, or `jwks_file`) and validates cryptographic signatures against its key set. `"none"` accepts unsigned JWTs (alg: "none") for trusted upstream environments such as service meshes. Unsigned mode requires explicit opt-in and is mutually exclusive with every key source.
 
 **JWTValidationFailed**: Domain event emitted when JWT pre-authentication fails. Contains failure reason (e.g., `invalid_signature`, `token_expired`, `audience_mismatch`), header name, and remote address. Logged as structured audit data for security monitoring per FR-020/SR-005. Not persisted — emitted as structured log entries.
 
@@ -1837,7 +1840,7 @@ At startup the application builder constructs an authenticator independently for
 
 **Approval pattern authority**: `arguments_hash` is the exact identity used to de-duplicate pending approvals. `ToolPattern` is server-owned exact coverage, and `ParamsPattern` defines editable coverage consumed by ExtProc's approval matcher. `ComputeArgumentsHash` and `toolpattern.Canonical` intentionally serve different purposes and must not be unified.
 
-**ApprovalSyncState**: Single-row entity tracking a monotonically increasing version counter. Incremented on every approval mutation. Used as the ETag source for the long-poll sync endpoint. Located in `migrations/009_create_approval_sync_state.up.sql`.
+**ApprovalSyncState**: Single-row entity tracking a monotonically increasing version counter. Incremented on every approval mutation. Used as the ETag source for the long-poll sync endpoint. Source: [025_create_approval_sync_state.up.sql](migrations/025_create_approval_sync_state.up.sql).
 
 **ApprovalCreated**: Domain event emitted when ExtProc creates a new pending approval. Carries approval_id, principal, agent_id, tool_name, and captured W3C traceparent request context for span linking.
 

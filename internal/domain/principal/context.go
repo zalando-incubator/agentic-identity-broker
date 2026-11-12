@@ -1,7 +1,11 @@
 // Package principal provides domain types and functions for managing authenticated principals.
 package principal
 
-import "context"
+import (
+	"context"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+)
 
 // principalContextKey is an unexported type used as the context key for principals.
 // Using an unexported type prevents external packages from accessing the principal directly
@@ -28,24 +32,24 @@ type principalContextKey struct{}
 //   - New context contains principal accessible via FromContext
 //   - Parent context is unmodified (immutability)
 //   - New context inherits cancellation, deadlines from parent
-func WithPrincipal(ctx context.Context, principal string) context.Context {
+func WithPrincipal(ctx context.Context, principal id.Principal) context.Context {
 	return context.WithValue(ctx, principalContextKey{}, principal)
 }
 
 // FromContext retrieves the principal from the context.
-// Returns (principal, true) if present and valid, ("", false) if not present.
+// Returns (principal, true) if present and valid, (zero Principal, false) if not present.
 // This is the safe retrieval method for use in handlers that may or may not have principals.
 //
 // Parameters:
 //   - ctx: Context potentially containing principal
 //
 // Returns:
-//   - string: Principal value (empty string if not present)
+//   - id.Principal: Principal value (zero value if not present)
 //   - bool: True if principal present and valid, false otherwise
 //
 // Postconditions:
-//   - If bool is true, string is guaranteed non-empty and ≤ 200 characters
-//   - If bool is false, string is empty string
+//   - If bool is true, the principal is guaranteed non-empty and ≤ 200 characters
+//   - If bool is false, the principal is the zero value
 //
 // Usage:
 //
@@ -55,8 +59,8 @@ func WithPrincipal(ctx context.Context, principal string) context.Context {
 //	    return
 //	}
 //	log.Info("request from principal", "principal", principal)
-func FromContext(ctx context.Context) (string, bool) {
-	principal, ok := ctx.Value(principalContextKey{}).(string)
+func FromContext(ctx context.Context) (id.Principal, bool) {
+	principal, ok := ctx.Value(principalContextKey{}).(id.Principal)
 	return principal, ok
 }
 
@@ -91,7 +95,7 @@ func FromContext(ctx context.Context) (string, bool) {
 //   - Optional routes (use FromContext instead)
 //   - Public routes (use FromContext instead)
 //   - Code paths where principal may be missing
-func MustFromContext(ctx context.Context) string {
+func MustFromContext(ctx context.Context) id.Principal {
 	principal, ok := FromContext(ctx)
 	if !ok {
 		panic("principal not found in context")

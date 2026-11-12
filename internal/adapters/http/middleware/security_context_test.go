@@ -3,7 +3,6 @@ package middleware_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,7 @@ import (
 	adapterhttp "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -184,7 +184,7 @@ func TestNewHandler_OrdinaryRequestFinalizesSecurityContextImmediately(t *testin
 			observed.sc, observed.ok = security.FromContext(r.Context())
 			w.WriteHeader(http.StatusNoContent)
 		})
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodPost, "/api/token?access_token=secret&code=opaque", nil)
 	req.Header.Set("X-Remote-User", "alice@example.com")
@@ -195,7 +195,7 @@ func TestNewHandler_OrdinaryRequestFinalizesSecurityContextImmediately(t *testin
 
 	require.Equal(t, http.StatusNoContent, res.Code)
 	require.True(t, observed.ok, "ordinary requests must expose a finalized SecurityContext before business logic runs")
-	assert.Equal(t, "alice@example.com", observed.sc.Actor)
+	assert.Equal(t, id.NewPrincipal("alice@example.com"), observed.sc.Actor)
 	assert.Empty(t, observed.sc.CallingPeer, "calling_peer must be omitted when no distinct peer is present")
 	assert.Equal(t, http.MethodPost, observed.sc.RequestMethod)
 	assert.Equal(t, "/api/token", observed.sc.RequestTarget, "request target must omit the query string")
@@ -222,7 +222,7 @@ func TestNewHandler_AnonymousFallbackRemainsFailOpen(t *testing.T) {
 					observed.sc, observed.ok = security.FromContext(r.Context())
 					w.WriteHeader(http.StatusNoContent)
 				})
-			}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			}, slog.New(slog.DiscardHandler))
 
 			req := httptest.NewRequest(http.MethodGet, "/api/public", nil)
 			if tt.principalHead != "" {
@@ -234,7 +234,7 @@ func TestNewHandler_AnonymousFallbackRemainsFailOpen(t *testing.T) {
 
 			require.Equal(t, http.StatusNoContent, res.Code, "capture must never reject a public request")
 			require.True(t, observed.ok, "public requests must still receive a finalized anonymous security context")
-			assert.Equal(t, security.AnonymousActor, observed.sc.Actor)
+			assert.Equal(t, id.NewPrincipal(security.AnonymousActor), observed.sc.Actor)
 			assert.Empty(t, observed.sc.CallingPeer)
 			assert.Equal(t, traceIDFromTraceResponse(t, res.Header().Get("traceresponse")), observed.sc.TraceID)
 		})
@@ -250,7 +250,7 @@ func TestNewHandler_TruncatesOversizedUserAgent(t *testing.T) {
 			observed.sc, observed.ok = security.FromContext(r.Context())
 			w.WriteHeader(http.StatusNoContent)
 		})
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, slog.New(slog.DiscardHandler))
 
 	longUserAgent := strings.Repeat("u", 1100)
 	req := httptest.NewRequest(http.MethodGet, "/api/ua", nil)
@@ -302,7 +302,7 @@ func TestNewHandler_TraceIDReusesInboundSpanOrFallsBackWhenAbsent(t *testing.T) 
 					observed.sc, observed.ok = security.FromContext(r.Context())
 					w.WriteHeader(http.StatusNoContent)
 				})
-			}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			}, slog.New(slog.DiscardHandler))
 
 			req := httptest.NewRequest(http.MethodGet, "/api/trace", nil).WithContext(tt.requestCtx)
 			res := httptest.NewRecorder()
@@ -344,7 +344,7 @@ func TestNewHandler_DoesNotReuseInboundTraceWhenTracingDisabled(t *testing.T) {
 			propagatedTraceID = trace.SpanContextFromContext(r.Context()).TraceID().String()
 			w.WriteHeader(http.StatusNoContent)
 		})
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, slog.New(slog.DiscardHandler))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/trace", nil)
 	req.Header.Set("traceparent", "00-"+inboundTraceID+"-bbbbbbbbbbbbbbbb-01")
@@ -445,7 +445,7 @@ func TestNewHandler_TracingOmitsQueryBearingRequests(t *testing.T) {
 		router.Get("/api/third-party/{serviceId}/oauth2/callback", func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
 		})
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, slog.New(slog.DiscardHandler))
 	request := httptest.NewRequest(http.MethodGet, "/api/third-party/123/oauth2/callback", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

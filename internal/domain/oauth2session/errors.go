@@ -44,15 +44,12 @@ var (
 	// ErrInvalidConfiguration is returned when OAuth2 service configuration is invalid.
 	ErrInvalidConfiguration = errors.New("invalid OAuth2 service configuration")
 
-	// ErrSessionExpired indicates the access token expired and no usable refresh token remains;
-	// ErrRefreshTokenExpired is also wrapped when a stored refresh token has expired.
-	ErrSessionExpired = errors.New("session expired: both access and refresh tokens expired")
+	// ErrReauthenticationRequired indicates the broker cannot obtain another access token for the
+	// session: the provider rejected the refresh token, or access expired without a refresh token.
+	ErrReauthenticationRequired = errors.New("session requires reauthentication")
 
 	// ErrRefreshFailed indicates token refresh operation failed with upstream provider.
 	ErrRefreshFailed = errors.New("failed to refresh access token with upstream provider")
-
-	// ErrRefreshTokenExpired indicates that a stored refresh token's recorded expiry has passed.
-	ErrRefreshTokenExpired = errors.New("refresh token expired")
 
 	// ErrRefreshRejected indicates that a provider rejected a refresh with invalid_grant.
 	ErrRefreshRejected = errors.New("refresh token rejected by provider")
@@ -73,7 +70,7 @@ func (e *RefreshRejectedError) Error() string {
 	return fmt.Sprintf("third-party token endpoint returned error status %d", e.StatusCode)
 }
 
-// Unwrap distinguishes provider rejection from a locally recorded token expiry.
+// Unwrap identifies a terminal provider rejection without trusting provider descriptions.
 func (e *RefreshRejectedError) Unwrap() error {
 	if e.OAuthError == "invalid_grant" && e.StatusCode >= 400 && e.StatusCode <= 499 && e.StatusCode != http.StatusTooManyRequests {
 		return ErrRefreshRejected
@@ -94,22 +91,22 @@ const (
 type ErrorDetail string
 
 const (
-	DetailSessionMissing          ErrorDetail = "session_missing"
-	DetailAccessTokenExpired      ErrorDetail = "access_token_expired"
-	DetailRefreshTokenExpired     ErrorDetail = "refresh_token_expired"
-	DetailRefreshUnavailable      ErrorDetail = "refresh_unavailable"
-	DetailRefreshRejected         ErrorDetail = "refresh_rejected"
-	DetailProviderClientRejected  ErrorDetail = "provider_client_rejected"
-	DetailProviderRejected        ErrorDetail = "provider_rejected"
-	DetailProviderUnavailable     ErrorDetail = "provider_unavailable"
-	DetailProviderResponseInvalid ErrorDetail = "provider_response_invalid"
-	DetailRepositoryUnavailable   ErrorDetail = "repository_unavailable"
-	DetailDecryptionFailed        ErrorDetail = "decryption_failed"
-	DetailEncryptionFailed        ErrorDetail = "encryption_failed"
-	DetailPersistenceFailed       ErrorDetail = "persistence_failed"
-	DetailConfiguration           ErrorDetail = "configuration"
-	DetailCallerCanceled          ErrorDetail = "caller_canceled"
-	DetailInternalUnclassified    ErrorDetail = "internal_unclassified"
+	DetailSessionMissing              ErrorDetail = "session_missing"
+	DetailAccessTokenExpired          ErrorDetail = "access_token_expired"
+	DetailRefreshUnavailable          ErrorDetail = "refresh_unavailable"
+	DetailRefreshRejected             ErrorDetail = "refresh_rejected"
+	DetailProviderClientRejected      ErrorDetail = "provider_client_rejected"
+	DetailProviderRejected            ErrorDetail = "provider_rejected"
+	DetailProviderUnavailable         ErrorDetail = "provider_unavailable"
+	DetailProviderResponseInvalid     ErrorDetail = "provider_response_invalid"
+	DetailCredentialSourceUnavailable ErrorDetail = "credential_source_unavailable" // #nosec G101 -- diagnostic detail code, not a credential.
+	DetailRepositoryUnavailable       ErrorDetail = "repository_unavailable"
+	DetailDecryptionFailed            ErrorDetail = "decryption_failed"
+	DetailEncryptionFailed            ErrorDetail = "encryption_failed"
+	DetailPersistenceFailed           ErrorDetail = "persistence_failed"
+	DetailConfiguration               ErrorDetail = "configuration"
+	DetailCallerCanceled              ErrorDetail = "caller_canceled"
+	DetailInternalUnclassified        ErrorDetail = "internal_unclassified"
 )
 
 type ErrorKind string
@@ -131,6 +128,7 @@ const (
 	DependencyProviderRepository Dependency = "provider_repository"
 	DependencyProvider           Dependency = "provider"
 	DependencyEncryption         Dependency = "encryption"
+	DependencyCredentialSource   Dependency = "credential_source" // #nosec G101 -- diagnostic dependency name, not a credential.
 	DependencySigning            Dependency = "signing"
 )
 
@@ -153,7 +151,7 @@ func NewErrorMetadata(operation Operation, detail ErrorDetail) ErrorMetadata {
 	}
 	metadata := ErrorMetadata{operation: operation, detail: detail, dependency: DependencyNone}
 	switch detail {
-	case DetailSessionMissing, DetailAccessTokenExpired, DetailRefreshTokenExpired, DetailRefreshUnavailable:
+	case DetailSessionMissing, DetailAccessTokenExpired, DetailRefreshUnavailable:
 		metadata.kind, metadata.dependency = KindSession, DependencySessionRepository
 	case DetailRefreshRejected, DetailProviderRejected, DetailProviderResponseInvalid:
 		metadata.kind, metadata.dependency = KindProvider, DependencyProvider
@@ -161,6 +159,8 @@ func NewErrorMetadata(operation Operation, detail ErrorDetail) ErrorMetadata {
 		metadata.kind, metadata.dependency = KindConfiguration, DependencyProvider
 	case DetailProviderUnavailable:
 		metadata.kind, metadata.dependency = KindInfrastructure, DependencyProvider
+	case DetailCredentialSourceUnavailable:
+		metadata.kind, metadata.dependency = KindInfrastructure, DependencyCredentialSource
 	case DetailRepositoryUnavailable, DetailPersistenceFailed:
 		metadata.kind, metadata.dependency = KindInfrastructure, DependencySessionRepository
 	case DetailDecryptionFailed, DetailEncryptionFailed:
@@ -219,7 +219,7 @@ func (m ErrorMetadata) LogValue() slog.Value {
 
 func (m ErrorMetadata) WithDependency(dependency Dependency) ErrorMetadata {
 	switch dependency {
-	case DependencyNone, DependencySessionRepository, DependencyProviderRepository, DependencyProvider, DependencyEncryption, DependencySigning:
+	case DependencyNone, DependencySessionRepository, DependencyProviderRepository, DependencyProvider, DependencyEncryption, DependencyCredentialSource, DependencySigning:
 		m.dependency = dependency
 	default:
 		m.dependency = DependencyNone

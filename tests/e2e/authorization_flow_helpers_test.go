@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 
 	. "github.com/onsi/gomega"
 
@@ -25,9 +26,9 @@ func completeAuthorizationCodeFlow(
 	clientID string,
 	redirectURI string,
 	assertConsentContext func(data map[string]any),
-) {
+) (code, verifier string) {
 	Expect(fixtures.SeedDefaultConsentData(context.Background(), testStorage, id.Principal(principal))).To(Succeed())
-	verifier := helpers.PKCEVerifier()
+	verifier = helpers.PKCEVerifier()
 	state := "portless-flow-state"
 	challenge := helpers.GenerateCodeChallenge(verifier)
 
@@ -111,4 +112,18 @@ func completeAuthorizationCodeFlow(
 	Expect(finalRedirect.String()).To(HavePrefix(redirectURI))
 	Expect(finalRedirect.Query().Get("code")).ToNot(BeEmpty(), "authorization code must be issued after consent")
 	Expect(finalRedirect.Query().Get("state")).To(Equal(state))
+	return finalRedirect.Query().Get("code"), verifier
+}
+
+func exchangeAuthorizationCode(server *bootstrap.TestServer, clientID, code, redirectURI, verifier string) *http.Response {
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {clientID},
+		"code":          {code},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+	}
+	resp, err := helpers.HTTPClient().Post(server.BaseURL()+"/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+	Expect(err).ToNot(HaveOccurred())
+	return resp
 }

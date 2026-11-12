@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
@@ -232,6 +233,21 @@ func ExtractImmediateResponseBody(resp *extprocv3.ProcessingResponse) string {
 	}
 
 	return string(immResp.ImmediateResponse.Body)
+}
+
+// ExtractImmediateResponseHeader returns the first matching ImmediateResponse header value.
+// Header names are case-insensitive; an absent header or response returns an empty string.
+func ExtractImmediateResponseHeader(resp *extprocv3.ProcessingResponse, name string) string {
+	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
+	if !ok || immResp.ImmediateResponse == nil || immResp.ImmediateResponse.Headers == nil {
+		return ""
+	}
+	for _, header := range immResp.ImmediateResponse.Headers.SetHeaders {
+		if header != nil && header.Header != nil && strings.EqualFold(header.Header.Key, name) {
+			return string(header.Header.RawValue)
+		}
+	}
+	return ""
 }
 
 // WithEndOfStream sets the EndOfStream flag on the HttpHeaders message.

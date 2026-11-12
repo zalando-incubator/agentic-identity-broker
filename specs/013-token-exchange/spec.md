@@ -212,7 +212,7 @@ Administrators need to configure authorization rules that validate client_assert
 
 ### User Story 5 - No Valid Session Returns Appropriate Error (Priority: P2)
 
-When a user has not established a session with a third-party service (no tokens in vault), or their session has expired (both access and refresh tokens expired), the system must return an appropriate error that privileged clients/agents can handle programmatically to trigger re-authentication flows.
+When a user has not established a session with a third-party service (no tokens in vault), or their session requires reauthentication because the access token expired without a refresh token or because the provider rejected the stored refresh token, the system must return an appropriate error that privileged clients/agents can handle programmatically to trigger re-authentication flows.
 
 **Why this priority**: This enables agents to detect when users need to re-authenticate with third-party services. It depends on P1 (basic exchange) and provides essential error handling.
 
@@ -220,12 +220,43 @@ When a user has not established a session with a third-party service (no tokens 
 
 **Acceptance Scenarios**:
 
-1. **Given** user has no stored session for the target service, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri addressing the sessions landing page (`<public URL>/sessions`).
-2. **Given** user's stored tokens have all expired (both access and refresh), **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_description="User session has expired, re-authentication required"
-3. **Given** a recoverable provider-session error response is returned, **When** the privileged client receives it, **Then** error_uri points to the sessions landing page rather than the authorization API that requires redirect parameters.
-4. **Given** user's stored access_token has expired and the third-party service rejects the stored refresh_token with HTTP 400 and error=invalid_grant, **When** privileged client requests token exchange, **Then** system returns 400 Bad Request with error=invalid_grant and error_uri set to the sessions landing page (`<public URL>/sessions`), never returns the provider's error_description, and leaves the stored session unchanged so that a later accepted refresh succeeds
+1. **Given** the user has no session for the resolved service, **When** a privileged client exchanges a token, **Then** the broker returns `400 invalid_grant`. Its `error_uri` starts that service's third-party OAuth2 flow with an encoded `/sessions` return URI.
+2. **Given** the stored access token expired and no usable refresh token remains, **When** a privileged client exchanges a token, **Then** the broker returns `400 invalid_grant` with the same service-specific `error_uri`.
+3. **Given** a user opens the recoverable provider-session `error_uri`, **When** the browser requests it, **Then** the service-specific authorization GET starts provider login with PKCE. The provider callback returns to `/sessions`; the link is not broker `/oauth2/authorize` or a raw provider URL.
+4. **Given** the provider rejects a stored refresh token with `invalid_grant` and an HTTP 4xx status other than 429 (for example HTTP 400), **When** a privileged client exchanges a token, **Then** the broker returns `400 invalid_grant` with the same service-specific `error_uri` and does not return the provider's description. It keeps the stored tokens unchanged and records the rejection. Later exchanges return the recovery error without contacting the provider, even while the stored access token has not expired, until the user reconnects the service.
 5. **Given** user's stored access_token has expired and the third-party service rejects the refresh request with error=invalid_client (or any non-invalid_grant code, provider 5xx, or unparseable response), **When** privileged client requests token exchange, **Then** system returns 500 Internal Server Error with error=server_error and no error_uri, and records the safe third-party HTTP status and OAuth error code in telemetry
 6. **Given** user's stored access_token has expired and the third-party service answers the refresh with a transient failure (5xx, 429, or a network error) followed by success, **When** privileged client requests token exchange, **Then** system retries the refresh with exponential backoff (at most 3 attempts, honouring a `Retry-After` of up to 10 seconds) and returns the refreshed token without signalling re-authentication
+
+### User Story 5 Amendment - Service-Specific Session Recovery (2026-10-26)
+
+This amendment supersedes the October 8 sessions-landing-page decision in merged PR #186. The user approved the service-specific browser URL on 2026-10-26. It changes only `error_uri` for recoverable provider-session failures. Grant recovery still links to `/agents/{agent-id}`. Non-recoverable errors still omit `error_uri`; `/oauth2/token` still sends no `WWW-Authenticate` header.
+
+For a broker configured with `PublicURL=https://broker.example.com` and a resolved service UUID `550e8400-e29b-41d4-a716-446655440000`, the exact URI is:
+
+```text
+https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions
+```
+
+The broker builds the link from its configured public URL and the resolved service UUID. It encodes `<public URL>/sessions` with `url.QueryEscape` as the `redirect_uri` query value. It never uses a caller-provided origin or service identifier to build this link. The GET initiates third-party OAuth with PKCE and validates the return URI's public origin. After the provider callback, the browser returns to `/sessions`.
+
+**Acceptance Scenarios**:
+
+1. **Given** a missing session, expired session without usable refresh, insufficient session scope, provider refresh `invalid_grant`, or established client-identity mismatch, **When** token exchange returns `400 invalid_grant`, **Then** `error_uri` is the exact service-specific link above for the resolved service and configured public URL.
+2. **Given** a user opens that link, **When** the service's provider completes authorization, **Then** the PKCE-backed callback returns the browser to `/sessions`.
+3. **Given** a grant failure or a non-recoverable exchange error, **When** token exchange fails, **Then** grant failures retain the agent consent-page URI and non-recoverable errors have no `error_uri`.
+
+**Concrete example journey (Scenarios 1–2)**: Alice's Research Assistant requests a token for the service above. Alice has no usable provider session. At 10:00, the broker responds:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":"invalid_grant","error_description":"User session is unavailable. Please re-authenticate.","error_uri":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"}
+```
+
+At 10:01, Alice opens `error_uri` in her authenticated browser. The broker starts that service's PKCE authorization and redirects her to its provider. At 10:02, the provider returns a code to `/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/callback`. The broker stores the new session and redirects Alice to `/sessions?success=true&service_id=550e8400-e29b-41d4-a716-446655440000`.
+
+**Contract note**: `error_uri` remains a broker-selected action URI in End-User API `1.0.0`. This amendment changes the recovery target, not the response shape, route, or status. See [ADR 044](../../adrs/044-service-specific-session-recovery-url.md).
 
 ---
 
@@ -260,6 +291,28 @@ The broker can issue local subject tokens while still requiring privileged-clien
 1. **Given** local mode has an external client-assertion trust anchor and a valid locally issued subject_token, **When** a privileged client sends a token-exchange request with a valid externally issued client_assertion, **Then** the system processes the exchange.
 2. **Given** local mode has an external client-assertion trust anchor, **When** a privileged client sends a token-exchange request with a broker-issued client_assertion, **Then** the system returns 401 Unauthorized with error=invalid_client.
 3. **Given** hybrid mode configures a client-assertion JWKS URI distinct from the upstream JWKS, **When** a client_assertion is issued by the configured issuer and signed by the configured JWKS, **Then** the system validates the assertion using the configured JWKS and processes the exchange.
+4. **Given** a CIMD agent has an active grant and provider session, and local token policy signs its registered UUID in `azp`,
+   **When** the user completes CIMD authorization and a privileged client exchanges the broker-issued JWT with a valid external assertion,
+   **Then** token exchange uses `azp` only for the broker issuer, finds the grant by UUID, and returns the provider token. The JWT's `agent_id` remains the CIMD metadata URL.
+
+**Concrete example journey (Scenario 4)**: Alice approves a grant for the Agent registered with `client_id=https://claude.ai/oauth/claude-code-client-metadata`. Its broker UUID is `550e8400-e29b-41d4-a716-446655440000`. The broker uses this local token policy:
+
+```yaml
+oauth2_authorization_server:
+  local:
+    token_claims_expression: '{"aud": "token-exchange-broker", "azp": agent.id}'
+token_exchange:
+  claim_extraction:
+    agent_id_expression: 'has(subject_token.azp) && subject_token.iss == "https://broker.example.com" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
+```
+
+At 10:00, Alice completes authorize → consent → grant → re-authorize with S256 PKCE. The Agent exchanges the code. The resulting broker-signed JWT contains these decoded claims:
+
+```json
+{"iss":"https://broker.example.com","sub":"alice@example.com","agent_id":"https://claude.ai/oauth/claude-code-client-metadata","azp":"550e8400-e29b-41d4-a716-446655440000","aud":"token-exchange-broker"}
+```
+
+At 10:01, a gateway presents this token as `subject_token`, its externally signed `client_assertion`, and the registered resource to `POST /oauth2/token`. The broker validates both signatures, uses the signed `azp` UUID to find Alice's grant, and returns the stored provider access token. For an upstream-issued subject token, the CEL expression instead resolves the upstream `azp` through the client ID registry.
 
 ---
 
@@ -275,6 +328,121 @@ The broker can issue local subject tokens while still requiring privileged-clien
 - **CEL expression timeout**: CEL evaluation has 100ms timeout; if exceeded, system returns error=server_error with description "Authorization evaluation timeout"
 - **Grant exists but session missing**: When user has granted agent access but has no session with the service, system returns error=invalid_grant (not access_denied) to indicate missing session rather than missing permission
 - **Non-token-exchange grant_type**: When `/oauth2/token` receives a grant_type other than token-exchange, system passes through to existing proxy behavior
+
+## Concrete Example Journeys *(mandatory)*
+
+### Journey 1 — The provider rejects Alice's refresh token until she reconnects (User Story 5, Scenario 4)
+
+**Cast**: Alice (`alice@example.com`); agent *Data Analysis Assistant*
+(`550e8400-e29b-41d4-a716-446655440000`), whose requests reach the broker through a privileged
+client; service *GitHub* (`880e8400-e29b-41d4-a716-446655440010`) with protected resource
+`https://api.github.com` and token endpoint `https://github.com/login/oauth/access_token`. Alice
+has an active grant covering GitHub for the agent. All times are 2026-10-21 UTC. All IDs, codes,
+assertions, and tokens are synthetic.
+
+**Step 1 — Initial state: Alice's GitHub session needs a refresh**
+
+Her access token expired at 09:00:00. The session still holds the refresh token `ghr_old`, and no
+provider rejection is recorded, so the broker treats it as usable. GitHub has revoked `ghr_old`.
+
+**Step 2 — 09:30:00: the privileged client exchanges a token; GitHub rejects the refresh token**
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=eyJ...&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
+&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer
+&client_assertion=eyJ...&resource=https%3A%2F%2Fapi.github.com
+```
+
+Line breaks in the body are for display only. `subject_token` names Alice and the agent; its
+validation is unchanged and not shown. The broker refreshes the expired access token; its client
+authentication is configured per service and omitted here:
+
+```http
+POST /login/oauth/access_token HTTP/1.1
+Host: github.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=refresh_token&refresh_token=ghr_old
+
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error": "invalid_grant", "error_description": "The refresh token has been revoked."}
+```
+
+The broker answers the privileged client without GitHub's description:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{
+  "error": "invalid_grant",
+  "error_description": "provider session is missing or unusable; re-authentication required",
+  "error_uri": "https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+}
+```
+
+The stored access token, refresh token, and access-token expiry are unchanged. The session now
+records the provider rejection at `2026-10-21T09:30:00Z` and requires reauthentication.
+
+**Step 3 — 09:35:00: a later exchange fails the same way without reaching GitHub**
+
+The privileged client repeats the request from Step 2. The broker sends no request to GitHub.
+It returns the same `400 invalid_grant` response with the service-specific `error_uri` from Step 2.
+
+**Step 4 — 09:40:00: Alice reconnects GitHub through the recovery URL**
+
+Alice opens `error_uri` in her authenticated browser. The broker starts GitHub authorization with PKCE:
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://github.com/login/oauth/authorize?client_id=...&state=eyJ...&code_challenge=...
+```
+
+Alice approves at GitHub, and the callback stores the new tokens
+(`specs/008-thirdparty-oauth2-sessions/spec.md`, User Story 2, Scenarios 3–6):
+
+```http
+GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/callback?code=gh_code_7f3a&state=eyJ... HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 302 Found
+Location: https://broker.example.com/sessions?service_id=880e8400-e29b-41d4-a716-446655440010&success=true
+```
+
+The session now holds the new tokens, and the recorded rejection is cleared.
+
+**Step 5 — 09:45:00: the next exchange succeeds**
+
+The privileged client repeats the request from Step 2:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+
+{
+  "access_token": "ghu_new",
+  "token_type": "Bearer",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "expires_in": 3600
+}
+```
+
+**Observable result**: After one rejected refresh, the agent receives `400 invalid_grant` with the
+service-specific `error_uri` until Alice reconnects GitHub. GitHub receives no further refresh
+requests with `ghr_old`. After she reconnects, the exchange returns a GitHub access token again.
 
 ## Requirements *(mandatory)*
 

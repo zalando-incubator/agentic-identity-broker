@@ -60,7 +60,7 @@ just check                                  # fmt + vet + lint gate
 
 ### V6 — Graceful degradation to anonymous (US3 S1/S2/S4 · FR-002, FR-008)
 
-- **Action**: Send an **unauthenticated** request to a public endpoint (e.g. `/health` or `/.well-known/oauth-authorization-server`), and a request with missing/garbled metadata.
+- **Action**: Send an **unauthenticated** request to a public endpoint (e.g. `/.well-known/oauth-authorization-server`), and a request with missing/garbled metadata.
 - **Expect**: Request succeeds (not rejected by capture); `actor` recorded as `anonymous`; `calling_peer` omitted; absent fields use safe defaults; the `traceresponse` header is still present.
 
 ### V7 — Access control unchanged (US3 S3 · FR-009, SR-003)
@@ -89,5 +89,5 @@ just check                                  # fmt + vet + lint gate
 
 - All E2E `It()` blocks under `-focus "Request Security Context"` and the gRPC `-focus "trace"` scenarios pass.
 - `just check` is clean.
-- Manual smoke: `curl -i http://localhost:14000/health` shows a `traceresponse` header (W3C form) and a matching
+- Manual smoke: `curl -i http://localhost:8000/.well-known/oauth-authorization-server` shows a `traceresponse` header (W3C form) and a matching
   `trace_id` (its `<trace-id>` field) in the server logs with `actor=anonymous`.

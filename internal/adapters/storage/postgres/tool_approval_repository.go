@@ -9,9 +9,6 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -43,13 +40,9 @@ func (*ToolApprovalRepository) ApprovalMutationsSyncAtomically() bool {
 // Create inserts a new tool approval or returns existing pending duplicate (idempotent).
 // Uses ON CONFLICT against the partial unique index on (principal, agent_id, tool_name, arguments_hash)
 // WHERE status='pending' AND consumed=FALSE.
-func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.ToolApproval) (*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.create.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "CreateToolApproval"),
-	)
+func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.ToolApproval) (_ *storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.create.tool_approval", "CreateToolApproval")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -242,14 +235,14 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 		if err := json.Unmarshal(argumentsJSON, &existing.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"CreateToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(existingParamsPatternJSON, &existing.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("CreateToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -266,13 +259,9 @@ func (r *ToolApprovalRepository) Create(ctx context.Context, approval *storage.T
 
 // Get retrieves a tool approval by ID from PostgreSQL.
 // Returns StorageError with Kind=NotFound if not found.
-func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.ApprovalID) (*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.get.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "GetToolApproval"),
-	)
+func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.ApprovalID) (_ *storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.get.tool_approval", "GetToolApproval")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -309,7 +298,7 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(queryCtx, query, approvalID).Scan(
+	err = r.adapter.db.QueryRowContext(queryCtx, query, approvalID).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -365,14 +354,14 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"GetToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("GetToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("GetToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
@@ -380,13 +369,9 @@ func (r *ToolApprovalRepository) Get(ctx context.Context, approvalID id.Approval
 
 // Approve transitions a pending tool approval to approved status in PostgreSQL.
 // Returns StorageError with Kind=NotFound if not found or not in pending state.
-func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.approve.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "ApproveToolApproval"),
-	)
+func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (_ *storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.approve.tool_approval", "ApproveToolApproval")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -487,14 +472,14 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"ApproveToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(storedParamsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("ApproveToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("ApproveToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
@@ -502,13 +487,9 @@ func (r *ToolApprovalRepository) Approve(ctx context.Context, approvalID id.Appr
 
 // Deny transitions a pending tool approval to denied status in PostgreSQL.
 // Returns StorageError with Kind=NotFound if not found or not in pending state.
-func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.deny.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "DenyToolApproval"),
-	)
+func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (_ *storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.deny.tool_approval", "DenyToolApproval")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -536,7 +517,8 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 
 	query := `
 		UPDATE tool_approvals
-		SET status = 'denied', persistence = $2, denied_at = $3
+		SET status = 'denied', persistence = $2, denied_at = $3,
+		    params_pattern = CASE WHEN $2::varchar = 'permanent' THEN '{}'::jsonb ELSE params_pattern END
 		WHERE id = $1 AND status = 'pending' AND expires_at > NOW()
 		RETURNING id, principal, agent_id, gateway_client_id, tool_name,
 		          arguments, arguments_hash, description, risk_level,
@@ -546,7 +528,7 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(execCtx, query, approvalID, persistence, deniedAt).Scan(
+	err = r.adapter.db.QueryRowContext(execCtx, query, approvalID, persistence, deniedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -602,14 +584,14 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"DenyToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("DenyToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("DenyToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
@@ -617,13 +599,9 @@ func (r *ToolApprovalRepository) Deny(ctx context.Context, approvalID id.Approva
 
 // Consume marks a once-persistence approved approval as consumed in PostgreSQL.
 // Returns StorageError with Kind=NotFound if not found or not in approved+once state.
-func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.ApprovalID, consumedAt time.Time) (*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.consume.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "ConsumeToolApproval"),
-	)
+func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.ApprovalID, consumedAt time.Time) (_ *storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.consume.tool_approval", "ConsumeToolApproval")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -661,7 +639,7 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(execCtx, query, approvalID, consumedAt).Scan(
+	err = r.adapter.db.QueryRowContext(execCtx, query, approvalID, consumedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -717,23 +695,23 @@ func (r *ToolApprovalRepository) Consume(ctx context.Context, approvalID id.Appr
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 			return nil, storage.NewStorageError(
 				"ConsumeToolApproval",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal arguments from JSON",
 			)
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("ConsumeToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("ConsumeToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 
 	return approval, nil
 }
 
 // RevokePermanent atomically clears a permanent approval or denial.
-func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID id.ApprovalID, revokedAt time.Time) (*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.revoke_permanent.tool_approval")
-	defer span.End()
+func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID id.ApprovalID, revokedAt time.Time) (_ *storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.revoke_permanent.tool_approval", "RevokePermanentToolApproval")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindConnection, nil, "database not initialized")
@@ -759,7 +737,7 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 	`
 
 	approval := &storage.ToolApproval{}
-	err := r.adapter.db.QueryRowContext(execCtx, query, approvalID, revokedAt).Scan(
+	err = r.adapter.db.QueryRowContext(execCtx, query, approvalID, revokedAt).Scan(
 		&approval.ID,
 		&approval.Principal,
 		&approval.AgentID,
@@ -796,23 +774,19 @@ func (r *ToolApprovalRepository) RevokePermanent(ctx context.Context, approvalID
 	}
 	if len(argumentsJSON) > 0 {
 		if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
-			return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal arguments from JSON")
+			return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal arguments from JSON")
 		}
 	}
 	if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-		return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+		return nil, storage.NewStorageError("RevokePermanentToolApproval", storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 	}
 	return approval, nil
 }
 
 // ListAllActive returns all non-expired, non-consumed active approvals, optionally filtered by principal and active agent sessions.
-func (r *ToolApprovalRepository) ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) ([]*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.list_active.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "ListAllActiveToolApprovals"),
-	)
+func (r *ToolApprovalRepository) ListAllActive(ctx context.Context, principalFilter *id.Principal, activeAgentSessionIDs []string) (_ []*storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.list_active.tool_approval", "ListAllActiveToolApprovals")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -898,13 +872,9 @@ func (r *ToolApprovalRepository) FindPendingByKey(ctx context.Context, principal
 }
 
 // ListPermanentByPrincipal returns all permanent approvals and denials for a principal.
-func (r *ToolApprovalRepository) ListPermanentByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.ToolApproval, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.list_permanent.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "ListPermanentToolApprovals"),
-	)
+func (r *ToolApprovalRepository) ListPermanentByPrincipal(ctx context.Context, principal id.Principal) (_ []*storage.ToolApproval, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.list_permanent.tool_approval", "ListPermanentToolApprovals")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -952,13 +922,9 @@ func (r *ToolApprovalRepository) ListPermanentByPrincipal(ctx context.Context, p
 }
 
 // CountPendingByPrincipalAndAgent returns the number of non-expired pending approvals for a (principal, agent) pair.
-func (r *ToolApprovalRepository) CountPendingByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (int, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.count_pending.tool_approval")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "CountPendingToolApprovals"),
-	)
+func (r *ToolApprovalRepository) CountPendingByPrincipalAndAgent(ctx context.Context, principal id.Principal, agentID id.AgentID) (_ int, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.count_pending.tool_approval", "CountPendingToolApprovals")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return 0, storage.NewStorageError(
@@ -980,7 +946,7 @@ func (r *ToolApprovalRepository) CountPendingByPrincipalAndAgent(ctx context.Con
 	`
 
 	var count int
-	err := r.adapter.db.QueryRowContext(queryCtx, query, principal, agentID).Scan(&count)
+	err = r.adapter.db.QueryRowContext(queryCtx, query, principal, agentID).Scan(&count)
 	if err != nil {
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return 0, storage.NewStorageError(
@@ -1045,14 +1011,14 @@ func scanApprovalRows(rows *sql.Rows, operation string) ([]*storage.ToolApproval
 			if err := json.Unmarshal(argumentsJSON, &approval.Arguments); err != nil {
 				return nil, storage.NewStorageError(
 					operation,
-					storage.ErrorKindValidation,
+					storage.ErrorKindUnknown,
 					err,
 					"failed to unmarshal arguments from JSON",
 				)
 			}
 		}
 		if err := unmarshalParamsPattern(paramsPatternJSON, &approval.ParamsPattern); err != nil {
-			return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal params pattern from JSON")
+			return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, err, "failed to unmarshal params pattern from JSON")
 		}
 		approvals = append(approvals, approval)
 	}

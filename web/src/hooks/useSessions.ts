@@ -24,8 +24,8 @@ interface UseSessionsState {
 }
 
 interface UseSessionsReturn extends UseSessionsState {
-  /** Refetch sessions data */
-  refetch: () => Promise<void>;
+  /** Refetch sessions data; resolves to the fetched sessions (empty on error) */
+  refetch: () => Promise<SessionSummary[]>;
 }
 
 /**
@@ -63,7 +63,7 @@ export function useSessions(): UseSessionsReturn {
    * Fetch sessions from API.
    * Updates state with results or error.
    */
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (): Promise<SessionSummary[]> => {
     // Set loading state
     setState((prev) => ({
       ...prev,
@@ -81,6 +81,7 @@ export function useSessions(): UseSessionsReturn {
         loading: false,
         error: null,
       });
+      return sessions;
     } catch (err: unknown) {
       let errorMessage: string;
       if (isAxiosError(err) && err.response?.status === 404) {
@@ -94,6 +95,7 @@ export function useSessions(): UseSessionsReturn {
         loading: false,
         error: errorMessage,
       });
+      return [];
     }
   }, []);
 
@@ -101,9 +103,7 @@ export function useSessions(): UseSessionsReturn {
    * Refetch function that can be called manually.
    * Useful for retry after errors or refreshing data.
    */
-  const refetch = useCallback(async () => {
-    await fetchData();
-  }, [fetchData]);
+  const refetch = useCallback(() => fetchData(), [fetchData]);
 
   // Fetch data on mount
   useEffect(() => {

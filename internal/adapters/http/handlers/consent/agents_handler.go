@@ -20,7 +20,7 @@ type AgentsHandler struct {
 // NewAgentsHandler creates a new agents handler.
 func NewAgentsHandler(consentService ConsentService, logger *slog.Logger) *AgentsHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("consent.NewAgentsHandler: logger must not be nil")
 	}
 	return &AgentsHandler{
 		consentService: consentService,
@@ -46,7 +46,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 	// Extract principal from request context
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
-		h.logger.Warn("principal not found in context")
+		h.logger.WarnContext(ctx, "principal not found in context")
 		h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
@@ -54,7 +54,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 	// Call consent service to get agent delegations
 	delegations, err := h.consentService.GetAgentDelegations(ctx, id.Principal(principalValue))
 	if err != nil {
-		h.logger.Error("failed to get agent delegations",
+		h.logger.ErrorContext(ctx, "failed to get agent delegations",
 			"principal", principalValue,
 			"error", err)
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
@@ -62,7 +62,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Return response (empty array if no delegations)
-	h.logger.Info("agent delegations retrieved",
+	h.logger.InfoContext(ctx, "agent delegations retrieved",
 		"principal", principalValue,
 		"count", len(delegations))
 

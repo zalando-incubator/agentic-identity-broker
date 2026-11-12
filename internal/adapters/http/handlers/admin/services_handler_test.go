@@ -21,6 +21,7 @@ import (
 	encryptionnoop "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/noop"
 	brokerhttp "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
@@ -138,17 +139,25 @@ type readyCIMDKeyReadiness struct{}
 
 func (readyCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error { return nil }
 
+type unavailableCIMDKeyReadiness struct{}
+
+func (unavailableCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) error {
+	return errors.New("no CIMD client-authentication key is available")
+}
+
 // setupHandler creates a handler backed by a mock repository and test encryption.
 func setupHandler(t *testing.T, mockRepo *MockProviderRepository) *ServicesHandler {
 	return setupHandlerWithConfig(t, mockRepo, testConfig())
 }
 
-func setupHandlerWithConfig(t *testing.T, mockRepo *MockProviderRepository, config *ports.Config) *ServicesHandler {
+func setupHandlerWithConfig(t *testing.T, mockRepo ports.ThirdpartyOAuth2ProviderRepository, config *ports.Config) *ServicesHandler {
 	t.Helper()
-	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.Default()).
+	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, config.Security.SkipThirdpartyHTTPSValidation, slog.Default()).
 		WithCIMDPublicURL(config.Server.EndUser.PublicURL).
-		WithCIMDKeyReadiness(readyCIMDKeyReadiness{}).
-		WithDiscoveryStatusWriter(mockRepo)
+		WithCIMDKeyReadiness(readyCIMDKeyReadiness{})
+	if writer, ok := mockRepo.(ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter); ok {
+		svc.WithDiscoveryStatusWriter(writer)
+	}
 	return NewServicesHandler(svc, config, slog.Default())
 }
 
@@ -181,6 +190,14 @@ func encryptedEntity(serviceID id.ServiceID, displayName string, clientID id.Cli
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
+}
+
+func expectStoredProviderForUpdate(repo *MockProviderRepository, serviceID id.ServiceID, version int64) *model.ThirdpartyOAuth2ProviderEntity {
+	entity := encryptedEntity(serviceID, "Stored Provider", "stored-client", "stored-secret", "https://provider.example.com", nil)
+	entity.CredentialSource = model.CredentialSourceStored
+	entity.Version = version
+	repo.On("Get", mock.Anything, serviceID).Return(entity, nil)
+	return entity
 }
 
 func TestServicesHandler_CreateService(t *testing.T) {
@@ -226,6 +243,7 @@ func TestServicesHandler_CreateService(t *testing.T) {
 		assert.NotEmpty(t, resp.ID)
 		assert.Equal(t, "GitHub", resp.DisplayName)
 		assert.Equal(t, "github-client-id", resp.ClientID)
+		assert.Equal(t, model.ClientRegistrationStatic, resp.ClientRegistration)
 		require.NotNil(t, resp.ClientSecret)
 		assert.Equal(t, "REDACTED", *resp.ClientSecret) // Secret must be redacted
 		assert.False(t, resp.Discovery.EnableDiscovery)
@@ -567,6 +585,7 @@ func TestServicesHandler_CreateServiceTokenEndpointAuthMethodMapping(t *testing.
 			var response map[string]json.RawMessage
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 			method, methodPresent := response["token_endpoint_auth_method"]
+			assert.JSONEq(t, `"static"`, string(response["client_registration"]))
 			require.True(t, methodPresent)
 
 			if tt.wantPublic {
@@ -723,6 +742,7 @@ func TestServicesHandler_RejectsCredentialedDiscoveredPublicTokenEndpoint(t *tes
 			updateRepo := new(MockProviderRepository)
 			updateHandler := setupHandler(t, updateRepo)
 			serviceID := id.NewServiceID()
+			expectStoredProviderForUpdate(updateRepo, serviceID, 1)
 			updateRequest := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(requestBody))
 			routeContext := chi.NewRouteContext()
 			routeContext.URLParams.Add("service-id", serviceID.String())
@@ -768,6 +788,7 @@ func TestServicesHandler_CreateCIMDConfidentialService(t *testing.T) {
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
 	assert.JSONEq(t, `"private_key_jwt"`, string(payload["token_endpoint_auth_method"]))
+	assert.JSONEq(t, `"cimd"`, string(payload["client_registration"]))
 	assert.NotContains(t, payload, "client_secret")
 
 	var serviceID, clientID string
@@ -889,7 +910,6 @@ func TestServicesHandler_RejectsCIMDForGoogleFlavor(t *testing.T) {
 			require.NoError(t, json.NewDecoder(response.Body).Decode(&errorResponse))
 			assert.Equal(t, "validation failed", errorResponse.Error)
 			assert.Contains(t, errorResponse.Message, "google")
-			assert.Contains(t, errorResponse.Message, "private_key_jwt")
 			repo.AssertNotCalled(t, "Create")
 			repo.AssertNotCalled(t, "Update")
 		})
@@ -959,12 +979,15 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 	staticID := id.NewServiceID()
 	publicID := id.NewServiceID()
 	cimdID := id.NewServiceID()
+	cimdPublicID := id.NewServiceID()
 	staticService := encryptedEntity(staticID, "Static provider", "static-client-id", "static-secret", "https://static.example.com", nil)
+	staticService.ClientRegistration = model.ClientRegistrationStatic
 	publicService := &model.ThirdpartyOAuth2ProviderEntity{
 		ID:                      publicID,
 		DisplayName:             "Public provider",
 		ClientID:                "public-client-id",
 		Secret:                  model.NewAbsentSecret(),
+		ClientRegistration:      model.ClientRegistrationStatic,
 		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
 		IssuerURI:               "https://public.example.com",
 		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://public.example.com/token", AuthorizeEndpoint: "https://public.example.com/authorize"},
@@ -977,9 +1000,23 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 		DisplayName:             "CIMD provider",
 		ClientID:                id.ClientID(cimdClientID),
 		Secret:                  model.NewAbsentSecret(),
-		TokenEndpointAuthMethod: model.TokenEndpointAuthMethod("private_key_jwt"),
+		ClientRegistration:      model.ClientRegistrationCIMD,
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodPrivateKeyJWT,
 		IssuerURI:               "https://issuer.example.com",
 		Endpoints:               model.OAuth2Endpoints{TokenEndpoint: "https://issuer.example.com/token", AuthorizeEndpoint: "https://issuer.example.com/authorize"},
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	cimdPublicClientID := "https://broker.example.com/.well-known/oauth-client/" + cimdPublicID.String()
+	cimdPublicService := &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                      cimdPublicID,
+		DisplayName:             "CIMD public provider",
+		ClientID:                id.ClientID(cimdPublicClientID),
+		Secret:                  model.NewAbsentSecret(),
+		ClientRegistration:      model.ClientRegistrationCIMD,
+		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone,
+		IssuerURI:               "https://issuer.example.com",
+		Endpoints:               cimdService.Endpoints,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
@@ -988,12 +1025,14 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 		name             string
 		service          *model.ThirdpartyOAuth2ProviderEntity
 		wantMethod       string
+		wantRegistration model.ClientRegistration
 		wantClientID     string
 		wantClientSecret bool
 	}{
-		{name: "static confidential", service: staticService, wantMethod: "null", wantClientID: "static-client-id", wantClientSecret: true},
-		{name: "public", service: publicService, wantMethod: `"none"`, wantClientID: "public-client-id"},
-		{name: "CIMD confidential", service: cimdService, wantMethod: `"private_key_jwt"`, wantClientID: cimdClientID},
+		{name: "static confidential", service: staticService, wantMethod: "null", wantRegistration: model.ClientRegistrationStatic, wantClientID: "static-client-id", wantClientSecret: true},
+		{name: "static public", service: publicService, wantMethod: `"none"`, wantRegistration: model.ClientRegistrationStatic, wantClientID: "public-client-id"},
+		{name: "CIMD confidential", service: cimdService, wantMethod: `"private_key_jwt"`, wantRegistration: model.ClientRegistrationCIMD, wantClientID: cimdClientID},
+		{name: "CIMD public", service: cimdPublicService, wantMethod: `"none"`, wantRegistration: model.ClientRegistrationCIMD, wantClientID: cimdPublicClientID},
 	}
 
 	for _, tt := range tests {
@@ -1015,6 +1054,9 @@ func TestServicesHandler_GetServiceAuthenticationPostures(t *testing.T) {
 			var payload map[string]json.RawMessage
 			require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
 			assert.JSONEq(t, tt.wantMethod, string(payload["token_endpoint_auth_method"]))
+			registration, present := payload["client_registration"]
+			require.True(t, present)
+			assert.JSONEq(t, `"`+string(tt.wantRegistration)+`"`, string(registration))
 			var clientID string
 			require.NoError(t, json.Unmarshal(payload["client_id"], &clientID))
 			assert.Equal(t, tt.wantClientID, clientID)
@@ -1053,6 +1095,7 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		handler := setupHandler(t, mockRepo)
 
 		serviceID := id.NewServiceID()
+		persisted := expectStoredProviderForUpdate(mockRepo, serviceID, 1)
 		reqBody := ServiceRequest{
 			DisplayName:  "GitHub Updated",
 			ClientID:     "github-client-id-new",
@@ -1073,7 +1116,7 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 
 		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(e *model.ThirdpartyOAuth2ProviderEntity) bool {
 			return e.ID == serviceID && e.DisplayName == "GitHub Updated" && e.Secret.IsEncrypted()
-		}), (*int64)(nil)).Return(nil)
+		}), &persisted.Version).Return(nil)
 
 		req := httptest.NewRequest(http.MethodPut, "/api/third-party/oauth2/clients/"+serviceID.String(), bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -1101,6 +1144,7 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
 		serviceID := id.NewServiceID()
+		persisted := expectStoredProviderForUpdate(mockRepo, serviceID, 1)
 		reqBody := ServiceRequest{
 			DisplayName:  "Scope-less IdP",
 			ClientID:     "scope-less-client",
@@ -1114,7 +1158,7 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		require.NoError(t, err)
 		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
 			return entity.ID == serviceID && len(entity.Scopes) == 0
-		}), (*int64)(nil)).Return(nil)
+		}), &persisted.Version).Return(nil)
 		req := httptest.NewRequest(http.MethodPut, "/api/services/"+serviceID.String(), bytes.NewReader(body))
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("service-id", serviceID.String())
@@ -1214,9 +1258,7 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		}
 		bodyBytes, _ := json.Marshal(reqBody)
 
-		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(e *model.ThirdpartyOAuth2ProviderEntity) bool {
-			return e.ID == nonexistentID && e.Secret.IsEncrypted()
-		}), (*int64)(nil)).Return(storage.NewStorageError("UpdateService", storage.ErrorKindNotFound, nil, "service not found"))
+		mockRepo.On("Get", mock.Anything, nonexistentID).Return(nil, storage.NewStorageError("GetService", storage.ErrorKindNotFound, nil, "service not found"))
 
 		req := httptest.NewRequest(http.MethodPut, "/api/third-party/oauth2/clients/"+nonexistentID.String(), bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
@@ -1289,6 +1331,7 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		handler := setupHandler(t, mockRepo)
 
 		serviceID := id.NewServiceID()
+		expectStoredProviderForUpdate(mockRepo, serviceID, 1)
 		reqBody := ServiceRequest{
 			DisplayName:  "API Service",
 			ClientID:     "api-client-id",
@@ -1339,6 +1382,99 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		mockRepo.AssertExpectations(t)
 	})
 
+	t.Run("normalized protected_resource conflict returns 409 on update", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+
+		serviceID := id.NewServiceID()
+		expectStoredProviderForUpdate(mockRepo, serviceID, 1)
+		reqBody := ServiceRequest{
+			DisplayName:  "API Service",
+			ClientID:     "api-client-id",
+			ClientSecret: "api-client-secret",
+			IssuerURI:    "https://api.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: false},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "https://api.example.com/token",
+				AuthorizeEndpoint: "https://api.example.com/authorize",
+			},
+			Scopes:             []OAuthScopeRequest{{ScopeValue: "read", Description: "Read access"}},
+			ProtectedResources: []string{"https://api.example.com/"},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
+			return len(entity.ProtectedResources) == 1 && entity.ProtectedResources[0] == "https://api.example.com"
+		}), mock.Anything).Return(storage.NewStorageError("Update", storage.ErrorKindConflict, storage.ErrProtectedResourceOwned, "protected resource URI already configured for another service")).Once()
+
+		req := httptest.NewRequest(http.MethodPut, "/api/third-party/oauth2/clients/"+serviceID.String(), bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"1"`)
+		w := httptest.NewRecorder()
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("service-id", serviceID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		handler.UpdateService(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+
+		var resp ErrorResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "conflict", resp.Error)
+		assert.Contains(t, resp.Message, "protected resource URI already configured for another service")
+
+		assert.Zero(t, mockRepo.protectedResourceLookupCalls.Load(), "ownership must be checked by the atomic write")
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("protected_resource write storage error aborts update", func(t *testing.T) {
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+
+		serviceID := id.NewServiceID()
+		expectStoredProviderForUpdate(mockRepo, serviceID, 1)
+		reqBody := ServiceRequest{
+			DisplayName:  "API Service",
+			ClientID:     "api-client-id",
+			ClientSecret: "api-client-secret",
+			IssuerURI:    "https://api.example.com",
+			Discovery:    DiscoveryConfigRequest{EnableDiscovery: false},
+			Endpoints: &OAuth2EndpointsRequest{
+				TokenEndpoint:     "https://api.example.com/token",
+				AuthorizeEndpoint: "https://api.example.com/authorize",
+			},
+			Scopes:             []OAuthScopeRequest{{ScopeValue: "read", Description: "Read access"}},
+			ProtectedResources: []string{"https://api.example.com/"},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+
+		mockRepo.On("Update", mock.Anything, mock.Anything, mock.Anything).
+			Return(storage.NewStorageError("Update", storage.ErrorKindConnection, nil, "database unavailable")).Once()
+
+		req := httptest.NewRequest(http.MethodPut, "/api/third-party/oauth2/clients/"+serviceID.String(), bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("If-Match", `"1"`)
+		w := httptest.NewRecorder()
+
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("service-id", serviceID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		handler.UpdateService(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+
+		var resp ErrorResponse
+		err := json.NewDecoder(w.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "internal server error", resp.Error)
+
+		assert.Zero(t, mockRepo.protectedResourceLookupCalls.Load(), "ownership must be checked by the atomic write")
+		mockRepo.AssertExpectations(t)
+	})
 	t.Run("rejects insecure authorization endpoint before update", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
@@ -1377,6 +1513,7 @@ func TestServicesHandler_UpdateService(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
 		serviceID := id.NewServiceID()
+		expectStoredProviderForUpdate(mockRepo, serviceID, 1)
 
 		reqBody := ServiceRequest{
 			DisplayName:  "Provider",
@@ -1420,15 +1557,17 @@ func TestServicesHandler_UpdateCIMDConfidentialService(t *testing.T) {
 		ClientID:                id.ClientID(clientID),
 		Secret:                  model.NewAbsentSecret(),
 		TokenEndpointAuthMethod: model.TokenEndpointAuthMethodPrivateKeyJWT,
+		CredentialSource:        model.CredentialSourceStored,
+		Version:                 1,
 	}
-	repo.On("Get", mock.Anything, serviceID).Return(persisted, nil).Once()
+	repo.On("Get", mock.Anything, serviceID).Return(persisted, nil).Times(2)
 
 	repo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
 		return entity.ID == serviceID &&
 			entity.TokenEndpointAuthMethod == model.TokenEndpointAuthMethod("private_key_jwt") &&
 			entity.ClientID == id.ClientID(clientID) &&
 			entity.Secret.IsAbsent()
-	}), (*int64)(nil)).Return(nil).Once()
+	}), &persisted.Version).Return(nil).Once()
 
 	body, err := json.Marshal(map[string]any{
 		"display_name":               "CIMD Provider",
@@ -1453,6 +1592,7 @@ func TestServicesHandler_UpdateCIMDConfidentialService(t *testing.T) {
 	var payload map[string]json.RawMessage
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
 	assert.JSONEq(t, `"private_key_jwt"`, string(payload["token_endpoint_auth_method"]))
+	assert.JSONEq(t, `"cimd"`, string(payload["client_registration"]))
 	assert.JSONEq(t, `"`+clientID+`"`, string(payload["client_id"]))
 	assert.NotContains(t, payload, "client_secret")
 	repo.AssertExpectations(t)
@@ -1566,6 +1706,7 @@ func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.
 			require.NoError(t, err)
 
 			if tt.wantError == "" {
+				persisted := expectStoredProviderForUpdate(mockRepo, serviceID, 1)
 				mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
 					if tt.wantPublic {
 						return entity.ID == serviceID &&
@@ -1575,7 +1716,7 @@ func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.
 					return entity.ID == serviceID &&
 						entity.TokenEndpointAuthMethod.IsAbsent() &&
 						entity.Secret.IsEncrypted()
-				}), (*int64)(nil)).Return(nil).Once()
+				}), &persisted.Version).Return(nil).Once()
 			}
 			if tt.wantError != "" {
 				mockRepo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -1604,6 +1745,7 @@ func TestServicesHandler_UpdateServiceTokenEndpointAuthMethodMapping(t *testing.
 			method, methodPresent := response["token_endpoint_auth_method"]
 			require.True(t, methodPresent)
 
+			assert.JSONEq(t, `"static"`, string(response["client_registration"]))
 			if tt.wantPublic {
 				assert.JSONEq(t, `"none"`, string(method))
 				assert.NotContains(t, response, "client_secret")
@@ -1704,6 +1846,9 @@ func TestServicesHandler_ListServices(t *testing.T) {
 			encryptedEntity(serviceID2, "Google", "google-client", "secret2", "https://accounts.google.com",
 				[]model.OAuthScope{{ScopeValue: "email", Description: "Email access"}}),
 		}
+		for _, entity := range entities {
+			entity.ClientRegistration = model.ClientRegistrationStatic
+		}
 
 		mockRepo.On("List", mock.Anything).Return(entities, nil)
 
@@ -1720,6 +1865,8 @@ func TestServicesHandler_ListServices(t *testing.T) {
 		assert.Len(t, resp, 2)
 		assert.Equal(t, "GitHub", resp[0].DisplayName)
 		assert.Equal(t, "Google", resp[1].DisplayName)
+		assert.Equal(t, model.ClientRegistrationStatic, resp[0].ClientRegistration)
+		assert.Equal(t, model.ClientRegistrationStatic, resp[1].ClientRegistration)
 		require.NotNil(t, resp[0].ClientSecret)
 		require.NotNil(t, resp[1].ClientSecret)
 		assert.Equal(t, "REDACTED", *resp[0].ClientSecret)
@@ -1805,7 +1952,9 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 	}
 
 	t.Run("requires If-Match when replacing resources", func(t *testing.T) {
-		handler := setupHandler(t, new(MockProviderRepository))
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+		expectStoredProviderForUpdate(mockRepo, serviceID, 7)
 		req, recorder := newRequest(body, "")
 		handler.UpdateService(recorder, req)
 		assert.Equal(t, http.StatusPreconditionRequired, recorder.Code)
@@ -1814,7 +1963,7 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 	t.Run("uses strong ETag and emits replacement version", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
-
+		expectStoredProviderForUpdate(mockRepo, serviceID, 7)
 		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
 			return entity.ProtectedResources[0] == "https://api.example.com/resource" && entity.Secret.IsEncrypted()
 		}), mock.MatchedBy(func(version *int64) bool { return version != nil && *version == 7 })).Run(func(args mock.Arguments) { args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Version = 8 }).Return(nil)
@@ -1832,7 +1981,7 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 	t.Run("maps a stale resource replacement to 412", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
-
+		expectStoredProviderForUpdate(mockRepo, serviceID, 7)
 		mockRepo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(storage.NewStorageError("Update", storage.ErrorKindConflict, nil, "provider version is stale"))
 		req, recorder := newRequest(body, `"7"`)
 		handler.UpdateService(recorder, req)
@@ -1847,7 +1996,8 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 		require.NoError(t, err)
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
-		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool { return entity.ProtectedResources == nil }), (*int64)(nil)).Run(func(args mock.Arguments) { args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Version = 9 }).Return(nil)
+		persisted := expectStoredProviderForUpdate(mockRepo, serviceID, 7)
+		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool { return entity.ProtectedResources == nil }), &persisted.Version).Run(func(args mock.Arguments) { args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Version = 9 }).Return(nil)
 		req, recorder := newRequest(omittedBody, "")
 		handler.UpdateService(recorder, req)
 		assert.Equal(t, http.StatusOK, recorder.Code)
@@ -1860,7 +2010,8 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 		require.NotEqual(t, body, nullBody)
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
-		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool { return entity.ProtectedResources == nil }), (*int64)(nil)).Run(func(args mock.Arguments) { args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Version = 10 }).Return(nil)
+		persisted := expectStoredProviderForUpdate(mockRepo, serviceID, 7)
+		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool { return entity.ProtectedResources == nil }), &persisted.Version).Run(func(args mock.Arguments) { args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Version = 10 }).Return(nil)
 		req, recorder := newRequest(nullBody, "")
 		handler.UpdateService(recorder, req)
 		assert.Equal(t, http.StatusOK, recorder.Code)
@@ -1871,7 +2022,9 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 	t.Run("empty resource list requires If-Match", func(t *testing.T) {
 		emptyBody := bytes.Replace(body, []byte(`"protected_resources":["https://api.example.com/resource/"]`), []byte(`"protected_resources":[]`), 1)
 		require.NotEqual(t, body, emptyBody)
-		handler := setupHandler(t, new(MockProviderRepository))
+		mockRepo := new(MockProviderRepository)
+		handler := setupHandler(t, mockRepo)
+		expectStoredProviderForUpdate(mockRepo, serviceID, 7)
 		req, recorder := newRequest(emptyBody, "")
 		handler.UpdateService(recorder, req)
 		assert.Equal(t, http.StatusPreconditionRequired, recorder.Code)
@@ -1881,6 +2034,7 @@ func TestServicesHandler_UpdateServiceProtectedResourcesETag(t *testing.T) {
 		require.NotEqual(t, body, emptyBody)
 		mockRepo := new(MockProviderRepository)
 		handler := setupHandler(t, mockRepo)
+		expectStoredProviderForUpdate(mockRepo, serviceID, 7)
 		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
 			return entity.ProtectedResources != nil && len(entity.ProtectedResources) == 0
 		}), mock.MatchedBy(func(version *int64) bool { return version != nil && *version == 7 })).Run(func(args mock.Arguments) { args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity).Version = 11 }).Return(nil)
@@ -1979,12 +2133,14 @@ func TestServicesHandler_UpdateReturnsCanonicalIDFromRepository(t *testing.T) {
 	handler := setupHandler(t, repo)
 	serviceID := id.NewServiceID()
 	canonicalID := "preserved-service"
+	persisted := expectStoredProviderForUpdate(repo, serviceID, 1)
+	persisted.CanonicalID = &canonicalID
 	request := ServiceRequest{DisplayName: "Updated Service", ClientID: "preserved-service-client", ClientSecret: "secret", IssuerURI: "https://service.example.com", Discovery: DiscoveryConfigRequest{}, Endpoints: &OAuth2EndpointsRequest{TokenEndpoint: "https://service.example.com/token", AuthorizeEndpoint: "https://service.example.com/authorize"}, Scopes: []OAuthScopeRequest{{ScopeValue: "read", Description: "Read"}}}
 	body, err := json.Marshal(request)
 	require.NoError(t, err)
 	repo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
-		return entity.ID == serviceID && entity.CanonicalID == nil && !entity.ClearCanonicalID
-	}), (*int64)(nil)).Run(func(args mock.Arguments) {
+		return entity.ID == serviceID && entity.CanonicalID != nil && *entity.CanonicalID == canonicalID && !entity.ClearCanonicalID
+	}), &persisted.Version).Run(func(args mock.Arguments) {
 		entity := args.Get(1).(*model.ThirdpartyOAuth2ProviderEntity)
 		entity.CanonicalID = &canonicalID
 		entity.Version = 2
@@ -2087,7 +2243,7 @@ func TestServicesHandler_DiscoveryTimeoutRespondsAfterServerWriteDeadline(t *tes
 					AuthorizationParams: map[string]string{"resource": adminTestResource}, Version: 7,
 					DiscoveryStatus: model.DiscoveryStatus{LastAttemptAt: &previousSuccess, LastSuccessAt: &previousSuccess},
 				}
-				repo.On("Get", mock.Anything, serviceID).Return(active, nil).Once()
+				repo.On("Get", mock.Anything, serviceID).Return(active, nil).Twice()
 				repo.On("RecordDiscoveryFailure", mock.Anything, serviceID, int64(7), mock.Anything, "timeout").Run(func(args mock.Arguments) {
 					time.Sleep(2 * writeTimeout)
 					attempted := args.Get(3).(time.Time)
@@ -2148,10 +2304,11 @@ func adminDiscoveryRequest(t *testing.T, method, serviceID string, body any) *ht
 func adminDiscoveryPayload(t *testing.T, body []byte, serviceID, clientMethod, tokenMethod, clientID, resource string) {
 	t.Helper()
 	var response struct {
-		ID                      string `json:"id"`
-		ClientID                string `json:"client_id"`
-		IssuerURI               string `json:"issuer_uri"`
-		TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
+		ID                      string                 `json:"id"`
+		ClientID                string                 `json:"client_id"`
+		CredentialSource        model.CredentialSource `json:"credential_source"`
+		IssuerURI               string                 `json:"issuer_uri"`
+		TokenEndpointAuthMethod string                 `json:"token_endpoint_auth_method"`
 		Discovery               struct {
 			EnableDiscovery bool   `json:"enable_discovery"`
 			ResourceURL     string `json:"resource_url"`
@@ -2166,11 +2323,21 @@ func adminDiscoveryPayload(t *testing.T, body []byte, serviceID, clientMethod, t
 	require.NoError(t, json.Unmarshal(body, &response))
 	assert.Equal(t, serviceID, response.ID)
 	assert.Equal(t, clientID, response.ClientID)
+	assert.Equal(t, model.CredentialSourceStored, response.CredentialSource)
 	assert.Equal(t, adminTestIssuer, response.IssuerURI)
 	assert.Equal(t, tokenMethod, response.TokenEndpointAuthMethod)
 	assert.True(t, response.Discovery.EnableDiscovery)
 	assert.Equal(t, adminTestResource, response.Discovery.ResourceURL)
 	assert.Equal(t, clientMethod, response.Discovery.ClientMethod)
+	var registration struct {
+		ClientRegistration model.ClientRegistration `json:"client_registration"`
+	}
+	require.NoError(t, json.Unmarshal(body, &registration))
+	if clientMethod == "cimd" {
+		assert.Equal(t, model.ClientRegistrationCIMD, registration.ClientRegistration)
+	} else {
+		assert.Equal(t, model.ClientRegistrationStatic, registration.ClientRegistration)
+	}
 	assert.Equal(t, "https://auth.example.test/tenant/authorize", response.Endpoints.AuthorizeEndpoint)
 	assert.Equal(t, "https://auth.example.test/tenant/token", response.Endpoints.TokenEndpoint)
 	assert.Equal(t, resource, response.AuthorizationParams["resource"])
@@ -2241,6 +2408,10 @@ func TestServicesHandler_ResourceDiscoveryReadAndListRepresentActiveClient(t *te
 			}
 			if tc.confidentialDCR {
 				entity.Secret = model.NewEncryptedSecret(encryptSecretForTest(serviceID.String(), "registered-secret-not-for-admin"))
+			}
+			entity.ClientRegistration = model.ClientRegistrationStatic
+			if tc.clientMethod == "cimd" {
+				entity.ClientRegistration = model.ClientRegistrationCIMD
 			}
 			repo.On("Get", mock.Anything, serviceID).Return(entity, nil).Once()
 			repo.On("List", mock.Anything).Return([]*model.ThirdpartyOAuth2ProviderEntity{entity}, nil).Once()
@@ -2607,6 +2778,7 @@ func TestServicesHandler_ResourceMetadataFailureKeepsActiveService(t *testing.T)
 		Endpoints:           model.OAuth2Endpoints{TokenEndpoint: adminTestIssuer + "/token", AuthorizeEndpoint: adminTestIssuer + "/authorize"},
 		AuthorizationParams: map[string]string{"resource": adminTestResource}, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Version: 9,
 	}
+	persisted.ClientRegistration = model.ClientRegistrationCIMD
 	repo.On("Get", mock.Anything, serviceID).Return(persisted, nil)
 	initial := httptest.NewRecorder()
 	handler.GetService(initial, adminDiscoveryRequest(t, http.MethodGet, serviceID.String(), nil))
@@ -2914,7 +3086,7 @@ func TestServicesHandler_ProtectedResourceOwnershipConflictFromStorage(t *testin
 				t.Run(outcome.name, func(t *testing.T) {
 					repo := new(MockProviderRepository)
 					handler := setup(repo)
-					if discovered && outcome.etag != "" {
+					if discovered {
 						active := &model.ThirdpartyOAuth2ProviderEntity{
 							ID: serviceID, DisplayName: "Files service", ClientID: id.ClientID("https://broker.example.com/.well-known/oauth-client/" + serviceID.String()),
 							Secret: model.NewAbsentSecret(), TokenEndpointAuthMethod: model.TokenEndpointAuthMethodPrivateKeyJWT,
@@ -2922,7 +3094,14 @@ func TestServicesHandler_ProtectedResourceOwnershipConflictFromStorage(t *testin
 							Endpoints:           model.OAuth2Endpoints{AuthorizeEndpoint: adminTestIssuer + "/authorize", TokenEndpoint: adminTestIssuer + "/token"},
 							AuthorizationParams: map[string]string{"resource": adminTestResource}, Version: 8,
 						}
-						repo.On("Get", mock.Anything, serviceID).Return(active, nil).Once()
+						reads := 1
+						if outcome.etag != "" {
+							reads++
+						}
+						repo.On("Get", mock.Anything, serviceID).Return(active, nil).Times(reads)
+					}
+					if !discovered {
+						expectStoredProviderForUpdate(repo, serviceID, 8)
 					}
 					if outcome.repoErr != nil {
 						repo.On("Update", mock.Anything, mock.MatchedBy(func(entity *model.ThirdpartyOAuth2ProviderEntity) bool {
@@ -3143,6 +3322,456 @@ func TestServicesHandler_DiscoveryStatusRejectsMalformedAndMissingIDs(t *testing
 	}
 }
 
+func credentialSourceHandlerRouter(t *testing.T, repo ports.ThirdpartyOAuth2ProviderRepository) http.Handler {
+	t.Helper()
+	config := testConfig()
+	config.ThirdPartyOAuth2.CredentialFiles = map[string]ports.CredentialFileBinding{
+		"credential-source": {
+			ClientIDFile:     "/unavailable/credential-source/client-id",
+			ClientSecretFile: "/unavailable/credential-source/client-secret",
+		},
+	}
+	handler := setupHandlerWithConfig(t, repo, config)
+	router := chi.NewRouter()
+	router.Post("/api/services", handler.CreateService)
+	router.Get("/api/services", handler.ListServices)
+	router.Get("/api/services/{service-id}", handler.GetService)
+	router.Put("/api/services/{service-id}", handler.UpdateService)
+	return router
+}
+
+func credentialSourceHandlerBody() map[string]any {
+	return map[string]any{
+		"canonical_id":  "credential-source",
+		"display_name":  "Credential source service",
+		"oauth2_flavor": "standard",
+		"issuer_uri":    "https://source.example.com",
+		"discovery":     map[string]any{"enable_discovery": false},
+		"endpoints": map[string]any{
+			"token_endpoint":     "https://source.example.com/token",
+			"authorize_endpoint": "https://source.example.com/authorize",
+		},
+		"scopes": []map[string]any{{"scope_value": "read", "description": "Read access"}},
+	}
+}
+
+func credentialSourceHandlerRequest(t *testing.T, router http.Handler, method, path string, body map[string]any, ifMatch string) *httptest.ResponseRecorder {
+	t.Helper()
+	var data []byte
+	if body != nil {
+		var err error
+		data, err = json.Marshal(body)
+		require.NoError(t, err)
+	}
+	request := httptest.NewRequest(method, path, bytes.NewReader(data))
+	request.Header.Set("Content-Type", "application/json")
+	if ifMatch != "" {
+		request.Header.Set("If-Match", ifMatch)
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	return response
+}
+
+func credentialSourceHandlerPayload(t *testing.T, response *httptest.ResponseRecorder) map[string]json.RawMessage {
+	t.Helper()
+	var payload map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &payload))
+	return payload
+}
+
+func credentialSourceHandlerAssertProjection(t *testing.T, payload map[string]json.RawMessage, source model.CredentialSource, clientID string) {
+	t.Helper()
+	assert.JSONEq(t, `"`+string(source)+`"`, string(payload["credential_source"]))
+	for _, field := range []string{"credential_source_transitioned", "client_id_file", "client_secret_file", "credential_files"} {
+		assert.NotContains(t, payload, field)
+	}
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "/unavailable/credential-source/")
+	if source == model.CredentialSourceFilesystem {
+		// Key absence, not a decoded zero value, excludes null, empty, and REDACTED placeholders.
+		assert.NotContains(t, payload, "client_id")
+		assert.NotContains(t, payload, "client_secret")
+		assert.NotContains(t, string(encoded), "REDACTED")
+		return
+	}
+	assert.JSONEq(t, `"`+clientID+`"`, string(payload["client_id"]))
+	assert.JSONEq(t, `"REDACTED"`, string(payload["client_secret"]))
+}
+
+func credentialSourceHandlerAssertReadViews(t *testing.T, router http.Handler, serviceID string, source model.CredentialSource, clientID string) {
+	t.Helper()
+	response := credentialSourceHandlerRequest(t, router, http.MethodGet, "/api/services/"+serviceID, nil, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	credentialSourceHandlerAssertProjection(t, credentialSourceHandlerPayload(t, response), source, clientID)
+	response = credentialSourceHandlerRequest(t, router, http.MethodGet, "/api/services", nil, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var services []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &services))
+	for _, service := range services {
+		var actualID string
+		require.NoError(t, json.Unmarshal(service["id"], &actualID))
+		if actualID == serviceID {
+			credentialSourceHandlerAssertProjection(t, service, source, clientID)
+			return
+		}
+	}
+	t.Fatalf("listed services do not contain %s", serviceID)
+}
+
+func credentialSourceHandlerStoredFixture(t *testing.T, repo ports.ThirdpartyOAuth2ProviderRepository) *model.ThirdpartyOAuth2ProviderEntity {
+	t.Helper()
+	entity := encryptedEntity(id.NewServiceID(), "Original service", "stored-client", "stored-secret", "https://source.example.com", nil)
+	canonicalID := "credential-source"
+	entity.CanonicalID = &canonicalID
+	entity.CredentialSource = model.CredentialSourceStored
+	entity.Flavor = model.OAuth2FlavorStandard
+	entity.ProtectedResources = []string{"https://resource.example.com/original"}
+	require.NoError(t, repo.Create(context.Background(), entity))
+	return entity
+}
+
+func credentialSourceHandlerFilesystemFixture() *model.ThirdpartyOAuth2ProviderEntity {
+	canonicalID := "credential-source"
+	now := time.Now().UTC()
+	return &model.ThirdpartyOAuth2ProviderEntity{
+		ID:                           id.NewServiceID(),
+		CanonicalID:                  &canonicalID,
+		DisplayName:                  "Filesystem service",
+		CredentialSource:             model.CredentialSourceFilesystem,
+		CredentialSourceTransitioned: true,
+		Secret:                       model.NewAbsentSecret(),
+		Flavor:                       model.OAuth2FlavorStandard,
+		IssuerURI:                    "https://source.example.com",
+		Endpoints: model.OAuth2Endpoints{
+			TokenEndpoint:     "https://source.example.com/token",
+			AuthorizeEndpoint: "https://source.example.com/authorize",
+		},
+		CreatedAt: now,
+		UpdatedAt: now,
+		Version:   7,
+	}
+}
+
+func TestServicesHandler_CredentialSourceStoredCRUD(t *testing.T) {
+	for _, explicitSource := range []bool{false, true} {
+		name := "omitted creation source defaults to stored"
+		if explicitSource {
+			name = "explicit stored source"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			router := credentialSourceHandlerRouter(t, repo)
+			body := credentialSourceHandlerBody()
+			body["client_id"] = "stored-client"
+			body["client_secret"] = "stored-secret"
+			body["protected_resources"] = []string{"https://resource.example.com/original"}
+			body["authorization_params"] = map[string]string{"prompt": "consent"}
+			if explicitSource {
+				body["credential_source"] = "stored"
+			}
+			response := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+			payload := credentialSourceHandlerPayload(t, response)
+			credentialSourceHandlerAssertProjection(t, payload, model.CredentialSourceStored, "stored-client")
+			var serviceID string
+			require.NoError(t, json.Unmarshal(payload["id"], &serviceID))
+			credentialSourceHandlerAssertReadViews(t, router, serviceID, model.CredentialSourceStored, "stored-client")
+
+			// Source omission adds no PATCH semantics to the existing full-replacement PUT.
+			delete(body, "credential_source")
+			delete(body, "canonical_id")
+			delete(body, "protected_resources")
+			delete(body, "authorization_params")
+			delete(body, "scopes")
+			body["display_name"] = "Renamed stored service"
+			response = credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			assert.Equal(t, `"2"`, response.Header().Get("ETag"))
+			payload = credentialSourceHandlerPayload(t, response)
+			credentialSourceHandlerAssertProjection(t, payload, model.CredentialSourceStored, "stored-client")
+			assert.JSONEq(t, `"credential-source"`, string(payload["canonical_id"]))
+			assert.JSONEq(t, `[]`, string(payload["scopes"]))
+			assert.JSONEq(t, `["https://resource.example.com/original"]`, string(payload["protected_resources"]))
+			assert.JSONEq(t, `{"prompt":"consent"}`, string(payload["authorization_params"]))
+			credentialSourceHandlerAssertReadViews(t, router, serviceID, model.CredentialSourceStored, "stored-client")
+		})
+	}
+}
+
+func TestServicesHandler_CredentialSourceFilesystemCRUD(t *testing.T) {
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	router := credentialSourceHandlerRouter(t, repo)
+	body := credentialSourceHandlerBody()
+	body["credential_source"] = "filesystem"
+	body["protected_resources"] = []string{"https://resource.example.com/original"}
+	response := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+	payload := credentialSourceHandlerPayload(t, response)
+	credentialSourceHandlerAssertProjection(t, payload, model.CredentialSourceFilesystem, "")
+	var serviceID string
+	require.NoError(t, json.Unmarshal(payload["id"], &serviceID))
+	credentialSourceHandlerAssertReadViews(t, router, serviceID, model.CredentialSourceFilesystem, "")
+	response = credentialSourceHandlerRequest(t, router, http.MethodGet, "/api/services/credential-source", nil, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	credentialSourceHandlerAssertProjection(t, credentialSourceHandlerPayload(t, response), model.CredentialSourceFilesystem, "")
+
+	delete(body, "credential_source")
+	delete(body, "canonical_id")
+	delete(body, "protected_resources")
+	delete(body, "scopes")
+	body["display_name"] = "Renamed filesystem service"
+	response = credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, `"2"`, response.Header().Get("ETag"))
+	payload = credentialSourceHandlerPayload(t, response)
+	credentialSourceHandlerAssertProjection(t, payload, model.CredentialSourceFilesystem, "")
+	assert.JSONEq(t, `"credential-source"`, string(payload["canonical_id"]))
+	assert.JSONEq(t, `"Renamed filesystem service"`, string(payload["display_name"]))
+	assert.JSONEq(t, `[]`, string(payload["scopes"]))
+	assert.JSONEq(t, `["https://resource.example.com/original"]`, string(payload["protected_resources"]))
+	credentialSourceHandlerAssertReadViews(t, router, serviceID, model.CredentialSourceFilesystem, "")
+
+	body["credential_source"] = "filesystem"
+	body["canonical_id"] = "New.Binding"
+	response = credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	credentialSourceHandlerAssertProjection(t, credentialSourceHandlerPayload(t, response), model.CredentialSourceFilesystem, "")
+	response = credentialSourceHandlerRequest(t, router, http.MethodGet, "/api/services/New.Binding", nil, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	credentialSourceHandlerAssertProjection(t, credentialSourceHandlerPayload(t, response), model.CredentialSourceFilesystem, "")
+}
+
+func TestServicesHandler_CredentialSourceRejectsInvalidSelector(t *testing.T) {
+	selectors := []struct {
+		name  string
+		value any
+	}{
+		{name: "unknown", value: "vault"},
+		{name: "empty", value: ""},
+		{name: "null", value: nil},
+		{name: "case-sensitive stored", value: "Stored"},
+		{name: "case-sensitive filesystem", value: "Filesystem"},
+		{name: "number", value: 1},
+		{name: "boolean", value: true},
+		{name: "array", value: []string{"stored"}},
+		{name: "object", value: map[string]string{"source": "stored"}},
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		for _, selector := range selectors {
+			t.Run(method+"/"+selector.name, func(t *testing.T) {
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					entity := credentialSourceHandlerStoredFixture(t, repo)
+					path += "/" + entity.ID.String()
+				}
+				before, err := repo.List(context.Background())
+				require.NoError(t, err)
+				body := credentialSourceHandlerBody()
+				body["credential_source"] = selector.value
+				body["client_id"] = "stored-client"
+				body["client_secret"] = "stored-secret"
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				after, err := repo.List(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, before, after, "invalid selectors must not create or replace a service")
+			})
+		}
+	}
+}
+
+func TestServicesHandler_CredentialSourceFilesystemRejectsInlinePresence(t *testing.T) {
+	operations := []struct {
+		name          string
+		method        string
+		currentSource model.CredentialSource
+		includeSource bool
+	}{
+		{name: "create", method: http.MethodPost, includeSource: true},
+		{name: "stored to filesystem", method: http.MethodPut, currentSource: model.CredentialSourceStored, includeSource: true},
+		{name: "explicit filesystem update", method: http.MethodPut, currentSource: model.CredentialSourceFilesystem, includeSource: true},
+		{name: "omitted-source filesystem update", method: http.MethodPut, currentSource: model.CredentialSourceFilesystem},
+	}
+	values := []struct {
+		name  string
+		value any
+	}{
+		{name: "null", value: nil},
+		{name: "empty", value: ""},
+		{name: "non-empty", value: "synthetic-inline-credential"},
+	}
+	for _, operation := range operations {
+		for _, field := range []string{"client_id", "client_secret"} {
+			for _, value := range values {
+				t.Run(operation.name+"/"+field+"/"+value.name, func(t *testing.T) {
+					repo := new(MockProviderRepository)
+					router := credentialSourceHandlerRouter(t, repo)
+					path := "/api/services"
+					if operation.method == http.MethodPut {
+						entity := encryptedEntity(id.NewServiceID(), "Existing service", "stored-client", "stored-secret", "https://source.example.com", nil)
+						entity.CredentialSource = operation.currentSource
+						if operation.currentSource == model.CredentialSourceFilesystem {
+							entity = credentialSourceHandlerFilesystemFixture()
+						}
+						canonicalID := "credential-source"
+						entity.CanonicalID = &canonicalID
+						path += "/" + entity.ID.String()
+						repo.On("Get", mock.Anything, entity.ID).Return(entity, nil).Maybe()
+					}
+					// Allow a faulty implementation to return normally so assertions identify the mutation.
+					repo.On("Create", mock.Anything, mock.Anything).Return(nil).Maybe()
+					repo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+					body := credentialSourceHandlerBody()
+					if operation.includeSource {
+						body["credential_source"] = "filesystem"
+					}
+					body[field] = value.value
+					response := credentialSourceHandlerRequest(t, router, operation.method, path, body, "")
+					assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+					repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+					repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+				})
+			}
+		}
+	}
+}
+
+func TestServicesHandler_CredentialSourceFilesystemRequiresCanonicalID(t *testing.T) {
+	canonicalIDs := []struct {
+		name     string
+		value    any
+		provided bool
+	}{
+		{name: "omitted on create"},
+		{name: "null", provided: true, value: nil},
+		{name: "empty", provided: true, value: ""},
+		{name: "invalid characters", provided: true, value: "invalid/id"},
+		{name: "UUID", provided: true, value: id.NewServiceID().String()},
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		for _, canonicalID := range canonicalIDs {
+			if method == http.MethodPut && !canonicalID.provided {
+				continue // Omitted update canonical IDs are preserved by the filesystem CRUD test.
+			}
+			t.Run(method+"/"+canonicalID.name, func(t *testing.T) {
+				repo := new(MockProviderRepository)
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					entity := credentialSourceHandlerFilesystemFixture()
+					repo.On("Get", mock.Anything, entity.ID).Return(entity, nil).Maybe()
+					path += "/" + entity.ID.String()
+				}
+				repo.On("Create", mock.Anything, mock.Anything).Return(nil).Maybe()
+				repo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+				body := credentialSourceHandlerBody()
+				body["credential_source"] = "filesystem"
+				delete(body, "canonical_id")
+				if canonicalID.provided {
+					body["canonical_id"] = canonicalID.value
+				}
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+				repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+			})
+		}
+	}
+}
+
+func TestServicesHandler_CredentialSourceUpdateResponseTransitions(t *testing.T) {
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	router := credentialSourceHandlerRouter(t, repo)
+	entity := credentialSourceHandlerStoredFixture(t, repo)
+	path := "/api/services/" + entity.ID.String()
+	body := credentialSourceHandlerBody()
+	body["credential_source"] = "filesystem"
+	delete(body, "canonical_id")
+	response := credentialSourceHandlerRequest(t, router, http.MethodPut, path, body, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	credentialSourceHandlerAssertProjection(t, credentialSourceHandlerPayload(t, response), model.CredentialSourceFilesystem, "")
+	assert.Equal(t, `"2"`, response.Header().Get("ETag"))
+	credentialSourceHandlerAssertReadViews(t, router, entity.ID.String(), model.CredentialSourceFilesystem, "")
+
+	body["credential_source"] = "stored"
+	body["client_id"] = "replacement-client"
+	body["client_secret"] = "replacement-secret"
+	response = credentialSourceHandlerRequest(t, router, http.MethodPut, path, body, "")
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	credentialSourceHandlerAssertProjection(t, credentialSourceHandlerPayload(t, response), model.CredentialSourceStored, "replacement-client")
+	assert.Equal(t, `"3"`, response.Header().Get("ETag"))
+	credentialSourceHandlerAssertReadViews(t, router, entity.ID.String(), model.CredentialSourceStored, "replacement-client")
+}
+
+func TestServicesHandler_CredentialSourceFilesystemResourcePreconditions(t *testing.T) {
+	tests := []struct {
+		name          string
+		resources     any
+		provided      bool
+		ifMatch       string
+		wantStatus    int
+		wantResources string
+	}{
+		{name: "omitted resources preserve without If-Match", wantStatus: http.StatusOK, wantResources: `["https://resource.example.com/original"]`},
+		{name: "null resources preserve without If-Match", provided: true, resources: nil, wantStatus: http.StatusOK, wantResources: `["https://resource.example.com/original"]`},
+		{name: "replacement requires If-Match", provided: true, resources: []string{}, wantStatus: http.StatusPreconditionRequired},
+		{name: "weak If-Match is rejected", provided: true, resources: []string{}, ifMatch: `W/"1"`, wantStatus: http.StatusPreconditionRequired},
+		{name: "stale If-Match leaves resources unchanged", provided: true, resources: []string{}, ifMatch: `"2"`, wantStatus: http.StatusPreconditionFailed},
+		{name: "empty replacement with strong If-Match", provided: true, resources: []string{}, ifMatch: `"1"`, wantStatus: http.StatusOK},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			router := credentialSourceHandlerRouter(t, repo)
+			body := credentialSourceHandlerBody()
+			body["credential_source"] = "filesystem"
+			body["protected_resources"] = []string{"https://resource.example.com/original"}
+			response := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+			var serviceID string
+			require.NoError(t, json.Unmarshal(credentialSourceHandlerPayload(t, response)["id"], &serviceID))
+			parsedID, err := id.ParseServiceID(serviceID)
+			require.NoError(t, err)
+			before, err := repo.Get(context.Background(), parsedID)
+			require.NoError(t, err)
+			delete(body, "credential_source")
+			delete(body, "canonical_id")
+			delete(body, "protected_resources")
+			body["display_name"] = "Updated metadata"
+			if test.provided {
+				body["protected_resources"] = test.resources
+			}
+			response = credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, test.ifMatch)
+			require.Equal(t, test.wantStatus, response.Code, response.Body.String())
+			if test.wantStatus == http.StatusOK {
+				payload := credentialSourceHandlerPayload(t, response)
+				credentialSourceHandlerAssertProjection(t, payload, model.CredentialSourceFilesystem, "")
+				if test.wantResources == "" {
+					assert.NotContains(t, payload, "protected_resources")
+				} else {
+					assert.JSONEq(t, test.wantResources, string(payload["protected_resources"]))
+				}
+				after, err := repo.Get(context.Background(), parsedID)
+				require.NoError(t, err)
+				if test.wantResources == "" {
+					assert.Empty(t, after.ProtectedResources)
+				} else {
+					assert.Equal(t, before.ProtectedResources, after.ProtectedResources)
+				}
+				assert.Equal(t, `"2"`, response.Header().Get("ETag"))
+			} else {
+				after, err := repo.Get(context.Background(), parsedID)
+				require.NoError(t, err)
+				assert.Equal(t, before, after, "failed preconditions must leave the full service unchanged")
+			}
+		})
+	}
+}
+
 func TestServicesHandler_DiscoveryStatusReturnsNotFoundAfterDeletion(t *testing.T) {
 	repo := new(MockProviderRepository)
 	handler := setupHandler(t, repo)
@@ -3167,7 +3796,7 @@ func TestServicesHandler_DiscoveryStatusReturnsNotFoundAfterDeletion(t *testing.
 }
 
 func TestServicesHandler_ConcurrentIssuerChangeConflictUsesSafeCode(t *testing.T) {
-	handler := NewServicesHandler(nil, nil, nil)
+	handler := NewServicesHandler(nil, nil, slog.New(slog.DiscardHandler))
 	response := httptest.NewRecorder()
 	err := storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
 		storage.ErrIssuerChangeHasSessions, "issuer change requires no user sessions")
@@ -3183,7 +3812,7 @@ func TestServicesHandler_ConcurrentAudienceChangeConflictUsesSafeCode(t *testing
 			name = "discovered"
 		}
 		t.Run(name, func(t *testing.T) {
-			handler := NewServicesHandler(nil, nil, nil)
+			handler := NewServicesHandler(nil, nil, slog.New(slog.DiscardHandler))
 			response := httptest.NewRecorder()
 			err := storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
 				storage.ErrResourceChangeHasSessions, "unsafe provider details must not leak")
@@ -3192,4 +3821,411 @@ func TestServicesHandler_ConcurrentAudienceChangeConflictUsesSafeCode(t *testing
 			assert.JSONEq(t, `{"error":"conflict","message":"resource_change_requires_no_sessions"}`, response.Body.String())
 		})
 	}
+}
+
+func TestServicesHandler_CredentialSourceFilesystemRejectsResourceDiscovery(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			handler := setupHandler(t, repo)
+			client := &adminDiscoveryClient{t: t}
+			handler.providerService.WithOAuthDiscoveryClient(client)
+			serviceID := ""
+			if method == http.MethodPut {
+				entity := credentialSourceHandlerFilesystemFixture()
+				serviceID = entity.ID.String()
+				repo.On("Get", mock.Anything, entity.ID).Return(entity, nil).Once()
+			}
+			body := map[string]any{
+				"canonical_id": "credential-source",
+				"display_name": "Filesystem resource",
+				"discovery":    map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+			}
+			if method == http.MethodPost {
+				body["credential_source"] = "filesystem"
+			}
+			response := httptest.NewRecorder()
+			request := adminDiscoveryRequest(t, method, serviceID, body)
+			if method == http.MethodPost {
+				handler.CreateService(response, request)
+			} else {
+				handler.UpdateService(response, request)
+			}
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			assert.Empty(t, client.probeCalls)
+			assert.Empty(t, client.getCalls)
+			assert.Empty(t, client.postCalls)
+			repo.AssertNotCalled(t, "Create", mock.Anything, mock.Anything)
+			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestServicesHandler_CredentialSourceFilesystemReadProjection(t *testing.T) {
+	for _, transitioned := range []bool{false, true} {
+		name := "created directly as filesystem"
+		if transitioned {
+			name = "transitioned to filesystem"
+		}
+		t.Run(name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			router := credentialSourceHandlerRouter(t, repo)
+			filesystem := credentialSourceHandlerFilesystemFixture()
+			filesystem.CredentialSourceTransitioned = transitioned
+			stored := encryptedEntity(id.NewServiceID(), "Stored service", "stored-client", "stored-secret", "https://source.example.com", nil)
+			stored.CredentialSource = model.CredentialSourceStored
+			repo.On("Get", mock.Anything, filesystem.ID).Return(filesystem, nil)
+			repo.On("Get", mock.Anything, stored.ID).Return(stored, nil)
+			repo.On("List", mock.Anything).Return([]*model.ThirdpartyOAuth2ProviderEntity{filesystem, stored}, nil)
+			credentialSourceHandlerAssertReadViews(t, router, filesystem.ID.String(), model.CredentialSourceFilesystem, "")
+			credentialSourceHandlerAssertReadViews(t, router, stored.ID.String(), model.CredentialSourceStored, "stored-client")
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+func TestServicesHandler_CredentialSourceFilesystemRejectsExplicitInvalidSelector(t *testing.T) {
+	for _, selector := range []struct {
+		name  string
+		value any
+	}{
+		{name: "null is not omission", value: nil},
+		{name: "empty is not omission", value: ""},
+		{name: "unknown is not omission", value: "vault"},
+	} {
+		t.Run(selector.name, func(t *testing.T) {
+			repo := new(MockProviderRepository)
+			router := credentialSourceHandlerRouter(t, repo)
+			entity := credentialSourceHandlerFilesystemFixture()
+			repo.On("Get", mock.Anything, entity.ID).Return(entity, nil).Maybe()
+			repo.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+			body := credentialSourceHandlerBody()
+			body["credential_source"] = selector.value
+			response := credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+entity.ID.String(), body, "")
+			assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			repo.AssertNotCalled(t, "Update", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+func clientRegistrationHandlerBody(registration model.ClientRegistration, method string) map[string]any {
+	body := map[string]any{
+		"display_name": "Provider",
+		"issuer_uri":   "https://provider.example.com",
+		"discovery":    map[string]any{"enable_discovery": false},
+		"endpoints": map[string]any{
+			"token_endpoint":     "https://provider.example.com/token",
+			"authorize_endpoint": "https://provider.example.com/authorize",
+		},
+	}
+	if registration != "" {
+		body["client_registration"] = registration
+	}
+	switch method {
+	case "":
+		body["client_id"] = "operator-client"
+		body["client_secret"] = "operator-secret"
+	case "none":
+		body["token_endpoint_auth_method"] = method
+		if registration != model.ClientRegistrationCIMD {
+			body["client_id"] = "operator-client"
+		}
+	case "private_key_jwt":
+		body["token_endpoint_auth_method"] = method
+	}
+	return body
+}
+
+func assertClientRegistrationHandlerView(t *testing.T, response *httptest.ResponseRecorder, registration model.ClientRegistration, method, clientID string, secret bool) string {
+	t.Helper()
+	payload := credentialSourceHandlerPayload(t, response)
+	value, present := payload["client_registration"]
+	require.True(t, present, "client_registration must be present even for the default")
+	assert.JSONEq(t, `"`+string(registration)+`"`, string(value))
+	var actualID string
+	require.NoError(t, json.Unmarshal(payload["id"], &actualID))
+	if registration == model.ClientRegistrationCIMD {
+		clientID = "https://broker.example.com/.well-known/oauth-client/" + actualID
+	}
+	assert.JSONEq(t, `"`+clientID+`"`, string(payload["client_id"]))
+	if method == "" {
+		assert.JSONEq(t, `null`, string(payload["token_endpoint_auth_method"]))
+	} else {
+		assert.JSONEq(t, `"`+method+`"`, string(payload["token_endpoint_auth_method"]))
+	}
+	if secret {
+		assert.JSONEq(t, `"REDACTED"`, string(payload["client_secret"]))
+	} else {
+		assert.NotContains(t, payload, "client_secret")
+	}
+	return actualID
+}
+
+func TestServicesHandler_ClientRegistrationFourModesAcrossCRUD(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		registration model.ClientRegistration
+		method       string
+		secret       bool
+	}{
+		{"static confidential", model.ClientRegistrationStatic, "", true},
+		{"static public", model.ClientRegistrationStatic, "none", false},
+		{"CIMD confidential", model.ClientRegistrationCIMD, "private_key_jwt", false},
+		{"CIMD public", model.ClientRegistrationCIMD, "none", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			router := credentialSourceHandlerRouter(t, repo)
+			body := clientRegistrationHandlerBody(tc.registration, tc.method)
+			created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+			require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+			serviceID := assertClientRegistrationHandlerView(t, created, tc.registration, tc.method, "operator-client", tc.secret)
+			path := "/api/services/" + serviceID
+			read := credentialSourceHandlerRequest(t, router, http.MethodGet, path, nil, "")
+			require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+			assertClientRegistrationHandlerView(t, read, tc.registration, tc.method, "operator-client", tc.secret)
+			list := credentialSourceHandlerRequest(t, router, http.MethodGet, "/api/services", nil, "")
+			require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+			var services []map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(list.Body.Bytes(), &services))
+			require.Len(t, services, 1)
+			listed, err := json.Marshal(services[0])
+			require.NoError(t, err)
+			listedResponse := httptest.NewRecorder()
+			_, err = listedResponse.Write(listed)
+			require.NoError(t, err)
+			assertClientRegistrationHandlerView(t, listedResponse, tc.registration, tc.method, "operator-client", tc.secret)
+			body["display_name"] = "Updated provider"
+			updated := credentialSourceHandlerRequest(t, router, http.MethodPut, path, body, "")
+			require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+			assertClientRegistrationHandlerView(t, updated, tc.registration, tc.method, "operator-client", tc.secret)
+		})
+	}
+}
+
+func TestServicesHandler_ClientRegistrationOmissionAndInvalidValues(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		registration model.ClientRegistration
+		method       string
+	}{
+		{"static confidential", model.ClientRegistrationStatic, ""},
+		{"static public", model.ClientRegistrationStatic, "none"},
+		{"CIMD confidential", model.ClientRegistrationCIMD, "private_key_jwt"},
+	} {
+		t.Run("omitted/"+tc.name, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			router := credentialSourceHandlerRouter(t, repo)
+			body := clientRegistrationHandlerBody("", tc.method)
+			created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+			require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+			serviceID := assertClientRegistrationHandlerView(t, created, tc.registration, tc.method, "operator-client", tc.method == "")
+			updated := credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+			require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+			assertClientRegistrationHandlerView(t, updated, tc.registration, tc.method, "operator-client", tc.method == "")
+		})
+	}
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{"null", nil},
+		{"empty", ""},
+		{"unknown", "dynamic"},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					created := credentialSourceHandlerRequest(t, router, http.MethodPost, path, clientRegistrationHandlerBody("", ""), "")
+					require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+					var identity struct {
+						ID string `json:"id"`
+					}
+					require.NoError(t, json.Unmarshal(created.Body.Bytes(), &identity))
+					path += "/" + identity.ID
+				}
+				before, err := repo.List(context.Background())
+				require.NoError(t, err)
+				body := clientRegistrationHandlerBody("", "")
+				body["client_registration"] = tc.value
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				var failure ErrorResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+				assert.Equal(t, "validation failed", failure.Error)
+				after, err := repo.List(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			})
+		}
+	}
+}
+
+func TestServicesHandler_ClientRegistrationRejectsInvalidPairsBeforeDiscovery(t *testing.T) {
+	var requests atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer upstream.Close()
+	for _, tc := range []struct {
+		name         string
+		registration model.ClientRegistration
+		method       string
+	}{
+		{"static with private_key_jwt", model.ClientRegistrationStatic, "private_key_jwt"},
+		{"CIMD with absent method", model.ClientRegistrationCIMD, ""},
+		{"CIMD with null method", model.ClientRegistrationCIMD, "null"},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				requests.Store(0)
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					created := credentialSourceHandlerRequest(t, router, http.MethodPost, path, clientRegistrationHandlerBody("", ""), "")
+					require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+					var identity struct {
+						ID string `json:"id"`
+					}
+					require.NoError(t, json.Unmarshal(created.Body.Bytes(), &identity))
+					path += "/" + identity.ID
+				}
+				before, err := repo.List(context.Background())
+				require.NoError(t, err)
+				body := clientRegistrationHandlerBody(tc.registration, tc.method)
+				if tc.method == "null" {
+					body["token_endpoint_auth_method"] = nil
+					body["client_id"] = "operator-client"
+					body["client_secret"] = "operator-secret"
+				}
+				body["issuer_uri"] = upstream.URL
+				body["discovery"] = map[string]any{"enable_discovery": true}
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				var failure ErrorResponse
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+				assert.Equal(t, "validation failed", failure.Error)
+				assert.Zero(t, requests.Load(), "invalid registration must be rejected before discovery")
+				after, err := repo.List(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			})
+		}
+	}
+}
+
+func TestServicesHandler_ClientRegistrationRejectsDiscoverySelectionBeforeTraffic(t *testing.T) {
+	for _, method := range []string{http.MethodPost, http.MethodPut} {
+		t.Run(method, func(t *testing.T) {
+			repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			client := adminCIMDDiscoveryClient(t)
+			handler := setupHandlerWithConfig(t, repo, testConfig())
+			handler.providerService.WithOAuthDiscoveryClient(client)
+			body := map[string]any{
+				"display_name":        "Discovered provider",
+				"client_registration": "cimd",
+				"discovery":           map[string]any{"enable_discovery": true, "resource_url": adminTestResource},
+			}
+			serviceID := ""
+			if method == http.MethodPut {
+				serviceID = credentialSourceHandlerStoredFixture(t, repo).ID.String()
+			}
+			before, err := repo.List(context.Background())
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			request := adminDiscoveryRequest(t, method, serviceID, body)
+			if method == http.MethodPost {
+				handler.CreateService(response, request)
+			} else {
+				handler.UpdateService(response, request)
+			}
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			var failure ErrorResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &failure))
+			assert.Equal(t, "validation failed", failure.Error)
+			assert.Empty(t, client.probeCalls)
+			assert.Empty(t, client.getCalls)
+			assert.Empty(t, client.postCalls)
+			after, err := repo.List(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}
+
+func TestServicesHandler_ClientRegistrationPublicPUTRequiresExplicitCIMD(t *testing.T) {
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	router := credentialSourceHandlerRouter(t, repo)
+	body := clientRegistrationHandlerBody(model.ClientRegistrationCIMD, "none")
+	created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	serviceID := assertClientRegistrationHandlerView(t, created, model.ClientRegistrationCIMD, "none", "", false)
+	before, err := repo.List(context.Background())
+	require.NoError(t, err)
+	delete(body, "client_registration")
+	updated := credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+	require.Equal(t, http.StatusBadRequest, updated.Code, updated.Body.String())
+	after, err := repo.List(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+}
+
+func TestServicesHandler_ClientRegistrationPublicRejectsCallerCredentials(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+		value string
+	}{
+		{"client ID", "client_id", "operator-client"},
+		{"client secret", "client_secret", "operator-secret"},
+	} {
+		for _, method := range []string{http.MethodPost, http.MethodPut} {
+			t.Run(method+"/"+tc.name, func(t *testing.T) {
+				repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+				router := credentialSourceHandlerRouter(t, repo)
+				path := "/api/services"
+				if method == http.MethodPut {
+					created := credentialSourceHandlerRequest(t, router, http.MethodPost, path, clientRegistrationHandlerBody("", ""), "")
+					require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+					var identity struct {
+						ID string `json:"id"`
+					}
+					require.NoError(t, json.Unmarshal(created.Body.Bytes(), &identity))
+					path += "/" + identity.ID
+				}
+				before, err := repo.List(context.Background())
+				require.NoError(t, err)
+				body := clientRegistrationHandlerBody(model.ClientRegistrationCIMD, "none")
+				body[tc.field] = tc.value
+				response := credentialSourceHandlerRequest(t, router, method, path, body, "")
+				require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+				after, err := repo.List(context.Background())
+				require.NoError(t, err)
+				assert.Equal(t, before, after)
+			})
+		}
+	}
+}
+
+func TestServicesHandler_ClientRegistrationPublicNeedsNoCIMDKey(t *testing.T) {
+	repo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+	handler := setupHandlerWithConfig(t, repo, testConfig())
+	handler.providerService.WithCIMDKeyReadiness(unavailableCIMDKeyReadiness{})
+	router := chi.NewRouter()
+	router.Post("/api/services", handler.CreateService)
+	router.Put("/api/services/{service-id}", handler.UpdateService)
+	body := clientRegistrationHandlerBody(model.ClientRegistrationCIMD, "none")
+	created := credentialSourceHandlerRequest(t, router, http.MethodPost, "/api/services", body, "")
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	serviceID := assertClientRegistrationHandlerView(t, created, model.ClientRegistrationCIMD, "none", "", false)
+	body["display_name"] = "Updated keyless provider"
+	updated := credentialSourceHandlerRequest(t, router, http.MethodPut, "/api/services/"+serviceID, body, "")
+	require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+	assertClientRegistrationHandlerView(t, updated, model.ClientRegistrationCIMD, "none", "", false)
 }

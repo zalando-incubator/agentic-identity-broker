@@ -1,20 +1,32 @@
 # Agentic Identity Broker — Agent Context
 
-> **IMPORTANT:** Use retrieval-led reasoning. Read the relevant source and documents before you decide. Do not infer project behavior from general knowledge.
+> Read the relevant source and documents before you decide. Do not infer repository behavior from general knowledge.
 
 ## How to Use This File
 
-Use this routing document to find repository areas. Before you change an area, read its nearest `AGENTS.md`. Use the index for detailed documents.
+Paths in this file are relative to the repository root. Read the nearest child `AGENTS.md` before you change an area.
+Use the indexes to select relevant sources, not as a requirement to read every document.
+
+Maintain shared instructions in the root or nearest child `AGENTS.md`.
+Keep tool-specific instruction files limited to scope metadata and routes to those owners.
+Read routed files before implementation or review. A route is not a substitute for its instructions.
 
 ## Docs Index (Retrieval Targets)
 
-For compact scanning, use pipe-delimited entries. Before you implement in a domain, read the relevant file.
+Read the source that governs the change. The summaries here do not replace the constitution, accepted ADRs, or API contracts.
 
 ### Architecture & Decisions
 
 `ARCHITECTURE.md` | Source of truth for system design
-`adrs/NNN-*.md` | Binding ADRs — read before implementation (see the ADR index that follows)
-`.specify/memory/constitution.md` | Binding constitution — 14 principles governing all work
+`adrs/` | Architecture decisions and status (see the ADR index)
+`.specify/memory/constitution.md` | Binding constitution — 15 principles governing all work
+`CONTRIBUTING.md` | Setup, contribution process, and verification requirements
+`docs/resources/assurance-case.md` | Threat model, trust boundaries, and security evidence
+
+### Coding Standards
+
+`coding-standards/LOGGING.md` | Structured logging: plumbing, record shape, levels, principals, permitted data. Read before you add or change a log call.
+`coding-standards/OPENTELEMETRY.md` | Traces and metrics: plumbing, span names and status, attribute keys, instruments, permitted data. Read before you add or change a span or metric.
 
 ### Section-Specific Agent Context
 
@@ -50,11 +62,16 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `.specify/examples/specification-by-example.md` | Worked example journey and Wireloom render command (Principle XIV)
 `.specify/templates/overrides/tasks-template.md` | Tasks template: mandatory Phase 2 design and Phase N compliance tasks
 
+For feature work, read its `spec.md`, `plan.md`, and `tasks.md` before implementation.
+Spec Kit selects `SPECIFY_FEATURE_DIRECTORY` first, then `.specify/feature.json`.
+Check that this selection matches the task. Do not infer the feature from the branch name alone.
+`.specify/scripts/bash/common.sh` defines this selection order.
+
 ### Encryption Deep Reference
 
-`.claude/skills/aws-crypto-go/SKILL.md` | AWS Encryption SDK Go — patterns, rules
-`.claude/skills/aws-crypto-go/reference.md` | API reference
-`.claude/skills/aws-crypto-go/examples.md` | Code examples
+`.agents/skills/aws-crypto-go/SKILL.md` | AWS Encryption SDK Go — patterns, rules
+`.agents/skills/aws-crypto-go/reference.md` | API reference
+`.agents/skills/aws-crypto-go/examples.md` | Code examples
 
 ### Design System (Frontend)
 
@@ -74,57 +91,63 @@ For compact scanning, use pipe-delimited entries. Before you implement in a doma
 `charts/agentic-identity-broker/` | Helm deployment contract
 `migrations/` | PostgreSQL schema migrations
 `mocks/` | Standalone test services and OAuth2 clients
+`configs/` | Development, test, production, and container configuration
+`scripts/` | Development helpers and deployment checks
+`justfile` | Maintained commands and their dependencies
+`.github/workflows/` | CI, security, coverage, and release gates
+`assets/docusaurus/` | Documentation-site source and build configuration
 
-## Constitution (Binding) — 14 Principles
+## Constitution (Binding) — 15 Principles
 
 Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
-1. **Security-First** — Fail closed. Do not use bypasses. Never treat signature validation as optional.
-2. **ADRs are Binding** — Use `ARCHITECTURE.md` as the source of truth. Follow Principle II
+1. **Security-First** — Fail closed. Do not bypass security controls. Only accepted ADR 031 permits unsigned subjects, with its full controls. This exception applies only to explicit unverified-subject rules in local-mode impersonation. Client assertions, actor tokens, and signed subjects still require signature verification.
+2. **Accepted ADRs are Binding** — Only ADRs with status "Accepted" are binding. Use `ARCHITECTURE.md` as the source of truth. Follow Principle II
    for same-PR ADR acceptance and revisions. A merged Accepted ADR requires an Accepted
    superseding ADR for deviations.
 3. **Library-First Security** — Do not use custom crypto. Use Go `crypto/*`, `golang.org/x/crypto`, or AWS Encryption SDK.
 4. **OpenAPI Transparency** — Define APIs in `api/{enduser,admin}/openapi.yaml` before implementation.
 5. **Domain-Driven Design** — Enforce ubiquitous language. Add new concepts to the `ARCHITECTURE.md` glossary.
-6. **Hexagonal Architecture** — Arrange dependencies as domain → ports (interfaces) → adapters. Never reverse this order. Prevent these violations:
+6. **Hexagonal Architecture** — Domain services depend on ports, not adapters. Adapters implement ports. Prevent these violations:
    - **Port bypass**: Route handlers through domain services to ports. Do not route a handler to a port directly.
    - **Anemic domain**: Make services enforce invariants. Do not only proxy port calls.
    - **Domain logic leakage**: Put conditional logic beyond input parsing in domain services, not handlers.
    - **Domain packaging**: Make each new `domain/X/` a genuinely independent bounded context.
-7. **Configuration-Driven** — Get all config through `internal/ports/config.go`. Do not load config ad hoc.
+7. **Configuration-Driven** — Use `internal/ports/config.go` for broker configuration. ExtProc has its own schema under accepted ADR 011. Update configuration documentation and examples with each parameter change. Update Helm values and templates only for workloads that the chart deploys.
 8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation.
 9. **Persistence Consistency** — Define ISP repos in `internal/ports/storage.go`. Use sqlx for PostgreSQL. Provide both in-memory and postgres adapters.
 10. **API-First** — Design APIs before implementation. Get stakeholder agreement before changes.
-11. **Design System Compliance** — Use Refined Trust Architecture and WCAG 2.1 AA. Use semantic tokens in `web/src/design-system/`.
-12. **DI via Builder** — Put all wiring in `internal/app/builder.go`. Do not instantiate services in routing.
+11. **Design System Compliance** — Use shared semantic tokens and WCAG 2.1 AA. Check light and dark themes. Keep brand assets in the repository. Read the current visual direction in `web/src/design-system/docs/DESIGN_PRINCIPLES.md`. A change to that direction requires an ADR.
+12. **DI via Builder** — Put broker dependency wiring in `internal/app/builder.go`. Do not instantiate services in routing.
 13. **E2E Acceptance Tests** — Use a 1:1 specification-to-test mapping in `tests/e2e/`. Test a complete user journey. Do not test one endpoint segment.
 14. **Specification by Example** — In each spec, add concrete user journeys and link them to the Given/When/Then scenarios. Where applicable, show configuration, RFC-style HTTP exchanges, Wireloom wireframes, and decoded JWT claims.
+15. **Binding Coding Standards** — Follow every applicable standard in `coding-standards/`, including its review checklist and required tests, contracts, and registry entries. See Principle XV for scoped exceptions.
 
 ## Monorepo Structure
 
 | Section | Technology | AGENTS.md |
 |---|---|---|
-| `internal/` | Go 1.27.2 — hexagonal (domain→ports→adapters→app) | `internal/AGENTS.md` |
-| `web/` | React 19 + TypeScript + Vite 7 + Tailwind 4 | `web/AGENTS.md` |
+| `internal/` | Go — domain services, ports, adapters, and app wiring | `internal/AGENTS.md` |
+| `web/` | React + TypeScript + Vite + Tailwind | `web/AGENTS.md` |
 | `infra/cdk/` | AWS CDK (Go) — KMS, DynamoDB, IAM | `infra/AGENTS.md` |
 | `tests/` | Ginkgo/Gomega (e2e), Go testing (integration) | `tests/AGENTS.md` |
 | `internal/extproc/` | Standalone gRPC ExtProc service | `internal/extproc/AGENTS.md` |
 
 **Import rules**: Do not let the domain import adapters or app. Define contracts in ports.
 Let driven adapters import ports and domain. HTTP routing receives handlers from app.
-It can use routing middleware and configuration. Do not let adapters import each other.
+It can use routing middleware and configuration. Do not couple independent adapter subsystems.
+Read `internal/adapters/AGENTS.md` for existing factory and shared-helper composition.
 
 ## ADR Decision Index
 
-Read relevant ADRs before implementation. You can mark an ADR introduced on this branch as
-Accepted in the same PR. Before the branch merges into `main`, you can revise that ADR in
-the same PR, even after acceptance. The final ADR and code MUST agree before merge.
+Read relevant ADRs before implementation. Only accepted decisions are binding.
+Check each file's status and superseding decisions. A proposal does not become binding because its code exists.
+ADR numbers are not unique in this repository. Use the full filename.
+You can mark an ADR introduced on this branch as Accepted in the same PR.
+Before the branch merges into `main`, you can revise that ADR in the same PR, even after acceptance.
+The final ADR and code MUST agree before merge.
 After that merge, a change or deviation requires a new Accepted superseding ADR.
 See Principle II in `.specify/memory/constitution.md`.
-
-For feature 029 only, the stakeholder accepted ADRs 038 and 039 on 2026-10-09. On 2026-10-12, the stakeholder amended ADR 039 in this unmerged PR to remove its guard requirement. These same-PR approvals do not apply to other ADRs. On 2026-10-12, the stakeholder approved renumbering ADR 039's migration from `036` to `037` after `main` took version 36.
-
-For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191. This same-PR approval does not apply to other ADRs.
 
 | ADR | File | Decision |
 |---|---|---|
@@ -132,10 +155,10 @@ For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191.
 | 003 | `adrs/003-chi-framework.md` | chi v5 HTTP router |
 | 004 | `adrs/004-dual-server-isolation.md` | errgroup dual-server :8000/:14000 |
 | 004 | `adrs/004-storage-layer-architecture.md` | Hexagonal storage, ISP repos, sqlx |
-| 005 | `adrs/005-spa-serving-pattern.md` | Embedded SPA with history API fallback |
-| 006 | `adrs/006-frontend-stack.md` | React 19 + Vite + Tailwind + Vitest |
+| 005 | `adrs/005-spa-serving-pattern.md` | SPA serving, with mount and build paths superseded by ADR 035 |
+| 006 | `adrs/006-frontend-stack.md` | React + Vite + Tailwind + Vitest |
 | 007 | `adrs/007-e2e-testing-with-ginkgo.md` | Ginkgo v2 BDD E2E tests |
-| 008 | `adrs/008-encryption-context-optimization.md` | EncryptionContext = `service_id` only |
+| 008 | `adrs/008-encryption-context-optimization.md` | Single-subject context: `service_id` or `kid`, as defined by its amendment |
 | 008 | `adrs/008-token-exchange-jwks-adapter-pattern.md` | JWKS adapter with jwx jwk.Cache |
 | 009 | `adrs/009-cel-for-authorization-policies.md` | cel-go for authorization + JWT claims |
 | 009 | `adrs/009-envelope-encryption-design.md` | Three-layer envelope: KEK→BranchKey→DEK |
@@ -154,34 +177,61 @@ For feature 050 only, the stakeholder accepted ADR 040 on 2026-10-19 in PR #191.
 | 018 | `adrs/018-approval-endpoint-auth-boundaries.md` | Endpoint-specific approval authentication boundaries |
 | 027 | `adrs/027-extproc-telemetry-shared-dependency.md` | ExtProc telemetry shared dependency |
 | 028 | `adrs/028-opa-extproc-authorization.md` | OPA authorization in ExtProc via embedded SDK |
-| 029 | `adrs/029-token-exchange-client-assertion-trust-anchor.md` | Dedicated client-assertion trust anchor for token exchange |
+| 029 | `adrs/029-token-exchange-client-assertion-trust-anchor.md` | Proposed: dedicated client-assertion trust anchor |
 | 030 | `adrs/030-normalize-protected-resources.md` | Normalized, globally unique protected-resource child records |
 | 030 | `adrs/030-vendor-neutral-oidc-trust.md` | Vendor-neutral CDK OIDC trust configuration |
-| 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA (first-class routes; /consent unmounted) |
+| 031 | `adrs/031-unverified-subject-unsigned-jwt.md` | Bounded unsigned-subject exception for local impersonation |
 | 032 | `adrs/032-impersonation-requires-user-delegation.md` | User delegation required for OAuth2 impersonation |
-| 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval-domain pattern grammar shared with ExtProc |
+| 033 | `adrs/033-request-security-context-propagation.md` | Proposed: request security context and audit identity |
+| 034 | `adrs/034-audience-absent-impersonation-credentials.md` | Explicit absent-audience policy for signed impersonation credentials |
+| 035 | `adrs/035-root-mounted-spa.md` | Root-mounted SPA. `/consent` is not mounted |
+| 035 | `adrs/035-shared-tool-pattern-matching.md` | Approval pattern grammar shared with ExtProc |
+| 036 | `adrs/036-extproc-approval-cache-and-gate.md` | ExtProc approval cache, sync, and request gate |
+| 036 | `adrs/036-extproc-metadata-token-exchange-input.md` | Token-exchange input from gateway metadata |
+| 036 | `adrs/036-public-client-token-endpoint-auth.md` | Explicit public-client authentication, extended by CIMD ADR 037 |
+| 037 | `adrs/037-cimd-client-authentication-key-domain.md` | Separate CIMD authentication keys and public JWK sets |
+| 037 | `adrs/037-consent-selection-oauth-redirect-state.md` | Proposed: consent selection across OAuth redirects |
 | 038 | `adrs/038-proactive-token-refresh.md` | Background token refresh and operator-driven synchronous session sweep |
 | 039 | `adrs/039-concurrent-session-expiry-index.md` | Named non-atomic migration `037` exception with direct CLI and manual recovery |
+| 040 | `adrs/040-trust-anchor-local-key-sets.md` | Inline and file-based key sets for trust anchors (trust directory, re-read, health) |
 | 040 | `adrs/040-protected-resource-discovery-and-dcr.md` | Protected-resource discovery and DCR client selection |
-| 041 | `adrs/041-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
+| 041 | `adrs/041-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
+| 042 | `adrs/042-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
+| 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
+| 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
+| 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
+| 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
+| 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
+| 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
 
 ## Domain Glossary
+
+Read `ARCHITECTURE.md` for the full glossary and relationships.
 
 | Term | Definition |
 |---|---|
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
+| **External ID** | Optional nonempty, globally unique Agent governance identifier, matched literally; collection PUT reconciles by it without changing UUID identity. |
+| **Agent Reconciliation** | Reconcile is the canonical term for applying an Agent definition by External ID while preserving UUID identity; upsert and create-or-update are aliases for this operation. The `ReconcileUnchanged` outcome means no-op/replay: no write or mutation audit, with stored timestamps preserved. |
+| **Subject Category** | `agent` only for a raw `sub` exactly equal to the audience-selected target UUID that is signed and verified, or unverified with a predicate binding `subject_token.sub`; another registered agent's UUID is a rejected cross-agent request; otherwise `human`. |
+| **Allowed Subject Categories** | Per-rule eligibility list; omission means `[human]`. Classification is independent of eligibility. |
+| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |
 | **UserSession** | Authenticated OAuth2 session with encrypted tokens. |
-| **Principal** | Authenticated user ID from `X-Remote-User`. |
-| **Secret** | Value object with exclusive plaintext or encrypted state. |
+| **Principal** | Authenticated user identity from the configured pre-authentication source. |
+| **Secret** | Value object with exclusive plaintext, encrypted, or absent state. |
 | **ServiceRequirement** | Agent requirement for a mandatory or optional service. |
 | **BranchKey** | DynamoDB-cached key between a KMS KEK and an operation DEK. |
 | **EncryptionContext** | AAD with exactly one subject key: `service_id` or `kid`. Never store secrets. |
 | **ResourceURI** | Normalized protected-resource URI for RFC 8693 token exchange. |
 | **CEL Expression** | Policy for privileged-client authorization and JWT claim extraction. |
 | **ToolApproval** | Human-in-the-loop authorization for an agent tool call with pending, approved, or denied status. |
+| **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
+| **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
+| **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
+| **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
 
 ## Development Workflow
 
@@ -189,10 +239,11 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 
 | Command | Purpose |
 |---|---|
-| `just check` | **Static checks**: fmt → vet → lint |
+| `just check` | Non-mutating format, vet, and lint checks |
+| `just fmt` | Apply Go formatting changes |
 | `just build` | Build Go binary → `./bin/agentic-identity-broker` |
 | `just test` | Fast Go/package tests (no E2E or integration suites) |
-| `just verify` | Full verification gate with E2E as the final guard layer |
+| `just verify` | Full gate: static checks, security scans, tests, integration, then E2E |
 | `just build-all` | Backend + frontend build |
 | `just test-e2e` | All backend, ExtProc, and frontend E2E suites |
 | `just test-integration` | Default self-contained integration suites |
@@ -201,7 +252,8 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just cdk-test` | CDK unit tests |
 | `just render-wireframes <spec.md>` | Render Wireloom wireframes in a spec to SVG (after `just install-tools`) |
 
-**Local validation:** Do not rely only on editor diagnostics. After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
+After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
+Do not rely only on editor diagnostics. Before a pull request, run the full gate from `CONTRIBUTING.md`.
 
 ## Code Style
 
@@ -215,12 +267,21 @@ Use these rules for all monorepo code (Go, TypeScript, CDK):
 - **Extend, do not duplicate** — Use an existing mechanism (for example, JWE for ephemeral state). Do not introduce a competing one.
 - **Explicit SQL columns** — List required result columns in SQL queries, including queries in migrations and tests. Do not use `SELECT *`, `table.*`, or `RETURNING *`. Wildcard projections hide data dependencies and couple readers to schema changes. `COUNT(*)` and `EXISTS (SELECT 1 ...)` are permitted.
 
+- **Structured logging** — Follow `coding-standards/LOGGING.md`. Log principals only as `id.Principal`. Never log credentials.
+- **OpenTelemetry** — Follow `coding-standards/OPENTELEMETRY.md`. Use constant span names. Set principals on spans only through `id.Principal.SpanAttribute`, and add none until #356 provides it. Never put a principal in a metric or a credential in any signal.
 - **No test-only production APIs** — Put test helpers in `_test.go` or `tests/`. Assert through production APIs.
 
 ## Database Migrations
 
-Use `NNN_description.{up,down}.sql` for migrations in `migrations/`. For large tables, use `CREATE INDEX CONCURRENTLY` with the no-transaction directive.
+Use `NNN_description.{up,down}.sql` in `migrations/`. Test both directions against PostgreSQL with the production migrations.
+Each migration must be atomic, as required by Constitution Principle IX. Non-atomic migrations require an accepted ADR exception.
+`adrs/039-concurrent-session-expiry-index.md` permits concurrent index creation and removal only for migration `037`.
+Keep its first-line `-- migrate:no-transaction` comment in both directions. The comment is informational, not enforced by the migration runners.
+Migration `030` is historical, not an approved template for new non-atomic migrations.
+Read `tests/integration/AGENTS.md` for migration tests.
 
 ## Active Technologies
 
-Go 1.27.2 | React 19 + TypeScript + Vite 7 + Tailwind 4 | chi v5 | sqlx + pgx v5 | Ginkgo/Gomega | Viper/Cobra | CVA | OpenTelemetry (`otelhttp`, `otelslog`) | `envoyproxy/go-control-plane` | PostgreSQL (prod) + in-memory (dev/test)
+Read `go.mod` and each module's manifest for exact versions.
+The stack uses chi v5, sqlx, pgx v5, Ginkgo/Gomega, Viper/Cobra, CVA, OpenTelemetry (`otelhttp`, `otelslog`), and Envoy ExtProc.
+PostgreSQL is the production store. In-memory storage is for development and tests.

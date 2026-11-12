@@ -26,10 +26,9 @@ type TokenExchangeError struct {
 	// Causes remain inspectable with errors.Is/As, but must not be serialized into telemetry.
 	cause error
 
-	// errorURI is the RFC 6749 §5.2 error_uri — a URI pointing to a human-readable page
-	// with more information about the error. For session-not-found / session-expired errors
-	// this is the sessions landing page where the user can inspect the session.
-	// May be empty when no re-authentication URL is available.
+	// errorURI is the RFC 6749 §5.2 error_uri. Recoverable provider-session errors
+	// point to the resolved service's authorization URL with a fixed /sessions return.
+	// It is empty when no recovery URL is available.
 	errorURI string
 
 	diagnostic    Diagnostic
@@ -136,7 +135,7 @@ func NewInvalidClientError(description string) *TokenExchangeError {
 // Used when:
 // - subject_token is invalid, expired, or fails signature verification
 // - User has no session with target service (both access and refresh tokens missing)
-// - All stored tokens (access and refresh) have fully expired
+// - The provider rejected the stored refresh token, or the access token expired without one
 // Per spec US5-S1 and US5-S2, this error enables agents to trigger re-authentication flows.
 func NewInvalidGrantError(description string) *TokenExchangeError {
 	return &TokenExchangeError{

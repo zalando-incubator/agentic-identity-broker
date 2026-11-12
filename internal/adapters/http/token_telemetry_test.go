@@ -123,3 +123,41 @@ func TestTokenEndpointUnsupportedMethodTelemetryIsBounded(t *testing.T) {
 		})
 	}
 }
+
+func TestHealthEndpointIsNotTraced(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+	handler := NewHandler(ServerConfig{Name: "enduser", Telemetry: ports.TelemetryConfig{Enabled: true}}, func(router chi.Router) {
+		router.Get("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		router.Get("/api/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	}, slog.New(slog.DiscardHandler))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	for _, path := range []string{"/health", "/api/me"} {
+		response, err := server.Client().Get(server.URL + path)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+		assert.Equal(t, http.StatusOK, response.StatusCode)
+	}
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, "GET /api/me", spans[0].Name())
+}
+
+func TestHealthEndpointIsNotLogged(t *testing.T) {
+	var logs bytes.Buffer
+	handler := NewHandler(ServerConfig{Name: "enduser"}, func(router chi.Router) {
+		router.Get("/health", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		router.Get("/api/me", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	}, slog.New(slog.NewJSONHandler(&logs, nil)))
+	for _, path := range []string{"/health", "/api/me"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		assert.Equal(t, http.StatusOK, recorder.Code)
+	}
+	assert.NotContains(t, logs.String(), `"path":"/health"`)
+	assert.Contains(t, logs.String(), `"path":"/api/me"`)
+}

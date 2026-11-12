@@ -117,7 +117,7 @@ func (s *JWXAccessTokenStrategy) mintAccessToken(ctx context.Context, requester 
 		}
 		for k, v := range customClaims {
 			if baseClaims[k] {
-				s.logger.Warn("CEL expression returned reserved claim, skipping", "claim", k)
+				s.logger.WarnContext(ctx, "CEL expression returned reserved claim, skipping", "claim", k)
 				continue
 			}
 			if actor != nil && k == "act" {

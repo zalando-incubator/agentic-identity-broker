@@ -4,10 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
-
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -25,13 +21,9 @@ func NewApprovalSyncStateRepository(adapter *Adapter) *ApprovalSyncStateReposito
 var _ ports.ApprovalSyncStateRepository = (*ApprovalSyncStateRepository)(nil)
 
 // GetVersion retrieves the current sync version from the approval_sync_state table.
-func (r *ApprovalSyncStateRepository) GetVersion(ctx context.Context) (int64, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.get_version.approval_sync")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "GetApprovalSyncVersion"),
-	)
+func (r *ApprovalSyncStateRepository) GetVersion(ctx context.Context) (_ int64, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.get_version.approval_sync", "GetApprovalSyncVersion")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return 0, storage.NewStorageError(
@@ -46,7 +38,7 @@ func (r *ApprovalSyncStateRepository) GetVersion(ctx context.Context) (int64, er
 	defer cancel()
 
 	var version int64
-	err := r.adapter.db.QueryRowContext(queryCtx,
+	err = r.adapter.db.QueryRowContext(queryCtx,
 		`SELECT version FROM approval_sync_state WHERE id = 1`,
 	).Scan(&version)
 
@@ -72,13 +64,9 @@ func (r *ApprovalSyncStateRepository) GetVersion(ctx context.Context) (int64, er
 
 // IncrementVersion atomically increments the sync version and issues NOTIFY for cross-instance wake-up.
 // Both UPDATE and NOTIFY are wrapped in the same transaction per ADR 014/FR-010.
-func (r *ApprovalSyncStateRepository) IncrementVersion(ctx context.Context) (int64, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.increment_version.approval_sync")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "IncrementApprovalSyncVersion"),
-	)
+func (r *ApprovalSyncStateRepository) IncrementVersion(ctx context.Context) (_ int64, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.increment_version.approval_sync", "IncrementApprovalSyncVersion")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return 0, storage.NewStorageError(

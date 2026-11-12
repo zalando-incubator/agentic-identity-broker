@@ -150,7 +150,7 @@ func stubSigningKey() *storage.SigningKey {
 }
 
 func withPrincipal(req *http.Request, principalValue string) *http.Request {
-	return req.WithContext(principal.WithPrincipal(req.Context(), principalValue))
+	return req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(principalValue)))
 }
 
 func TestSigningKeysHandler_Add(t *testing.T) {

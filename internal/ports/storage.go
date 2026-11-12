@@ -14,6 +14,8 @@ import (
 var (
 	// ErrNotFound is returned when a requested entity does not exist.
 	ErrNotFound = errors.New("entity not found")
+	// ErrExternalIDConflict identifies a set external ID held by another agent.
+	ErrExternalIDConflict = errors.New("external_id already held by another agent")
 )
 
 // IsNotFoundErr returns true if err represents a not-found condition from any
@@ -108,6 +110,8 @@ type UserRepository interface {
 // Agents represent AI agents registered in the identity broker.
 // Following Interface Segregation Principle: focused interface for agent operations.
 type AgentRepository interface {
+	// Create and Update atomically reject external IDs held by another agent with
+	// ErrorKindConflict wrapping ErrExternalIDConflict; empty IDs are invalid.
 	Create(ctx context.Context, agent *storage.Agent) error
 	Get(ctx context.Context, id id.AgentID) (*storage.Agent, error)
 	// GetByIDs retrieves existing agents once per ID, in requested order; missing IDs are omitted.
@@ -116,6 +120,8 @@ type AgentRepository interface {
 	// Delete reports whether the primary agent row was actually deleted; absence is false, nil.
 	Delete(ctx context.Context, id id.AgentID) (bool, error)
 	List(ctx context.Context) ([]*storage.Agent, error)
+	// GetByExternalID returns an independent copy of the exact match, or ErrNotFound.
+	GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error)
 	GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error)
 	ExistsOtherWithClientID(ctx context.Context, clientID id.ClientID, excludeAgentID *id.AgentID) (bool, error)
 	// GetByClientURI resolves an exact CIMD URL first, then a URI pattern.
@@ -259,7 +265,7 @@ type UserSessionRepository interface {
 	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
-	// Used for FR-020 consent submission validation and anyDelegatedSessionExpired checks.
+	// Used for FR-020 consent submission validation.
 	// Returns empty slice if no active sessions exist (not an error).
 	ListActiveByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSession, error)
 
@@ -281,7 +287,8 @@ type UserSessionRepository interface {
 // UserSessionRefreshRepository serializes a read-modify-write of one session's tokens, used by
 // refresh and by re-connect. The callback sees the latest session under a lock; it returns true
 // only when it has changed the session and the adapter must atomically persist the encrypted
-// tokens, both expiries, token type, scope, encryption context and callback generation.
+// tokens, access expiry, refresh rejection, token type, scope, encryption context and callback generation.
+// Only a new callback generation may replace the established upstream client identity.
 // A nil session means the principal has no session for that service.
 type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)
@@ -298,6 +305,17 @@ type UserSessionExpiryRepository interface {
 	// No matches return an empty slice and no error. Failures return domain
 	// storage.StorageError values.
 	ListExpiringSessions(ctx context.Context, threshold time.Time, cursor storage.SessionExpiryCursor, limit int) ([]*storage.UserSession, error)
+}
+
+// UserSessionHealthRepository counts stored sessions for session-health metrics.
+// It reads metadata columns only and never returns or decrypts token material.
+type UserSessionHealthRepository interface {
+	// CountSessionsByExpiry groups every stored session by service, by access-token expiry
+	// relative to now and threshold (after threshold; due when after now and at or before
+	// threshold; expired when at or before now; unknown when not recorded), and by whether the
+	// refresh token is present and not rejected by the provider. Groups with no sessions are omitted.
+	// The caller bounds the query through ctx. Failures return domain storage.StorageError values.
+	CountSessionsByExpiry(ctx context.Context, threshold, now time.Time) ([]storage.SessionExpiryGroup, error)
 }
 
 // PermissionSetRepository defines storage operations for permission set entities.
@@ -337,7 +355,7 @@ type ToolApprovalRepository interface {
 	// Approve transitions a pending approval to approved status with the user decision.
 	Approve(ctx context.Context, id id.ApprovalID, decision storage.ApprovalDecision, approvedAt time.Time) (*storage.ToolApproval, error)
 
-	// Deny transitions a pending approval to denied status.
+	// Deny transitions a pending approval to denied status, clearing parameter constraints for permanent denials.
 	Deny(ctx context.Context, id id.ApprovalID, persistence *storage.ApprovalPersistence, deniedAt time.Time) (*storage.ToolApproval, error)
 
 	// RevokePermanent atomically clears a permanent approval or denial.

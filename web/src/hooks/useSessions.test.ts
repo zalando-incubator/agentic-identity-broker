@@ -32,11 +32,9 @@ const mockSessions: SessionSummary[] = [
     token_type: 'Bearer',
     scope: ['read:email', 'write:files'],
     initiated_at: new Date('2024-01-01T12:00:00Z').toISOString(),
-    is_expired: false,
+    requires_reauthentication: false,
     access_token_expired: false,
-    refresh_token_expires_at: new Date(
-      Date.now() + 30 * 24 * 60 * 60 * 1000,
-    ).toISOString(),
+    has_refresh_token: true,
     dependent_agent_count: 2,
     is_encrypted: true,
   },
@@ -47,11 +45,9 @@ const mockSessions: SessionSummary[] = [
     token_type: 'Bearer',
     scope: ['repo', 'user'],
     initiated_at: new Date('2024-02-01T12:00:00Z').toISOString(),
-    is_expired: false,
+    requires_reauthentication: false,
     access_token_expired: false,
-    refresh_token_expires_at: new Date(
-      Date.now() + 15 * 24 * 60 * 60 * 1000,
-    ).toISOString(),
+    has_refresh_token: true,
     dependent_agent_count: 1,
     is_encrypted: true,
   },
@@ -178,8 +174,9 @@ describe('useSessions', () => {
       expect(result.current.sessions).toEqual(mockSessions);
 
       // Call refetch
+      let refetched: SessionSummary[] = [];
       await act(async () => {
-        await result.current.refetch();
+        refetched = await result.current.refetch();
       });
 
       // Wait for refetch to complete
@@ -188,6 +185,7 @@ describe('useSessions', () => {
       });
 
       // Verify updated data
+      expect(refetched).toEqual([mockSessions[0]]);
       expect(result.current.sessions).toEqual([mockSessions[0]]);
       expect(sessionsApi.listSessions).toHaveBeenCalledTimes(2);
     });
@@ -237,7 +235,7 @@ describe('useSessions', () => {
       });
 
       // Start refetch
-      let refetchPromise: Promise<void>;
+      let refetchPromise: Promise<SessionSummary[]>;
 
       await act(async () => {
         refetchPromise = result.current.refetch();

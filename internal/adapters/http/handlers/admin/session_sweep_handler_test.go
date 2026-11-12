@@ -15,11 +15,15 @@ import (
 	"time"
 
 	brokerhttp "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 type fakeSessionSweeper struct {
@@ -35,7 +39,7 @@ func (f *fakeSessionSweeper) Sweep(ctx context.Context, request oauth2session.Sw
 func sweepRequest(body string, operator string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/sweep", strings.NewReader(body))
 	if operator != "" {
-		req = req.WithContext(principal.WithPrincipal(req.Context(), operator))
+		req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(operator)))
 	}
 	return req
 }
@@ -200,7 +204,7 @@ func TestSessionSweepHandlerRequiresOperator(t *testing.T) {
 		t.Fatal("unauthenticated request reached session sweep")
 		return oauth2session.SweepResult{}, nil
 	}}
-	handler := NewSessionSweepHandler(fake, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	handler := NewSessionSweepHandler(fake, slog.New(slog.DiscardHandler))
 	w := httptest.NewRecorder()
 	handler.Sweep(w, sweepRequest(`{"lookahead_duration":"PT5M"}`, ""))
 
@@ -260,7 +264,7 @@ func TestSessionSweepHandlerAcceptsBodyAtLimit(t *testing.T) {
 		return oauth2session.SweepResult{}, nil
 	}}
 	w := httptest.NewRecorder()
-	NewSessionSweepHandler(fake, slog.New(slog.NewTextHandler(io.Discard, nil))).Sweep(w, sweepRequest(`{}`+strings.Repeat(" ", 4094), "operator@example.test"))
+	NewSessionSweepHandler(fake, slog.New(slog.DiscardHandler)).Sweep(w, sweepRequest(`{}`+strings.Repeat(" ", 4094), "operator@example.test"))
 
 	require.Equal(t, http.StatusOK, w.Code, "exactly 4 KiB of valid JSON must not be rejected as oversized")
 	assert.Len(t, fake.calls, 1)
@@ -332,7 +336,7 @@ func TestSessionSweepHandlerLiftsRealServerWriteDeadline(t *testing.T) {
 		<-release
 		return oauth2session.SweepResult{Refreshed: 1, TotalEvaluated: 1}, nil
 	}}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	handler := NewSessionSweepHandler(fake, logger)
 	router := chi.NewRouter()
 	router.Use(brokerhttp.LoggingMiddleware(logger))
@@ -383,4 +387,63 @@ func TestSessionSweepHandlerLiftsRealServerWriteDeadline(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("sweep response did not complete after the write timeout was lifted")
 	}
+}
+
+func TestSessionSweepHandlerRecordsDurationByOutcome(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(meterProvider)
+	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
+
+	var logs bytes.Buffer
+	var outcome error
+	fake := &fakeSessionSweeper{sweep: func(ctx context.Context, request oauth2session.SweepRequest) (oauth2session.SweepResult, error) {
+		if ctx.Err() != nil {
+			return oauth2session.SweepResult{}, ctx.Err()
+		}
+		return oauth2session.SweepResult{DryRun: request.DryRun}, outcome
+	}}
+	handler := NewSessionSweepHandler(fake, sweepTestLogger(&logs))
+	serve := func(req *http.Request) { handler.Sweep(httptest.NewRecorder(), req) }
+
+	serve(sweepRequest(`{}`, "operator@example.test"))
+	serve(sweepRequest(`{"dry_run":true}`, "operator@example.test"))
+	serve(sweepRequest(`{"unknown":1}`, "operator@example.test"))
+	outcome = oauth2session.ErrInvalidSweepRequest
+	serve(sweepRequest(`{}`, "operator@example.test"))
+	outcome = errors.New("storage unavailable")
+	serve(sweepRequest(`{"dry_run":true}`, "operator@example.test"))
+	outcome = nil
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	serve(sweepRequest(`{}`, "operator@example.test").WithContext(principal.WithPrincipal(canceled, "operator@example.test")))
+	serve(sweepRequest(`{}`, ""))
+
+	var collected metricdata.ResourceMetrics
+	require.NoError(t, reader.Collect(context.Background(), &collected))
+	var histogram *metricdata.Metrics
+	for _, scope := range collected.ScopeMetrics {
+		for i := range scope.Metrics {
+			if scope.Metrics[i].Name == "session_sweep_duration_seconds" {
+				histogram = &scope.Metrics[i]
+			}
+		}
+	}
+	require.NotNil(t, histogram, "session_sweep_duration_seconds must be recorded")
+	assert.Equal(t, "s", histogram.Unit)
+	assert.NotEmpty(t, histogram.Description)
+	data, ok := histogram.Data.(metricdata.Histogram[float64])
+	require.True(t, ok, "session_sweep_duration_seconds must be a float64 histogram, got %T", histogram.Data)
+	counts := map[string]uint64{}
+	for _, point := range data.DataPoints {
+		assert.Equal(t, []float64{1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600}, point.Bounds)
+		assert.Len(t, point.Attributes.ToSlice(), 2, "only outcome and dry_run are permitted")
+		o, _ := point.Attributes.Value("outcome")
+		d, _ := point.Attributes.Value("dry_run")
+		counts[o.AsString()+"/"+d.AsString()] += point.Count
+	}
+	assert.Equal(t, map[string]uint64{
+		"completed/false": 1, "completed/true": 1, "rejected/false": 2, "aborted/true": 1, "canceled/false": 1,
+	}, counts, "a request without an operator principal records no run")
 }

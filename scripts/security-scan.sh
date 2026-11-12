@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+# An exported CDPATH makes `cd` print the directory, corrupting resolved paths.
+unset CDPATH
 
 if (( $# > 1 )); then
     echo "usage: $0 [scan-root]" >&2
@@ -14,23 +16,35 @@ if [[ ! -d "$scan_root_input" ]]; then
 fi
 scan_root="$(cd "$scan_root_input" && pwd -P)"
 
+# SECURITY_SCAN_TOOLS_DIR names scanners built before an environment that cannot
+# compile them, such as the agent sandbox; they must match the pinned builds.
+prebuilt_tools=""
+if [[ -n "${SECURITY_SCAN_TOOLS_DIR:-}" ]]; then
+    if [[ ! -d "$SECURITY_SCAN_TOOLS_DIR" ]]; then
+        echo "SECURITY_SCAN_TOOLS_DIR must be an existing directory: $SECURITY_SCAN_TOOLS_DIR" >&2
+        exit 2
+    fi
+    prebuilt_tools="$(cd "$SECURITY_SCAN_TOOLS_DIR" && pwd -P)"
+fi
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 trusted_root="$(cd "$script_dir/.." && pwd -P)"
-tool_gobin="$(mktemp -d "${TMPDIR:-/tmp}/security-scan.XXXXXX")"
-trap 'rm -rf "$tool_gobin"' EXIT
+scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/security-scan.XXXXXX")"
+trap 'rm -rf "$scratch_dir"' EXIT
 
 cd "$trusted_root"
 
-# gosec v2.29.0: proxy VCS commit deb54465fea23d19a77f037e11e6589021f8501d; module Go 1.25.0.
-GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
-# govulncheck v1.8.0: proxy VCS commit 709015412431dd2b5b28a53c06c70bc02d49074c; module Go 1.26.0.
-GOTOOLCHAIN=local GOBIN="$tool_gobin" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-# OSV-Scanner v2.5.1: proxy VCS commit c84fa4568f2526d0333e9a914ea8a0a5f74ad68; module Go 1.26.5.
-GOTOOLCHAIN=local GOBIN="$tool_gobin" go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.5.1
+if [[ -n "$prebuilt_tools" ]]; then
+    tool_gobin="$prebuilt_tools"
+    bash "$script_dir/install-security-tools.sh" --verify "$tool_gobin"
+else
+    tool_gobin="$scratch_dir/bin"
+    bash "$script_dir/install-security-tools.sh" "$tool_gobin"
+fi
 
 trusted_config="$trusted_root/osv-scanner.toml"
 if [[ ! -f "$trusted_config" ]]; then
-    trusted_config="$tool_gobin/osv-scanner.toml"
+    trusted_config="$scratch_dir/osv-scanner.toml"
     printf 'ScanGoModVersion = false\n' > "$trusted_config"
 fi
 
@@ -44,6 +58,51 @@ modules=(
     mocks/upstream-oauth2-server
 )
 
+# govulncheck has no ignore file. Each entry names a module, a called advisory it may
+# report, and the UTC date the exception ends. Every entry needs an osv-scanner.toml
+# entry for the same advisory that records the reason.
+govulncheck_exceptions=(
+    "mocks/sample-agent GO-2026-6911 2026-12-31"
+)
+
+run_govulncheck() {
+    local module="$1" output status today id excepted entry entry_module entry_id entry_until
+    local -a ids
+    set +e
+    output="$(cd "$scan_root/$module" && GOTOOLCHAIN=local GOFLAGS=-mod=readonly "$tool_gobin/govulncheck" ./... 2>&1)"
+    status=$?
+    set -e
+    printf '%s\n' "$output"
+    if (( status == 0 )); then
+        return 0
+    fi
+    if (( status != 3 )); then
+        return "$status"
+    fi
+
+    mapfile -t ids < <(awk '/^=== (Package|Module) Results ===$/ { exit } match($0, /^Vulnerability #[0-9]+: GO-[0-9]+-[0-9]+$/) { print $3 }' <<<"$output")
+    if (( ${#ids[@]} == 0 )); then
+        echo "govulncheck reported vulnerabilities in $module that this script cannot identify" >&2
+        return 1
+    fi
+
+    today="$(date -u +%F)"
+    for id in "${ids[@]}"; do
+        excepted=false
+        for entry in "${govulncheck_exceptions[@]}"; do
+            read -r entry_module entry_id entry_until <<<"$entry"
+            if [[ "$entry_module" == "$module" && "$entry_id" == "$id" && "$today" < "$entry_until" ]]; then
+                excepted=true
+                echo "govulncheck: $id in $module is excepted until $entry_until; see osv-scanner.toml" >&2
+            fi
+        done
+        if ! $excepted; then
+            echo "govulncheck: $id in $module has no current exception" >&2
+            return 1
+        fi
+    done
+}
+
 for module in "${modules[@]}"; do
     echo "==> gosec: $module"
     (
@@ -55,10 +114,7 @@ for module in "${modules[@]}"; do
     )
 
     echo "==> govulncheck: $module"
-    (
-        cd "$scan_root/$module"
-        GOTOOLCHAIN=local GOFLAGS=-mod=readonly "$tool_gobin/govulncheck" ./...
-    )
+    run_govulncheck "$module"
 done
 
 lockfiles=(

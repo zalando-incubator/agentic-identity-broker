@@ -9,9 +9,6 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -19,6 +16,20 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+func mapAgentExternalIDError(operation string, err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return nil
+	}
+	if pgErr.Code == "23505" && pgErr.ConstraintName == "uq_agents_external_id" {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, ports.ErrExternalIDConflict, "external_id is already held by another agent")
+	}
+	if pgErr.Code == "23514" && pgErr.ConstraintName == "chk_agents_external_id_not_empty" {
+		return storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "external_id cannot be empty when provided")
+	}
+	return nil
+}
 
 // emptyIfNil converts a nil string slice to an empty slice.
 // pq.Array returns SQL NULL for a nil slice, which violates NOT NULL constraints.
@@ -202,6 +213,9 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 		pq.Array(emptyIfNil(agent.AllowedScopes)), agent.CreatedAt, agent.UpdatedAt,
 	)
 	if err != nil {
+		if mapped := mapAgentExternalIDError("CreateAgent", err); mapped != nil {
+			return mapped
+		}
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("CreateAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
@@ -231,13 +245,9 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 
 // Get retrieves an agent entity by ID from PostgreSQL.
 // Returns StorageError with Kind=NotFound if agent not found.
-func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage.Agent, error) {
-	ctx, span := otel.Tracer("storage").Start(ctx, "storage.get.agent")
-	defer span.End()
-	span.SetAttributes(
-		semconv.DBSystemKey.String("postgresql"),
-		attribute.String("db.operation", "GetAgent"),
-	)
+func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (_ *storage.Agent, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.get.agent", "GetAgent")
+	defer func() { endSpan(err) }()
 
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError(
@@ -263,7 +273,7 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 	var serviceReqsJSON, permissionSetsJSON []byte
 
 	agent := &storage.Agent{}
-	err := r.adapter.db.QueryRowContext(
+	err = r.adapter.db.QueryRowContext(
 		queryCtx,
 		`SELECT id, canonical_id, client_id, external_id, display_name, description,
 		        governance_url, user_documentation_url, agent_interface_url,
@@ -292,7 +302,7 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 		if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgent",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal service_requirements from JSON",
 			)
@@ -303,7 +313,7 @@ func (r *AgentRepository) Get(ctx context.Context, agentID id.AgentID) (*storage
 		if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgent",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal permission_sets from JSON",
 			)
@@ -448,6 +458,9 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 		pq.Array(emptyIfNil(agent.RedirectURIs)), pq.Array(emptyIfNil(agent.AllowedScopes)), agent.UpdatedAt,
 	)
 	if err != nil {
+		if mapped := mapAgentExternalIDError("UpdateAgent", err); mapped != nil {
+			return mapped
+		}
 		if strings.Contains(err.Error(), "context deadline exceeded") {
 			return storage.NewStorageError("UpdateAgent", storage.ErrorKindTimeout, err, "operation exceeded timeout")
 		}
@@ -578,6 +591,40 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	return r.scanAgentRows(queryCtx, rows, "ListAgents")
 }
 
+func (r *AgentRepository) GetByExternalID(ctx context.Context, externalID id.ExternalID) (*storage.Agent, error) {
+	if r.adapter.db == nil {
+		return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindConnection, nil, "database not initialized")
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
+	defer cancel()
+
+	rows, err := r.adapter.db.QueryContext(
+		queryCtx,
+		`SELECT id, canonical_id, client_id, external_id, display_name, description,
+		        governance_url, user_documentation_url, agent_interface_url,
+		        service_requirements, permission_sets, redirect_uris, allowed_scopes, created_at, updated_at
+		 FROM agents WHERE external_id = $1`,
+		externalID,
+	)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindTimeout, err, "operation exceeded timeout")
+		}
+		return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindConnection, err, "failed to list agents")
+	}
+	defer func() { _ = rows.Close() }()
+
+	agents, err := r.scanAgentRows(queryCtx, rows, "GetAgentByExternalID")
+	if err != nil {
+		return nil, err
+	}
+	if len(agents) == 0 {
+		return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
+	}
+	return agents[0], nil
+}
+
 func (r *AgentRepository) scanAgentRows(ctx context.Context, rows *sql.Rows, operation string) ([]*storage.Agent, error) {
 	agents := make([]*storage.Agent, 0)
 	for rows.Next() {
@@ -595,12 +642,12 @@ func (r *AgentRepository) scanAgentRows(ctx context.Context, rows *sql.Rows, ope
 		}
 		if len(serviceReqsJSON) > 0 {
 			if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
-				return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal service_requirements from JSON")
+				return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, err, "failed to unmarshal service_requirements from JSON")
 			}
 		}
 		if len(permissionSetsJSON) > 0 {
 			if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
-				return nil, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "failed to unmarshal permission_sets from JSON")
+				return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, err, "failed to unmarshal permission_sets from JSON")
 			}
 		}
 		agents = append(agents, agent)
@@ -720,7 +767,7 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 		if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgentByClientID",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal service_requirements from JSON",
 			)
@@ -731,7 +778,7 @@ func (r *AgentRepository) GetByClientID(ctx context.Context, clientID id.ClientI
 		if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
 			return nil, storage.NewStorageError(
 				"GetAgentByClientID",
-				storage.ErrorKindValidation,
+				storage.ErrorKindUnknown,
 				err,
 				"failed to unmarshal permission_sets from JSON",
 			)
@@ -871,13 +918,13 @@ func (r *AgentRepository) GetByClientURI(ctx context.Context, uri string) (*stor
 
 	if len(serviceReqsJSON) > 0 {
 		if err := json.Unmarshal(serviceReqsJSON, &agent.ServiceRequirements); err != nil {
-			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindValidation, err, "failed to unmarshal service_requirements from JSON")
+			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindUnknown, err, "failed to unmarshal service_requirements from JSON")
 		}
 	}
 
 	if len(permissionSetsJSON) > 0 {
 		if err := json.Unmarshal(permissionSetsJSON, &agent.PermissionSets); err != nil {
-			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindValidation, err, "failed to unmarshal permission_sets from JSON")
+			return nil, storage.NewStorageError("GetAgentByClientURI", storage.ErrorKindUnknown, err, "failed to unmarshal permission_sets from JSON")
 		}
 	}
 

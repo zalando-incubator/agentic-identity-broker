@@ -2,6 +2,8 @@ package oauth2session_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -271,6 +273,198 @@ func TestHandleCallbackSecurity_PublicClientUsesBodyClientIDWithoutCredentialsAc
 	assert.Zero(t, assertionSignerCallCount(signer), "public code exchange behavior must not invoke the CIMD signer")
 }
 
+func TestHandleCallbackSecurity_CIMDPublicClientExchangesAndRefreshesWithoutAuthentication(t *testing.T) {
+	const (
+		code         = "cimd-public-code"
+		firstAccess  = "cimd-public-access"
+		firstRefresh = "cimd-public-refresh"
+		newAccess    = "cimd-public-rotated-access"
+		newRefresh   = "cimd-public-rotated-refresh"
+	)
+	ctx := context.Background()
+	var logs strings.Builder
+	sessions := memory.NewInMemoryUserSessionRepository()
+	service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.NewJSONHandler(&logs, nil)), 2, sessions)
+	signer := &cimdAssertionSignerSpy{}
+	service = service.WithCIMDAssertionSigner(signer)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+	clientID := cimdClientIDForService(serviceID)
+	requests := make(chan capturedTokenExchangeRequest, 4)
+	var exchangeAttempts atomic.Int32
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		form, parseErr := url.ParseQuery(string(body))
+		request := capturedTokenExchangeRequest{
+			method: r.Method, body: form, header: r.Header.Clone(), query: r.URL.Query(),
+			err: errorsJoin(readErr, parseErr),
+		}
+		requests <- request
+		w.Header().Set("Content-Type", "application/json")
+		if request.err != nil || hasCredentialMaterial(request) || form.Get("client_id") != clientID {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
+			return
+		}
+		if form.Get("grant_type") == "authorization_code" && exchangeAttempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"error":"server_error"}`)
+			return
+		}
+		switch form.Get("grant_type") {
+		case "authorization_code":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": firstAccess, "refresh_token": firstRefresh, "token_type": "Bearer", "expires_in": 3600,
+			})
+		case "refresh_token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": newAccess, "refresh_token": newRefresh, "token_type": "Bearer", "expires_in": 3600,
+			})
+		default:
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"unsupported_grant_type"}`)
+		}
+	}))
+	defer tokenServer.Close()
+
+	provider := createCIMDPublicTestProvider(serviceID, tokenServer.URL)
+	require.NoError(t, providerService.Create(ctx, provider))
+	assert.Equal(t, id.ClientID(clientID), provider.ClientID)
+	assert.True(t, provider.IsCIMDClient())
+	assert.True(t, provider.IsCIMDPublicClient())
+
+	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
+	require.NoError(t, err)
+	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	require.NoError(t, err)
+	require.NotEmpty(t, claims.PKCEVerifier)
+	authorizationURL, err := url.Parse(flow.AuthorizationURL)
+	require.NoError(t, err)
+	assert.Equal(t, clientID, authorizationURL.Query().Get("client_id"))
+	assert.Equal(t, "S256", authorizationURL.Query().Get("code_challenge_method"))
+	challenge := sha256.Sum256([]byte(claims.PKCEVerifier))
+	assert.Equal(t, base64.RawURLEncoding.EncodeToString(challenge[:]), authorizationURL.Query().Get("code_challenge"))
+
+	connected, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
+		ServiceID: serviceID, Code: code, State: flow.StateToken,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, connected.Session)
+	assert.NotEqual(t, []byte(firstAccess), connected.Session.EncryptedAccessToken)
+	assert.NotEqual(t, []byte(firstRefresh), connected.Session.EncryptedRefreshToken)
+	access, err := service.DecryptAccessToken(ctx, connected.Session)
+	require.NoError(t, err)
+	assert.Equal(t, firstAccess, access)
+	refresh, err := service.DecryptRefreshToken(ctx, connected.Session)
+	require.NoError(t, err)
+	assert.Equal(t, firstRefresh, refresh)
+
+	refreshed, err := service.ForceRefreshSession(ctx, principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, refreshed)
+	persisted, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	assert.Equal(t, connected.Session.ID, persisted.ID)
+	assert.NotEqual(t, []byte(newAccess), persisted.EncryptedAccessToken)
+	assert.NotEqual(t, []byte(newRefresh), persisted.EncryptedRefreshToken)
+	access, err = service.DecryptAccessToken(ctx, persisted)
+	require.NoError(t, err)
+	assert.Equal(t, newAccess, access)
+	refresh, err = service.DecryptRefreshToken(ctx, persisted)
+	require.NoError(t, err)
+	assert.Equal(t, newRefresh, refresh)
+
+	require.Len(t, requests, 3, "one transient exchange retry and one refresh without authentication probing")
+	for range 2 {
+		exchangeRequest := <-requests
+		assertPublicTokenExchangeRequest(t, exchangeRequest, clientID, code)
+		assert.Equal(t, "authorization_code", exchangeRequest.body.Get("grant_type"))
+		assert.Equal(t, claims.PKCEVerifier, exchangeRequest.body.Get("code_verifier"))
+	}
+	assertPublicTokenRefreshRequest(t, <-requests, clientID, firstRefresh)
+	assert.Zero(t, assertionSignerCallCount(signer), "CIMD public exchange and refresh must never sign an assertion")
+	assertSecurityEventsMarkPublicClient(t, logs.String(),
+		"session.oauth2.flow_initiated", "session.oauth2.session_established", "session.oauth2.token_refreshed")
+	for _, private := range []string{code, claims.PKCEVerifier, firstAccess, firstRefresh, newAccess, newRefresh} {
+		assert.NotContains(t, logs.String(), private)
+	}
+}
+
+func TestHandleCallbackSecurity_CIMDPublicClientInvalidClientDoesNotRetryOrFallback(t *testing.T) {
+	for _, rejectedGrant := range []string{"authorization_code", "refresh_token"} {
+		t.Run(rejectedGrant, func(t *testing.T) {
+			ctx := context.Background()
+			sessions := memory.NewInMemoryUserSessionRepository()
+			service, providerService := newSecurityTestOAuth2SessionServiceWithSessions(t, slog.New(slog.DiscardHandler), 3, sessions)
+			signer := &cimdAssertionSignerSpy{}
+			service = service.WithCIMDAssertionSigner(signer)
+			serviceID := id.NewServiceID()
+			clientID := cimdClientIDForService(serviceID)
+			principal := id.Principal("user@example.com")
+			requests := make(chan capturedTokenExchangeRequest, 6)
+			tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, readErr := io.ReadAll(r.Body)
+				form, parseErr := url.ParseQuery(string(body))
+				requests <- capturedTokenExchangeRequest{
+					method: r.Method, body: form, header: r.Header.Clone(), query: r.URL.Query(),
+					err: errorsJoin(readErr, parseErr),
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if form.Get("grant_type") == rejectedGrant {
+					w.WriteHeader(http.StatusUnauthorized)
+					_, _ = io.WriteString(w, `{"error":"invalid_client"}`)
+					return
+				}
+				_, _ = io.WriteString(w, `{"access_token":"initial-access","refresh_token":"initial-refresh","token_type":"Bearer","expires_in":3600}`)
+			}))
+			defer tokenServer.Close()
+
+			provider := createCIMDPublicTestProvider(serviceID, tokenServer.URL)
+			require.NoError(t, providerService.Create(ctx, provider))
+			flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
+			require.NoError(t, err)
+			claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+			require.NoError(t, err)
+			connected, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
+				ServiceID: serviceID, Code: "rejected-code", State: flow.StateToken,
+			})
+			if rejectedGrant == "authorization_code" {
+				require.ErrorIs(t, err, oauth2session.ErrTokenExchange)
+				assert.Nil(t, connected)
+				assertOperationMetadata(t, err, oauth2session.OperationCodeExchange, oauth2session.DetailProviderClientRejected)
+				require.Len(t, requests, 1, "invalid_client must not retry code exchange")
+				request := <-requests
+				assertPublicTokenExchangeRequest(t, request, clientID, "rejected-code")
+				assert.Equal(t, claims.PKCEVerifier, request.body.Get("code_verifier"))
+				count, countErr := sessions.CountByService(ctx, serviceID)
+				require.NoError(t, countErr)
+				assert.Zero(t, count, "a rejected exchange must not persist a session")
+			} else {
+				require.NoError(t, err)
+				require.NotNil(t, connected.Session)
+				before, findErr := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+				require.NoError(t, findErr)
+				require.NotNil(t, before)
+				refreshed, refreshErr := service.ForceRefreshSession(ctx, principal, serviceID)
+				require.ErrorIs(t, refreshErr, oauth2session.ErrRefreshFailed)
+				assert.Nil(t, refreshed)
+				require.Len(t, requests, 2, "invalid_client must not retry refresh or try another method")
+				request := <-requests
+				assertPublicTokenExchangeRequest(t, request, clientID, "rejected-code")
+				assert.Equal(t, claims.PKCEVerifier, request.body.Get("code_verifier"))
+				assertPublicTokenRefreshRequest(t, <-requests, clientID, "initial-refresh")
+				after, findErr := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
+				require.NoError(t, findErr)
+				require.NotNil(t, after)
+				assert.Equal(t, before.EncryptedAccessToken, after.EncryptedAccessToken)
+				assert.Equal(t, before.EncryptedRefreshToken, after.EncryptedRefreshToken)
+			}
+			assert.Zero(t, assertionSignerCallCount(signer), "invalid_client must not trigger a signed assertion fallback")
+		})
+	}
+}
+
 // T057: CIMD clients must use a fresh private_key_jwt assertion for every code-exchange attempt.
 func TestHandleCallbackSecurity_CIMDClientReSignsEachRetryWithoutCredentialDowngrade(t *testing.T) {
 	logOutput := new(strings.Builder)
@@ -421,7 +615,7 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 		provider := createCIMDTestProvider(serviceID, tokenServer.URL)
 		require.NoError(t, providerService.Create(context.Background(), provider))
 
-		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+		_, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 		require.NoError(t, err)
 		assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "success")
 	})
@@ -433,7 +627,7 @@ func TestRefreshAccessTokenSecurity_CIMDClientAuditsSuccessAndRejection(t *testi
 		provider := createCIMDTestProvider(serviceID, "https://issuer.example.com/oauth/token")
 		require.NoError(t, providerService.Create(context.Background(), provider))
 
-		_, err := service.RefreshAccessToken(context.Background(), provider, "")
+		_, err := service.RefreshAccessToken(context.Background(), provider, "", nil)
 
 		require.Error(t, err)
 		assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "rejected")
@@ -473,7 +667,7 @@ func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *test
 						provider.Secret = model.NewAbsentSecret()
 					}
 
-					token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+					token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 					require.Error(t, err)
 					assert.Nil(t, token)
 					if failure == "drain read error" {
@@ -491,7 +685,7 @@ func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *test
 }
 
 func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *testing.T) {
-	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+	service, _ := newSecurityTestOAuth2SessionService(t, slog.New(slog.DiscardHandler), 1)
 	service = service.WithCIMDAssertionSigner(&cimdAssertionSignerSpy{})
 	var requests atomic.Int64
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -503,7 +697,7 @@ func TestRefreshAccessTokenSecurity_RejectsPersistedCIMDCredentialInTokenURL(t *
 
 	provider := createCIMDTestProvider(id.NewServiceID(), tokenServer.URL+"?client_secret=stale-secret")
 	provider.ClientID = id.ClientID(cimdClientIDForService(provider.ID))
-	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+	token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailConfiguration)
 	assert.Nil(t, token)
 	assert.Zero(t, requests.Load(), "an invalid persisted CIMD configuration must not send a token request")
@@ -1277,9 +1471,9 @@ func TestRefreshAccessTokenSecurity_DiscoveredFailuresPreserveContextErrors(t *t
 				calls.Add(1)
 				return nil, want
 			})}
-			service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), client)
+			service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.DiscardHandler), client)
 			provider := storedDCRSessionProvider(id.NewServiceID(), "https://auth.example.test/token", model.TokenEndpointAuthMethodNone, "", "https://mcp.example.test/mcp", "https://mcp.example.test/mcp")
-			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+			token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 			require.ErrorIs(t, err, want)
 			assert.Nil(t, token)
 			assert.EqualValues(t, 1, calls.Load())
@@ -1294,13 +1488,13 @@ func TestRefreshAccessTokenSecurity_DiscoveredUnsafeEndpointRejectedBeforeReques
 		calls.Add(1)
 		return nil, errors.New("unsafe destination was contacted")
 	})}
-	service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.NewTextHandler(io.Discard, nil)), client)
+	service, _, _ := newDiscoveredSecurityTestService(t, slog.New(slog.DiscardHandler), client)
 	for _, endpoint := range []string{
 		"http://auth.example.test/token?trace=" + marker,
 		"https://127.0.0.1/token?trace=" + marker,
 	} {
 		provider := storedDCRSessionProvider(id.NewServiceID(), endpoint, model.TokenEndpointAuthMethodNone, "", "https://mcp.example.test/mcp", "https://mcp.example.test/mcp")
-		token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token")
+		token, err := service.RefreshAccessToken(context.Background(), provider, "refresh-token", nil)
 		require.Error(t, err)
 		assert.Nil(t, token)
 		assert.NotContains(t, err.Error(), marker)
@@ -1411,20 +1605,48 @@ func assertPublicTokenExchangeRequest(
 	assert.Equal(t, code, request.body.Get("code"))
 	assert.NotEmpty(t, request.body.Get("code_verifier"))
 	assert.NotContains(t, request.body, "client_secret")
+	assert.NotContains(t, request.body, "client_assertion")
+	assert.NotContains(t, request.body, "client_assertion_type")
 	assert.Equal(t, http.MethodPost, request.method)
 	assert.Empty(t, request.header.Values("Authorization"))
-	assert.NotContains(t, request.query, "client_id")
-	assert.NotContains(t, request.query, "client_secret")
+	assert.Empty(t, request.query)
+}
+
+func assertPublicTokenRefreshRequest(t *testing.T, request capturedTokenExchangeRequest, clientID, refreshToken string) {
+	t.Helper()
+
+	require.NoError(t, request.err)
+	assert.Equal(t, http.MethodPost, request.method)
+	assert.Equal(t, "refresh_token", request.body.Get("grant_type"))
+	assert.Equal(t, clientID, request.body.Get("client_id"))
+	assert.Equal(t, refreshToken, request.body.Get("refresh_token"))
+	for _, forbidden := range []string{"client_secret", "client_assertion", "client_assertion_type", "code_verifier"} {
+		assert.NotContains(t, request.body, forbidden)
+	}
+	assert.Empty(t, request.header.Values("Authorization"))
+	assert.Empty(t, request.query)
 }
 
 func hasCredentialMaterial(request capturedTokenExchangeRequest) bool {
 	if _, hasClientSecret := request.body["client_secret"]; hasClientSecret {
 		return true
 	}
+	if _, hasAssertion := request.body["client_assertion"]; hasAssertion {
+		return true
+	}
+	if _, hasAssertionType := request.body["client_assertion_type"]; hasAssertionType {
+		return true
+	}
 	if len(request.header.Values("Authorization")) != 0 {
 		return true
 	}
 	if _, hasClientIDQuery := request.query["client_id"]; hasClientIDQuery {
+		return true
+	}
+	if _, hasAssertionQuery := request.query["client_assertion"]; hasAssertionQuery {
+		return true
+	}
+	if _, hasAssertionTypeQuery := request.query["client_assertion_type"]; hasAssertionTypeQuery {
 		return true
 	}
 	_, hasClientSecretQuery := request.query["client_secret"]
@@ -1474,6 +1696,16 @@ func createCIMDTestProvider(serviceID id.ServiceID, tokenEndpoint string) *model
 	return provider
 }
 
+func createCIMDPublicTestProvider(serviceID id.ServiceID, tokenEndpoint string) *model.ThirdpartyOAuth2ProviderEntity {
+	provider := createTestService(serviceID)
+	provider.ClientID = ""
+	provider.ClientRegistration = model.ClientRegistrationCIMD
+	provider.Endpoints.TokenEndpoint = tokenEndpoint
+	provider.TokenEndpointAuthMethod = model.TokenEndpointAuthMethodNone
+	provider.Secret = model.NewAbsentSecret()
+	return provider
+}
+
 type cimdAssertionSignerCall struct {
 	clientID      id.ClientID
 	tokenEndpoint string
@@ -1511,4 +1743,43 @@ func assertionSignerCallCount(signer *cimdAssertionSignerSpy) int {
 		return 0
 	}
 	return len(signer.Requests())
+}
+
+func TestValidateStateTokenSecurity_MalformedClaimsRetainInvalidStateSentinel(t *testing.T) {
+	service, _, _ := setupService(t)
+	key, err := jwk.Import[jwk.Key]([]byte("test-secret-key-must-be-32-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, key.Set(jwk.KeyIDKey, "test-key"))
+	require.NoError(t, key.Set(jwk.AlgorithmKey, "A256GCM"))
+	jweService := domjwe.New(key)
+	principal := id.Principal("state-security@example.com")
+	serviceID := id.NewServiceID()
+	for _, malformed := range []string{"principal", "issuer", "resource", "upstream identity"} {
+		t.Run(malformed, func(t *testing.T) {
+			now := time.Now()
+			claims := &oauth2session.OAuth2StateTokenClaims{
+				Principal: principal, ServiceID: serviceID, PKCEVerifier: "test-verifier",
+				RedirectURI: "https://broker.example.com/sessions", IssuedAt: now, ExpiresAt: now.Add(time.Minute),
+			}
+			switch malformed {
+			case "principal":
+				claims.Principal = ""
+			case "issuer":
+				claims.IssuerURI = "https://auth.example.test"
+			case "resource":
+				claims.Resource = "https://mcp.example.test/mcp"
+			case "upstream identity":
+				empty := id.ClientID("")
+				claims.UpstreamClientID = &empty
+			}
+			state, err := jweService.Encrypt(claims)
+			require.NoError(t, err)
+			validated, err := service.ValidateStateToken(state, principal, serviceID)
+			assert.Nil(t, validated)
+			require.ErrorIs(t, err, oauth2session.ErrInvalidStateToken)
+			if malformed == "upstream identity" {
+				assert.ErrorIs(t, err, model.ErrCredentialSourceUnavailable)
+			}
+		})
+	}
 }

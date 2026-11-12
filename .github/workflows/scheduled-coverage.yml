@@ -34,12 +34,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Install just
-        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: just
       - name: Install Ginkgo and Playwright
         run: |
-          go install github.com/onsi/ginkgo/v2/ginkgo@v2.33.0
+          go install github.com/onsi/ginkgo/v2/ginkgo@v2.34.0
           go run github.com/mxschmitt/playwright-go/cmd/playwright@v0.6201.1 install --with-deps
       - name: Pre-pull E2E images
         run: |

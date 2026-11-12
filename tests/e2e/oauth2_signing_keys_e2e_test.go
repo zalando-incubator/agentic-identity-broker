@@ -3,7 +3,6 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -135,7 +134,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	}
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		config := fixtures.LocalConfig()
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		var err error

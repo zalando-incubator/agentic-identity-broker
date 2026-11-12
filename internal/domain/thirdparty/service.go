@@ -64,7 +64,7 @@ func NewThirdpartyOAuth2ProviderService(
 	logger *slog.Logger,
 ) *ThirdpartyOAuth2ProviderService {
 	if logger == nil {
-		logger = slog.Default()
+		panic("thirdparty.NewThirdpartyOAuth2ProviderService: logger must not be nil")
 	}
 	if repo == nil {
 		panic("thirdparty.NewThirdpartyOAuth2ProviderService: repo must not be nil")
@@ -125,13 +125,17 @@ func (s *ThirdpartyOAuth2ProviderService) WithDiscoveryStatusWriter(writer ports
 // message is safe to return when an implementation error may contain secrets.
 var errDiscoveryInfrastructure = errors.New("discovery infrastructure unavailable")
 
-func (s *ThirdpartyOAuth2ProviderService) auditCIMD(serviceID id.ServiceID, operation, outcome string) {
-	s.logger.Info("CIMD confidential service", "service_id", serviceID, "operation", operation, "outcome", outcome)
+func (s *ThirdpartyOAuth2ProviderService) auditCIMD(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, operation, outcome string) {
+	message := "CIMD confidential service"
+	if entity.IsCIMDPublicClient() {
+		message = "CIMD public service"
+	}
+	s.logger.InfoContext(ctx, message, "service_id", entity.ID, "operation", operation, "outcome", outcome)
 }
 
 // auditDiscovery uses validated metadata or persisted state for issuer and method.
 // It never records URL queries, remote bodies, or credentials.
-func (s *ThirdpartyOAuth2ProviderService) auditDiscovery(entity *model.ThirdpartyOAuth2ProviderEntity, operation string, result error, known *model.ThirdpartyOAuth2ProviderEntity) {
+func (s *ThirdpartyOAuth2ProviderService) auditDiscovery(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, operation string, result error, known *model.ThirdpartyOAuth2ProviderEntity) {
 	fields := []any{"service_id", entity.ID, "operation", operation}
 	if known != nil {
 		fields = append(fields, "issuer", known.IssuerURI, "client_method", known.Discovery.ClientMethod)
@@ -162,7 +166,7 @@ func (s *ThirdpartyOAuth2ProviderService) auditDiscovery(entity *model.Thirdpart
 			fields = append(fields, "failure_code", "internal_failure")
 		}
 	}
-	s.logger.Info("protected-resource discovery", fields...)
+	s.logger.InfoContext(ctx, "protected-resource discovery", fields...)
 }
 
 // DiscoveryAttemptTimeout bounds resource discovery and registration together.
@@ -198,6 +202,7 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryCreate(ctx context.Con
 	entity.Endpoints = selected.endpoints
 	entity.Discovery.ClientMethod = selected.method
 	entity.TokenEndpointAuthMethod = selected.auth
+	entity.ClientRegistration = selected.registration
 	if selected.method == model.ClientBootstrapDCR {
 		entity.ClientID = selected.clientID
 		entity.Secret = selected.secret
@@ -208,16 +213,12 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryCreate(ctx context.Con
 
 // prepareDiscoveryUpdate refreshes the active issuer without changing the client
 // method. Issuer or effective audience changes first require zero user sessions.
-func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) (completedAt time.Time, persistedResult *model.ThirdpartyOAuth2ProviderEntity, resultErr error) {
+func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Context, entity, persisted *model.ThirdpartyOAuth2ProviderEntity) (completedAt time.Time, persistedResult *model.ThirdpartyOAuth2ProviderEntity, resultErr error) {
 	if entity.ID.IsZero() {
 		return time.Time{}, nil, fmt.Errorf("provider validation failed: provider ID cannot be empty")
 	}
 	if err := entity.ValidateDiscoveryRequest(); err != nil {
 		return time.Time{}, nil, fmt.Errorf("provider validation failed: %w", err)
-	}
-	persisted, err := s.repo.Get(ctx, entity.ID)
-	if err != nil {
-		return time.Time{}, nil, err
 	}
 	if persisted.Discovery.ResourceURL == nil || persisted.Discovery.ClientMethod != model.ClientBootstrapCIMD && persisted.Discovery.ClientMethod != model.ClientBootstrapDCR {
 		return time.Time{}, nil, discoveryFailure("client_method_changed")
@@ -307,6 +308,7 @@ func (s *ThirdpartyOAuth2ProviderService) prepareDiscoveryUpdate(ctx context.Con
 	entity.Endpoints = endpoints
 	entity.Discovery.ClientMethod = persisted.Discovery.ClientMethod
 	entity.TokenEndpointAuthMethod = persisted.TokenEndpointAuthMethod
+	entity.ClientRegistration = model.ResolveClientRegistration(persisted.TokenEndpointAuthMethod)
 	return time.Now().UTC(), persisted, nil
 }
 
@@ -365,19 +367,19 @@ func (s *ThirdpartyOAuth2ProviderService) CanonicalIDs(ctx context.Context, ids 
 	return map[id.ServiceID]string{}, nil
 }
 
-// HasCompatibleCIMDServices verifies that every persisted CIMD service has the client ID
-// derived from the configured public origin. It never rewrites persisted identities.
-func (s *ThirdpartyOAuth2ProviderService) HasCompatibleCIMDServices(ctx context.Context) (bool, error) {
+// VerifyCIMDServiceIdentities checks persisted hosted identities against the public origin.
+// It reports whether a CIMD confidential service needs a client-authentication key.
+func (s *ThirdpartyOAuth2ProviderService) VerifyCIMDServiceIdentities(ctx context.Context) (bool, error) {
 	services, err := s.repo.List(ctx)
 	if err != nil {
 		return false, fmt.Errorf("list persisted CIMD services: %w", err)
 	}
-	hasCIMDService := false
+	requiresClientKey := false
 	for _, service := range services {
-		if !service.IsCIMDConfidentialClient() {
+		if !service.IsCIMDClient() {
 			continue
 		}
-		hasCIMDService = true
+		requiresClientKey = requiresClientKey || service.IsCIMDConfidentialClient()
 		expected, err := model.CIMDClientID(s.cimdPublicURL, service.ID)
 		if err != nil {
 			return false, fmt.Errorf("server.enduser.public_url is invalid for CIMD service %s: %w", service.ID, err)
@@ -386,7 +388,7 @@ func (s *ThirdpartyOAuth2ProviderService) HasCompatibleCIMDServices(ctx context.
 			return false, fmt.Errorf("CIMD service %s client_id does not match server.enduser.public_url", service.ID)
 		}
 	}
-	return hasCIMDService, nil
+	return requiresClientKey, nil
 }
 
 // Create validates, provisions a branch key, conditionally encrypts the secret, and stores the entity.
@@ -400,7 +402,7 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	var attemptedAt time.Time
 	var selected *model.ThirdpartyOAuth2ProviderEntity
 	if discovered {
-		defer func() { s.auditDiscovery(entity, "create", resultErr, selected) }()
+		defer func() { s.auditDiscovery(ctx, entity, "create", resultErr, selected) }()
 		var err error
 		attemptedAt, err = s.prepareDiscoveryCreate(ctx, entity)
 		if err != nil {
@@ -409,15 +411,15 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		selected = entity
 	}
 	if err := entity.ValidateForCreate(s.skipHTTPSValidation); err != nil {
-		if !discovered && entity.IsCIMDConfidentialClient() {
-			s.auditCIMD(entity.ID, "create", "rejected")
+		if !discovered && (entity.IsCIMDClient() || entity.IsCIMDConfidentialClient()) {
+			s.auditCIMD(ctx, entity, "create", "rejected")
 		}
 		return fmt.Errorf("provider validation failed: %w", err)
 	}
 	entity.NormalizeProtectedResources()
 	if err := entity.ValidateProtectedResources(); err != nil {
-		if !discovered && entity.IsCIMDConfidentialClient() {
-			s.auditCIMD(entity.ID, "create", "rejected")
+		if !discovered && entity.IsCIMDClient() {
+			s.auditCIMD(ctx, entity, "create", "rejected")
 		}
 		return fmt.Errorf("provider validation failed: %w", err)
 	}
@@ -425,11 +427,11 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	if entity.ID.IsZero() {
 		entity.ID = id.NewServiceID()
 	}
-	if entity.IsCIMDConfidentialClient() {
+	if entity.IsCIMDClient() {
 		clientID, err := model.CIMDClientID(s.cimdPublicURL, entity.ID)
 		if err != nil {
 			if !discovered {
-				s.auditCIMD(entity.ID, "create", "rejected")
+				s.auditCIMD(ctx, entity, "create", "rejected")
 			}
 			if discovered {
 				return discoveryFailure("cimd_unavailable")
@@ -440,11 +442,11 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	}
 	if !discovered && entity.IsCIMDConfidentialClient() {
 		if s.cimdKeyReadiness == nil {
-			s.auditCIMD(entity.ID, "create", "rejected")
+			s.auditCIMD(ctx, entity, "create", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", ports.ErrCIMDPublicKeyUnavailable)
 		}
 		if err := s.cimdKeyReadiness.RequireUsablePublishedKey(ctx); err != nil {
-			s.auditCIMD(entity.ID, "create", "rejected")
+			s.auditCIMD(ctx, entity, "create", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", err)
 		}
 	}
@@ -453,9 +455,9 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	branchKeyID, err := s.branchKeyManager.Create(ctx, serviceSubject)
 	if err != nil {
 		if !discovered {
-			s.logger.Error("failed to provision branch key", "service_id", entity.ID, "error", err)
-			if entity.IsCIMDConfidentialClient() {
-				s.auditCIMD(entity.ID, "create", "rejected")
+			s.logger.ErrorContext(ctx, "failed to provision branch key", "service_id", entity.ID, "error", err)
+			if entity.IsCIMDClient() {
+				s.auditCIMD(ctx, entity, "create", "rejected")
 			}
 		}
 		if discovered && errors.Is(ctx.Err(), context.Canceled) {
@@ -467,10 +469,10 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		return fmt.Errorf("branch key provisioning failed: %w", err)
 	}
 	if !discovered {
-		s.logger.Info("branch key provisioned", "service_id", entity.ID, "branch_key_id", branchKeyID)
+		s.logger.InfoContext(ctx, "branch key provisioned", "service_id", entity.ID, "branch_key_id", branchKeyID)
 	}
 
-	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
+	if entity.CredentialSource != model.CredentialSourceFilesystem && !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() {
 		plaintext, err := entity.Secret.GetPlaintext()
 		if err != nil {
 			return fmt.Errorf("entity secret must be in plaintext state for create: %w", err)
@@ -478,7 +480,7 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
 		if err != nil {
 			if !discovered {
-				s.logger.Error("encryption_failed", "operation", "create_provider", "service_id", entity.ID, "reason", err)
+				s.logger.ErrorContext(ctx, "encryption_failed", "operation", "create_provider", "service_id", entity.ID, "reason", err)
 			}
 			if discovered && errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
@@ -490,7 +492,7 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		}
 		entity.Secret = model.NewEncryptedSecret(ciphertext)
 		if !discovered {
-			s.logger.Info("service_secret_encrypted", "operation", "create", "service_id", entity.ID)
+			s.logger.InfoContext(ctx, "service_secret_encrypted", "operation", "create", "service_id", entity.ID)
 		}
 	}
 
@@ -498,8 +500,8 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 		entity.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &attemptedAt, LastSuccessAt: &attemptedAt}
 	}
 	if err := s.repo.Create(ctx, entity); err != nil {
-		if !discovered && entity.IsCIMDConfidentialClient() {
-			s.auditCIMD(entity.ID, "create", "rejected")
+		if !discovered && entity.IsCIMDClient() {
+			s.auditCIMD(ctx, entity, "create", "rejected")
 		}
 		return fmt.Errorf("failed to store provider: %w", err)
 	}
@@ -507,11 +509,11 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	if discovered {
 		return nil
 	}
-	if entity.IsCIMDConfidentialClient() {
-		s.auditCIMD(entity.ID, "create", "success")
+	if entity.IsCIMDClient() {
+		s.auditCIMD(ctx, entity, "create", "success")
 		return nil
 	}
-	s.logger.Info("provider_created", "event", "service.thirdparty.provider_created", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
+	s.logger.InfoContext(ctx, "provider_created", "event", "service.thirdparty.provider_created", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
 	return nil
 }
 
@@ -534,19 +536,19 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 
 	// Guard: verify ID consistency for data integrity
 	if entity.ID != serviceID {
-		s.logger.Error("service_id_mismatch",
+		s.logger.ErrorContext(ctx, "service_id_mismatch",
 			"expected_id", serviceID,
 			"actual_id", entity.ID)
 		return nil, fmt.Errorf("provider ID mismatch: expected %s, got %s", serviceID, entity.ID)
 	}
 
-	if entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
+	if entity.CredentialSource == model.CredentialSourceFilesystem || entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
 		return entity, nil
 	}
 
 	dec, decErr := s.decryptSecret(ctx, entity)
 	if decErr != nil {
-		s.logger.Warn("secret_decryption_failed_returning_encrypted",
+		s.logger.WarnContext(ctx, "secret_decryption_failed_returning_encrypted",
 			"operation", "get",
 			"service_id", entity.ID,
 			"error_kind", "decryption_failed",
@@ -565,7 +567,7 @@ func (s *ThirdpartyOAuth2ProviderService) GetForTokenAcquisition(ctx context.Con
 	if entity == nil || entity.ID != serviceID {
 		return nil, ErrProviderConfiguration
 	}
-	if entity.IsPublicClient() || entity.IsCIMDConfidentialClient() || entity.Secret.IsPlaintext() {
+	if entity.CredentialSource == model.CredentialSourceFilesystem || entity.IsPublicClient() || entity.IsCIMDConfidentialClient() || entity.Secret.IsPlaintext() {
 		return entity, nil
 	}
 	decrypted, err := s.decryptSecret(ctx, entity)
@@ -620,7 +622,7 @@ func (s *ThirdpartyOAuth2ProviderService) GetCIMDClientService(
 	if err != nil {
 		return nil, err
 	}
-	if entity == nil || entity.ID != serviceID || !entity.IsCIMDConfidentialClient() || entity.ClientID.IsZero() {
+	if entity == nil || entity.ID != serviceID || !entity.IsCIMDClient() || entity.ClientID.IsZero() {
 		return nil, ports.ErrNotFound
 	}
 	return &ports.CIMDClientServiceProjection{
@@ -637,18 +639,73 @@ func (s *ThirdpartyOAuth2ProviderService) GetByIDs(ctx context.Context, ids []id
 		return nil, err
 	}
 	for i, entity := range entities {
-		if entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
+		if entity.CredentialSource == model.CredentialSourceFilesystem || entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
 			continue
 		}
 		dec, decErr := s.decryptSecret(ctx, entity)
 		if decErr != nil {
-			s.logger.Warn("secret_decryption_failed_returning_encrypted",
+			s.logger.WarnContext(ctx, "secret_decryption_failed_returning_encrypted",
 				"operation", "get_by_ids", "service_id", entity.ID, "reason", decErr)
 			continue
 		}
 		entities[i] = dec
 	}
 	return entities, nil
+}
+
+func (s *ThirdpartyOAuth2ProviderService) ValidateUpdate(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) error {
+	candidate := *entity
+	if _, err := s.prepareUpdate(ctx, &candidate); err != nil {
+		return err
+	}
+	if candidate.Discovery.ResourceURL != nil {
+		return candidate.ValidateDiscoveryRequest()
+	}
+	return candidate.ValidateForUpdate(s.skipHTTPSValidation)
+}
+
+func (s *ThirdpartyOAuth2ProviderService) prepareUpdate(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	if entity.Discovery.ResourceURL != nil {
+		candidate := *entity
+		if err := candidate.ValidateDiscoveryRequest(); err != nil {
+			return nil, err
+		}
+		if entity.ID.IsZero() {
+			return nil, errors.New("provider ID cannot be empty")
+		}
+	} else {
+		if entity.ID.IsZero() || entity.DisplayName == "" {
+			return nil, entity.ValidateForUpdate(s.skipHTTPSValidation)
+		}
+		if (entity.CredentialSource != model.CredentialSourceFilesystem && (!entity.Secret.IsAbsent() || !entity.ClientID.IsZero())) || entity.IsPublicClient() || entity.IsCIMDConfidentialClient() || entity.Flavor == model.OAuth2FlavorGoogle {
+			candidate := *entity
+			if err := candidate.ValidateForUpdate(s.skipHTTPSValidation); err != nil {
+				return nil, err
+			}
+		}
+	}
+	persisted, err := s.repo.Get(ctx, entity.ID)
+	if err != nil {
+		return nil, err
+	}
+	previousSource := persisted.CredentialSource
+	if previousSource == "" {
+		previousSource = model.CredentialSourceStored
+	}
+	if !entity.CredentialSourceProvided && entity.CredentialSource == "" {
+		entity.CredentialSource = previousSource
+	}
+	if entity.CanonicalID == nil && !entity.ClearCanonicalID {
+		entity.CanonicalID = persisted.CanonicalID
+	}
+	if persisted.CredentialSource == model.CredentialSourceFilesystem && entity.CredentialSource == model.CredentialSourceStored {
+		secret, secretErr := entity.Secret.GetPlaintext()
+		if !entity.ClientIDProvided || !entity.ClientSecretProvided || entity.ClientID.IsZero() || secretErr != nil || secret == "" {
+			return nil, errors.New("explicit client_id and client_secret are required when returning to stored credential_source")
+		}
+	}
+	entity.CredentialSourceTransitioned = persisted.CredentialSourceTransitioned || previousSource != entity.CredentialSource
+	return persisted, nil
 }
 
 // Update validates, provisions a branch key, conditionally encrypts the secret, and stores the entity.
@@ -675,10 +732,23 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 			if selected != nil {
 				known = selected
 			}
-			s.auditDiscovery(entity, "update", resultErr, known)
+			s.auditDiscovery(ctx, entity, "update", resultErr, known)
 		}()
+	}
+	persisted, err := s.prepareUpdate(ctx, entity)
+	if err != nil {
+		if !discovered && (entity.IsCIMDClient() || entity.IsCIMDConfidentialClient()) {
+			s.auditCIMD(ctx, entity, "update", "rejected")
+		}
+		var storageErr *storage.StorageError
+		if errors.As(err, &storageErr) {
+			return err
+		}
+		return storage.NewStorageError("UpdateProvider", storage.ErrorKindValidation, err, "provider validation failed: "+err.Error())
+	}
+	if discovered {
 		var err error
-		attemptedAt, persistedDiscovery, err = s.prepareDiscoveryUpdate(ctx, entity)
+		attemptedAt, persistedDiscovery, err = s.prepareDiscoveryUpdate(ctx, entity, persisted)
 		if err != nil {
 			if persistedDiscovery != nil {
 				return s.recordFailedDiscoveryUpdate(ctx, persistedDiscovery, attemptedAt, err)
@@ -688,19 +758,19 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		selected = entity
 	}
 	if err := entity.ValidateForUpdate(s.skipHTTPSValidation); err != nil {
-		if !discovered && entity.IsCIMDConfidentialClient() {
-			s.auditCIMD(entity.ID, "update", "rejected")
+		if !discovered && entity.IsCIMDClient() {
+			s.auditCIMD(ctx, entity, "update", "rejected")
 		}
-		return fmt.Errorf("provider validation failed: %w", err)
+		return storage.NewStorageError("UpdateProvider", storage.ErrorKindValidation, err, "provider validation failed: "+err.Error())
 	}
 	entity.NormalizeProtectedResources()
 	if err := entity.ValidateProtectedResources(); err != nil {
-		if !discovered && entity.IsCIMDConfidentialClient() {
-			s.auditCIMD(entity.ID, "update", "rejected")
+		if !discovered && entity.IsCIMDClient() {
+			s.auditCIMD(ctx, entity, "update", "rejected")
 		}
 		return fmt.Errorf("provider validation failed: %w", err)
 	}
-	if entity.IsCIMDConfidentialClient() {
+	if entity.IsCIMDClient() {
 		if discovered {
 			clientID, err := model.CIMDClientID(s.cimdPublicURL, entity.ID)
 			if err != nil || persistedDiscovery.ClientID != clientID {
@@ -708,18 +778,13 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 			}
 			entity.ClientID = persistedDiscovery.ClientID
 		} else {
-			persisted, err := s.repo.Get(ctx, entity.ID)
-			if err != nil {
-				s.auditCIMD(entity.ID, "update", "rejected")
-				return fmt.Errorf("get existing CIMD service: %w", err)
-			}
 			clientID, err := model.CIMDClientID(s.cimdPublicURL, entity.ID)
 			if err != nil {
-				s.auditCIMD(entity.ID, "update", "rejected")
+				s.auditCIMD(ctx, entity, "update", "rejected")
 				return err
 			}
-			if persisted.IsCIMDConfidentialClient() && persisted.ClientID != clientID {
-				s.auditCIMD(entity.ID, "update", "rejected")
+			if persisted.IsCIMDClient() && persisted.ClientID != clientID {
+				s.auditCIMD(ctx, entity, "update", "rejected")
 				return fmt.Errorf("persisted CIMD client_id for service %s does not match server.enduser.public_url", entity.ID)
 			}
 			entity.ClientID = clientID
@@ -727,11 +792,11 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 	}
 	if !discovered && entity.IsCIMDConfidentialClient() {
 		if s.cimdKeyReadiness == nil {
-			s.auditCIMD(entity.ID, "update", "rejected")
+			s.auditCIMD(ctx, entity, "update", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", ports.ErrCIMDPublicKeyUnavailable)
 		}
 		if err := s.cimdKeyReadiness.RequireUsablePublishedKey(ctx); err != nil {
-			s.auditCIMD(entity.ID, "update", "rejected")
+			s.auditCIMD(ctx, entity, "update", "rejected")
 			return fmt.Errorf("CIMD client-authentication key readiness: %w", err)
 		}
 	}
@@ -740,9 +805,9 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 	branchKeyID, err := s.branchKeyManager.Create(ctx, serviceSubject)
 	if err != nil {
 		if !discovered {
-			s.logger.Error("failed to ensure branch key for update", "service_id", entity.ID, "error", err)
-			if entity.IsCIMDConfidentialClient() {
-				s.auditCIMD(entity.ID, "update", "rejected")
+			s.logger.ErrorContext(ctx, "failed to ensure branch key for update", "service_id", entity.ID, "error", err)
+			if entity.IsCIMDClient() {
+				s.auditCIMD(ctx, entity, "update", "rejected")
 			}
 		}
 		if discovered && errors.Is(ctx.Err(), context.Canceled) {
@@ -754,11 +819,11 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		return fmt.Errorf("branch key provisioning failed: %w", err)
 	}
 	if !discovered {
-		s.logger.Info("branch key ready for update", "service_id", entity.ID, "branch_key_id", branchKeyID)
+		s.logger.InfoContext(ctx, "branch key ready for update", "service_id", entity.ID, "branch_key_id", branchKeyID)
 	}
 
 	retainsEncryptedDCRSecret := discovered && persistedDiscovery.Discovery.ClientMethod == model.ClientBootstrapDCR && entity.Secret.IsEncrypted()
-	if !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() && !retainsEncryptedDCRSecret {
+	if entity.CredentialSource != model.CredentialSourceFilesystem && !entity.IsPublicClient() && !entity.IsCIMDConfidentialClient() && !retainsEncryptedDCRSecret {
 		plaintext, err := entity.Secret.GetPlaintext()
 		if err != nil {
 			return fmt.Errorf("failed to read plaintext secret for update: %w", err)
@@ -766,7 +831,7 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		ciphertext, err := s.encryption.Encrypt(ctx, []byte(plaintext), serviceSubject.EncryptionContext())
 		if err != nil {
 			if !discovered {
-				s.logger.Error("encryption_failed", "operation", "update_provider", "service_id", entity.ID, "reason", err)
+				s.logger.ErrorContext(ctx, "encryption_failed", "operation", "update_provider", "service_id", entity.ID, "reason", err)
 			}
 			if discovered && errors.Is(ctx.Err(), context.Canceled) {
 				return context.Canceled
@@ -778,16 +843,20 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		}
 		entity.Secret = model.NewEncryptedSecret(ciphertext)
 		if !discovered {
-			s.logger.Info("service_secret_encrypted", "operation", "update", "service_id", entity.ID)
+			s.logger.InfoContext(ctx, "service_secret_encrypted", "operation", "update", "service_id", entity.ID)
 		}
 	}
 
 	if discovered {
 		entity.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &attemptedAt, LastSuccessAt: &attemptedAt}
 	}
+	if expectedVersion == nil {
+		entity.ProtectedResources = persisted.ProtectedResources
+		expectedVersion = &persisted.Version
+	}
 	if err := s.repo.Update(ctx, entity, expectedVersion); err != nil {
-		if !discovered && entity.IsCIMDConfidentialClient() {
-			s.auditCIMD(entity.ID, "update", "rejected")
+		if !discovered && entity.IsCIMDClient() {
+			s.auditCIMD(ctx, entity, "update", "rejected")
 		}
 		if discovered && persistedDiscovery != nil &&
 			(errors.Is(err, storage.ErrDuplicateDCRClientIdentity) || errors.Is(err, storage.ErrIssuerChangeHasSessions) || errors.Is(err, storage.ErrResourceChangeHasSessions)) {
@@ -799,11 +868,11 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 	if discovered {
 		return nil
 	}
-	if entity.IsCIMDConfidentialClient() {
-		s.auditCIMD(entity.ID, "update", "success")
+	if entity.IsCIMDClient() {
+		s.auditCIMD(ctx, entity, "update", "success")
 		return nil
 	}
-	s.logger.Info("provider_updated", "event", "service.thirdparty.provider_updated", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
+	s.logger.InfoContext(ctx, "provider_updated", "event", "service.thirdparty.provider_updated", "service_id", entity.ID, "display_name", entity.DisplayName, "public_client", entity.IsPublicClient())
 	return nil
 }
 
@@ -823,13 +892,13 @@ func (s *ThirdpartyOAuth2ProviderService) List(
 
 	result := make([]*model.ThirdpartyOAuth2ProviderEntity, 0, len(entities))
 	for _, entity := range entities {
-		if entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
+		if entity.CredentialSource == model.CredentialSourceFilesystem || entity.IsPublicClient() || entity.IsCIMDConfidentialClient() {
 			result = append(result, entity)
 			continue
 		}
 		dec, err := s.decryptSecret(ctx, entity)
 		if err != nil {
-			s.logger.Warn("secret_decryption_failed_returning_encrypted",
+			s.logger.WarnContext(ctx, "secret_decryption_failed_returning_encrypted",
 				"operation", "list",
 				"service_id", entity.ID,
 				"reason", err)
@@ -869,7 +938,7 @@ func (s *ThirdpartyOAuth2ProviderService) Delete(
 		return fmt.Errorf("failed to delete provider: %w", err)
 	}
 
-	s.logger.Info("provider_deleted", "service_id", serviceID)
+	s.logger.InfoContext(ctx, "provider_deleted", "service_id", serviceID)
 	return nil
 }
 
@@ -937,7 +1006,7 @@ func (s *ThirdpartyOAuth2ProviderService) ValidateServiceRequirements(
 		if err != nil {
 			var storageErr *storage.StorageError
 			if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindNotFound {
-				s.logger.Warn("service not found for requirement",
+				s.logger.WarnContext(ctx, "service not found for requirement",
 					"service_id", sr.ServiceID, "index", i)
 				return storage.NewStorageError(
 					"ValidateServiceRequirements",
@@ -956,7 +1025,7 @@ func (s *ThirdpartyOAuth2ProviderService) ValidateServiceRequirements(
 
 		for _, requiredScope := range sr.RequiredScopes {
 			if !serviceScopes[requiredScope] {
-				s.logger.Warn("invalid scope for service",
+				s.logger.WarnContext(ctx, "invalid scope for service",
 					"service_id", sr.ServiceID,
 					"service_name", entity.DisplayName,
 					"scope", requiredScope,

@@ -2,6 +2,7 @@ package oauth2
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -155,6 +156,54 @@ func TestBuildErrorRedirectURL(t *testing.T) {
 					t.Errorf("error parameter = %q, want 'access_denied'", q.Get("error"))
 				}
 			},
+		},
+		{
+			name:        "native authority retains callback and state",
+			redirectURI: "github-app://oauth/callback",
+			state:       "xyz",
+			errorCode:   "invalid_scope",
+			validateURL: func(t *testing.T, redirectURL string) {
+				u, err := url.Parse(redirectURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if u.Scheme != "github-app" || u.Host != "oauth" || u.Path != "/callback" || u.Query().Get("error") != "invalid_scope" || u.Query().Get("state") != "xyz" {
+					t.Errorf("native callback = %q; want registered authority/path and error/state", redirectURL)
+				}
+			},
+		},
+		{
+			name:        "single-slash native callback stays single-slash",
+			redirectURI: "com.example.app:/oauth2redirect/example-provider",
+			errorCode:   "invalid_scope",
+			validateURL: func(t *testing.T, redirectURL string) {
+				if !strings.HasPrefix(redirectURL, "com.example.app:/oauth2redirect/example-provider?") {
+					t.Errorf("native callback = %q; want single-slash form", redirectURL)
+				}
+			},
+		},
+		{
+			name:        "native query is preserved when errors are appended",
+			redirectURI: "github-app://oauth/callback?window=1",
+			state:       "xyz",
+			errorCode:   "invalid_scope",
+			validateURL: func(t *testing.T, redirectURL string) {
+				u, err := url.Parse(redirectURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if u.Query().Get("window") != "1" || u.Query().Get("error") != "invalid_scope" || u.Query().Get("state") != "xyz" {
+					t.Errorf("native callback query = %q; want original window, error, and state", u.RawQuery)
+				}
+			},
+		},
+		{
+			name:        "unsafe script scheme cannot receive an error",
+			redirectURI: "javascript://oauth/callback",
+			state:       "xyz",
+			errorCode:   "invalid_scope",
+			wantErr:     true,
+			wantErrMsg:  "invalid redirect_uri",
 		},
 	}
 

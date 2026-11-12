@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
@@ -40,7 +42,6 @@ type AgentPermissionSetEntry struct {
 type Agent struct {
 	ID                   id.AgentID                `json:"id" db:"id"`
 	CanonicalID          *string                   `json:"canonical_id,omitempty" db:"canonical_id"`
-	ClearCanonicalID     bool                      `json:"-" db:"-"`
 	ClientID             *id.ClientID              `json:"client_id,omitempty" db:"client_id"`
 	ExternalID           *id.ExternalID            `json:"external_id,omitempty" db:"external_id"`
 	DisplayName          string                    `json:"display_name" db:"display_name"`
@@ -64,6 +65,15 @@ type Agent struct {
 func (a *Agent) validateFields() error {
 	if err := ValidateCanonicalID(a.CanonicalID); err != nil {
 		return err
+	}
+
+	if a.ExternalID != nil {
+		if *a.ExternalID == "" {
+			return errors.New("external_id cannot be empty when provided")
+		}
+		if err := ValidateExternalID(*a.ExternalID); err != nil {
+			return err
+		}
 	}
 
 	if a.ClientID != nil && strings.TrimSpace(string(*a.ClientID)) == "" {
@@ -96,10 +106,10 @@ func (a *Agent) validateFields() error {
 		return errors.New("agent_interface_url is not a valid HTTP/HTTPS URL")
 	}
 
-	// Redirect URI validation (stricter than isValidURL: requires non-empty host, no fragment)
+	// Redirect URIs: https, loopback http, or a private-use scheme (RFC 8252 §7.1).
 	for i, uri := range a.RedirectURIs {
-		if !urivalidation.IsValidRedirectURI(uri) {
-			return fmt.Errorf("redirect_uris[%d] is not a valid absolute HTTP/HTTPS URI without a fragment", i)
+		if !urivalidation.IsValidRedirectURI(uri) && !urivalidation.IsValidPrivateUseRedirectURI(uri) {
+			return fmt.Errorf("redirect_uris[%d] must be an https URI, an http URI on a loopback host, or a valid private-use scheme URI", i)
 		}
 	}
 
@@ -115,6 +125,30 @@ func (a *Agent) validateFields() error {
 		return fmt.Errorf("permission_sets validation failed: %w", err)
 	}
 
+	return nil
+}
+
+// ValidateExternalID defines the format shared by Agent writes and exact-match selectors.
+func ValidateExternalID(externalID id.ExternalID) error {
+	value := string(externalID)
+	count := 0
+	for len(value) > 0 {
+		r, size := utf8.DecodeRuneInString(value)
+		if r == utf8.RuneError && size == 1 {
+			return errors.New("external_id must be valid UTF-8 text")
+		}
+		if r == 0 {
+			return errors.New("external_id must not contain a NUL character")
+		}
+		count++
+		if count > 255 {
+			return errors.New("external_id must be 1 to 255 characters")
+		}
+		value = value[size:]
+	}
+	if count == 0 {
+		return errors.New("external_id must be 1 to 255 characters")
+	}
 	return nil
 }
 
@@ -243,17 +277,9 @@ func (a *Agent) Copy() *Agent {
 		}
 	}
 
-	// Deep copy redirect URIs and allowed scopes
-	if a.RedirectURIs != nil {
-		copy.RedirectURIs = append([]string(nil), a.RedirectURIs...)
-	}
-	if a.AllowedScopes != nil {
-		copy.AllowedScopes = append([]string(nil), a.AllowedScopes...)
-	}
-
-	if a.ClientURIs != nil {
-		copy.ClientURIs = append([]string(nil), a.ClientURIs...)
-	}
+	copy.RedirectURIs = slices.Clone(a.RedirectURIs)
+	copy.AllowedScopes = slices.Clone(a.AllowedScopes)
+	copy.ClientURIs = slices.Clone(a.ClientURIs)
 
 	return copy
 }

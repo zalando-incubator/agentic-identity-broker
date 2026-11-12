@@ -219,7 +219,17 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	It("should keep code exchange and refresh working for none clients", func() {
 		code, verifier := authorizeCode("read offline_access")
 
-		tokenResp, err := exchangeCode(code, verifier, "", "")
+		codeForm := url.Values{
+			"grant_type":            {"authorization_code"},
+			"client_id":             {clientURL},
+			"code":                  {code},
+			"redirect_uri":          {redirectURI},
+			"code_verifier":         {verifier},
+			"client_assertion":      {""},
+			"client_assertion_type": {""},
+			"client_secret":         {""},
+		}
+		tokenResp, err := server.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(codeForm.Encode()))
 		Expect(err).ToNot(HaveOccurred())
 		Expect(tokenResp.StatusCode).To(Equal(http.StatusOK))
 		var tokenBody map[string]any
@@ -230,7 +240,15 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 		Expect(ok).To(BeTrue(), "token response: %#v", tokenBody)
 		Expect(refreshToken).ToNot(BeEmpty())
 
-		refreshResp, err := exchangeRefresh(refreshToken, "", "")
+		refreshForm := url.Values{
+			"grant_type":            {"refresh_token"},
+			"client_id":             {clientURL},
+			"refresh_token":         {refreshToken},
+			"client_assertion":      {""},
+			"client_assertion_type": {""},
+			"client_secret":         {""},
+		}
+		refreshResp, err := server.PublicPOST("/oauth2/token", "application/x-www-form-urlencoded", strings.NewReader(refreshForm.Encode()))
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = refreshResp.Body.Close() }()
 		Expect(refreshResp.StatusCode).To(Equal(http.StatusOK))

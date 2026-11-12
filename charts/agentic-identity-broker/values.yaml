@@ -292,9 +292,8 @@ migration:
   hookWeight: -5
 
   # Job configuration
-  # -- Job backoff limit (retry attempts)
-  # Higher value needed for Zalando operator as PostgreSQL takes time to initialize
-  backoffLimit: 10
+  # -- Job retry attempts. Dirty migration metadata requires operator recovery.
+  backoffLimit: 0
   # -- TTL for completed/failed jobs (cleanup delay in seconds)
   ttlSecondsAfterFinished: 300
 
@@ -330,6 +329,11 @@ broker:
   # Keep IDENTITY_BROKER_ENCRYPTION_AWS_KMS_DISABLE_SSL false in production.
   # True requires explicit GO_ENV=development; all other environments reject it.
   extraEnv: []
+
+  # -- Additional Kubernetes volumes for the broker pod
+  extraVolumes: []
+  # -- Additional Kubernetes volume mounts for the broker container
+  extraVolumeMounts: []
 
   # Logging
   log:
@@ -423,6 +427,8 @@ broker:
     jweSigningKeySecret:
       name: ""
       key: signing-key
+    # -- Exact canonical-ID bindings to client_id_file and client_secret_file absolute paths; service source selection is separate
+    credentialFiles: {}
 
   # -- Encryption configuration
   encryption:
@@ -511,6 +517,10 @@ broker:
       signingKeys:
         # -- Startup budget for signing-key bootstrap in local/hybrid mode. Defaults to 90s if empty.
         bootstrapTimeout: ""
+      clientSecretHashing:
+        # -- Client secret hashes that may run at once. Each Argon2id hash allocates 64 MiB and already uses
+        # up to four CPUs, so raising it adds memory, not throughput. Defaults to 2 if 0.
+        maxConcurrent: 0
 
     # RFC 8693 user impersonation (signed or unverified subject). Only valid in "local" mode.
     # Disabled by default (nil): the impersonation block is omitted from the rendered
@@ -523,6 +533,8 @@ broker:
     #   # CR-002: non-empty, ordered; first-match.
     #   rules:
     #     - name: "internal-gateway-prod"
+    #       # -- Optional distinct human/agent list (1–2 entries). Omission means [human].
+    #       allowed_subject_categories: [human]
     #       # CR-003: client_assertion, actor, and subject are all required.
     #       roles:
     #         client_assertion:
@@ -624,17 +636,33 @@ broker:
     # Defaults to "token-exchange-broker" if empty.
     expectedAudience: ""
     clientAssertion:
-      # -- External IdP issuer for privileged-gateway client assertions. Required for configured
-      # token exchange in local mode; empty defaults to the proxy upstream issuer in proxy/hybrid mode.
+      # -- External IdP issuer for privileged-gateway client assertions. Required in local mode
+      # with token exchange, approval authentication, or any key source. Empty defaults to the
+      # proxy upstream issuer in proxy/hybrid mode.
       issuerUri: ""
       # -- Explicit client-assertion JWKS endpoint. Empty discovers it from issuerUri.
       jwksUri: ""
       # -- Minimum client-assertion JWKS refresh interval. Empty defaults to 15m.
       jwksMinRefresh: ""
-      # -- Maximum client-assertion JWKS refresh interval. Empty defaults to max(jwksMinRefresh, 1h).
+      # -- Maximum client-assertion JWKS refresh interval. For jwksFile, empty or below-minimum
+      # values default to max(3 × jwksMinRefresh, 1h); remote sources default to max(jwksMinRefresh, 1h).
       jwksMaxRefresh: ""
+      # -- Inline JWK Set JSON (public keys only). Mutually exclusive with jwksUri and jwksFile,
+      # and with jwksMinRefresh and jwksMaxRefresh. Rendered without discovery or key fetch.
+      jwks: ""
+      # -- Absolute key-set file path inside broker.security.trustMaterial.directory.
+      # Mutually exclusive with jwksUri and jwks.
+      jwksFile: ""
 
     claimExtraction:
+      # -- Optional replacing CEL detector. Empty/omitted uses the guarded default below.
+      # has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
+      # Compile/type errors and expressions not referencing subject_token.sub fail startup;
+      # runtime errors/timeouts/non-boolean results fail closed.
+      # Overrides must preserve broker agent-token matching, e.g. keep the default as a disjunct.
+      # A non-matching override that references sub removes categorical rejection and protection
+      # against access to same-text human credentials. Equal-claim human/external tokens also match.
+      agentSubjectExpression: ""
       # -- CEL expression to extract the user principal from subject_token.
       # Default: "subject_token.sub"
       principalExpression: "subject_token.sub"
@@ -667,11 +695,35 @@ broker:
     sweep:
       # -- Default page size for the external POST /api/sessions/sweep (1-1000).
       defaultPageSize: 100
+    healthMetrics:
+      # -- Publish the oauth2_sessions{service_id,expiry,refreshable} gauge when telemetry metrics are enabled.
+      # Each replica runs one grouped count query per metric export cycle.
+      enabled: true
+      # -- Timeout of the per-export health count query (Go duration).
+      queryTimeout: "5s"
 
   # Security configuration
   security:
     # -- Skip HTTPS validation for third-party services (dev/test only!)
     skipThirdpartyHttpsValidation: false
+    # -- Trust material mounted for jwks_file key sets.
+    trustMaterial:
+      # -- Absolute path of the trust directory (security.trust_material_dir). Empty disables jwks_file.
+      directory: ""
+      # -- Existing Secrets or ConfigMaps projected read-only into the trust directory.
+      # Each entry is {secret: {name, items}} or {configMap: {name, items}}; items are {key, path}.
+      sources: []
+      # sources:
+      #   - secret:
+      #       name: agentgateway-jwks
+      #       items:
+      #         - key: jwks.json
+      #           path: agentgateway-jwks.json
+      #   - configMap:
+      #       name: mesh-jwks
+      #       items:
+      #         - key: jwks.json
+      #           path: mesh-jwks.json
 
   # OpenTelemetry observability configuration
   telemetry:
@@ -771,3 +823,68 @@ extraObjects: []
   #     namespace: '{{ include "agentic-identity-broker.namespace" . }}'
   #   data:
   #     build: '{{ "{{{BUILD_VERSION}}}" }}'
+
+# Scheduled session sweep: a CronJob that calls POST /api/sessions/sweep on the admin API.
+# The chart only transports the request. Supply the caller's identity with headers,
+# headersFromFile, or a TLS client certificate; rendering fails without one.
+sessionSweep:
+  # -- Render the CronJob and its ServiceAccount
+  enabled: false
+  # -- Cron schedule. Keep lookaheadDuration longer than one interval plus a missed run.
+  schedule: "0 * * * *"
+  # -- Optional IANA time zone for the schedule
+  timeZone: ""
+  # -- Seconds after the scheduled time within which a late run may still start
+  startingDeadlineSeconds: 3600
+  # -- Hard cap on one Job, in seconds. Must exceed timeoutSeconds.
+  activeDeadlineSeconds: 2100
+  # -- Retries of a failed Job. activeDeadlineSeconds covers all attempts.
+  backoffLimit: 0
+  # -- Request timeout in seconds, passed to curl --max-time
+  timeoutSeconds: 1800
+  # -- ISO 8601 lookahead sent as lookahead_duration (days, hours, minutes, seconds only).
+  # Keep it shorter than the shortest provider access-token lifetime, or every run refreshes every session.
+  lookaheadDuration: PT2H
+  # -- Send dry_run=true: classify candidates without refreshing
+  dryRun: false
+  # -- Optional page_size (1-1000); null uses broker.tokenRefresh.sweep.defaultPageSize
+  pageSize: null
+  # -- Target URL. Empty targets this release's admin Service: http://<fullname>.<namespace>.svc:<service.ports.admin>
+  url: ""
+  # -- Host header override. Empty derives it from broker.server.admin.publicUrl, only for the default target.
+  host: ""
+  # -- Literal request headers. They are rendered into the manifest; never put secrets here.
+  headers: {}
+  # -- Headers read from mounted files at run time, for example
+  # Authorization: {path: /var/run/secrets/session-sweep/token, prefix: "Bearer "}
+  headersFromFile: {}
+  tls:
+    # -- Path of a PEM client certificate presented to the target
+    certFile: ""
+    # -- Path of the PEM private key for certFile
+    keyFile: ""
+    # -- Path of a PEM CA bundle used to verify the target
+    caFile: ""
+  # -- Volumes that provide header and TLS files
+  volumes: []
+  # -- Mounts for those volumes in the sweep container
+  volumeMounts: []
+  image:
+    # -- Image with a POSIX shell and curl 8.3 or later
+    repository: curlimages/curl
+    # -- Image tag
+    tag: "8.16.0"
+    # -- Image pull policy
+    pullPolicy: IfNotPresent
+  # -- Resource requests and limits for the sweep container
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+  # -- Extra pod labels; override commonLabels for shared keys
+  podLabels: {}
+  # -- Extra pod annotations
+  podAnnotations: {}

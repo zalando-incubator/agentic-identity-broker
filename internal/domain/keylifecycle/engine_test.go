@@ -2,6 +2,7 @@ package keylifecycle
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestEffectiveCurrent(t *testing.T) {
 
 func TestEngine_GenerateWithInitialActivationSerializesConcurrentFirstGeneration(t *testing.T) {
 	repository := &lifecycleTestRepository{}
-	engine := NewEngine(repository, &lifecycleTestCoordinator{}, lifecycleTestEncryption{}, lifecycleTestBranchKeys{}, nil)
+	engine := NewEngine(repository, &lifecycleTestCoordinator{}, lifecycleTestEncryption{}, lifecycleTestBranchKeys{}, slog.New(slog.DiscardHandler))
 	policy := Policy{
 		Domain: storage.KeyDomainCIMDClientAuthentication,
 		NewKID: func() id.KeyID { return UUIDKID(domainencryption.CIMDClientAuthenticationKeyIDPrefix) },

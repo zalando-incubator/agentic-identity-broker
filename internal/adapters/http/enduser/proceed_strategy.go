@@ -65,7 +65,7 @@ func (s *localProceedStrategy) HandleProceed(w http.ResponseWriter, r *http.Requ
 		}
 
 		if s.logger != nil {
-			s.logger.Error("unexpected error issuing authorization code", "error", err)
+			s.logger.ErrorContext(r.Context(), "unexpected error issuing authorization code", "error", err)
 		}
 		writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "authorization failed")
 		return

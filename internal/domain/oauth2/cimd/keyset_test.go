@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -138,7 +137,7 @@ func TestClientKeySetServiceAppliesCurrentSigningAlgorithmToCachedKeys(t *testin
 
 func TestClientKeySetServiceBoundsCacheEntries(t *testing.T) {
 	fetcher := &keySetTestFetcher{result: &ports.CIMDFetchResult{Body: testKeySet(t, testPublicRSAKey(t, 2048, "shared-key"))}}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	service := NewClientKeySetService(fetcher, keySetConfig(), time.Now, logger)
 
 	for index := range 1001 {
@@ -325,6 +324,75 @@ func TestClientKeySetServiceRefreshForKIDDeduplicatesConcurrentCallers(t *testin
 		require.NoError(t, err)
 	}
 	assert.Equal(t, int32(2), fetcher.calls.Load(), "one initial fetch plus one shared refresh is expected")
+}
+
+type concurrentColdKeySetFetcher struct {
+	calls              atomic.Int32
+	result             *ports.CIMDFetchResult
+	firstFetchStarted  chan struct{}
+	secondFetchStarted chan struct{}
+	releaseFetches     chan struct{}
+}
+
+func (f *concurrentColdKeySetFetcher) Fetch(context.Context, string) (*ports.CIMDFetchResult, error) {
+	switch f.calls.Add(1) {
+	case 1:
+		close(f.firstFetchStarted)
+	case 2:
+		close(f.secondFetchStarted)
+	}
+	<-f.releaseFetches
+	return f.result, nil
+}
+
+func TestClientKeySetServiceDeduplicatesConcurrentColdFetches(t *testing.T) {
+	fetcher := &concurrentColdKeySetFetcher{
+		result:             &ports.CIMDFetchResult{Body: testKeySet(t, testPublicRSAKey(t, 2048, "cold-key"))},
+		firstFetchStarted:  make(chan struct{}),
+		secondFetchStarted: make(chan struct{}),
+		releaseFetches:     make(chan struct{}),
+	}
+	service := NewClientKeySetService(fetcher, keySetConfig(), time.Now, slog.Default())
+	doc := &ports.CIMDMetadataDTO{ClientID: "https://client.example/metadata", AuthMethod: "private_key_jwt", SigningAlg: "RS256", JWKSURI: "https://client.example/jwks.json"}
+
+	const callers = 20
+	ready := make(chan struct{}, callers)
+	start := make(chan struct{})
+	errorsFound := make(chan error, callers)
+	var wait sync.WaitGroup
+	for range callers {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			ready <- struct{}{}
+			<-start
+			keys, err := service.KeysFor(context.Background(), doc)
+			if err == nil && keys.Len() != 1 {
+				err = errors.New("cold fetch returned an unexpected key set")
+			}
+			errorsFound <- err
+		}()
+	}
+	for range callers {
+		<-ready
+	}
+	close(start)
+	<-fetcher.firstFetchStarted
+
+	select {
+	case <-fetcher.secondFetchStarted:
+		close(fetcher.releaseFetches)
+		wait.Wait()
+		t.Fatal("concurrent cold misses started duplicate key-set fetches")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(fetcher.releaseFetches)
+	wait.Wait()
+	close(errorsFound)
+	for err := range errorsFound {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int32(1), fetcher.calls.Load())
 }
 
 func TestClientKeySetServiceRefreshForKIDFailurePreservesCache(t *testing.T) {

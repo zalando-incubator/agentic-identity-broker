@@ -193,9 +193,12 @@ func TestToolApproval_Deny(t *testing.T) {
 
 	t.Run("denies with permanent persistence", func(t *testing.T) {
 		a := &ToolApproval{
-			Principal: principal,
-			Status:    ApprovalStatusPending,
-			ExpiresAt: now.Add(10 * time.Minute),
+			Principal:     principal,
+			Status:        ApprovalStatusPending,
+			ExpiresAt:     now.Add(10 * time.Minute),
+			ToolName:      "read_file",
+			ToolPattern:   "read_file",
+			ParamsPattern: map[string]string{"path": "/reviewed"},
 		}
 		p := ApprovalPersistencePermanent
 		err := a.Deny(principal, &p, now)
@@ -204,6 +207,12 @@ func TestToolApproval_Deny(t *testing.T) {
 		}
 		if a.Persistence == nil || *a.Persistence != ApprovalPersistencePermanent {
 			t.Fatal("expected permanent persistence")
+		}
+		if len(a.ParamsPattern) != 0 {
+			t.Fatal("permanent denial must cover every argument value")
+		}
+		if a.ToolPattern != "read_file" {
+			t.Fatal("permanent denial must retain the exact tool scope")
 		}
 	})
 

@@ -261,7 +261,7 @@ func TestProvider_DowngradedRefreshRejectsInsecureJWKSURI(t *testing.T) {
 
 func TestProvider_UnknownRefreshSignatureDoesNotRevealSessionExistence(t *testing.T) {
 	verifier := &providerAssertionVerifierFake{}
-	provider, _, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
+	provider, agent, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
 	code, codeVerifier, redirectURI := createCIMDAuthorizationCode(t, provider, clientID)
 	credentials := ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "valid-code-assertion"}
 	issued, err := provider.HandleAuthorizationCodeExchange(context.Background(), clientID, credentials, code, redirectURI, codeVerifier)
@@ -274,6 +274,27 @@ func TestProvider_UnknownRefreshSignatureDoesNotRevealSessionExistence(t *testin
 	require.ErrorIs(t, knownErr, ErrInvalidClient)
 	require.ErrorIs(t, unknownErr, ErrInvalidClient)
 	assert.Equal(t, knownErr.Error(), unknownErr.Error())
+
+	provider.fositeStorage.clientResolver = &mockClientResolver{resolveFunc: func(_ context.Context, resolvedID id.ClientID) (*ports.ClientResolution, error) {
+		if string(resolvedID) != clientID {
+			return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "not found"}
+		}
+		return ports.NewClientResolution(agent, &ports.CIMDMetadataDTO{
+			ClientID:     clientID,
+			AuthMethod:   "none",
+			RedirectURIs: []string{"https://client.example/callback"},
+			GrantTypes:   []string{"authorization_code", "refresh_token"},
+			SigningAlg:   "RS256",
+			JWKSURI:      "https://client.example/jwks.json",
+		}), nil
+	}}
+	downgradedKnownErr := error(nil)
+	_, downgradedKnownErr = provider.HandleRefreshToken(context.Background(), clientID, ports.ClientCredentials{}, issued.RefreshToken, "")
+	downgradedUnknownErr := error(nil)
+	_, downgradedUnknownErr = provider.HandleRefreshToken(context.Background(), clientID, ports.ClientCredentials{}, "unknown-refresh-token", "")
+	require.ErrorIs(t, downgradedKnownErr, ErrInvalidClient)
+	require.ErrorIs(t, downgradedUnknownErr, ErrInvalidClient)
+	assert.Equal(t, downgradedKnownErr.Error(), downgradedUnknownErr.Error())
 
 	refreshed, err := provider.HandleRefreshToken(context.Background(), clientID, credentials, issued.RefreshToken, "")
 	require.NoError(t, err, "failed authentication for a known token must not consume it")

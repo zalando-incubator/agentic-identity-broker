@@ -42,26 +42,35 @@ func (s *MetadataService) Metadata(ctx context.Context, serviceID id.ServiceID) 
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.publishedJWKSet(ctx); err != nil {
-		return nil, err
+	if service.TokenEndpointAuthMethod == "private_key_jwt" {
+		if _, err := s.publishedJWKSet(ctx); err != nil {
+			return nil, err
+		}
 	}
 
 	clientID := service.ClientID.String()
-	return &ports.CIMDClientMetadata{ // #nosec G101 -- RFC-defined public Client ID Metadata fields, not credentials.
-		ClientID:                     clientID,
-		RedirectURIs:                 []string{s.publicURL + "/api/third-party/" + serviceID.String() + "/oauth2/callback"},
-		GrantTypes:                   []string{"authorization_code", "refresh_token"},
-		ResponseTypes:                []string{"code"},
-		TokenEndpointAuthMethod:      "private_key_jwt",
-		TokenEndpointAuthSigningAlgo: "ES256",
-		JWKSURI:                      clientID + "/jwks.json",
-	}, nil
+	metadata := &ports.CIMDClientMetadata{ // #nosec G101 -- RFC-defined public Client ID Metadata fields, not credentials.
+		ClientID:                clientID,
+		RedirectURIs:            []string{s.publicURL + "/api/third-party/" + serviceID.String() + "/oauth2/callback"},
+		GrantTypes:              []string{"authorization_code", "refresh_token"},
+		ResponseTypes:           []string{"code"},
+		TokenEndpointAuthMethod: service.TokenEndpointAuthMethod,
+	}
+	if service.TokenEndpointAuthMethod == "private_key_jwt" {
+		metadata.TokenEndpointAuthSigningAlgo = "ES256"
+		metadata.JWKSURI = clientID + "/jwks.json"
+	}
+	return metadata, nil
 }
 
 // JWKSet returns the public CIMD verification keys for an eligible CIMD service.
 func (s *MetadataService) JWKSet(ctx context.Context, serviceID id.ServiceID) (jwk.Set, error) {
-	if _, err := s.eligibleService(ctx, serviceID); err != nil {
+	service, err := s.eligibleService(ctx, serviceID)
+	if err != nil {
 		return nil, err
+	}
+	if service.TokenEndpointAuthMethod == "none" {
+		return nil, ports.ErrCIMDPublicKeyUnavailable
 	}
 	return s.publishedJWKSet(ctx)
 }
@@ -71,7 +80,8 @@ func (s *MetadataService) eligibleService(ctx context.Context, serviceID id.Serv
 		return nil, ports.ErrCIMDPublicKeyUnavailable
 	}
 	service, err := s.serviceReader.GetCIMDClientService(ctx, serviceID)
-	if err != nil || service == nil || service.ID != serviceID || service.TokenEndpointAuthMethod != "private_key_jwt" {
+	if err != nil || service == nil || service.ID != serviceID ||
+		(service.TokenEndpointAuthMethod != "private_key_jwt" && service.TokenEndpointAuthMethod != "none") {
 		return nil, ports.ErrCIMDPublicKeyUnavailable
 	}
 

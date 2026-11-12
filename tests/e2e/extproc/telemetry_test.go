@@ -236,6 +236,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 
 			exchangeSpan := findSpan(spanRecorder, "extproc.token_exchange")
 			Expect(exchangeSpan).NotTo(BeNil(), "expected extproc.token_exchange span even on failure")
+			Expect(exchangeSpan.SpanKind().String()).To(Equal("server"))
 			Expect(exchangeSpan.Status().Code).To(Equal(otelcodes.Error))
 			Expect(exchangeSpan.Status().Description).To(Equal("token exchange failed"))
 
@@ -251,7 +252,33 @@ var _ = Describe("ExtProc Telemetry", func() {
 			Expect(attrs["token_exchange.exchange_kind"].AsString()).To(Equal("unknown"))
 			Expect(attrs["token_exchange.broker_status_code"].Type()).To(Equal(attribute.INT64))
 			Expect(attrs["token_exchange.broker_status_code"].AsInt64()).To(Equal(int64(400)))
-			Expect(attrs["token_exchange.broker_error_code"].AsString()).To(Equal("invalid_grant"))
+			Expect(attrs["token_exchange.oauth_error_code"].AsString()).To(Equal("invalid_grant"))
+		})
+
+		// Scenario 1.7 from specs/027-extproc-otel/spec.md
+		It("US1-S7: leaves the status unset when the client receives a 4xx response", func() {
+			env.MockTokenExchange.WithError(400, "invalid_grant").
+				WithErrorURI("https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize")
+
+			client, conn := env.NewExtProcClient()
+			defer conn.Close() //nolint:errcheck
+
+			response := sendExchangeRequest(client, standardRequestHeaders())
+			Expect(response.GetImmediateResponse()).NotTo(BeNil())
+			Expect(int32(response.GetImmediateResponse().GetStatus().GetCode())).To(Equal(int32(403)),
+				"a broker error with a recovery URI becomes a re-authentication challenge")
+
+			exchangeSpan := findSpan(spanRecorder, "extproc.token_exchange")
+			Expect(exchangeSpan).NotTo(BeNil(), "expected extproc.token_exchange span on a 4xx response")
+			Expect(exchangeSpan.SpanKind().String()).To(Equal("server"))
+			Expect(exchangeSpan.Status().Code).To(Equal(otelcodes.Unset))
+
+			attrs := map[string]attribute.Value{}
+			for _, attr := range exchangeSpan.Attributes() {
+				attrs[string(attr.Key)] = attr.Value
+			}
+			Expect(attrs["token_exchange.outcome"].AsString()).To(Equal("reauth_required"))
+			Expect(attrs["token_exchange.failure_stage"].AsString()).To(Equal("exchange_routing"))
 		})
 
 		// Scenario 1.5 from specs/027-extproc-otel/spec.md

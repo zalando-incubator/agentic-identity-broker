@@ -129,8 +129,7 @@ flowchart TD
     C -->|invalid_subject_token| R1[503 invalid_subject_token]
     C -->|invalid_resource| R2[503 invalid_resource]
     C -->|ok| D{authorizer == nil?}
-    D -->|yes| E[extractProtocolFromMetadata, default mcp]
-    E --> F[Exchange -> replace Authorization]
+    D -->|yes| F[Exchange -> replace Authorization]
     D -->|no| G[protocol metadata required -> MCP method check -> requestState]
     G --> H{endOfStream?}
     H -->|no| I[Exchange -> buffer body -> OPA in body phase]
@@ -143,8 +142,9 @@ Three properties of this flow are load-bearing:
   and traced (SC-005). In the OPA path this moves `beginTokenExchangeObservation` ahead of the former
   Bearer check, which no longer exists. Traffic that previously passed through OPA mode silently —
   emitting no span, metric, or outcome — now emits an `invalid_subject_token` observation.
-- **Protocol extraction is retained in the non-OPA path.** `extractProtocolFromMetadata` with its
-  `"mcp"` default still runs after input validation, because `exchangeErrorResponse` uses protocol to choose between MCP URL elicitation and a 503 on broker re-authentication. The [Feature 043 response matrix](spec.md#exchangeerrorresponse-matrix) retains that behavior.
+- **The non-OPA path does not inspect protocol metadata.** After input validation, it exchanges tokens directly.
+  A non-transient broker error with `error_uri` returns HTTP 403 with the `insufficient_scope` challenge
+  for every protocol. See the [Feature 043 response matrix](spec.md#exchangeerrorresponse-matrix).
 
 - **Header-only OPA requests validate early and exchange late.** Validation completes in
   `processRequestHeadersOPA`; the validated values live in `requestState` until

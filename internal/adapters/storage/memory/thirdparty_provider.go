@@ -107,6 +107,10 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(_ context.Context, e
 	if err != nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
+	record.entity.CredentialSourceTransitioned = false
+	entity.CredentialSource = record.entity.CredentialSource
+	entity.ClientRegistration = record.entity.ClientRegistration
+	entity.CredentialSourceTransitioned = false
 	r.providers[entity.ID] = record
 	r.resources[entity.ID] = resources
 	if entity.CanonicalID != nil {
@@ -269,6 +273,13 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 
 	proposed := *entity
 	proposed.CanonicalID = canonicalID
+	previousSource := existing.entity.CredentialSource
+	if previousSource == "" {
+		previousSource = model.CredentialSourceStored
+	}
+	if proposed.CredentialSource == "" && !proposed.CredentialSourceProvided {
+		proposed.CredentialSource = previousSource
+	}
 	proposed.CreatedAt = existing.entity.CreatedAt
 	proposed.Version = existing.entity.Version + 1
 	if proposed.AuthorizationParams == nil {
@@ -288,6 +299,7 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	if err != nil {
 		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
+	record.entity.CredentialSourceTransitioned = existing.entity.CredentialSourceTransitioned || previousSource != record.entity.CredentialSource
 
 	if expectedVersion != nil {
 		for resource := range r.resources[entity.ID] {
@@ -311,6 +323,9 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	if canonicalID != nil {
 		r.canonicalIndex[*canonicalID] = entity.ID
 	}
+	proposed.CredentialSource = record.entity.CredentialSource
+	proposed.ClientRegistration = record.entity.ClientRegistration
+	proposed.CredentialSourceTransitioned = record.entity.CredentialSourceTransitioned
 	*entity = proposed
 	return nil
 }

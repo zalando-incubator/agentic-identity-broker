@@ -312,6 +312,11 @@ var _ = Describe("Proactive Token Refresh", func() {
 
 	Describe("User Story 2: when an agent exchanges an expired session token", func() {
 		var principal string
+		recoveryURI := func() string {
+			publicURL := config.Server.EndUser.PublicURL
+			return publicURL + "/api/third-party/" + serviceID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions")
+		}
+
 		BeforeEach(func() {
 			principal = fixtures.DefaultPrincipal().String()
 			Expect(fixtures.SeedPlaceholderGrantData(ctx, store, serviceID)).To(Succeed())
@@ -344,7 +349,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 		})
 
-		Context("and both stored tokens have expired", func() {
+		Context("and the provider has rejected its refresh token", func() {
 			BeforeEach(func() { seedSession(fixtures.FullyExpiredSessionForPrincipal(principal, serviceID.String())) })
 
 			// US2-S2 from specs/029-proactive-token-refresh/spec.md
@@ -354,17 +359,12 @@ var _ = Describe("Proactive Token Refresh", func() {
 				oldRefresh := bytes.Clone(before.EncryptedRefreshToken)
 				body := proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusBadRequest)
 				Expect(body).To(HaveKeyWithValue("error", "invalid_grant"))
-				Expect(body).To(HaveKeyWithValue("error_uri", config.Server.EndUser.PublicURL+"/sessions"))
+				Expect(body).To(HaveKeyWithValue("error_uri", recoveryURI()))
 				Expect(body).NotTo(HaveKey("access_token"))
 				Expect(upstream.GetTokenRequests()).To(BeEmpty())
 				Expect(storedSession(principal).EncryptedAccessToken).To(Equal(oldAccess))
 				Expect(storedSession(principal).EncryptedRefreshToken).To(Equal(oldRefresh))
-				events := proactiveEvents(logs, "session.oauth2.refresh_failed")
-				Expect(events).To(HaveLen(1))
-				Expect(events[0]).To(HaveKeyWithValue("level", "ERROR"))
-				Expect(events[0]).To(HaveKeyWithValue("session_id", storedSession(principal).ID.String()))
-				Expect(events[0]).To(HaveKeyWithValue("triggered_by", "on-demand"))
-				Expect(events[0]).To(HaveKeyWithValue("principal", principal))
+				Expect(proactiveEvents(logs, "session.oauth2.refresh_failed")).To(BeEmpty(), "a recorded rejection refuses issuance without a refresh attempt")
 			})
 		})
 
@@ -381,7 +381,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 				expiry := *before.AccessTokenExpiresAt
 				body := proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusBadRequest)
 				Expect(body).To(HaveKeyWithValue("error", "invalid_grant"))
-				Expect(body).To(HaveKeyWithValue("error_uri", config.Server.EndUser.PublicURL+"/sessions"))
+				Expect(body).To(HaveKeyWithValue("error_uri", recoveryURI()))
 				Expect(body).NotTo(HaveKey("access_token"))
 				Expect(upstream.GetTokenRequests()).To(HaveLen(1))
 				after := storedSession(principal)
@@ -467,12 +467,12 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 		})
 
-		Context("and one candidate cannot use its expired refresh token", func() {
+		Context("and one candidate has no refresh token", func() {
 			var failed, succeeding string
 			BeforeEach(func() {
 				failed = fixtures.DefaultPrincipal().String()
 				succeeding = fixtures.AnotherPrincipal().String()
-				failedSession := fixtures.FullyExpiredSessionForPrincipal(failed, serviceID.String())
+				failedSession := fixtures.ExpiredWithoutRefreshSession(failed, serviceID, time.Now())
 				failedSession.ID = id.MustParseSessionID("00000000-0000-0000-0000-000000000001")
 				seedSession(failedSession)
 				succeedingSession := fixtures.ExpiredGitHubSessionForPrincipal(succeeding)
@@ -481,7 +481,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US3-S2 from specs/029-proactive-token-refresh/spec.md
-			It("should count expired refresh tokens as failures and continue the sweep", func() {
+			It("should count unrefreshable sessions as failures and continue the sweep", func() {
 				oldFailedRefresh := bytes.Clone(storedSession(failed).EncryptedRefreshToken)
 				oldFailedExpiry := *storedSession(failed).AccessTokenExpiresAt
 				oldFailed := bytes.Clone(storedSession(failed).EncryptedAccessToken)
@@ -521,6 +521,38 @@ var _ = Describe("Proactive Token Refresh", func() {
 					}
 				}
 				Expect(auditCount).To(Equal(2))
+			})
+		})
+
+		Context("and one candidate's refresh token was rejected by the provider", func() {
+			var rejected, succeeding string
+			BeforeEach(func() {
+				rejected = fixtures.DefaultPrincipal().String()
+				succeeding = fixtures.AnotherPrincipal().String()
+				rejectedSession := fixtures.FullyExpiredSessionForPrincipal(rejected, serviceID.String())
+				rejectedSession.ID = id.MustParseSessionID("00000000-0000-0000-0000-000000000001")
+				seedSession(rejectedSession)
+				succeedingSession := fixtures.ExpiredGitHubSessionForPrincipal(succeeding)
+				succeedingSession.ID = id.MustParseSessionID("00000000-0000-0000-0000-000000000002")
+				seedSession(succeedingSession)
+			})
+
+			// US3-S5 from specs/029-proactive-token-refresh/spec.md
+			It("should not treat a rejected session as a sweep candidate", func() {
+				before := storedSession(rejected)
+				oldAccess := bytes.Clone(before.EncryptedAccessToken)
+				oldRefresh := bytes.Clone(before.EncryptedRefreshToken)
+				summary := proactiveSweepBody(proactiveSweep(admin, `{"lookahead_duration":"PT10M","page_size":1}`))
+				Expect(summary).To(Equal(proactiveSweepSummary{Refreshed: 1, TotalEvaluated: 1}))
+				Expect(upstream.GetTokenRequests()).To(HaveLen(1))
+				after := storedSession(rejected)
+				Expect(after.EncryptedAccessToken).To(Equal(oldAccess))
+				Expect(after.EncryptedRefreshToken).To(Equal(oldRefresh))
+				Expect(after.RefreshRejectedAt).To(Equal(before.RefreshRejectedAt))
+				Expect(proactiveEvents(logs, "session.oauth2.refresh_failed")).To(BeEmpty())
+				refreshes := proactiveEvents(logs, "session.oauth2.token_refreshed")
+				Expect(refreshes).To(HaveLen(1))
+				Expect(refreshes[0]).To(HaveKeyWithValue("principal", succeeding))
 			})
 		})
 
@@ -599,7 +631,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 					after := storedSession(principal)
 					Expect(after.EncryptedAccessToken).To(Equal(before[principal].EncryptedAccessToken), fmt.Sprintf("access token for %s", principal))
 					Expect(after.EncryptedRefreshToken).To(Equal(before[principal].EncryptedRefreshToken))
-					Expect(after.RefreshTokenExpiresAt).To(Equal(before[principal].RefreshTokenExpiresAt))
+					Expect(after.RefreshRejectedAt).To(Equal(before[principal].RefreshRejectedAt))
 					Expect(after.UpdatedAt).To(Equal(before[principal].UpdatedAt))
 					Expect(after.AccessTokenExpiresAt).To(Equal(before[principal].AccessTokenExpiresAt))
 				}

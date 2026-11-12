@@ -1,0 +1,154 @@
+# Local Key Sets for Trust Anchors (inline JWK Set and key-set file)
+#
+# These trust anchors take their public verification keys from configuration
+# instead of a remote jwks_uri or issuer-metadata discovery:
+#   1. token_exchange.client_assertion               -> inline `jwks`
+#   2. impersonation rules[].trusted_issuers[]       -> `jwks_file`
+#   3. server.enduser.authentication.jwt             -> `jwks_file`
+#   (server.admin.authentication.jwt accepts the same settings as a separate trust anchor)
+#
+# Each trust anchor accepts at most one of jwks_uri, jwks, and jwks_file.
+# The broker makes no outbound request for the keys of a trust anchor that uses
+# `jwks` or `jwks_file`, so the issuer need not publish metadata or keys.
+#
+# Key sets hold PUBLIC asymmetric keys only (RS*, PS*, ES*, EdDSA). Private key
+# material, symmetric keys, missing or empty `kid`, duplicate `kid` values, and
+# documents over 1 MiB fail startup. Every key needs a unique non-empty `kid`.
+# Set `alg` on every key: it is optional, but token exchange and impersonation
+# skip keys without it.
+#
+# `jwks_file` paths must lie inside security.trust_material_dir. The broker
+# re-reads each file every jwks_min_refresh (JWT pre-authentication: 5m), keeps
+# the last valid set when a re-read fails, and fails closed after jwks_max_refresh
+# without a successful read. Re-read failures show as
+# components.trust_anchor_key_files = "degraded" on GET /health.
+#
+# `jwks` is never refreshed, so jwks_min_refresh and jwks_max_refresh are rejected
+# next to it. In YAML, write the JSON as a block scalar (`jwks: |`). Through the
+# environment, use IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS. With
+# ${VAR} expansion, make the reference the whole value: jwks: ${GATEWAY_JWKS}.
+#
+# This example is a COMPLETE, loadable local-mode configuration. The JWK Sets
+# contain public keys generated for this example only. Replace them, and create
+# the files below, before running it:
+#   /etc/agentic-identity-broker/trust/agentgateway-jwks.json
+#   /etc/agentic-identity-broker/trust/mesh-jwks.json
+#
+# For full documentation see: docs/configuration.md
+
+# Logging
+log:
+  level: "info"
+  format: "json"
+
+# The only directory from which the broker reads jwks_file key sets.
+# Environment override: IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR
+security:
+  trust_material_dir: "/etc/agentic-identity-broker/trust"
+
+# Dual-server architecture: end-user and admin on separate ports
+server:
+  enduser:
+    port: 8000
+    bind: "0.0.0.0"
+    public_url: "https://broker.example.com"
+    authentication:
+      # Trust anchor 3: identity JWTs injected by a service mesh, verified against a file.
+      jwt:
+        header_name: Authorization
+        verification: jwks # Signature verification stays mandatory.
+        jwks_file: "/etc/agentic-identity-broker/trust/mesh-jwks.json" # Re-read every 5 minutes.
+        expected_issuer: "https://mesh.internal.example.com"
+        expected_audience: "agentic-identity-broker"
+        claim_extraction:
+          principal_expression: "claims.email"
+          display_name_expression: "claims.name"
+  admin:
+    port: 14000
+    bind: "0.0.0.0"
+    public_url: "https://broker.example.com:14000"
+    authentication:
+      # server.admin.authentication.jwt also accepts jwks or jwks_file, as its own trust anchor.
+      preauth:
+        principal_header_name: "X-Remote-User"
+
+# Storage backend
+storage:
+  backend: "memory" # Use "postgres" for production
+
+# Encryption for signing key private material
+encryption:
+  memory:
+    # Base64-encoded 32-byte AES-256 key. Fixed dev key - never use in production.
+    # Generate a real one with: openssl rand -base64 32
+    raw_key: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+
+# Third-party OAuth2 token vault. jwe_signing_key seals ephemeral state tokens.
+third_party_oauth2:
+  # Base64-encoded 32-byte key. Fixed dev key - never use in production.
+  jwe_signing_key: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+  state_token_ttl: "10m"
+  pkce_verifier_length: 32
+
+# OAuth2 authorization server: local mode, so the broker's own issuer is
+# https://broker.example.com. A trust anchor may not trust that issuer.
+oauth2_authorization_server:
+  mode: "local"
+
+  local:
+    issuer_uri: "https://broker.example.com"
+    token_ttl: "1h"
+    token_claims_expression: '{"azp": agent.id, "aud": "token-exchange-broker"}'
+    signing_keys:
+      bootstrap_timeout: 90s
+
+  # Trust anchor 2: impersonation trusted issuers with key-set files.
+  impersonation:
+    audience_prefix: "https://broker.example.com/impersonation"
+    rules:
+      - name: "agentgateway"
+        roles:
+          client_assertion:
+            expected_audience: "https://broker.example.com/impersonation"
+            principal_expression: "client_assertion.sub"
+          actor:
+            expected_audience: "https://broker.example.com/impersonation"
+            principal_expression: "actor_token.sub"
+          subject:
+            expected_audience: "https://broker.example.com/impersonation"
+            principal_expression: "subject_token.sub"
+        trusted_issuers:
+          - issuer_uri: "https://agentgateway.internal.example.com"
+            jwks_file: "/etc/agentic-identity-broker/trust/agentgateway-jwks.json"
+            allowed_algorithms: ["ES256"] # An RS256 credential is rejected.
+            signs_roles: ["client_assertion", "actor"]
+          # Every signed role needs a trusted issuer, so the mesh signs the subject.
+          - issuer_uri: "https://mesh.internal.example.com"
+            jwks_file: "/etc/agentic-identity-broker/trust/mesh-jwks.json"
+            allowed_algorithms: ["ES256"]
+            signs_roles: ["subject"]
+        authorization:
+          type: cel
+          cel:
+            expression: 'client_assertion.sub == "agentgateway"'
+            evaluation_timeout: "100ms"
+
+# Trust anchor 1: token-exchange client assertions verified against an inline key set.
+token_exchange:
+  client_assertion:
+    issuer_uri: "https://agentgateway.internal.example.com" # Expected iss; never contacted.
+    jwks: | # Inline key set: no discovery, no key fetch, never refreshed.
+      {"keys":[{"kty":"EC","crv":"P-256","kid":"agentgateway-2026-10","use":"sig","alg":"ES256",
+                "x":"N6WiFRofyuIyQB-eW9crpdmS9g4kKSiH74YTdLAl7W4","y":"xCY8xIVostJxGQOY2g8TQBFtBkivLecgjQUUnQEMrAk"}]}
+  claim_extraction:
+    principal_expression: "subject_token.sub"
+    agent_id_expression: "subject_token.azp"
+  authorization:
+    type: "cel"
+    cel:
+      expression: 'client_assertion.sub == "agentgateway"' # Only the gateway may exchange.
+      evaluation_timeout: "100ms"
+
+# Example mesh-jwks.json (public key only; contents of the file, not of this config):
+# {"keys":[{"kty":"EC","crv":"P-256","kid":"mesh-2026-10","use":"sig","alg":"ES256",
+#           "x":"AryAkv96bElvB6_UwNnmwq6LFsKFFeWFQPhoDTs2OZI","y":"Ci4Umj64zzovIQGDe64N3EKv-H5DsvAj1xtLUBMtvmw"}]}

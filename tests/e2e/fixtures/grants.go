@@ -9,6 +9,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
 // PlaceholderPermissionSetID is the stable permission set ID used by grant fixtures
@@ -139,6 +140,36 @@ func SeedDefaultConsentData(ctx context.Context, store *storageadapter.Adapter, 
 		TokenType:            "Bearer",
 		EncryptionContext:    storagedomain.EncryptionContext{ServiceID: PlaceholderServiceID},
 	})
+}
+
+// SeedGrantSessions stores a usable session for every service the grant includes,
+// as FR-020 of specs/019-permission-sets/spec.md requires before consent is saved.
+// Authorization redirects to consent while an included service has no session (FR-022).
+// Included services that are not stored yet are created with ServiceWithID and no protected resources.
+func SeedGrantSessions(ctx context.Context, store *storageadapter.Adapter, grant *storagedomain.UserGrant) error {
+	seen := make(map[id.ServiceID]bool)
+	for _, entry := range grant.GrantedPermissionSets {
+		for _, serviceID := range entry.IncludedServiceIDs {
+			if seen[serviceID] {
+				continue
+			}
+			seen[serviceID] = true
+			if _, err := store.Services().Get(ctx, serviceID); err != nil {
+				if !ports.IsNotFoundErr(err) {
+					return err
+				}
+				svc := ServiceWithID(serviceID.String())
+				svc.ProtectedResources = nil
+				if err := store.Services().Create(ctx, svc); err != nil {
+					return err
+				}
+			}
+			if err := store.UserSessions().Create(ctx, SessionForService(grant.Principal.String(), serviceID.String())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ActiveGrant returns a user grant that is currently active (not expired).

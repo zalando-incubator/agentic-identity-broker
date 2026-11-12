@@ -81,3 +81,17 @@
 - The approved generation contract defaults `algorithm` to `ES256` and rejects any other value, so the CIMD domain does not inherit the token-signing path's tolerance for other algorithms, consistent with `FR-029`.
 - The clarification record holds eight decisions: three on 2026-09-17 and five on 2026-09-18.
 - All 16 checklist items pass; no checkbox state changed across the session.
+
+### Increment 2 (issue #264) — 2026-10-22
+
+- This increment augments the feature 046 specification. The original 31 acceptance scenarios remain, followed by US6 (6), US7 (6), and US8 (8). The focused total is 51.
+- New contiguous ranges are FR-032–FR-049, API-010–API-014, DB-005–DB-007, and SC-009–SC-013. The existing ranges end at FR-031, API-009, DB-004, and SC-008.
+- The six concrete example journeys link registration, metadata, connection, refresh, assertion, transitions, rotation, and keyless startup to their acceptance scenarios. The increment changes no UI, so it adds no wireframes.
+- Issue #264 approves API-013. The API-014 gate remains open for D-A, D-B, D-C, and D-D. The decision now in ADR 044 remains Proposed and needs explicit stakeholder acceptance before implementation. These are recorded decisions awaiting confirmation, not unspecified requirements or missing sections.
+- The checklist retains the prior content-quality marks. No Increment 2 implementation begins while the API-014 and ADR gates remain open.
+
+### Increment 2 approval record — 2026-10-22
+
+- After the Stage 1 review, the stakeholder confirmed D-A, D-B, D-C, and D-D in writing under API-014.
+- The stakeholder explicitly accepted the decision now in ADR 044, including D-E–D-J and the D-I rolling-upgrade limitation.
+- The API-014 and ADR gates are closed. The previous Increment 2 note records the gate state before this decision.

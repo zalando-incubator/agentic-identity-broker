@@ -177,7 +177,8 @@ func TestRun_ServesExtProcAndGracefullyStopsOnSIGTERM(t *testing.T) {
 		}
 		_ = process.Signal(syscall.SIGTERM)
 		select {
-		case <-waited:
+		case err := <-waited:
+			require.NoError(t, err)
 		case <-time.After(6 * time.Second):
 			t.Error("ExtProc did not stop during test cleanup")
 		}

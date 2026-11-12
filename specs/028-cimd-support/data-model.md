@@ -54,12 +54,12 @@ Represents a parsed and validated CIMD JSON document. Immutable after constructi
 | `PolicyURI` | `string` | No | Privacy policy URL |
 | `TosURI` | `string` | No | Terms of service URL |
 
-**Validation rules** (applied at parse time):
+**Validation rules** (applied at parse or resolution time as indicated):
 - `ClientID` must exactly match the URL the document was fetched from (byte-for-byte, SR-008)
 - `RedirectURIs` must not be empty (edge case: "omits redirect_uris" → rejection)
 - `AuthMethod` must not be `client_secret_post`, `client_secret_basic`, or `client_secret_jwt` (FR-022)
 - `ClientName` must not match any entry in the keyword blocklist (FR-023b, case-insensitive)
-- Each `RedirectURI` must be same-origin with `ClientID` URL, except `localhost`/`127.0.0.1` (FR-004a)
+- Each `RedirectURI` must be same-origin with the `ClientID` URL, use a `localhost`/`127.0.0.1`/`::1` host, or be a valid private-use scheme URI that the resolved Agent's `redirect_uris` lists byte for byte (FR-004a; checked on every resolution by `ValidatePrivateUseRedirectURIs`)
 
 **Package**: `internal/domain/cimd/document.go`
 

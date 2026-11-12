@@ -12,12 +12,14 @@ This guide explains how to configure the Agentic Identity Broker for different d
 - [Overview](#overview)
 - [Configuration Sources](#configuration-sources)
 - [Precedence Rules](#precedence-rules)
+- [Third-party OAuth2 Credential Files](#third-party-oauth2-credential-files)
 - [Environment-Specific Configuration](#environment-specific-configuration)
 - [YAML Configuration](#yaml-configuration)
 - [Command-Line Flags](#command-line-flags)
 - [Configuration Reference](#configuration-reference)
 - [Available Settings](#available-settings)
 - [Token Refresh](#token-refresh)
+- [Trust-Anchor Key Sets](#trust-anchor-key-sets)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
 
@@ -112,6 +114,59 @@ CLI Flags > Environment Variables (including .env files) > YAML File > Defaults
 - CLI flag `--log-level=debug` is provided
 
 **Result**: `log.level=debug` (from CLI flag)
+
+## Third-party OAuth2 credential files
+
+`third_party_oauth2.credential_files` maps exact, case-sensitive service canonical IDs to credential file pairs. Its default is `{}`.
+Every binding requires `client_id_file` and `client_secret_file`, each with a non-blank absolute path.
+Canonical IDs follow the existing canonical-ID grammar. UUIDs, paths, and whitespace are not canonical IDs.
+
+```yaml
+third_party_oauth2:
+  credential_files:
+    corporate-api:
+      client_id_file: /meta/credentials/client-id
+      client_secret_file: /meta/credentials/client-secret
+    GitHub.Team:
+      client_id_file: /meta/github/client-id
+      client_secret_file: /meta/github/client-secret
+```
+
+The loader accepts this mapping from YAML, environment variables, `.env` files, or the JSON CLI flag.
+For this mapping, precedence is CLI, environment, configuration file, then default. The winning source replaces the whole map, without merging bindings.
+A winning `{}` removes all bindings. It does not change service records or restore stored credentials.
+
+```bash
+export IDENTITY_BROKER_THIRD_PARTY_OAUTH2_CREDENTIAL_FILES='{"corporate-api":{"client_id_file":"/meta/credentials/client-id","client_secret_file":"/meta/credentials/client-secret"}}'
+./bin/agentic-identity-broker
+
+./bin/agentic-identity-broker \
+  --third_party_oauth2.credential_files='{"corporate-api":{"client_id_file":"/meta/credentials/client-id","client_secret_file":"/meta/credentials/client-secret"}}'
+
+./bin/agentic-identity-broker --third_party_oauth2.credential_files='{}'
+```
+
+Configuration validates types, canonical IDs, and paths without opening files. Unavailable files do not prevent startup or metadata operations.
+Unknown-ID bindings create no services. Each filesystem service uses only its own exact canonical-ID binding.
+The broker infers no binding from a service UUID, display name, client ID, or filename.
+
+Register the service with `credential_source: "filesystem"`, a canonical ID, and neither inline credential field.
+See [source-specific administration](/docs/guides/manage-agents-and-services#register-and-update-a-filesystem-service) for complete create and PUT examples.
+Stored services ignore bindings, including unusable bindings. Filesystem services fail closed when their required binding or file is unavailable.
+Public, CIMD confidential, and Google services cannot select filesystem mode.
+
+Initiation reads only the current client-ID file. Each exchange attempt and actual refresh reads a fresh, coherent pair.
+Each file must be regular, readable by the broker UID, non-empty after whitespace removal, and at most 65,536 bytes before trimming.
+The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value and reads no files for metadata.
+Configuration has no hot reload. Binding changes require a restart, but file publication takes effect on the next applicable operation.
+
+For rotation, publish fresh immutable targets and switch the complete pair atomically. Do not modify a published target or reuse a retired target during acquisition.
+The reader revalidates both targets after acquisition. A detected replacement returns a safe `generation_changed` error and sends no provider authentication request.
+A pair validated before later publication can finish its in-flight operation. Provider validity overlap must cover that operation.
+
+Secret rotation can retain sessions when the client ID stays the same. A changed client ID requires new connections for old codes and sessions.
+Source transitions never rewrite established identities. Removing a binding preserves filesystem mode and makes affected authentication fail with `missing_binding`.
+Administrative responses expose source metadata, not paths, file values, or transition history. Source errors retain generic HTTP responses and closed, credential-free event reasons.
 
 ## ExtProc approval configuration
 
@@ -254,6 +309,8 @@ Each successful confidential-provider secret decryption emits `service_secret_de
 | `token_refresh.lookahead_duration` | Go duration string | `5m` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_LOOKAHEAD_DURATION` | `--token_refresh.lookahead_duration` | Window before access-token expiry for background refresh. Set it shorter than the provider's access-token lifetime. |
 | `token_refresh.background_workers` | integer | `10` | 1–20 | No | `IDENTITY_BROKER_TOKEN_REFRESH_BACKGROUND_WORKERS` | `--token_refresh.background_workers` | Maximum concurrent background refreshes per replica. PostgreSQL separately limits all locked-session operations to 20 across background, on-demand, sweep, and reconnect traffic. |
 | `token_refresh.sweep.default_page_size` | integer | `100` | 1–1000 | No | `IDENTITY_BROKER_TOKEN_REFRESH_SWEEP_DEFAULT_PAGE_SIZE` | `--token_refresh.sweep.default_page_size` | Number of candidates per admin sweep page when the request omits `page_size`. |
+| `token_refresh.health_metrics.enabled` | bool | `true` | `true`, `false` | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_ENABLED` | `--token_refresh.health_metrics.enabled` | Publish the `oauth2_sessions{service_id,expiry,refreshable}` gauge. Takes effect only when telemetry metrics are exported. |
+| `token_refresh.health_metrics.query_timeout` | Go duration string | `5s` | Positive Go duration | No | `IDENTITY_BROKER_TOKEN_REFRESH_HEALTH_METRICS_QUERY_TIMEOUT` | `--token_refresh.health_metrics.query_timeout` | Timeout of the per-export session count query, applied instead of `storage.timeouts.read`. A slower query reports no gauge data for that export cycle. |
 
 
 #### Encryption Configuration
@@ -456,7 +513,8 @@ or mesh; it must remove client-supplied copies and restrict direct access to bot
 |---|---|---|
 | `header_name` | `Authorization` | JWT header; only `Authorization` strips a `Bearer ` prefix. A gateway-supplied `X-Userinfo` contains the raw JWT. |
 | `verification` | `jwks` | `jwks` verifies a signature; `none` trusts a gateway-supplied JWT without signature verification. |
-| `jwks_uri` | none | Required with `jwks`, forbidden with `none`. Must use HTTPS except when the development-only HTTPS skip is enabled. |
+| `jwks_uri` | none | One key source for `jwks` verification. Forbidden with `none`. Must use HTTPS except when the development-only HTTPS skip is enabled. |
+| `jwks`, `jwks_file` | none | Alternative key sources to `jwks_uri`, on both `server.enduser.authentication.jwt` and `server.admin.authentication.jwt`. Each server is a separate trust anchor with its own key set. At most one of the three key sources may be set, and `jwks` verification requires one. Forbidden with `none`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
 | `expected_audience`, `expected_issuer` | unset | Reject JWTs with other audience/issuer when set. |
 | `claim_extraction.principal_expression` | `claims.sub` | CEL expression returning a non-empty principal; for gateway userinfo containing `principal`, use `claims.principal`. |
 | `claim_extraction.display_name_expression`, `email_expression`, `picture_url_expression` | unset | Optional CEL expressions for profile attributes. |
@@ -581,11 +639,11 @@ These options control the authorization-code flow and token refresh for third-pa
 
 **Refresh notes:**
 
-- Token exchange returns a still-valid access token immediately. Within `token_refresh.lookahead_duration` (default `5m`), a usable refresh token allows background refresh without delaying the response. Failed or dropped background work does not change the response.
+- Token exchange returns a still-valid access token immediately, unless the provider has rejected the session's refresh token. A recorded rejection refuses the exchange with `invalid_grant` even while the access token has not expired. Within `token_refresh.lookahead_duration` (default `5m`), a usable refresh token allows background refresh without delaying the response. Failed or dropped background work does not change the response.
 - Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts. Backoff delays are 1s and 2s. It honors `Retry-After` up to 10 seconds; larger values, including numeric overflow, stop retries. It does not retry incomplete response bodies, other 4xx rejections, timeouts, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation; stored credentials remain unchanged, and a later provider rejection can require login.
 - Refresh error bodies are limited to 64 KiB. Larger bodies are treated as incomplete and are not retried.
-- If a reconnect omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and its recorded expiry. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. To restore automatic refresh, obtain a new refresh token through provider consent. For providers that require it, configure `prompt=consent` through the service's authorization parameters.
-- The broker does not infer refresh-token expiry from provider-specific lifetime fields. An unknown expiry does not guarantee indefinite validity. Provider rejection remains authoritative.
+- If a reconnect omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and any recorded rejection. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. To restore automatic refresh, obtain a new refresh token through provider consent. For providers that require it, configure `prompt=consent` through the service's authorization parameters.
+- The broker does not infer or record refresh-token expiry from provider-specific lifetime fields. It records only an observed provider `invalid_grant` rejection, which requires the user to log in again. Provider rejection remains authoritative.
 - The broker accepts access-token `expires_in` values as JSON numbers or numeric strings. During refresh, absent or null metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid`. Other positive fractions are truncated to whole seconds. Refresh commits explicit token type and scope with the new tokens. An omitted scope retains the stored scope; an explicit empty scope clears it. GitHub scopes use comma separators.
 
 **Notes:**
@@ -733,9 +791,12 @@ token_refresh:
   background_workers: 10
   sweep:
     default_page_size: 100
+  health_metrics:
+    enabled: true
+    query_timeout: 5s
 ```
 
-The source order is CLI flags > environment variables > YAML file > defaults. The three flags use the exact names in the [reference table](#token-refresh-configuration).
+The source order is CLI flags > environment variables > YAML file > defaults. The five flags use the exact names in the [reference table](#token-refresh-configuration).
 
 Set `lookahead_duration` to less than the shortest access-token lifetime that your providers issue. Otherwise, every token exchange can submit a refresh while the token remains valid.
 
@@ -745,7 +806,9 @@ The PostgreSQL adapter separately limits locked-session operations to 20 across 
 
 Each admitted refresh holds its connection through all provider attempts, retry waits, and token persistence. Two maximum `Retry-After` waits add 20 connection-seconds per refresh, before provider latency. The bounded refresh context limits the total duration. Lower background concurrency leaves more of the shared admission capacity for on-demand refreshes and sweeps.
 
-The admin sweep is not scheduled by the broker. Schedule `POST /api/sessions/sweep` externally through the authenticated admin proxy. See the [session sweep runbook](operations/session-sweep.md) for the request and scheduling instructions.
+With `health_metrics.enabled`, each replica runs one grouped count of stored sessions per metric export cycle and publishes `oauth2_sessions` by service, access-token expiry class, and refreshability. The query reads no token material. A failed or slow query exports no points for that cycle and logs `session health query failed` at WARN. Consumers aggregate the gauge across replicas with `max`.
+
+The broker does not schedule the admin sweep. Enable the chart's `sessionSweep` CronJob, or schedule `POST /api/sessions/sweep` with another external job. See the [session sweep runbook](operations/session-sweep.md) for scheduling, credentials, and monitoring.
 
 ### Encryption Backend Configuration
 
@@ -1236,10 +1299,13 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 
 | Option | Type | Default | Required? | Environment Variable | Rules |
 |--------|------|---------|-----------|----------------------|-------|
-| `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
+| `token_exchange.client_assertion.issuer_uri` | string | Proxy upstream issuer | Yes for configured token exchange or explicit key sources in `local` mode | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_ISSUER_URI` | External IdP issuer URI. In `proxy` and `hybrid` modes, an empty value defaults to `oauth2_authorization_server.proxy.upstream_issuer_uri`. In `local` mode it must be explicit. The broker's own issuer is rejected at startup. |
+| `token_exchange.client_assertion.expected_audience` | string | `token_exchange.expected_audience` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_EXPECTED_AUDIENCE` | Audience required only for client assertions. When omitted, the shared token-exchange audience is retained for backward compatibility; subject tokens in third-party token exchange use `token_exchange.expected_audience`. Impersonation subject credentials use the applicable rule audience or no audience in unverified mode. |
 | `token_exchange.client_assertion.jwks_uri` | string | Discovered from `issuer_uri` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_URI` | Explicit external IdP JWKS endpoint. Set this when the IdP does not support OAuth/OIDC discovery. |
+| `token_exchange.client_assertion.jwks` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` | Inline JWK Set JSON, as an alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
+| `token_exchange.client_assertion.jwks_file` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` | Absolute path of a JWK Set file inside `security.trust_material_dir`. Mutually exclusive with `jwks_uri` and `jwks`. |
 | `token_exchange.client_assertion.jwks_min_refresh` | duration | `15m` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MIN_REFRESH` | Minimum interval between client-assertion JWKS refresh attempts. Must be a non-negative Go duration. |
-| `token_exchange.client_assertion.jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH` | Maximum client-assertion JWKS refresh interval. Must be a non-negative Go duration; values below the effective minimum are raised to it. |
+| `token_exchange.client_assertion.jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_MAX_REFRESH` | Maximum client-assertion JWKS refresh interval. Must be a non-negative Go duration. For `jwks_file`, the default is `max(3 × jwks_min_refresh, 1h)` when unset or below the minimum; remote sources use `max(jwks_min_refresh, 1h)`. |
 
 **Example**:
 
@@ -1247,13 +1313,192 @@ See `examples/config/oauth2-authorization-server.yaml` for a complete configurat
 token_exchange:
   client_assertion:
     issuer_uri: "https://privileged-gateway-idp.example.com"
+    expected_audience: "https://broker.example.com/oauth2/token"
     # Optional when discovery is unavailable:
     # jwks_uri: "https://privileged-gateway-idp.example.com/keys"
     # jwks_min_refresh: "15m"
     # jwks_max_refresh: "1h"
 ```
 
-In `local` mode, set `issuer_uri` whenever token exchange or approval authentication is configured. In `proxy` and `hybrid` modes it defaults to the configured proxy upstream issuer when omitted. The configured issuer must be an external IdP; a broker-self issuer is rejected at startup to prevent broker-minted tokens from becoming privileged client assertions.
+In `local` mode, set `issuer_uri` whenever token exchange or approval authentication is configured or whenever `jwks_uri`, `jwks`, or `jwks_file` is set. In `proxy` and `hybrid` modes it defaults to the configured proxy upstream issuer when omitted. The configured issuer must be an external IdP; a broker-self issuer is rejected at startup to prevent broker-minted tokens from becoming privileged client assertions.
+
+### Trust-Anchor Key Sets
+
+#### jwks, jwks_file, and security.trust_material_dir
+
+**Description**: A trust anchor is an authority whose signed credentials the broker verifies. Each trust anchor takes its public verification keys from one **key set source**: a remote `jwks_uri` (or discovery), an inline `jwks` document, or a `jwks_file` that the broker reads from the trust directory. Inline and file sources need no network-reachable key-publishing service and cause no outbound request. See `adrs/040-trust-anchor-local-key-sets.md`.
+
+The in-scope trust anchors are:
+
+- the token-exchange client assertion trust anchor, which also authenticates machine-facing approval requests;
+- every trusted issuer of every impersonation rule;
+- JWT pre-authentication on the end-user server and, separately, on the admin server.
+
+| Option | Type | Default | Required? | Environment Variable | Rules |
+|--------|------|---------|-----------|----------------------|-------|
+| `security.trust_material_dir` | string | unset | Yes, for any `jwks_file` | `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR` | Absolute path. It must resolve, after symbolic links, to an existing directory other than `/`. The broker reads key-set files only from here. When no `jwks_file` is configured, the broker does not touch the filesystem. |
+| `token_exchange.client_assertion.jwks` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` | Inline JWK Set JSON. |
+| `token_exchange.client_assertion.jwks_file` | string | unset | No | `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` | Absolute path of a JWK Set file inside the trust directory. |
+| `oauth2_authorization_server.impersonation.rules[].trusted_issuers[].jwks` | string | unset | No | None (rule lists are YAML-only) | Inline JWK Set JSON. |
+| `oauth2_authorization_server.impersonation.rules[].trusted_issuers[].jwks_file` | string | unset | No | None (rule lists are YAML-only) | Absolute path of a JWK Set file inside the trust directory. |
+| `server.enduser.authentication.jwt.jwks` | string | unset | No | None. `${VAR}` expansion in YAML applies | Inline JWK Set JSON. |
+| `server.enduser.authentication.jwt.jwks_file` | string | unset | No | None. `${VAR}` expansion in YAML applies | Absolute path of a JWK Set file inside the trust directory. |
+| `server.admin.authentication.jwt.jwks` | string | unset | No | None. `${VAR}` expansion in YAML applies | Inline JWK Set JSON. |
+| `server.admin.authentication.jwt.jwks_file` | string | unset | No | None. `${VAR}` expansion in YAML applies | Absolute path of a JWK Set file inside the trust directory. |
+
+The end-user and admin servers' JWT pre-authentication are separate trust anchors. Each has its own key set, and a JWT verified by one server's keys is not accepted by the other unless both declare the same key.
+
+**Mutual exclusivity**: A trust anchor accepts at most one of `jwks_uri`, `jwks`, and `jwks_file`. There is no precedence. Setting more than one fails startup. A trust anchor that sets none keeps its existing behavior: issuer-metadata discovery, or the proxy upstream key set for the client assertion trust anchor in `proxy` and `hybrid` modes. A failed local source never falls back to discovery or to another source. To move a trust anchor from a remote key set to a local one, replace `jwks_uri` with `jwks` or `jwks_file`.
+
+For JWT pre-authentication, `verification: none` is mutually exclusive with every key source (`jwks_uri`, `jwks`, and `jwks_file`).
+
+A local key set is used only by the trust anchor that declares it. The broker never publishes it at `/oauth2/jwks.json` and never uses it to validate subject tokens. Two impersonation trusted issuers that share an `issuer_uri` but declare different key sets each verify against only their own keys. The ADR 029 self-trust check applies to every source. In `proxy` and `hybrid` modes, a client assertion trust anchor with a local key set and no `issuer_uri` keeps the upstream issuer as the expected issuer and verifies client assertions against the local keys only. In `local` mode, any explicit client-assertion key source requires `issuer_uri`.
+
+##### Environment overrides
+
+- `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS` and `IDENTITY_BROKER_TOKEN_EXCHANGE_CLIENT_ASSERTION_JWKS_FILE` override the client assertion keys. Any valid JWK Set JSON is accepted, including multiple lines.
+- `IDENTITY_BROKER_SECURITY_TRUST_MATERIAL_DIR` overrides `security.trust_material_dir`.
+- Impersonation rule lists are YAML-only, as for every other rule setting.
+- JWT pre-authentication on either server has no environment variable. Use `${VAR}` expansion in YAML, as the whole value: `jwks: ${MESH_JWKS}`. The loader checks the YAML value that contains the reference, so that value must fit on one line and must not contain shell metacharacters; the substituted environment value itself may span lines. A YAML block scalar (`jwks: |`) that holds the JSON directly may also span lines.
+
+##### Refresh bounds
+
+`jwks_min_refresh` and `jwks_max_refresh` apply as follows.
+
+| Key set source | Behavior |
+|---|---|
+| `jwks_uri` or discovery | Unchanged. |
+| `jwks_file` | `jwks_min_refresh` is how often the broker re-reads the file. `jwks_max_refresh` is how long after the last successful read the broker still serves the last valid key set. The minimum defaults to `15m`. When the maximum is unset or below the minimum, it defaults to `max(3 × jwks_min_refresh, 1h)`. An explicit maximum at least as large as the minimum is used as configured. |
+| `jwks` | Rejected when either bound is set (`refresh_bounds_with_inline`). An inline key set never refreshes. Change it by editing the configuration and restarting. |
+
+| Trust anchor | Re-read interval | Staleness window |
+|---|---|---|
+| `token_exchange.client_assertion` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`: file default `max(3 × min, 1h)`; remote default `max(min, 1h)` |
+| Impersonation `trusted_issuers[]` | `jwks_min_refresh`, default `15m` | `jwks_max_refresh`: file default `max(3 × min, 1h)`; remote default `max(min, 1h)` |
+| `server.enduser.authentication.jwt`, `server.admin.authentication.jwt` | `5m`, fixed | `15m`, fixed |
+
+JWT pre-authentication does not accept refresh settings.
+
+##### Key-set document rules
+
+The inline value and the file contents are JSON text of an RFC 7517 section 5 JWK Set: an object with a `keys` array. The broker applies the same rules to both sources, at startup and on every re-read.
+
+| Rule | Category |
+|---|---|
+| At most 1 MiB (1048576 bytes) | `too_large` |
+| An object with a `keys` array that the JOSE library parses as a key set | `not_a_jwk_set` |
+| At least one key | `empty_key_set` |
+| No `kty: oct` (symmetric) key | `symmetric_key` |
+| No private key members | `private_key` |
+| `alg`, when present, is one of `RS256`, `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES256`, `ES384`, `ES512`, `EdDSA` | `unapproved_algorithm` |
+| Every key has a non-empty `kid` | `missing_kid` |
+| `kid` values are unique | `duplicate_kid` |
+
+A bare JWK without a `keys` array is rejected. A document that is only partly valid is rejected as a whole.
+
+**Set `alg` on every key.** A local key must have a unique non-empty `kid`; a missing or empty `kid` fails startup. Only `alg` is optional. Token exchange and impersonation skip keys without `alg`, so those keys can pass startup but cannot verify credentials through those trust anchors. Every trust anchor requires a `kid` in the credential header. Remote key-set acceptance is unchanged.
+
+##### Key-set file rules
+
+| Rule | Category |
+|---|---|
+| The path is absolute | `relative_path` |
+| `security.trust_material_dir` is set | `missing_trust_directory` |
+| The cleaned path lies under the cleaned trust directory | `outside_trust_directory` |
+| Opening the file beneath the trust directory does not leave the directory through `..` or a symbolic link | `outside_trust_directory` |
+| The file exists | `not_found` |
+| The file can be read | `unreadable` |
+| The file is a regular file after the broker follows symbolic links | `not_regular_file` |
+
+The broker opens the file through the trust directory (`os.Root`). The regular-file check and the read use the same open file, so retargeting a link between a check and a read cannot escape the directory.
+
+**Symbolic links**: Relative symbolic links that stay inside the trust directory are accepted. Kubernetes Secret, ConfigMap, and projected volumes use this layout (`jwks.json` links to `..data/jwks.json`, which links to a timestamped directory). **Absolute symbolic links inside the trust directory are rejected**, even when their target is also inside the directory. A link that resolves outside the directory is rejected. Do not mount a key-set file with `subPath`: Kubernetes does not update `subPath` mounts, so the file would never rotate.
+
+Choose a narrow trust directory that holds only trust material. The broker rejects `/`.
+
+##### Re-read behavior
+
+After startup the broker re-reads each key-set file every `jwks_min_refresh`, in the background.
+
+- A valid re-read replaces the whole key set. Added and removed key identifiers are logged.
+- A failed re-read keeps the last valid key set, logs a warning, and sets `trust_anchor_key_files` to `degraded` in `GET /health`. A failure is any file rule or document rule above.
+- After `jwks_max_refresh` has elapsed since the last successful read, verification for that trust anchor fails closed until a valid re-read succeeds.
+- The next valid re-read returns the component to `healthy`.
+
+Removing a compromised key from a file that keeps other keys is a valid change. It takes effect within `jwks_min_refresh`. Emptying the file is invalid and does not disable the trust anchor. To disable a trust anchor, change the configuration.
+
+`trust_anchor_key_files` appears in the end-user server's `/health` `components` only when at least one trust anchor uses `jwks_file`. It never changes the HTTP status or the top-level `status`. Inline key sets never affect it.
+
+##### Startup errors
+
+Every error names the trust anchor's configuration path. No error includes inline content, file contents, or key material. Key identifiers, file paths, and the trust directory may appear.
+
+Configuration validator errors use the existing format. For an inline key set, the value is always `[inline JWK Set redacted]`:
+
+```text
+configuration error: invalid value "<value>" for field "<path>" (expected: <expectation>)
+```
+
+Builder errors use `<path>: <message>`. For document rules, `<path>` is the source setting, `….jwks` or `….jwks_file`.
+
+| Category | Message |
+|---|---|
+| `conflicting_key_sources` | `only one of jwks_uri, jwks, jwks_file may be set (found: jwks_uri, jwks)` |
+| `refresh_bounds_with_inline` | `jwks_min_refresh and jwks_max_refresh are not allowed with jwks; an inline key set never refreshes` |
+| `verification_disabled_with_key_source` | `verification 'none' and jwks are mutually exclusive` (or `jwks_file`, or the existing `jwks_uri` message) |
+| `relative_path` | `jwks_file "<path>" must be an absolute path` |
+| `missing_trust_directory` | `jwks_file requires security.trust_material_dir to be set` |
+| `invalid_trust_directory` | `security.trust_material_dir "<dir>" must be an absolute path to an existing directory other than /` |
+| `outside_trust_directory` | `jwks_file "<path>" is outside security.trust_material_dir "<dir>"` |
+| `not_found` | `jwks_file "<path>" does not exist` |
+| `unreadable` | `jwks_file "<path>" cannot be read` |
+| `not_regular_file` | `jwks_file "<path>" is not a regular file` |
+| `too_large` | `key set exceeds 1048576 bytes` |
+| `not_a_jwk_set` | `key set is not a valid JWK Set document` |
+| `empty_key_set` | `key set contains no keys` |
+| `symmetric_key` | `key set contains a symmetric key; only public asymmetric keys are allowed` |
+| `private_key` | `key set contains private key material; only public keys are allowed` |
+| `unapproved_algorithm` | `key "<kid>" declares an algorithm outside the approved asymmetric set` |
+| `missing_kid` | `key at index <zero-based index> requires a non-empty kid` |
+| `duplicate_kid` | `key identifier "<kid>" appears more than once` |
+
+For a local key with a missing or empty `kid`, `missing_kid` reports its zero-based index only. An `unapproved_algorithm` key without `kid` reports `unapproved_algorithm` first, using that index. The existing startup errors still apply to every source: the self-trust rejection, a missing issuer for local-mode approval authentication, and JWT verification with no key source.
+
+##### Log events
+
+All events are structured `slog` records. None includes inline content, file contents, or key material.
+
+| Event message | Level | When | Fields |
+|---|---|---|---|
+| `trust anchor key set loaded` | Info | Startup, once per trust anchor with an inline or file source | `trust_anchor`, `key_source` (`inline` or `file`), `path` (file only), `key_count`, `key_ids` |
+| `trust anchor key set changed` | Info | A file re-read that changes the key identifiers | `trust_anchor`, `key_source`, `path`, `key_count`, `added_key_ids`, `removed_key_ids` |
+| `trust anchor key set re-read failed` | Warn | A failed file re-read | `trust_anchor`, `key_source`, `path`, `error_kind`, `last_success_at`, `fails_closed_at` |
+| `trust anchor key set recovered` | Info | First valid re-read after a failure | `trust_anchor`, `key_source`, `path`, `key_count` |
+| `trust anchor key set expired` | Warn | First key lookup after the staleness window expires | `trust_anchor`, `key_source`, `path`, `error_kind=stale` |
+
+A re-read with unchanged content logs nothing.
+
+**Example**: a locally signing gateway with an inline client assertion key set and a file-based end-user JWT key set:
+
+```yaml
+security:
+  trust_material_dir: "/etc/agentic-identity-broker/trust"
+
+token_exchange:
+  client_assertion:
+    issuer_uri: "https://agentgateway.internal.example.com"
+    jwks: |
+      {"keys":[{"kty":"EC","crv":"P-256","kid":"agentgateway-2026-10","alg":"ES256","use":"sig","x":"<base64url x>","y":"<base64url y>"}]}
+
+server:
+  enduser:
+    authentication:
+      jwt:
+        verification: jwks
+        jwks_file: "/etc/agentic-identity-broker/trust/mesh-jwks.json"
+```
+
+See `examples/config/trust-anchor-local-jwks.yaml` for a complete configuration that also covers an impersonation trusted issuer.
 
 ### OAuth2 Server Mode Configuration
 
@@ -1278,6 +1523,7 @@ In `local` mode, set `issuer_uri` whenever token exchange or approval authentica
 | `oauth2_authorization_server.local.token_ttl` | duration | `1h` | Go duration (e.g. `30m`, `2h`) | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_TTL` | — | Validity period for locally issued JWT access tokens. |
 | `oauth2_authorization_server.local.token_claims_expression` | string | `""` | CEL expression | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_TOKEN_CLAIMS_EXPRESSION` | — | CEL expression to inject custom claims into issued JWTs. |
 | `oauth2_authorization_server.local.signing_keys.bootstrap_timeout` | duration | `90s` | Positive duration | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_SIGNING_KEYS_BOOTSTRAP_TIMEOUT` | — | Startup budget for signing-key bootstrap in local/hybrid mode. Covers advisory locking, key generation, encryption, and persistence. |
+| `oauth2_authorization_server.local.client_secret_hashing.max_concurrent` | int | `2` | Positive integer | No | `IDENTITY_BROKER_OAUTH2_AUTH_SERVER_LOCAL_CLIENT_SECRET_HASHING_MAX_CONCURRENT` | — | Client secret hashes that may run at once in local/hybrid mode. Each Argon2id hash allocates 64 MiB, and further requests wait for a free slot. Plan about 128 MiB of container memory per slot. Each hash already uses up to four CPUs, so more slots add memory, not throughput. |
 
 **Required**: `oauth2_authorization_server.mode` is mandatory — the broker rejects startup when the block is absent or `mode` is empty or invalid. Set `mode` to `proxy`, `local`, or `hybrid` before deploying.
 
@@ -1358,7 +1604,48 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 #### oauth2_authorization_server.impersonation
 
-**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every rule-authorized request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted subject is used unchanged as the grant principal; this is mandatory for signed and unverified subjects, with no configuration opt-out. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every eligible human-category request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted human subject is used unchanged as the grant principal; this remains mandatory for signed and unverified humans, with no configuration opt-out. Accepted ADR 045 narrowly exempts eligible signed self-agent requests, as described below. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+
+##### Subject categories and self-agent issuance
+
+`rules[].allowed_subject_categories` is an optional YAML-only string list, like the existing rule list. Omission alone means `[human]`. A present list must contain one or two distinct, case-sensitive values from `human` and `agent`; either dual order is valid. Empty lists, unknown/case-mismatched values, duplicates, explicit null, scalars, mappings, non-string entries and null entries fail startup. Errors identify `oauth2_authorization_server.impersonation.rules[i].allowed_subject_categories`, without credential content. Direct configurations enforce the same value invariants.
+
+The broker classifies a request as `agent` only after the rule's signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target's canonical UUID. An unsigned (`verification: none`) subject with that exact `sub` is `agent` only when the rule's authorization predicate binds `subject_token.sub`. The broker only checks that the predicate uses that field, so make it limit the agents, for example `subject_token.sub in ['agent-uuid-a', 'agent-uuid-b']`; the predicate is then the only control on which agent a client may represent, because agent issuance skips consent. `subject_token.sub == request.agent_id` does not limit anything: an agent request already requires `sub` to equal the target, which is `request.agent_id`. A `sub` or extracted subject principal that is the canonical UUID of a different registered agent is rejected on every rule as a cross-agent request, without falling back to human delegation. Everything else is `human`. No alias/case/UUID normalization, extracted-principal mapping, or request parameter selects agent issuance. Eligibility is checked separately, before CEL authorization and delegation. Ineligible rules fall through; no matching rule returns generic `403 access_denied` without consent recovery. Signed exact-target equality is rejected on human-only/omitted rules even with active same-text delegation.
+
+| Allowed categories | Human subject | Signed exact-target subject |
+| --- | --- | --- |
+| Omitted / `[human]` | Active delegation required | Ineligible |
+| `[agent]` | Ineligible | No delegation required |
+| `[human, agent]` / `[agent, human]` | Active delegation required | No delegation required |
+
+Every principal extraction and the CEL predicate remain mandatory for agents; the minted `sub` and reserved `agent_id` are the target UUID, and `act` retains verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email and creates no grant/session. Custom output claims, including policy-owned email and audience, retain their existing semantics. Human delegation failure is terminal, never agent fallback. Listing `agent` on an unsigned-subject rule is valid at startup but has no effect: `[agent]` cannot match it and `[human, agent]` acts as `[human]`. ADR 031's other controls are unchanged.
+
+See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), and [examples index](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md).
+
+##### Agent-subject detection for third-party exchange
+
+`token_exchange.claim_extraction.agent_subject_expression` is an optional CEL boolean over validated `subject_token` claims. Empty or omitted selects the exact guarded default:
+
+```cel
+has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id
+```
+
+The scalar setting supports YAML, `IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION`, and `--token_exchange.claim_extraction.agent_subject_expression`. Explicit CLI overrides environment, which overrides YAML, which overrides the evaluator default; an unchanged CLI flag does not shadow a lower source. Environment/CLI work with no YAML key or file. An explicitly empty highest-precedence value selects the evaluator default, not a lower source. Rule lists remain YAML-only.
+
+The expression compiles once at startup. Syntax errors, undeclared variables, a static output type other than boolean/dynamic, or an expression that does not reference `subject_token.sub` fail startup. Evaluation uses the existing CEL timeout. Runtime errors/timeouts return `500 server_error` (`identity_resolution/cel_evaluation_failed`); dynamic non-boolean output returns `500 server_error` (`identity_resolution/cel_configuration`). Neither is treated as false. Matching tokens receive `403 access_denied` (`identity_resolution/subject_category_unsupported`) without `error_uri`, before any grant/session/provider access. The default matches all broker agent-subject tokens, but also legacy human, mapped-principal/unsigned human and trusted external issuer tokens with equal `sub`/`agent_id`; fix identity collisions through the migration guide, not consent fabrication.
+
+A non-empty override **replaces the default entirely**. A configured expression must reference `subject_token.sub` (field selection, `has()`, or `subject_token["sub"]`); otherwise startup fails with a CEL configuration error, so `false`, `true`, or an `azp`-only comparison cannot be configured. Keep broker agent-token matching, for example:
+
+```yaml
+token_exchange:
+  claim_extraction:
+    agent_subject_expression: >-
+      (has(subject_token.sub) && has(subject_token.agent_id) &&
+       subject_token.sub == subject_token.agent_id) ||
+      (has(subject_token.token_use) && subject_token.token_use == 'machine')
+```
+
+**Warning:** A non-matching override that references `sub` (a detector without `subject_token.sub`, such as `false`, fails startup) removes categorical rejection and protection against same-text human-credential access. Existing checks may then consult matching human grants/sessions and return consent errors; this is not support for third-party agent identity or guaranteed exchange success. See [token-exchange examples](../examples/config/token-exchange.yaml), [concepts](concepts/token-exchange.md), [reference](reference/token-exchange.md), and [token endpoint](api/enduser-api.md#agent-subject-token-exchange).
 
 **Configuration block** (nested under `oauth2_authorization_server`, `local` mode only):
 
@@ -1367,17 +1654,20 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 | `impersonation.audience_prefix` | URI | — | Absolute HTTP(S) URI; host required; no userinfo/query/fragment/trailing slash | Yes (CR-001) | Routing-only prefix. Exactly one `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent; it never sets the issued token `aud`. |
 | `impersonation.rules` | list | — | Non-empty, ordered | Yes (CR-002) | Ordered rules evaluated first-match. |
 | `impersonation.rules[].name` | string | — | Unique across rules | Yes (CR-003) | Operator-facing rule identifier. |
+| `impersonation.rules[].allowed_subject_categories` | list of strings | `[human]` when omitted | One or two distinct `human`/`agent` values | No | Category eligibility, independent of signed raw-sub classification; YAML-only. |
 | `impersonation.rules[].roles` | map | — | Keys `client_assertion`, `actor`, `subject` | Yes (CR-003) | Role semantics keyed by role name; all three roles MUST be defined. |
 | `impersonation.rules[].roles.<role>.expected_audience` | string | — | Non-empty string | Yes for signed roles without `audience_requirement: absent` | The `aud` each signed credential for this role must carry. Omit it for an unverified subject (`verification: none`) or when `audience_requirement` is `absent`. |
 | `impersonation.rules[].roles.<role>.audience_requirement` | enum | — | `absent` | No | Signed roles only. `absent` accepts only a credential with no `aud` claim and rejects a credential with an `aud`. It is mutually exclusive with `expected_audience`, forbidden on an unverified subject, and requires the authorization predicate to reference this role (CR-009). |
 | `impersonation.rules[].roles.<role>.principal_expression` | string | — | CEL expression | Yes | CEL extracting a non-empty identity from the role's token. |
 | `impersonation.rules[].roles.subject.verification` | enum | `jwks` | `jwks`, `none` | No | `subject` role only. `jwks` = signed subject validated against a trusted issuer; `none` = unverified unsigned `alg:none` subject JWT under `subject_token_type=urn:ietf:params:oauth:token-type:jwt` (broker profile extension, ADR 031). |
-| `impersonation.rules[].roles.subject.email_expression` | string | `""` | CEL expression | No | CEL extracting the subject's email; `subject` role only. For an unverified subject the email is minted only when the authorization predicate binds `subject_token.email` (FR-006a). Omitted from the issued token when it evaluates empty. |
+| `impersonation.rules[].roles.subject.email_expression` | string | `""` | CEL expression | No | CEL extracting a human subject's email; not evaluated for agents; `subject` role only. For an unverified subject the email is minted only when the authorization predicate binds `subject_token.email` (FR-006a). Omitted from the issued token when it evaluates empty. |
 | `impersonation.rules[].trusted_issuers` | list | — | Non-empty | Yes (CR-008) | Trust anchors permitted to sign this rule's credentials. |
 | `impersonation.rules[].trusted_issuers[].issuer_uri` | string | — | Valid URI | Yes | Matched against a credential's `iss`. |
 | `impersonation.rules[].trusted_issuers[].jwks_uri` | string | Discovered from `issuer_uri` | Valid URI | No | Explicit JWKS endpoint; discovered from issuer metadata when empty. |
+| `impersonation.rules[].trusted_issuers[].jwks` | string | — | Inline JWK Set JSON | No | Alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks_file`. Rejected with `jwks_min_refresh` or `jwks_max_refresh`. See [Trust-Anchor Key Sets](#trust-anchor-key-sets). |
+| `impersonation.rules[].trusted_issuers[].jwks_file` | string | — | Absolute path inside `security.trust_material_dir` | No | Alternative to `jwks_uri` and discovery. Mutually exclusive with `jwks_uri` and `jwks`. Re-read every `jwks_min_refresh`. |
 | `impersonation.rules[].trusted_issuers[].jwks_min_refresh` | duration | `15m` | Non-negative Go duration | No | Minimum interval between JWKS refresh attempts. |
-| `impersonation.rules[].trusted_issuers[].jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | Non-negative Go duration | No | Maximum JWKS refresh interval; values below the effective minimum are raised to it. |
+| `impersonation.rules[].trusted_issuers[].jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | Non-negative Go duration | No | Maximum JWKS refresh interval. For `jwks_file`, the default is `max(3 × jwks_min_refresh, 1h)` when unset or below the minimum; remote sources use `max(jwks_min_refresh, 1h)`. |
 | `impersonation.rules[].trusted_issuers[].allowed_algorithms` | list | — | Subset of `RS256,RS384,RS512,PS256,PS384,PS512,ES256,ES384,ES512,EdDSA` | Yes (CR-007) | Accepted signing algorithms; `none` and `HS*` are rejected. |
 | `impersonation.rules[].trusted_issuers[].signs_roles` | list | — | Subset of defined signed roles | Yes (CR-008) | Which signed roles this issuer may sign. |
 | `impersonation.rules[].authorization.type` | enum | — | `cel` | Yes (CR-005) | Authorization predicate type; reuses the token-exchange schema. |
@@ -1555,7 +1845,7 @@ telemetry:
 | `telemetry.traces.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_TRACES_ENABLED` | Enable trace export. Disabling traces suppresses otelchi HTTP spans and storage child spans. |
 | `telemetry.traces.sampling_rate` | float64 | `1.0` | `IDENTITY_BROKER_TELEMETRY_TRACES_SAMPLING_RATE` | Fractional sampling rate for traces (0.0–1.0). `1.0` = 100% sampled. Uses `ParentBased(TraceIDRatioBased(rate))`. |
 | `telemetry.traces.propagators` | []string | `["ottrace","b3multi","baggage"]` | N/A (config file only) | Propagators to register globally. Supported values: `ottrace` (OpenTracing interop), `b3multi` (Zipkin B3 multiple headers), `b3` (B3 single header), `tracecontext` (W3C), `baggage` (W3C). Propagators are registered unconditionally when telemetry is enabled, even if `traces.enabled` is false. |
-| `telemetry.metrics.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_METRICS_ENABLED` | Enable metrics export. When enabled, process runtime metrics (goroutines, memory, GC) and HTTP request metrics (via otelchi) are exported automatically. |
+| `telemetry.metrics.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_METRICS_ENABLED` | Enable metrics export. When enabled, process runtime metrics (goroutines, memory, GC) and HTTP request metrics (via otelchi) are exported automatically, along with the session refresh and sweep instruments and the `oauth2_sessions` gauge when `token_refresh.health_metrics.enabled` is true. |
 | `telemetry.metrics.export_interval` | duration | `30s` | `IDENTITY_BROKER_TELEMETRY_METRICS_EXPORT_INTERVAL` | How often metrics are pushed to the collector. Must be positive. Example: `30s`, `1m`. |
 | `telemetry.logs.enabled` | bool | `true` (when telemetry.enabled) | `IDENTITY_BROKER_TELEMETRY_LOGS_ENABLED` | Enable OTLP log export via the `slog` bridge. Set to `false` if the collector does not support `opentelemetry.proto.collector.logs.v1.LogsService`. |
 | `telemetry.exporter.protocol` | string | `"grpc"` | `IDENTITY_BROKER_TELEMETRY_EXPORTER_PROTOCOL` | OTLP transport protocol. Accepted values: `grpc`, `http`, `https`. The `https` protocol uses the HTTP OTLP exporter with TLS; bare `host:port` endpoints are auto-prefixed with `https://`. |
@@ -1612,13 +1902,24 @@ When tracing is enabled, the following operations emit child spans:
 |---|---|---|
 | HTTP span (per route) | All inbound HTTP requests (via otelchi) | `http.method`, `http.route`, `http.status_code` |
 | `storage.get.agent` | PostgreSQL `AgentRepository.Get` | `db.system=postgresql`, `db.operation=GetAgent` |
-| `storage.list.userGrants` | PostgreSQL `UserGrantRepository.ListByPrincipal` | `db.system=postgresql` |
-| `storage.upsert.userGrant` | PostgreSQL `UserGrantRepository.Create` (upsert) | `db.system=postgresql` |
-| `storage.get.thirdPartyService` | PostgreSQL `ThirdpartyServiceRepository.Get` | `db.system=postgresql` |
+| `storage.list.user_grants_by_principal` | PostgreSQL `UserGrantRepository.ListByPrincipal` | `db.system=postgresql`, `db.operation=ListByPrincipal` |
+| `storage.create.user_grant` | PostgreSQL `UserGrantRepository.Create` (upsert) | `db.system=postgresql`, `db.operation=CreateUserGrant` |
+| `storage.*.tool_approval`, `storage.*.approval_sync` | PostgreSQL tool approval and approval sync repositories | `db.system=postgresql`, `db.operation` |
 | `encryption.encrypt` | AWS KMS envelope encryption | `encryption.key_type=aws_kms` |
 | `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
-| `jwks.fetch` | JWKS key set fetch/cache lookup | `url.full` |
-| `oauth2.token_exchange` | Upstream OAuth2 token proxy | `http.method=POST`, `http.status_code` |
+| `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
+| `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
+
+`storage.*` spans have span kind `Client`. A failed database call, or a stored value that cannot be decoded, sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
+
+These results are not failures. They leave the status unset and set `storage.outcome`:
+
+| `storage.outcome` | Meaning |
+|---|---|
+| `not_found` | No matching row, or a referenced row does not exist |
+| `conflict` | The write conflicts with existing data |
+| `validation` | The repository rejected the input |
+| `canceled` | The caller canceled the operation |
 
 ### Security notes
 

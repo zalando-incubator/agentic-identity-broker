@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
@@ -11,7 +12,7 @@ import (
 )
 
 // ClientIDMetadataDocument is a parsed and validated CIMD JSON document.
-// Immutable after construction via Parse.
+// Immutable after construction via ParseDocument.
 type ClientIDMetadataDocument struct {
 	ClientID      string          `json:"client_id"`
 	ClientName    string          `json:"client_name,omitempty"`
@@ -26,6 +27,17 @@ type ClientIDMetadataDocument struct {
 	ResponseTypes []string        `json:"response_types,omitempty"`
 	PolicyURI     string          `json:"policy_uri,omitempty"`
 	TosURI        string          `json:"tos_uri,omitempty"`
+}
+
+// ValidatePrivateUseRedirectURIs checks native callbacks against the resolved Agent.
+// Call it on every resolution, including cache hits.
+func (d *ClientIDMetadataDocument) ValidatePrivateUseRedirectURIs(agentRedirectURIs []string) error {
+	for i, redirectURI := range d.RedirectURIs {
+		if urivalidation.IsValidPrivateUseRedirectURI(redirectURI) && !slices.Contains(agentRedirectURIs, redirectURI) {
+			return fmt.Errorf("redirect_uris[%d]: private-use redirect_uri %q is not listed in the agent's redirect_uris", i, redirectURI)
+		}
+	}
+	return nil
 }
 
 // ParseDocument parses and validates a CIMD JSON document fetched from fetchURL.
@@ -107,7 +119,7 @@ func ParseDocument(data []byte, fetchURL string, nameBlocklist []string) (*Clien
 		}
 	}
 
-	// FR-004a: each redirect_uri must be same-origin with client_id URL (localhost excepted)
+	// FR-004a: enforce web origins and validate private-use URI structure.
 	clientURL, err := url.Parse(fetchURL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid fetch URL: %w", err)
@@ -154,8 +166,11 @@ func validateLogoURI(logoURI string) error {
 }
 
 // validateRedirectOrigin enforces same-origin between a redirect URI and the
-// client_id URL, with an exception for localhost/127.0.0.1 redirect URIs.
+// client_id URL, with exceptions for loopback and private-use redirect URIs.
 func validateRedirectOrigin(clientURL *url.URL, redirectURI string) error {
+	if urivalidation.IsValidPrivateUseRedirectURI(redirectURI) {
+		return nil
+	}
 	// Structural validity check first (catches ftp://, fragments, missing host, etc.)
 	if !urivalidation.IsValidRedirectURI(redirectURI) {
 		return fmt.Errorf("redirect_uri %q is not a valid redirect URI", redirectURI)

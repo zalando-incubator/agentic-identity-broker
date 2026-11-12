@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -102,13 +103,13 @@ func TestGetAgentDetail_Success(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req = req.WithContext(principal.WithPrincipal(req.Context(), principalID))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(principalID)))
 
 	rr := httptest.NewRecorder()
 	handler.GetAgentDetail(rr, req)
@@ -182,7 +183,7 @@ func TestGetAgentDetail_DomainErrors(t *testing.T) {
 					return nil, tt.serviceError
 				},
 			}
-			handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+			handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 			req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
 			rctx := chi.NewRouteContext()
@@ -204,7 +205,7 @@ func TestGetAgentDetail_DomainErrors(t *testing.T) {
 }
 
 func TestGetAgentDetail_MissingAgentID(t *testing.T) {
-	handler := NewAgentDetailHandler(&mockAgentDetailService{}, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(&mockAgentDetailService{}, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/", nil)
 	rctx := chi.NewRouteContext()
@@ -227,7 +228,7 @@ func TestGetAgentDetail_ServiceError(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	testAgentID := id.NewAgentID()
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+testAgentID.String(), nil)
@@ -255,7 +256,7 @@ func TestGetAgentDetail_ServiceRequirementError(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
 	rctx := chi.NewRouteContext()
@@ -290,7 +291,7 @@ func TestGetAgentDetail_EmptyServicesList(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
 	rctx := chi.NewRouteContext()
@@ -326,7 +327,7 @@ func TestResolveCIMDMetadata_SessionAgentMismatch(t *testing.T) {
 	validator := newTestSessionTokenValidator()
 	tokenForAgentA := newTestSessionToken(ts, agentA, principalID, "https://example.com/original")
 
-	handler := NewAgentDetailHandler(mockService, nil, validator)
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), validator)
 
 	// Request agent B's detail with a session token that belongs to agent A
 	req := httptest.NewRequest(http.MethodGet,
@@ -334,7 +335,7 @@ func TestResolveCIMDMetadata_SessionAgentMismatch(t *testing.T) {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentB.String())
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	req = req.WithContext(principal.WithPrincipal(req.Context(), principalID))
+	req = req.WithContext(principal.WithPrincipal(req.Context(), id.NewPrincipal(principalID)))
 
 	rr := httptest.NewRecorder()
 	handler.GetAgentDetail(rr, req)
@@ -362,7 +363,7 @@ func TestResolveCIMDMetadata_SessionPrincipalMismatch(t *testing.T) {
 	validator := newTestSessionTokenValidator()
 	tokenForUserA := newTestSessionToken(ts, agentID, "userA@example.com", "https://example.com/original")
 
-	handler := NewAgentDetailHandler(mockService, nil, validator)
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), validator)
 
 	// User B tries to use user A's session token
 	req := httptest.NewRequest(http.MethodGet,
@@ -398,7 +399,7 @@ func TestGetAgentDetail_ExpiredSessionToken(t *testing.T) {
 	validator := newTestSessionTokenValidator()
 	expiredToken := newExpiredTestSessionToken(ts, agentID, "user@example.com")
 
-	handler := NewAgentDetailHandler(mockService, nil, validator)
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), validator)
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/consent/agent/"+agentID.String()+"?session_token="+expiredToken, nil)
@@ -430,7 +431,7 @@ func TestGetAgentDetail_MalformedSessionToken(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet,
 		"/api/consent/agent/"+agentID.String()+"?session_token=notvalidjwe", nil)
@@ -465,7 +466,7 @@ func TestGetAgentDetail_SortsMandatoryFirst(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
 	rctx := chi.NewRouteContext()
@@ -498,7 +499,7 @@ func TestGetAgentDetail_ConnectionStatus(t *testing.T) {
 				}, nil
 			},
 		}
-		handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+		handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 		req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("agent-id", agentID.String())
@@ -522,7 +523,7 @@ func TestGetAgentDetail_ConnectionStatus(t *testing.T) {
 				}, nil
 			},
 		}
-		handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+		handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 		req := httptest.NewRequest(http.MethodGet, "/api/consent/agent/"+agentID.String(), nil)
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("agent-id", agentID.String())
@@ -555,7 +556,7 @@ func TestGetAgentDetail_NilClientID(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents/"+agentID.String(), nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
@@ -592,7 +593,7 @@ func TestGetAgentDetail_CIMDAgent(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents/"+agentID.String(), nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())
@@ -646,7 +647,7 @@ func TestGetAgentDetail_PermissionSetsIncluded(t *testing.T) {
 		},
 	}
 
-	handler := NewAgentDetailHandler(mockService, nil, newTestSessionTokenValidator())
+	handler := NewAgentDetailHandler(mockService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 	req := httptest.NewRequest(http.MethodGet, "/api/consent/agents/"+agentID.String(), nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("agent-id", agentID.String())

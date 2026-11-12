@@ -189,6 +189,11 @@ export const ThirdPartySessionsPage: React.FC = () => {
     setTerminationError(null);
   };
 
+  const handleLogin = (serviceId: string) => {
+    const redirectURI = `${window.location.origin}/sessions`;
+    window.location.href = `/api/third-party/${serviceId}/oauth2/authorize?redirect_uri=${encodeURIComponent(redirectURI)}`;
+  };
+
   const handleRefresh = async (serviceId: string) => {
     try {
       setRefreshingServiceIds((prev) => new Set(prev).add(serviceId));
@@ -201,12 +206,16 @@ export const ThirdPartySessionsPage: React.FC = () => {
       });
     } catch (err) {
       console.error('Failed to refresh session token', err);
+      const session = (await refetch()).find((s) => s.service_id === serviceId);
       setAlert({
         type: 'error',
-        message: extractApiError(
-          err,
-          'Failed to refresh session token. Please try again.',
-        ),
+        message:
+          session?.requires_reauthentication
+            ? `Your ${session.service_display_name} session can no longer be renewed. Log in to reconnect.`
+            : extractApiError(
+                err,
+                'Failed to refresh session token. Please try again.',
+              ),
       });
     } finally {
       setRefreshingServiceIds((prev) => {
@@ -398,6 +407,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
                   session={session}
                   onTerminate={handleTerminate}
                   onRefresh={handleRefresh}
+                  onLogin={handleLogin}
                   refreshing={refreshingServiceIds.has(session.service_id)}
                   loading={
                     terminatingLoading &&

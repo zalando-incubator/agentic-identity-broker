@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +44,7 @@ func (m *noopBranchKeyManager) Create(_ context.Context, _ domainencryption.Bran
 // newTestProviderService wraps a repository in a ThirdpartyOAuth2ProviderService
 // with passthrough encryption for use in domain-layer tests.
 func newTestProviderService(repo ports.ThirdpartyOAuth2ProviderRepository) *thirdparty.ThirdpartyOAuth2ProviderService {
-	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, &MockEncryption{}, newNoopBranchKeyManager(), nil, false, nil)
+	return thirdparty.NewThirdpartyOAuth2ProviderService(repo, &MockEncryption{}, newNoopBranchKeyManager(), nil, false, slog.New(slog.DiscardHandler))
 }
 
 // newMockPermissionSetService creates a PermissionSetService with mock for testing
@@ -682,25 +681,25 @@ func TestExchange_InvalidRequest(t *testing.T) {
 	}{
 		{
 			name:        "empty grant_type",
-			request:     NewTokenExchangeRequest("", "token", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest("", "token", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing subject_token",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", "", "assertion", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "", AccessTokenType, "assertion", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing client_assertion",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "", "", "resource", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "", JWTBearerType, "https://api.example.com", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
 		{
 			name:        "missing resource",
-			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", "", "assertion", "", "", ""),
+			request:     NewTokenExchangeRequest(TokenExchangeGrantType, "token", AccessTokenType, "assertion", JWTBearerType, "", ""),
 			expectError: true,
 			errorCode:   "invalid_request",
 		},
@@ -2090,8 +2089,9 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 		wantCode          string
 		wantReauthURI     bool
 		wantRefreshErr    bool
+		wantRefreshMarked bool
 	}{
-		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true},
+		{name: "provider 400 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_grant","error_description":"sentinel-description"}`), wantCode: "invalid_grant", wantReauthURI: true, wantRefreshErr: true, wantRefreshMarked: true},
 		{name: "provider 401 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusUnauthorized, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 400 invalid_client", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusBadRequest, `{"error":"invalid_client"}`), wantCode: "server_error", wantRefreshErr: true},
 		{name: "provider 500 invalid_grant", session: refreshableSession(), thirdpartyHandler: thirdpartyResponseHandler(http.StatusInternalServerError, `{"error":"invalid_grant"}`), wantCode: "server_error", wantRefreshErr: true},
@@ -2132,7 +2132,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			assert.Equal(t, tt.wantCode, tokenErr.Code())
 			if tt.wantReauthURI {
 				assert.Equal(t, 400, tokenErr.HTTPStatus())
-				assert.Equal(t, "https://broker.example.com/sessions", tokenErr.ErrorURI())
+				assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
 			} else {
 				assert.Equal(t, 500, tokenErr.HTTPStatus())
 				assert.Empty(t, tokenErr.ErrorURI())
@@ -2143,8 +2143,15 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 				var retrieveErr *oauth2.RetrieveError
 				assert.ErrorAs(t, err, &retrieveErr)
 			}
-			if tt.session != nil {
-				assert.Same(t, tt.session, sessionRepo.session, "a rejected refresh must not persist session changes")
+			switch {
+			case tt.wantRefreshMarked:
+				after := *sessionRepo.session
+				require.NotNil(t, after.RefreshRejectedAt, "a rejected refresh token must be recorded as rejected")
+				after.RefreshRejectedAt = before.RefreshRejectedAt
+				after.UpdatedAt = before.UpdatedAt
+				assert.Equal(t, before, after, "a rejected refresh must not change stored tokens")
+			case tt.session != nil:
+				assert.Same(t, tt.session, sessionRepo.session, "a failed refresh must not persist session changes")
 				assert.Equal(t, before, *sessionRepo.session)
 			}
 		})
@@ -2266,7 +2273,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		&http.Client{Timeout: 5 * time.Second},
 		nil,
 		sessionConfig,
-		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		slog.New(slog.DiscardHandler),
 	)
 
 	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
@@ -2364,7 +2371,7 @@ func TestExchange_FinalizesSecurityContextWithDistinctCallingPeer(t *testing.T) 
 	sc, ok := holder.Finalized()
 	require.True(t, ok, "validated delegated exchanges must finalize the captured transport context")
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", sc.TraceID)
-	assert.Equal(t, "user@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("user@example.com"), sc.Actor)
 	assert.Equal(t, "privileged-client-1", sc.CallingPeer)
 	assert.Equal(t, "203.0.113.44", sc.ClientIP)
 	assert.Equal(t, "delegated-client/1.0", sc.UserAgent)
@@ -2412,7 +2419,7 @@ func TestExchange_FinalizesSecurityContextWithoutDuplicatingCallingPeer(t *testi
 
 	sc, ok := holder.Finalized()
 	require.True(t, ok, "validated delegated exchanges must always finalize the security context")
-	assert.Equal(t, "same-identity@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("same-identity@example.com"), sc.Actor)
 	assert.Empty(t, sc.CallingPeer, "calling_peer must collapse to empty when it resolves to the actor")
 	assert.Equal(t, "fedcba9876543210fedcba9876543210", sc.TraceID)
 }
@@ -2476,7 +2483,7 @@ func TestExchange_FinalizesSecurityContextWhenAuthorizationDenied(t *testing.T) 
 
 	sc, ok := holder.Finalized()
 	require.True(t, ok, "a denied delegated exchange whose tokens validated MUST still finalize the security context for the audit trail")
-	assert.Equal(t, "user@example.com", sc.Actor)
+	assert.Equal(t, id.NewPrincipal("user@example.com"), sc.Actor)
 	assert.Equal(t, "privileged-client-1", sc.CallingPeer)
 	assert.Equal(t, "aaaabbbbccccddddeeeeffff00001111", sc.TraceID)
 }
@@ -2554,7 +2561,7 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 				require.NotNil(t, response)
 				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, response.Service)
 				assert.Equal(t, fixture.agentID.String(), response.AgentID)
-				assert.Equal(t, fixture.grant.Principal.String(), response.Principal)
+				assert.Equal(t, fixture.grant.Principal, response.Principal)
 				assert.Equal(t, map[string][]string{fixture.permissionSetID.String(): {fixture.serviceID.String()}}, response.GrantedPermissionSets)
 				actual = response.Authorization
 			} else {
@@ -2565,6 +2572,9 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 				assert.Equal(t, tc.wantCode, tokenErr.Code())
 				assert.Equal(t, tc.wantStatus, tokenErr.HTTPStatus())
 				assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
+				if tc.wantCode == "invalid_grant" {
+					assert.Equal(t, "https://broker.example.com/api/third-party/"+fixture.serviceID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
+				}
 				if tc.wantCause != nil {
 					assert.ErrorIs(t, err, tc.wantCause)
 				}

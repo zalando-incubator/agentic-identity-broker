@@ -15,6 +15,12 @@ After a successful exchange, it replaces the downstream `Authorization` header w
 
 This guide describes the separate Agentgateway policy and ExtProc sidecar configuration.
 
+:::tip
+Agentgateway v1.5.0 and later can exchange tokens without the sidecar. See
+[Use the agentgateway token-exchange policy](/docs/guides/agentgateway-token-exchange) to
+compare both options.
+:::
+
 ## What you need
 
 - An Agentgateway v1.5.0 instance with the ExtProc policy. Configure it with the `jwtAuth` syntax shown in this guide.
@@ -104,10 +110,29 @@ The sidecar rejects the request if either required metadata field is absent, emp
 It validates `subject_token` before `resource_uri`. If both are invalid, it returns `invalid_subject_token`.
 The response is a 503 JSON immediate response. Diagnostics never contain the subject credential or rejected resource URI.
 
-If exchange fails, the sidecar does not forward the original credential to the third-party service. Generic exchange errors, broker 4xx errors without `error_uri`, transient 429 or 5xx errors, network errors, and timeouts return HTTP 500 with `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
+If exchange fails, the sidecar does not forward the original credential. Generic errors, broker 4xx responses without `error_uri` (including 429), 5xx errors, network errors, and timeouts return HTTP 500. The body is `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`.
 
-If a nontransient broker error contains `error_uri`, MCP receives JSON-RPC code `-32042` URL elicitation. Non-MCP traffic receives the 503 re-authentication response. Expired assertions and open circuits also return their defined 503 responses.
-For provider-session recovery, the URL opens `/sessions`. It does not automatically start an OAuth2 authorization flow.
+If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 403 for every protocol. It forwards the broker URI unchanged in the RFC 6750 challenge and JSON-RPC `-32042` URL elicitation body (`id: null`). For provider-session recovery, the broker URI starts that service's third-party OAuth2 authorization with PKCE and returns to `/sessions` after the provider callback.
+
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: application/json
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+```
+
+The challenge always has `error="insufficient_scope"`. It adds `error_description` and `error_uri` only when each value uses its RFC 6750 §3 character set. It does not provide `scope`, `resource_metadata`, or `realm`. Generic failures have no `WWW-Authenticate` header. Expired assertions and open circuits also have no challenge and keep their 503 responses.
+
+An mcp-go client can read the URL from a tool-call error after initialization, but not from an `initialize` error.
+
+For automatic step-up, an MCP client must discover RFC 9728 protected-resource metadata for the gateway's MCP URL. This `jwtAuth` route does not provide metadata by itself. Add a separate gateway route for `/.well-known/oauth-protected-resource/mcp`. It must return the MCP resource URL and its authorization server. Match the MCP route on `/mcp`, so route order does not affect dispatch. [Feature 023's example journey](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/023-extproc-mcp-elicitation/spec.md) shows the route and authorization-code retry.
+
+The Compose gateway includes this public metadata route. It advertises `http://localhost:4000/mcp` as the resource and `http://localhost:3000` as the authorization server. Vite proxies the broker's authorization-server metadata and OAuth2 endpoints on port 3000. The `/mcp` route still applies strict JWT validation and ExtProc exchange. Compose also exposes `WWW-Authenticate` to browser clients through CORS.
+
+The existing JWT 401 response has no `resource_metadata` link. Clients must try the well-known URL when that link is absent.
+
+The broker does not advertise a dynamic client registration endpoint in its Compose metadata. A client needs a broker-registered identity and an allowed redirect URI, or a supported Client ID Metadata Document. URL-only discovery does not register an arbitrary agent.
 
 ### Diagnostic telemetry
 
@@ -230,6 +255,10 @@ The cache is warmed asynchronously at startup and then refreshed by one ETag lon
 The Compose gateway trusts upstream JWTs from `http://upstream-oauth2:9001` and broker-issued local JWTs from `http://localhost:3000`.
 
 An upstream JWT must contain `token-exchange-broker` in `aud` and identify a registered agent in `azp`. A local JWT must contain the same audience and its broker-issued `agent_id` claim.
+
+A broker-issued CIMD token keeps its metadata URL in `agent_id`. Compose also signs the registered agent UUID as `azp`. The issuer-gated exchange policy uses that UUID only for broker-issued tokens. When upstream tokens do not carry an `agent_id`, token exchange resolves their `azp` through the client ID registry. Tokens issued before this policy change may lack `azp` and require a new authorization flow.
+
+Compose uses in-memory broker storage. A restart discards grants, provider sessions, signing keys, and manually registered agents. The startup script re-registers Visual Studio Code and Claude Code with new agent UUIDs. Obtain a new token, approve delegation, and reconnect the provider after a restart.
 
 ### Use a sample-client token
 

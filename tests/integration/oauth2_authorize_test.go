@@ -53,7 +53,7 @@ func TestOAuth2AuthorizeEndpoint_NonUUIDClientIDError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -83,7 +83,7 @@ func TestOAuth2AuthorizeEndpoint_UnknownAgentUUIDDirectError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -172,7 +172,7 @@ func TestOAuth2AuthorizeEndpoint_MissingParameterError(t *testing.T) {
 	agentRepo := newInMemoryAgentRepo()
 	grantRepo := newInMemoryGrantRepo()
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -227,7 +227,7 @@ func TestOAuth2AuthorizeEndpoint_NoGrantRedirectsToConsent(t *testing.T) {
 	}
 	_ = agentRepo.Create(context.Background(), agent)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -281,7 +281,7 @@ func TestOAuth2AuthorizeEndpoint_ActiveGrantRedirectsToUpstream(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -344,7 +344,7 @@ func TestOAuth2AuthorizeEndpoint_ExpiredGrantRedirectsToConsent(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -400,7 +400,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -412,7 +412,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 	}
 
 	// Wrap with audit middleware
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := slog.New(slog.DiscardHandler)
 	auditMiddleware := middleware.OAuth2AuditMiddleware(logger)
 	wrappedHandler := auditMiddleware(handler)
 
@@ -459,7 +459,7 @@ func TestOAuth2AuthorizeEndpoint_PKCEParametersPreserved(t *testing.T) {
 	}
 	_ = grantRepo.Create(context.Background(), grant)
 
-	svc := oauth2.NewAuthorizationService(grantRepo, memory.NewInMemoryUserSessionRepository(), oauth2.NewAgentClientResolver(agentRepo, nil), &oauth2.OAuth2Config{
+	svc := oauth2.NewAuthorizationService(grantRepo, newConnectedSessionRepo(t, grant), oauth2.NewAgentClientResolver(agentRepo, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
@@ -548,6 +548,16 @@ func (r *inMemoryAgentRepo) List(ctx context.Context) ([]*storage.Agent, error) 
 		agents = append(agents, agent)
 	}
 	return agents, nil
+}
+
+func (r *inMemoryAgentRepo) GetByExternalID(_ context.Context, externalID id.ExternalID) (*storage.Agent, error) {
+
+	for _, agent := range r.agents {
+		if agent.ExternalID != nil && *agent.ExternalID == externalID {
+			return agent.Copy(), nil
+		}
+	}
+	return nil, storage.NewStorageError("GetByExternalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
 }
 
 func (r *inMemoryAgentRepo) GetByClientID(ctx context.Context, clientID id.ClientID) (*storage.Agent, error) {
@@ -738,4 +748,24 @@ func (r *inMemoryGrantRepo) DeleteByPrincipalAndAgentID(ctx context.Context, pri
 
 func (r *inMemoryGrantRepo) CountGrantsReferencingPermissionSet(_ context.Context, _ id.PermissionSetID) (int, error) {
 	return 0, nil
+}
+
+// newConnectedSessionRepo stores a usable session for every service the grant includes,
+// as consent requires (FR-020 of specs/019-permission-sets/spec.md).
+func newConnectedSessionRepo(t *testing.T, grant *storage.UserGrant) ports.UserSessionRepository {
+	t.Helper()
+	repo := memory.NewInMemoryUserSessionRepository()
+	for _, entry := range grant.GrantedPermissionSets {
+		for _, serviceID := range entry.IncludedServiceIDs {
+			require.NoError(t, repo.Create(context.Background(), &storage.UserSession{
+				ID:                   id.NewSessionID(),
+				Principal:            grant.Principal,
+				ServiceID:            serviceID,
+				EncryptedAccessToken: []byte("opaque-test-token"),
+				TokenType:            "Bearer",
+				EncryptionContext:    storage.EncryptionContext{ServiceID: serviceID},
+			}))
+		}
+	}
+	return repo
 }

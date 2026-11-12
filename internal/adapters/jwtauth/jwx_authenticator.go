@@ -45,6 +45,10 @@ type JWXAuthenticatorConfig struct {
 
 	// Logger is the structured logger for authentication events.
 	Logger *slog.Logger
+
+	// KeySet, when set, supplies the verification keys instead of JWTConfig.JWKSURI.
+	// The authenticator then skips its own key fetching and does not own the key set's lifecycle.
+	KeySet ports.JWKSPort
 }
 
 // JWXAuthenticator implements the domain JWTAuthenticator port using lestrrat-go/jwx v4.
@@ -59,12 +63,16 @@ type JWXAuthenticator struct {
 	celEvaluator *jwtauth.CELEvaluator
 	jwksCache    *jwkfetch.Cache
 	jwksURL      string
+	keySet       ports.JWKSPort
 	logger       *slog.Logger
 }
 
 // NewJWXAuthenticator creates a new JWX-based JWT authenticator.
 // It initializes the JWKS cache (for "jwks" verification mode) and validates configuration.
 func NewJWXAuthenticator(cfg JWXAuthenticatorConfig) (*JWXAuthenticator, error) {
+	if cfg.Logger == nil {
+		return nil, fmt.Errorf("logger is required")
+	}
 	if cfg.JWTConfig == nil {
 		return nil, fmt.Errorf("JWTConfig is required")
 	}
@@ -72,20 +80,21 @@ func NewJWXAuthenticator(cfg JWXAuthenticatorConfig) (*JWXAuthenticator, error) 
 		return nil, fmt.Errorf("CELEvaluator is required")
 	}
 
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
 	auth := &JWXAuthenticator{
 		config:       cfg.JWTConfig,
 		celEvaluator: cfg.CELEvaluator,
 		jwksURL:      cfg.JWTConfig.JWKSURI,
-		logger:       logger,
+		logger:       cfg.Logger,
+	}
+
+	signed := cfg.JWTConfig.Verification == "jwks" || cfg.JWTConfig.Verification == ""
+	if signed && cfg.KeySet != nil {
+		auth.keySet = cfg.KeySet
+		return auth, nil
 	}
 
 	// Initialize JWKS cache for signed verification mode
-	if cfg.JWTConfig.Verification == "jwks" || cfg.JWTConfig.Verification == "" {
+	if signed {
 		httpClient := cfg.HTTPClient
 		if httpClient == nil {
 			httpClient = http.DefaultClient
@@ -150,7 +159,7 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 
 	// Reject empty tokens early
 	if strings.TrimSpace(tokenStr) == "" {
-		a.logger.Warn("JWT authentication failed: malformed token",
+		a.logger.WarnContext(ctx, "JWT authentication failed: malformed token",
 			"reason", "empty_token",
 			"jwt_header", a.config.HeaderName,
 		)
@@ -160,20 +169,20 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	// Parse and verify the JWT
 	token, err := a.parseAndVerify(ctx, tokenStr)
 	if err != nil {
-		a.logValidationFailure(err)
+		a.logValidationFailure(ctx, err)
 		return nil, err
 	}
 
 	// Validate temporal claims
 	if err := a.validateClaims(token); err != nil {
-		a.logValidationFailure(err)
+		a.logValidationFailure(ctx, err)
 		return nil, err
 	}
 
 	// Extract claims map for CEL evaluation
 	claimsMap, err := a.extractClaimsMap(token)
 	if err != nil {
-		a.logger.Warn("JWT authentication failed: claim extraction error",
+		a.logger.WarnContext(ctx, "JWT authentication failed: claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, fmt.Errorf("%w: %v", jwtauth.ErrClaimExtraction, err)
@@ -182,13 +191,13 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	// Use CEL evaluator to extract principal and profile attributes
 	result, err := a.celEvaluator.ExtractClaims(claimsMap)
 	if err != nil {
-		a.logger.Warn("JWT authentication failed: CEL claim extraction error",
+		a.logger.WarnContext(ctx, "JWT authentication failed: CEL claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, err
 	}
 
-	a.logger.Info("JWT authentication successful",
+	a.logger.InfoContext(ctx, "JWT authentication successful",
 		"principal", result.Principal,
 		"has_display_name", result.DisplayName != nil,
 		"has_email", result.Email != nil,
@@ -214,35 +223,50 @@ func (a *JWXAuthenticator) stripBearerPrefix(rawJWT string) string {
 
 // parseAndVerify parses the JWT and verifies its signature using JWKS.
 func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) (jwt.Token, error) {
+	if a.keySet != nil {
+		keySet, err := a.keySet.GetKeySet(ctx)
+		if err != nil {
+			a.logger.ErrorContext(ctx, "local JWT pre-authentication key set unavailable", "error", err)
+			return nil, fmt.Errorf("%w: %v", jwtauth.ErrJWKSUnavailable, err)
+		}
+		return a.verifyWithKeySet(tokenStr, keySet)
+	}
+
 	if a.jwksCache != nil {
 		// JWKS verification mode: ensure cache is ready, then fetch keyset
 		if !a.jwksCache.Ready(ctx, a.jwksURL) {
 			if _, err := a.jwksCache.Refresh(ctx, a.jwksURL); err != nil {
-				a.logger.Error("failed to fetch JWKS", "url", a.jwksURL, "error", err)
+				a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
 				return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
 			}
 		}
 
 		keySet, err := a.jwksCache.Lookup(ctx, a.jwksURL)
 		if err != nil {
-			a.logger.Error("failed to fetch JWKS", "url", a.jwksURL, "error", err)
+			a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
 			return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
 		}
 
-		token, err := jwt.Parse([]byte(tokenStr),
-			jwt.WithKeySet(keySet, jws.WithInferAlgorithmFromKey(true)),
-			jwt.WithValidate(false), // We do our own validation below
-		)
-		if err != nil {
-			return nil, a.classifyParseError(err)
-		}
-		return token, nil
+		return a.verifyWithKeySet(tokenStr, keySet)
 	}
 
 	// Unsigned mode: parse without verification
 	token, err := jwt.Parse([]byte(tokenStr),
 		jwt.WithVerify(false),
 		jwt.WithValidate(false),
+	)
+	if err != nil {
+		return nil, a.classifyParseError(err)
+	}
+	return token, nil
+}
+
+// verifyWithKeySet verifies the JWT signature against keySet, with the same options for remote
+// and local key sets.
+func (a *JWXAuthenticator) verifyWithKeySet(tokenStr string, keySet jwk.Set) (jwt.Token, error) {
+	token, err := jwt.Parse([]byte(tokenStr),
+		jwt.WithKeySet(keySet, jws.WithInferAlgorithmFromKey(true)),
+		jwt.WithValidate(false), // We do our own validation below
 	)
 	if err != nil {
 		return nil, a.classifyParseError(err)
@@ -343,7 +367,7 @@ func (a *JWXAuthenticator) classifyParseError(err error) error {
 // logValidationFailure logs a structured audit event for JWT validation failures.
 // Per FR-020/SR-005: all authentication failures are logged with structured context
 // for security monitoring and incident response.
-func (a *JWXAuthenticator) logValidationFailure(err error) {
+func (a *JWXAuthenticator) logValidationFailure(ctx context.Context, err error) {
 	reason := "unknown"
 	switch {
 	case errors.Is(err, jwtauth.ErrJWKSUnavailable):
@@ -364,7 +388,7 @@ func (a *JWXAuthenticator) logValidationFailure(err error) {
 		reason = "claim_extraction"
 	}
 
-	a.logger.Warn("JWT authentication failed",
+	a.logger.WarnContext(ctx, "JWT authentication failed",
 		"reason", reason,
 		"error", err.Error(),
 		"jwt_header", a.config.HeaderName,

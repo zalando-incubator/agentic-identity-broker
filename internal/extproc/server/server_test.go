@@ -1058,6 +1058,7 @@ func TestServer_Process_ExpiredAssertion_Returns503(t *testing.T) {
 	assert.Equal(t, `{"error":"service_unavailable","error_description":"client assertion expired"}`, string(immResp.ImmediateResponse.Body))
 	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
 	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "expired assertion must not mutate authorization")
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 
 }
 
@@ -1463,9 +1464,8 @@ func TestServer_OPA_HeadersOnly_EndOfStream_Deny_Returns403(t *testing.T) {
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "access_denied")
 }
 
-// Spec: OPA allow + header-only + broker returns 401 + error_uri →
-// URLElicitationRequiredError must be returned (same as body-phase path).
-func TestServer_OPA_HeadersOnly_EndOfStream_ReAuth_Returns401WithElicitation(t *testing.T) {
+// A header-only MCP request returns the same broker re-authentication challenge.
+func TestServer_OPA_HeadersOnly_EndOfStream_ReAuth_ReturnsInsufficientScopeChallenge(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
 			return &authorization.OPADecision{Action: "allow"}, nil
@@ -1491,14 +1491,14 @@ func TestServer_OPA_HeadersOnly_EndOfStream_ReAuth_Returns401WithElicitation(t *
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "re-auth on header-only MCP must produce ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"MCP re-auth must return HTTP 200 with JSON-RPC -32042")
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
+	assert.Equal(t, `Bearer error="insufficient_scope", error_uri="https://idp.example.com/reauth"`, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), reAuthURL)
 }
 
 // Spec: OPA allow + header-only + broker returns 500 + error_uri →
 // transient 5xx must NOT return elicitation; returns normal exchange failure (500).
-func TestServer_OPA_HeadersOnly_EndOfStream_5xxWithErrorURI_Returns500NotElicitation(t *testing.T) {
+func TestServer_OPA_HeadersOnly_EndOfStream_5xxWithErrorURI_Returns500WithoutChallenge(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
 			return &authorization.OPADecision{Action: "allow"}, nil
@@ -1523,10 +1523,9 @@ func TestServer_OPA_HeadersOnly_EndOfStream_5xxWithErrorURI_Returns500NotElicita
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "5xx with error_uri on header-only must produce ImmediateResponse")
-	assert.NotEqual(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"transient 5xx must not return elicitation (HTTP 200)")
 	assert.Equal(t, int32(httpv3.StatusCode_InternalServerError), int32(immResp.ImmediateResponse.Status.Code),
 		"transient 5xx with error_uri on header-only must return 500")
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 }
 
 // Spec: Only GET is a valid MCP header-only transport (SSE streams, upgrade handshakes).
@@ -1731,13 +1730,11 @@ func TestServer_Process_StreamHandledCleanly(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// MCP URL Elicitation — BrokerExchangeError with ErrorURI
+// Re-authentication challenge — BrokerExchangeError with ErrorURI
 // ---------------------------------------------------------------------------
 
-// Spec: When broker returns error_uri and protocol is "mcp", headers phase immediately
-// returns HTTP 200 with JSON-RPC -32042 URLElicitationRequiredError. id is null because
-// the request body has not been read yet; this is correct per JSON-RPC 2.0 §5.
-func TestServer_Process_BrokerErrorWithURI_ReturnsElicitationFromHeadersPhase(t *testing.T) {
+// Broker re-authentication rejects from the headers phase, before the JSON-RPC id is known.
+func TestServer_Process_BrokerErrorWithURI_ReturnsInsufficientScopeChallenge(t *testing.T) {
 	reAuthURL := "https://broker.example.com/sessions"
 	const description = "User session has expired. Please re-authenticate."
 	exchanger := &mockExchanger{
@@ -1758,10 +1755,11 @@ func TestServer_Process_BrokerErrorWithURI_ReturnsElicitationFromHeadersPhase(t 
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "headers phase must return ImmediateResponse for elicitation")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"elicitation must use HTTP 200 (JSON-RPC errors always travel over HTTP 200)")
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
 	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
-	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "elicitation must not mutate authorization")
+	assert.Equal(t, `Bearer error="insufficient_scope", error_description="User session has expired. Please re-authenticate.", error_uri="https://broker.example.com/sessions"`, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
+	require.Len(t, immResp.ImmediateResponse.Headers.SetHeaders, 2, "content type and exactly one challenge header")
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "challenge must not mutate authorization")
 
 	var envelope struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -1791,120 +1789,101 @@ func TestServer_Process_BrokerErrorWithURI_ReturnsElicitationFromHeadersPhase(t 
 	assert.NotEmpty(t, envelope.Error.Data.Elicitations[0].ElicitationID, "elicitationId must be set")
 }
 
-// Spec: When broker returns error_uri and protocol metadata is absent, non-OPA mode
-// returns URLElicitationRequiredError (same as protocol="mcp"). The absent protocol
-// defaults to MCP for token-exchange-only deployments.
-func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_ReturnsElicitationFromHeadersPhase(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{}, &server.BrokerExchangeError{
-				StatusCode:  401,
-				Code:        "invalid_grant",
-				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/sessions",
-			}
+// Invalid challenge attributes never enter a header, but the broker's recovery body is preserved.
+func TestServer_Process_BrokerErrorWithURI_InvalidHeaderAttributesStayInBody(t *testing.T) {
+	for _, tt := range []struct {
+		name, description, uri, wantHeader string
+	}{
+		{
+			name: "description containing CRLF", description: "session expired\r\nX-Injected: yes",
+			uri:        "https://broker.example.com/sessions",
+			wantHeader: `Bearer error="insufficient_scope", error_uri="https://broker.example.com/sessions"`,
 		},
+		{
+			name: "URI containing quote", description: "session expired",
+			uri:        `https://broker.example.com/"sessions`,
+			wantHeader: `Bearer error="insufficient_scope", error_description="session expired"`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{}, &server.BrokerExchangeError{
+					StatusCode: 400, Code: "invalid_grant", Description: tt.description, ErrorURI: tt.uri,
+				}
+			}}
+			client, cleanup := startTestServer(t, exchanger)
+			defer cleanup()
+
+			resp, err := sendRequestHeaders(t, client, nil)
+			require.NoError(t, err)
+			immediate := resp.GetImmediateResponse()
+			require.NotNil(t, immediate)
+			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.Status.Code))
+			assert.Equal(t, tt.wantHeader, headerMutationValue(immediate.Headers, "www-authenticate"))
+			var envelope struct {
+				Error struct {
+					Message string `json:"message"`
+					Data    struct {
+						Elicitations []struct {
+							URL string `json:"url"`
+						} `json:"elicitations"`
+					} `json:"data"`
+				} `json:"error"`
+			}
+			require.NoError(t, json.Unmarshal(immediate.Body, &envelope))
+			assert.Equal(t, tt.description, envelope.Error.Message)
+			require.Len(t, envelope.Error.Data.Elicitations, 1)
+			assert.Equal(t, tt.uri, envelope.Error.Data.Elicitations[0].URL)
+		})
 	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, nil)
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "absent protocol metadata must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"absent protocol metadata defaults to MCP — elicitation uses HTTP 200")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body), "-32042",
-		"absent protocol metadata must return URLElicitationRequiredError (JSON-RPC -32042), not 503")
 }
 
-// Spec: Absent protocol metadata defaults to MCP in non-OPA mode.
-func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DefaultsToMCP(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{}, &server.BrokerExchangeError{
-				StatusCode:  401,
-				Code:        "invalid_grant",
-				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/sessions",
+// The recovery challenge is protocol-independent when OPA is disabled.
+func TestServer_Process_BrokerErrorWithURI_ChallengeIgnoresProtocol(t *testing.T) {
+	const recoveryURL = "https://broker.example.com/sessions"
+	const challenge = `Bearer error="insufficient_scope", error_description="session expired", error_uri="https://broker.example.com/sessions"`
+	for _, tt := range []struct {
+		name     string
+		protocol string
+	}{
+		{name: "absent"},
+		{name: "mcp", protocol: "mcp"},
+		{name: "a2a", protocol: "a2a"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			exchanger := &mockExchanger{exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
+				return server.ExchangeResult{}, &server.BrokerExchangeError{
+					StatusCode: 400, Code: "invalid_grant", Description: "session expired", ErrorURI: recoveryURL,
+				}
+			}}
+			client, cleanup := startTestServer(t, exchanger)
+			defer cleanup()
+
+			var (
+				resp *extprocv3.ProcessingResponse
+				err  error
+			)
+			if tt.protocol == "" {
+				resp, err = sendRequestHeaders(t, client, nil)
+			} else {
+				resp, err = sendRequestHeadersWithProtocol(t, client, nil, tt.protocol)
 			}
-		},
+			require.NoError(t, err)
+			immediate := resp.GetImmediateResponse()
+			require.NotNil(t, immediate)
+			assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immediate.Status.Code))
+			assert.Equal(t, challenge, headerMutationValue(immediate.Headers, "www-authenticate"))
+			assert.Contains(t, string(immediate.Body), `"code":-32042`)
+			assert.Contains(t, string(immediate.Body), recoveryURL)
+		})
 	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, nil)
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "absent protocol metadata must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"absent protocol metadata defaults to MCP — elicitation uses HTTP 200")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body), "-32042",
-		"absent protocol metadata must return URLElicitationRequiredError (JSON-RPC -32042)")
-}
-
-// Spec: Absent protocol metadata defaults to MCP for direct ExtProc clients.
-func TestServer_Process_BrokerErrorWithURI_AbsentProtocolMetadata_DirectClientDefaultsToMCP(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{}, &server.BrokerExchangeError{
-				StatusCode:  401,
-				Code:        "invalid_grant",
-				Description: "session expired",
-				ErrorURI:    "https://broker.example.com/sessions",
-			}
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeaders(t, client, nil)
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "absent protocol metadata must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"absent protocol metadata defaults to MCP — elicitation uses HTTP 200")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body), "-32042",
-		"absent protocol metadata returns JSON-RPC -32042")
-}
-
-// Spec: When broker returns error_uri and protocol is explicitly non-MCP (e.g. "a2a"),
-// headers phase must return 503 — URLElicitationRequiredError is MCP-specific.
-func TestServer_Process_BrokerErrorWithURI_NonMCP_Returns503FromHeadersPhase(t *testing.T) {
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{}, &server.BrokerExchangeError{
-				StatusCode:  401,
-				Code:        "invalid_grant",
-				Description: "session expired",
-				ErrorURI:    "https://idp.example.com/reauth",
-			}
-		},
-	}
-	client, cleanup := startTestServer(t, exchanger)
-	defer cleanup()
-
-	resp, err := sendRequestHeadersWithProtocol(t, client, nil, "a2a")
-	require.NoError(t, err)
-
-	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "non-MCP re-auth must produce an ImmediateResponse")
-	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable), int32(immResp.ImmediateResponse.Status.Code),
-		"non-MCP re-auth in headers phase must return 503")
-	assert.Equal(t, `{"error":"service_unavailable","error_description":"token exchange requires re-authentication"}`, string(immResp.ImmediateResponse.Body))
-	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
-	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "non-MCP re-auth must not mutate authorization")
-
 }
 
 // Spec: A transient 5xx broker error carrying error_uri must NOT trigger re-auth
 // elicitation — it must be treated as a normal exchange failure (500), even when
 // the exchange cache is empty (cache miss). Transient errors must never surface
 // a spurious re-auth URL.
-func TestServer_Process_5xxBrokerErrorWithURI_Returns500NotElicitation(t *testing.T) {
+func TestServer_Process_5xxBrokerErrorWithURI_Returns500WithoutChallenge(t *testing.T) {
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, &server.BrokerExchangeError{
@@ -1922,13 +1901,12 @@ func TestServer_Process_5xxBrokerErrorWithURI_Returns500NotElicitation(t *testin
 
 	immResp, ok := resp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "5xx with error_uri must produce an ImmediateResponse")
-	assert.NotEqual(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"transient 5xx with error_uri must not return elicitation (HTTP 200)")
 	assert.Equal(t, int32(httpv3.StatusCode_InternalServerError), int32(immResp.ImmediateResponse.Status.Code),
 		"transient 5xx with error_uri must return 500, not elicitation")
 	assert.Equal(t, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`, string(immResp.ImmediateResponse.Body))
 	assert.Equal(t, "application/json", headerMutationValue(immResp.ImmediateResponse.Headers, "content-type"))
 	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "authorization"), "transient failure must not mutate authorization")
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1972,10 +1950,8 @@ func TestServer_OPA_AbsentProtocolMetadata_Returns403(t *testing.T) {
 	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
 }
 
-// Spec: Exchange fails with re-auth → elicitation is returned in the headers-phase response.
-// Token exchange now occurs eagerly in the headers phase (before the body is seen), so the
-// JSON-RPC id cannot be extracted from the request body; the elicitation carries id=null.
-func TestServer_OPA_BodyPhaseReauth_ReturnsElicitationInHeadersPhase(t *testing.T) {
+// Token exchange fails in the headers phase before a body-bearing request is read.
+func TestServer_OPA_BodyBearingReauth_ReturnsChallengeInHeadersPhase(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
 			return &authorization.OPADecision{Action: "allow"}, nil
@@ -1999,11 +1975,12 @@ func TestServer_OPA_BodyPhaseReauth_ReturnsElicitationInHeadersPhase(t *testing.
 		":method": "POST",
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","id":42,"params":{"name":"list_files"}}`))
 
-	// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
+	// Exchange failed in headers phase, so no body-phase response exists.
 	assert.Nil(t, bodyResp, "re-auth in headers phase must not produce a body-phase response")
 	immResp, ok := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "re-auth must produce an ImmediateResponse in the headers phase")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code))
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
+	assert.Equal(t, `Bearer error="insufficient_scope", error_description="session expired", error_uri="https://idp.example.com/reauth"`, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 	assert.Contains(t, string(immResp.ImmediateResponse.Body), "idp.example.com/reauth")
 
 	var rpcErr map[string]any
@@ -2175,18 +2152,19 @@ func TestServer_OPA_AmbiguousMCPMembers_DeniedBeforePolicy(t *testing.T) {
 		name                string
 		body                []byte
 		downstreamArguments map[string]any
+		checkDownstream     bool
 	}{
 		{name: "standalone case-folded method", body: []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}`)},
 		{name: "batch case-folded method", body: []byte(`[{"jsonrpc":"2.0","id":1,"method":"initialize","Method":"tools/call","params":{"name":"delete_repository","arguments":{"repo":"acme/app"}}}]`)},
-		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "standalone repeated params", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}`), downstreamArguments: nil, checkDownstream: true},
 		{name: "batch repeated params", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"arguments":{"env":"prod"}},"params":{"name":"deploy"}}]`)},
 		{name: "case-folded tool name", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"read","Name":"delete"}}`)},
-		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}},
+		{name: "standalone case-folded arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`), downstreamArguments: map[string]any{"env": "prod"}, checkDownstream: true},
 		{name: "repeated arguments", body: []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"arguments":{"env":"prod"}}}`)},
 		{name: "batch case-folded arguments", body: []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}]`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if tc.downstreamArguments != nil {
+			if tc.checkDownstream {
 				var downstream mcp.CallToolRequest
 				require.NoError(t, json.Unmarshal(tc.body, &downstream))
 				assert.Equal(t, tc.downstreamArguments, downstream.GetArguments(), "downstream would execute these arguments")
@@ -2684,91 +2662,11 @@ func TestServer_OPA_ApprovalGateDoesNotHandleHeaderOnlyRequests(t *testing.T) {
 	assert.Zero(t, brokerCalls)
 }
 
-// Spec: Exchange fails with re-auth for a batch request → elicitation is returned in the
-// headers-phase response. Token exchange occurs eagerly in the headers phase (before the
-// batch body is seen), so the elicitation carries id=null regardless of batch element ids.
-func TestServer_OPA_BatchBodyPhaseReauth_ReturnsElicitationInHeadersPhase(t *testing.T) {
-	auth := &mockAuthorizer{
-		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
-			return &authorization.OPADecision{Action: "allow"}, nil
-		},
-	}
-	reAuthErr := &server.BrokerExchangeError{
-		StatusCode:  401,
-		Code:        "reauth_required",
-		Description: "session expired",
-		ErrorURI:    "https://idp.example.com/reauth",
-	}
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{}, reAuthErr
-		},
-	}
-	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
-	defer cleanup()
-
-	batch := []byte(`[{"jsonrpc":"2.0","method":"tools/call","id":7,"params":{"name":"a"}},{"jsonrpc":"2.0","method":"tools/call","id":8,"params":{"name":"b"}}]`)
-	headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method": "POST",
-	}, batch)
-
-	// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
-	assert.Nil(t, bodyResp, "re-auth in headers phase must not produce a body-phase response")
-	immResp, ok := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "batch re-auth must produce an ImmediateResponse in the headers phase")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code))
-	assert.Contains(t, string(immResp.ImmediateResponse.Body), "idp.example.com/reauth")
-
-	var rpcErr map[string]any
-	require.NoError(t, json.Unmarshal(immResp.ImmediateResponse.Body, &rpcErr))
-	assert.Nil(t, rpcErr["id"], "headers-phase re-auth elicitation carries id=null (batch not yet seen)")
-}
-
-// Spec: Exchange fails with re-auth for a batch starting with a notification → elicitation
-// is returned in the headers-phase response with id=null. Token exchange occurs eagerly in
-// the headers phase, so the batch body (and its element ids) is never seen.
-func TestServer_OPA_BatchBodyPhaseReauth_NotificationFirstUsesNextID(t *testing.T) {
-	auth := &mockAuthorizer{
-		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
-			return &authorization.OPADecision{Action: "allow"}, nil
-		},
-	}
-	reAuthErr := &server.BrokerExchangeError{
-		StatusCode:  401,
-		Code:        "reauth_required",
-		Description: "session expired",
-		ErrorURI:    "https://idp.example.com/reauth",
-	}
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{}, reAuthErr
-		},
-	}
-	client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
-	defer cleanup()
-
-	// First element is a notification (no id field); second carries id=42.
-	batch := []byte(`[{"jsonrpc":"2.0","method":"notifications/progress"},{"jsonrpc":"2.0","method":"tools/call","id":42,"params":{"name":"a"}}]`)
-	headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-		":method": "POST",
-	}, batch)
-
-	// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
-	assert.Nil(t, bodyResp, "re-auth in headers phase must not produce a body-phase response")
-	immResp, ok := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-	require.True(t, ok, "batch re-auth must produce an ImmediateResponse in the headers phase")
-	assert.Equal(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code))
-
-	var rpcErr map[string]any
-	require.NoError(t, json.Unmarshal(immResp.ImmediateResponse.Body, &rpcErr))
-	assert.Nil(t, rpcErr["id"], "headers-phase re-auth elicitation carries id=null (batch not yet seen)")
-}
-
 // Spec: A transient 5xx broker error with error_uri on an MCP batch request must NOT
 // trigger re-auth elicitation — it must return a normal exchange failure (500).
 // Token exchange occurs eagerly in the headers phase, so the 500 is returned in the
 // headers-phase response (not the body phase).
-func TestServer_OPA_BatchBodyPhase_5xxWithErrorURI_Returns500NotElicitation(t *testing.T) {
+func TestServer_OPA_BatchBodyPhase_5xxWithErrorURI_Returns500WithoutChallenge(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
 			return &authorization.OPADecision{Action: "allow"}, nil
@@ -2795,66 +2693,13 @@ func TestServer_OPA_BatchBodyPhase_5xxWithErrorURI_Returns500NotElicitation(t *t
 	assert.Nil(t, bodyResp, "5xx exchange error in headers phase must not produce a body-phase response")
 	immResp, ok := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "5xx with error_uri on batch must produce an ImmediateResponse in the headers phase")
-	assert.NotEqual(t, int32(httpv3.StatusCode_OK), int32(immResp.ImmediateResponse.Status.Code),
-		"transient 5xx with error_uri must not return elicitation (HTTP 200)")
 	assert.Equal(t, int32(httpv3.StatusCode_InternalServerError), int32(immResp.ImmediateResponse.Status.Code),
 		"transient 5xx with error_uri must return 500, not elicitation")
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 }
 
-// Spec: re-auth returns elicitation in the headers phase with id=null. Token exchange
-// occurs eagerly before the body is seen, so the request body (including its id field)
-// is never inspected; id is always null in headers-phase elicitation responses.
-func TestServer_OPA_BodyPhaseReauth_InvalidIDTypesFallBackToNull(t *testing.T) {
-	auth := &mockAuthorizer{
-		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
-			return &authorization.OPADecision{Action: "allow"}, nil
-		},
-	}
-	reAuthErr := &server.BrokerExchangeError{
-		StatusCode:  401,
-		Code:        "reauth_required",
-		Description: "session expired",
-		ErrorURI:    "https://idp.example.com/reauth",
-	}
-	exchanger := &mockExchanger{
-		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
-			return server.ExchangeResult{}, reAuthErr
-		},
-	}
-
-	for _, tc := range []struct {
-		name string
-		body []byte
-	}{
-		{"object id", []byte(`{"jsonrpc":"2.0","method":"tools/call","id":{},"params":{"name":"a"}}`)},
-		{"array id", []byte(`{"jsonrpc":"2.0","method":"tools/call","id":[],"params":{"name":"a"}}`)},
-		{"boolean true id", []byte(`{"jsonrpc":"2.0","method":"tools/call","id":true,"params":{"name":"a"}}`)},
-		{"boolean false id", []byte(`{"jsonrpc":"2.0","method":"tools/call","id":false,"params":{"name":"a"}}`)},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			client, cleanup := startTestServerWithAuthorizer(t, exchanger, auth)
-			defer cleanup()
-
-			headersResp, bodyResp := sendHeadersThenBody(t, client, map[string]string{
-				":method": "POST",
-			}, tc.body)
-
-			// Exchange failed in headers phase → elicitation is in headersResp, no body phase.
-			assert.Nil(t, bodyResp)
-			immResp, ok := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
-			require.True(t, ok)
-
-			var rpcErr map[string]any
-			require.NoError(t, json.Unmarshal(immResp.ImmediateResponse.Body, &rpcErr))
-			assert.Nil(t, rpcErr["id"], "headers-phase re-auth elicitation carries id=null")
-		})
-	}
-}
-
-// Spec: When OPA allows a non-MCP request and Exchange returns error_uri,
-// the response must NOT be a URLElicitationRequiredError (MCP-specific).
-// It should fall through to the generic token-exchange error path.
-func TestServer_OPA_NonMCPBodyPhaseReauth_DoesNotReturnElicitation(t *testing.T) {
+// A non-MCP body-bearing request receives the same broker recovery challenge.
+func TestServer_OPA_NonMCPReauth_ReturnsChallenge(t *testing.T) {
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
 			return &authorization.OPADecision{Action: "allow"}, nil
@@ -2881,10 +2726,8 @@ func TestServer_OPA_NonMCPBodyPhaseReauth_DoesNotReturnElicitation(t *testing.T)
 	assert.Nil(t, bodyResp, "non-MCP re-auth in headers phase must not produce a body-phase response")
 	immResp, ok := headersResp.Response.(*extprocv3.ProcessingResponse_ImmediateResponse)
 	require.True(t, ok, "non-MCP re-auth must produce an ImmediateResponse in the headers phase")
-	assert.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable), int32(immResp.ImmediateResponse.Status.Code),
-		"non-MCP re-auth must return 503")
-	assert.Contains(t, string(immResp.ImmediateResponse.Body), "service_unavailable",
-		"non-MCP re-auth body must contain service_unavailable")
+	assert.Equal(t, int32(httpv3.StatusCode_Forbidden), int32(immResp.ImmediateResponse.Status.Code))
+	assert.Equal(t, `Bearer error="insufficient_scope", error_description="session expired", error_uri="https://idp.example.com/reauth"`, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 }
 
 // Spec: BrokerExchangeError without ErrorURI still returns 500 (no elicitation).
@@ -2909,6 +2752,7 @@ func TestServer_Process_BrokerErrorWithoutURI_Returns500(t *testing.T) {
 	require.True(t, ok, "broker error without ErrorURI must produce an ImmediateResponse directly")
 	assert.Equal(t, int32(httpv3.StatusCode_InternalServerError),
 		int32(immResp.ImmediateResponse.Status.Code))
+	assert.Empty(t, headerMutationValue(immResp.ImmediateResponse.Headers, "www-authenticate"))
 }
 
 // ---------------------------------------------------------------------------
@@ -2981,6 +2825,7 @@ func TestServer_ProcessRequestHeaders_SpanOutcomeOnSuccess(t *testing.T) {
 	}
 	assert.Equal(t, "success", outcomeAttr, "span outcome must be 'success' on successful exchange")
 	assert.Equal(t, otelcodes.Unset, findTokenExchangeSpan(t, spans).Status().Code, "successful exchange must leave span status UNSET")
+	assert.Equal(t, trace.SpanKindServer, findTokenExchangeSpan(t, spans).SpanKind())
 }
 
 // Agentgateway injects a fresh "traceparent" entry directly into the gRPC
@@ -3077,7 +2922,7 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 		wantHTTP                  httpv3.StatusCode
 		wantOutcome               string
 	}{
-		{name: "recovery", code: "invalid_grant", wantCode: "invalid_grant", uri: recoveryURL, status: 400, wantHTTP: httpv3.StatusCode_OK, wantOutcome: "reauth_required"},
+		{name: "recovery", code: "invalid_grant", wantCode: "invalid_grant", uri: recoveryURL, status: 400, wantHTTP: httpv3.StatusCode_Forbidden, wantOutcome: "reauth_required"},
 		{name: "server error with recovery URI", code: "server_error", wantCode: "server_error", uri: recoveryURL, status: 500, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "infrastructure_error"},
 		{name: "invalid_request", code: "invalid_request", wantCode: "invalid_request", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "invalid_request"},
 		{name: "invalid_client", code: "invalid_client", wantCode: "invalid_client", status: 400, wantHTTP: httpv3.StatusCode_InternalServerError, wantOutcome: "authentication_failed"},
@@ -3106,7 +2951,7 @@ func TestServer_Process_BrokerErrorTelemetry(t *testing.T) {
 			require.NoError(t, err)
 			assertBrokerErrorResponse(t, resp, tt.wantHTTP, recoveryURL)
 
-			assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), tt.status, tt.wantCode, tt.wantOutcome)
+			assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), tt.wantHTTP, tt.status, tt.wantCode, tt.wantOutcome)
 		})
 	}
 }
@@ -3119,7 +2964,7 @@ func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 				recorder := installSpanRecorder(t)
 
 				code := "invalid_grant"
-				wantHTTP := httpv3.StatusCode_OK
+				wantHTTP := httpv3.StatusCode_Forbidden
 				wantOutcome := "reauth_required"
 				if statusCode == 500 {
 					code = "server_error"
@@ -3148,10 +2993,57 @@ func TestServer_OPA_BrokerErrorTelemetry(t *testing.T) {
 					require.NoError(t, err)
 				}
 				assertBrokerErrorResponse(t, resp, wantHTTP, recoveryURL)
-				assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), statusCode, code, wantOutcome)
+				assertBrokerExchangeSpan(t, findTokenExchangeSpan(t, recorder.Ended()), wantHTTP, statusCode, code, wantOutcome)
 			})
 		}
 	}
+}
+
+// Spec: US1 S4 — Rejected metadata gets a 503 response, so the span records a server error.
+func TestServer_TokenExchangeSpan_RejectedMetadataIsAnError(t *testing.T) {
+	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+		t.Fatal("Exchange must not be called for rejected metadata")
+		return server.ExchangeResult{}, nil
+	}}
+	starters := map[string]func(t *testing.T) (extprocv3.ExternalProcessorClient, func()){
+		"without OPA": func(t *testing.T) (extprocv3.ExternalProcessorClient, func()) {
+			return startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
+		},
+		"with OPA": func(t *testing.T) (extprocv3.ExternalProcessorClient, func()) {
+			return startTestServerWithAuthorizerConfig(t, testConfigWithTelemetry(), exchanger, &mockAuthorizer{})
+		},
+	}
+	for name, start := range starters {
+		t.Run(name, func(t *testing.T) {
+			recorder := installSpanRecorder(t)
+			client, cleanup := start(t)
+			defer cleanup()
+
+			resp, err := sendRequestHeadersWithMetadata(t, client, nil, nil, false)
+			require.NoError(t, err)
+			require.Equal(t, int32(httpv3.StatusCode_ServiceUnavailable), int32(resp.GetImmediateResponse().GetStatus().GetCode()))
+
+			span := findTokenExchangeSpan(t, recorder.Ended())
+			assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+			assert.Equal(t, otelcodes.Error, span.Status().Code)
+			assert.Equal(t, "rejected", attributeMap(span.Attributes())["error.type"])
+		})
+	}
+}
+
+// coding-standards/OPENTELEMETRY.md section 3.4: caller cancellation is an outcome, not an error.
+func TestServer_TokenExchangeSpan_CallerCancellationIsNotAnError(t *testing.T) {
+	recorder := installSpanRecorder(t)
+	exchangeStarted := make(chan struct{})
+	exchanger := &mockExchanger{exchangeFunc: func(ctx context.Context, _, _ string) (server.ExchangeResult, error) {
+		close(exchangeStarted)
+		<-ctx.Done()
+		return server.ExchangeResult{}, ctx.Err()
+	}}
+	client, cleanup := startTestServerWithConfig(t, testConfigWithTelemetry(), exchanger)
+	defer cleanup()
+
+	assertCanceledExchangeSpan(t, recorder, client, exchangeStarted)
 }
 
 // Spec: US3 S1 — Metrics are recorded with outcome attribute
@@ -3508,8 +3400,8 @@ func TestServer_OPA_HeadersOnly_Deny_RecordsAuthorizationOutcome(t *testing.T) {
 		}
 	}
 	assert.True(t, foundSpan, "OPA header-only deny path must emit extproc.token_exchange span")
-	assert.Equal(t, otelcodes.Error, findTokenExchangeSpan(t, spans).Status().Code)
-	assert.Equal(t, "token exchange failed", findTokenExchangeSpan(t, spans).Status().Description)
+	assert.Equal(t, trace.SpanKindServer, findTokenExchangeSpan(t, spans).SpanKind())
+	assert.Equal(t, otelcodes.Unset, findTokenExchangeSpan(t, spans).Status().Code, "a policy denial is a 403, not a server error")
 
 	var rm metricdata.ResourceMetrics
 	require.NoError(t, metricReader.Collect(context.Background(), &rm))
@@ -3903,18 +3795,25 @@ func assertBrokerErrorResponse(t *testing.T, resp *extprocv3.ProcessingResponse,
 	require.NotNil(t, immediate)
 	assert.Equal(t, int32(wantHTTP), int32(immediate.Status.Code))
 	assert.Empty(t, headerMutationValue(immediate.Headers, "authorization"))
-	if wantHTTP == httpv3.StatusCode_OK {
+	if wantHTTP == httpv3.StatusCode_Forbidden {
 		assert.Contains(t, string(immediate.Body), `"code":-32042`)
 		assert.Contains(t, string(immediate.Body), recoveryURL)
+		assert.Contains(t, headerMutationValue(immediate.Headers, "www-authenticate"), `error_uri="`+recoveryURL+`"`)
 	} else {
 		assert.NotContains(t, string(immediate.Body), recoveryURL)
+		assert.Empty(t, headerMutationValue(immediate.Headers, "www-authenticate"))
 	}
 }
 
-func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCode int, errorCode, wantOutcome string) {
+func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, wantHTTP httpv3.StatusCode, statusCode int, errorCode, wantOutcome string) {
 	t.Helper()
-	assert.Equal(t, otelcodes.Error, span.Status().Code)
-	assert.Equal(t, "token exchange failed", span.Status().Description)
+	assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+	if wantHTTP >= httpv3.StatusCode_InternalServerError {
+		assert.Equal(t, otelcodes.Error, span.Status().Code)
+		assert.Equal(t, "token exchange failed", span.Status().Description)
+	} else {
+		assert.Equal(t, otelcodes.Unset, span.Status().Code, "a 4xx response is not a server error")
+	}
 	attrs := make(map[string]attribute.Value, len(span.Attributes()))
 	for _, attr := range span.Attributes() {
 		attrs[string(attr.Key)] = attr.Value
@@ -3923,11 +3822,21 @@ func assertBrokerExchangeSpan(t *testing.T, span sdktrace.ReadOnlySpan, statusCo
 	assert.Equal(t, "exchange_routing", attrs["token_exchange.failure_stage"].AsString(), "broker origin stages are unknown to ExtProc")
 	assert.Equal(t, "unknown", attrs["token_exchange.exchange_kind"].AsString())
 	assert.NotContains(t, attrs, "outcome")
+	wantErrorType := "rejected"
+	if statusCode >= 500 {
+		wantErrorType = "unavailable"
+	}
+	assert.Equal(t, "exchange", attrs["token_exchange.operation"].AsString())
+	assert.Equal(t, "broker", attrs["token_exchange.dependency"].AsString())
+	assert.Equal(t, wantErrorType, attrs["error.type"].AsString())
+	for _, legacy := range []string{"operation", "dependency", "error.kind", "token_exchange.broker_error_code"} {
+		assert.NotContains(t, attrs, legacy)
+	}
 	status, ok := attrs["token_exchange.broker_status_code"]
 	require.True(t, ok, "broker status must be present")
 	assert.Equal(t, attribute.INT64, status.Type())
 	assert.Equal(t, int64(statusCode), status.AsInt64())
-	code, ok := attrs["token_exchange.broker_error_code"]
+	code, ok := attrs["token_exchange.oauth_error_code"]
 	require.True(t, ok, "broker code must be present")
 	assert.Equal(t, attribute.STRING, code.Type())
 	assert.Equal(t, errorCode, code.AsString())

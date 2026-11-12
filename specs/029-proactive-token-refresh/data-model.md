@@ -25,7 +25,7 @@ The fields this feature reads and writes are unchanged (spec "Key Entities"):
 | `EncryptedAccessToken` | `[]byte` | `DecryptAccessToken` | `setSessionTokens` (all triggers) |
 | `EncryptedRefreshToken` | `[]byte` | `DecryptRefreshToken`, `CanRefresh` | `setSessionTokens` when the provider rotates it |
 | `AccessTokenExpiresAt` | `*time.Time` | `AccessTokenExpiresBy`, sweep query and cursor | `setSessionTokens` |
-| `RefreshTokenExpiresAt` | `*time.Time` | `CanRefresh` | — (unchanged; current behavior, out of scope) |
+| `RefreshRejectedAt` | `*time.Time` | `CanRefresh`, sweep candidate query | set on provider `invalid_grant`; cleared by a rotated refresh token (ADR 046) |
 | `UpdatedAt` | `time.Time` | — | `setSessionTokens` |
 
 ### New predicate

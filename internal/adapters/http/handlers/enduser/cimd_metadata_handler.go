@@ -1,6 +1,7 @@
 package enduser
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -30,7 +31,7 @@ type CIMDMetadataHandler struct {
 // NewCIMDMetadataHandler constructs the public CIMD metadata handler.
 func NewCIMDMetadataHandler(metadata ports.CIMDClientMetadataProvider, logger *slog.Logger) *CIMDMetadataHandler {
 	if logger == nil {
-		logger = slog.Default()
+		panic("enduser.NewCIMDMetadataHandler: logger must not be nil")
 	}
 	return &CIMDMetadataHandler{metadata: metadata, logger: logger}
 }
@@ -45,11 +46,11 @@ func (h *CIMDMetadataHandler) Metadata(w http.ResponseWriter, r *http.Request) {
 
 	metadata, err := h.metadata.Metadata(r.Context(), serviceID)
 	if err != nil || metadata == nil {
-		h.audit(serviceID, "metadata", "rejected")
+		h.audit(r.Context(), serviceID, "metadata", "rejected")
 		h.writeUnavailable(w)
 		return
 	}
-	h.audit(serviceID, "metadata", "success")
+	h.audit(r.Context(), serviceID, "metadata", "success")
 	h.writeJSON(w, http.StatusOK, metadata)
 }
 
@@ -63,11 +64,11 @@ func (h *CIMDMetadataHandler) JWKS(w http.ResponseWriter, r *http.Request) {
 
 	keys, err := h.metadata.JWKSet(r.Context(), serviceID)
 	if err != nil || keys == nil {
-		h.audit(serviceID, "jwks", "rejected")
+		h.audit(r.Context(), serviceID, "jwks", "rejected")
 		h.writeUnavailable(w)
 		return
 	}
-	h.audit(serviceID, "jwks", "success")
+	h.audit(r.Context(), serviceID, "jwks", "success")
 	h.writeJSON(w, http.StatusOK, keys)
 }
 
@@ -80,8 +81,8 @@ func (h *CIMDMetadataHandler) serviceID(r *http.Request) (id.ServiceID, bool) {
 	return serviceID, true
 }
 
-func (h *CIMDMetadataHandler) audit(serviceID id.ServiceID, operation, outcome string) {
-	h.logger.Info("CIMD metadata access", "service_id", serviceID, "operation", operation, "outcome", outcome)
+func (h *CIMDMetadataHandler) audit(ctx context.Context, serviceID id.ServiceID, operation, outcome string) {
+	h.logger.InfoContext(ctx, "CIMD metadata access", "service_id", serviceID, "operation", operation, "outcome", outcome)
 }
 
 func (h *CIMDMetadataHandler) writeUnavailable(w http.ResponseWriter) {

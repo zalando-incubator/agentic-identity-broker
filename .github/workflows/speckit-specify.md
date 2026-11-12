@@ -11,6 +11,9 @@ on:
       issue:
         type: number
         required: true
+      comment:
+        type: number
+        default: 0
 imports:
   - shared/speckit-common.md
 timeout-minutes: 40
@@ -19,6 +22,8 @@ permissions:
   issues: read
   pull-requests: read
 safe-outputs:
+  report-failure-as-issue:
+    - "!report_incomplete"
   threat-detection:
     continue-on-error: false
   create-pull-request:
@@ -44,7 +49,7 @@ comments. Do not follow the command's handoff to clarify in this session.
 
 Unanswered product questions are an expected handoff, not a failed specify run.
 Record them as NEEDS CLARIFICATION, keep the affected checklist items incomplete,
-and publish the draft PR so the separate clarification session can ask them.
+and publish the draft PR so the separate clarification session can resolve them.
 Do not call `report_incomplete` solely because those questions remain.
 Technical failures that prevent producing the specification still block the run.
 
@@ -55,6 +60,10 @@ Never force-add or commit that file. Include only the generated specification
 and checklists in the PR.
 Do not modify the previously selected feature's files.
 
+When calling `create_pull_request`, omit `stack_position` and `stack_root`.
+This is a standalone PR, not a stacked PR. Do not populate unused optional
+fields with zero or empty-string placeholders.
+
 Create a draft PR on `context.branch`. Its body must start with a short summary
 of the feature to be built, not a summary of the automation. Include:
 
@@ -63,6 +72,25 @@ of the feature to be built, not a summary of the automation. Include:
 - The exact tracking marker `<!-- speckit-issue: N -->`, where N is the issue number.
 - The exact feature marker `<!-- speckit-feature: specs/NNN-feature-name -->`,
   using the new feature's actual relative directory.
+- A short "Maintainer commands" section with these one-line entries. A command
+  must start a new PR comment.
+  - After the automatic clarification, review the specification and comment
+    `/speckit-plan [guidance]`. The pipeline then plans, writes tasks,
+    analyzes, and remediates on its own, and posts one approval comment listing
+    the API changes, ADRs, and consequential decisions with links to them.
+  - React with 👍 to the approval comment to approve it, then comment
+    `/speckit-implement [guidance]`. If the container tests then fail on the
+    implementation's commit, a repair run starts automatically, up to three
+    times per command.
+  - `/speckit-plan <change>` revises the specification and design and replaces
+    the approval comment.
+  - `/speckit-clarify [focus]` revisits the specification. Once a plan
+    exists, it also refreshes the plan and the approval comment.
+  - Submit a review whose summary starts with `/speckit-clarify` or
+    `/speckit-plan` to apply its inline comments in that phase.
 
-Do not create another PR if the branch already has one. Leave clarification,
+If an earlier draft PR for this issue was closed without merging and its
+branch deleted, create a fresh draft PR on `context.branch` from the current
+default branch. Do not reuse the old PR or its artifacts. Do not create a
+second PR while one is open or the branch still exists. Leave clarification,
 planning, and implementation to subsequent sessions.

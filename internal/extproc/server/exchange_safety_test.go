@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -230,7 +231,7 @@ func TestNetworkExchangeAndAssertionTelemetryContainsNoSecrets(t *testing.T) {
 	request := safetyRequest(subject, resource, headers)
 	response := server.processRequestHeaders(context.Background(), request, headers)
 	require.NotNil(t, response.GetImmediateResponse())
-	assert.Contains(t, string(response.GetImmediateResponse().GetBody()), recoveryURL, "elicitation URL remains in direct protocol response")
+	assert.Contains(t, string(response.GetImmediateResponse().GetBody()), recoveryURL, "recovery URL remains in direct protocol response")
 	assert.Contains(t, string(response.GetImmediateResponse().GetBody()), description)
 	refreshErr := exchanger.refreshClientAssertion()
 	require.Error(t, refreshErr)
@@ -346,4 +347,52 @@ func TestAssertionRefreshOwnedDeadlineNeverLabelsCallerCancellation(t *testing.T
 	assert.Contains(t, logs.String(), `"operation":"assertion_refresh"`)
 	assert.Contains(t, logs.String(), `"error_kind":"unavailable"`)
 	assertSafetyTelemetry(t, recorder, reader, logs.String(), "endpoint-path-secret-sentinel", "query-secret-sentinel", "client-id-secret-sentinel", "client-secret-sentinel", provider.URL)
+}
+
+func TestAssertionRefreshSpanAttributeKeys(t *testing.T) {
+	recorder, _ := installSafetyTelemetry(t)
+	var calls atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if calls.Add(1) == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "assertion", "token_type": "Bearer", "expires_in": 3600})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
+	}))
+	defer provider.Close()
+	cfg := &extprocconfig.Config{OAuth2: extprocconfig.OAuth2Config{ClientCredentialsEndpoint: provider.URL,
+		ClientID: "client-id", ClientSecret: "client-secret", ClientAssertionType: "access_token", ExchangeTimeout: time.Second}}
+	client, err := httpclient.New(cfg, cfg.OAuth2.ExchangeTimeout)
+	require.NoError(t, err)
+	defer client.CloseIdleConnections()
+	exchanger := &TokenExchanger{cfg: cfg, client: client, logger: slog.New(slog.DiscardHandler)}
+	require.NoError(t, exchanger.refreshClientAssertion())
+	require.Error(t, exchanger.refreshClientAssertion())
+
+	var spans []map[string]attribute.Value
+	for _, span := range recorder.Ended() {
+		if span.Name() != "extproc.client_assertion.refresh" {
+			continue
+		}
+		attrs := make(map[string]attribute.Value, len(span.Attributes()))
+		for _, attr := range span.Attributes() {
+			attrs[string(attr.Key)] = attr.Value
+		}
+		spans = append(spans, attrs)
+	}
+	require.Len(t, spans, 2)
+	for _, attrs := range spans {
+		assert.Equal(t, "assertion_refresh", attrs["token_exchange.operation"].AsString())
+		assert.Equal(t, "oauth_provider", attrs["token_exchange.dependency"].AsString())
+		for _, legacy := range []string{"operation", "dependency", "error_kind", "oauth.error_code"} {
+			assert.NotContains(t, attrs, legacy)
+		}
+	}
+	success, failure := spans[0], spans[1]
+	assert.NotContains(t, success, "error.type", "a successful refresh is not an error")
+	assert.Equal(t, "rejected", failure["error.type"].AsString())
+	assert.Equal(t, "invalid_client", failure["token_exchange.oauth_error_code"].AsString())
+	assert.Equal(t, int64(http.StatusBadRequest), failure["http.response.status_code"].AsInt64())
 }

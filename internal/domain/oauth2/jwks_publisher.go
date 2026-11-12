@@ -93,13 +93,13 @@ func (s *JWKSPublisherService) PublishJWKS(ctx context.Context) (jwk.Set, error)
 		var err error
 		local, err = s.tokenSigningKeys.BuildJWKS(ctx)
 		if err != nil {
-			s.logger.Error("failed to build local JWKS", "error", err)
+			s.logger.ErrorContext(ctx, "failed to build local JWKS", "error", err)
 			return nil, fmt.Errorf("failed to build local JWKS: %w", err)
 		}
 	}
 
 	if local != nil && upstream != nil {
-		return s.mergeWithKidCheck(local, upstream)
+		return s.mergeWithKidCheck(ctx, local, upstream)
 	}
 	if local != nil {
 		return local, nil
@@ -117,7 +117,7 @@ func (s *JWKSPublisherService) HealthState() ports.ComponentHealth {
 	return s.upstreamKeys.HealthState()
 }
 
-func (s *JWKSPublisherService) mergeWithKidCheck(local, upstream jwk.Set) (jwk.Set, error) {
+func (s *JWKSPublisherService) mergeWithKidCheck(ctx context.Context, local, upstream jwk.Set) (jwk.Set, error) {
 	localKids := make(map[string]struct{}, local.Len())
 	for i := 0; i < local.Len(); i++ {
 		key, ok := local.Key(i)
@@ -136,7 +136,7 @@ func (s *JWKSPublisherService) mergeWithKidCheck(local, upstream jwk.Set) (jwk.S
 		}
 		if kid, ok := key.KeyID(); ok && kid != "" {
 			if _, conflict := localKids[kid]; conflict {
-				s.logger.Error("kid conflict detected between local and upstream key sets",
+				s.logger.ErrorContext(ctx, "kid conflict detected between local and upstream key sets",
 					"kid", kid)
 				return nil, ports.ErrKidConflict
 			}
@@ -169,21 +169,21 @@ func (s *JWKSPublisherService) mergeWithKidCheck(local, upstream jwk.Set) (jwk.S
 func (s *JWKSPublisherService) fetchUpstream(ctx context.Context) (jwk.Set, error) {
 	set, err := s.upstreamKeys.GetKeySet(ctx)
 	if err != nil {
-		return nil, s.recordUpstreamFailure(err)
+		return nil, s.recordUpstreamFailure(ctx, err)
 	}
 
 	failures := s.consecutiveUpstreamFailure.Swap(0)
 	if failures > 0 {
-		s.logger.Info("upstream JWKS fetch recovered", "consecutive_failures", failures)
+		s.logger.InfoContext(ctx, "upstream JWKS fetch recovered", "consecutive_failures", failures)
 	}
 
 	return set, nil
 }
 
-func (s *JWKSPublisherService) recordUpstreamFailure(err error) error {
+func (s *JWKSPublisherService) recordUpstreamFailure(ctx context.Context, err error) error {
 	failures := s.consecutiveUpstreamFailure.Add(1)
 	if failures == 1 || failures%upstreamFailureRelogEvery == 0 {
-		s.logger.Error("upstream JWKS fetch failed",
+		s.logger.ErrorContext(ctx, "upstream JWKS fetch failed",
 			"error", err,
 			"consecutive_failures", failures,
 		)

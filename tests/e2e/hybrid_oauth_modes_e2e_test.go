@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -42,7 +41,7 @@ var _ = Describe("US2: Hybrid Mode Agent Coexistence", func() {
 	)
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 
@@ -164,7 +163,7 @@ var _ = Describe("US2+US3: Hybrid Mode with CIMD", func() {
 	const fakeHost = "cimd-hybrid-test.test.invalid"
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 
@@ -384,7 +383,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 	const localAgentRedirectURI = "http://localhost:9999/callback"
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 
@@ -592,7 +591,7 @@ var _ = Describe("US2: Hybrid Mode — Proxy Agent Full Authorization Code Journ
 	const proxyRedirectURI = "https://example.com/cb"
 
 	BeforeEach(func() {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+		logger = slog.New(slog.DiscardHandler)
 		storageFactory = bootstrap.NewStorageFactory(logger)
 		mockUpstream = helpers.NewMockUpstreamOAuth2Server()
 

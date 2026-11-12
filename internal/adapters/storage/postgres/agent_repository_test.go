@@ -5,15 +5,18 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -82,6 +85,155 @@ func TestAgentRepository_Get_EmitsSpan(t *testing.T) {
 		}
 	}
 	assert.True(t, foundSpan, "expected a span named 'storage.get.agent' to be recorded")
+}
+
+// TestAgentRepository_Get_SpanResult checks the span of each way a real query can end.
+func TestAgentRepository_Get_SpanResult(t *testing.T) {
+	adapter, cleanup := setupAgentTestDB(t)
+	defer cleanup()
+
+	repo := NewAgentRepository(adapter)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	agent := &storage.Agent{
+		ClientID:    ptr.To(id.ClientID("span-result-client")),
+		DisplayName: "Span Result Agent",
+		Description: "Agent for span result testing",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	attachTestPermissionSet(t, adapter, agent)
+	require.NoError(t, repo.Create(ctx, agent))
+
+	getAgentSpan := func(t *testing.T, ctx context.Context, agentID id.AgentID) (sdktrace.ReadOnlySpan, error) {
+		t.Helper()
+		recorder := recordStorageSpans(t)
+		_, err := repo.Get(ctx, agentID)
+		for _, span := range recorder.Ended() {
+			if span.Name() == "storage.get.agent" {
+				return span, err
+			}
+		}
+		require.Fail(t, "expected a storage.get.agent span")
+		return nil, err
+	}
+
+	t.Run("found", func(t *testing.T) {
+		span, err := getAgentSpan(t, ctx, agent.ID)
+		require.NoError(t, err)
+		assertStorageSpanResult(t, span, codes.Unset, "", "")
+	})
+
+	t.Run("not found", func(t *testing.T) {
+		span, err := getAgentSpan(t, ctx, id.NewAgentID())
+		require.Error(t, err)
+		assertStorageSpanResult(t, span, codes.Unset, "", "not_found")
+	})
+
+	t.Run("canceled by the caller", func(t *testing.T) {
+		canceled, cancel := context.WithCancel(ctx)
+		cancel()
+		span, err := getAgentSpan(t, canceled, agent.ID)
+		require.Error(t, err)
+		assertStorageSpanResult(t, span, codes.Unset, "", "canceled")
+	})
+
+	// blockAgentQueries makes the next read of the agents table wait until the test ends.
+	blockAgentQueries := func(t *testing.T) {
+		t.Helper()
+		tx, err := adapter.db.BeginTx(ctx, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = tx.Rollback() })
+		_, err = tx.ExecContext(ctx, `LOCK TABLE agents IN ACCESS EXCLUSIVE MODE`)
+		require.NoError(t, err)
+	}
+
+	t.Run("canceled while the query runs", func(t *testing.T) {
+		blockAgentQueries(t)
+		running, cancel := context.WithCancel(ctx)
+		defer cancel()
+		time.AfterFunc(100*time.Millisecond, cancel)
+		span, err := getAgentSpan(t, running, agent.ID)
+		require.Error(t, err)
+		assertStorageSpanResult(t, span, codes.Unset, "", "canceled")
+	})
+
+	t.Run("query exceeds the read timeout", func(t *testing.T) {
+		blockAgentQueries(t)
+		readTimeout := adapter.timeouts.Read
+		adapter.timeouts.Read = 100 * time.Millisecond
+		t.Cleanup(func() { adapter.timeouts.Read = readTimeout })
+		span, err := getAgentSpan(t, ctx, agent.ID)
+		require.Error(t, err)
+		assertStorageSpanResult(t, span, codes.Error, "timeout", "")
+	})
+
+	t.Run("query exceeds the statement timeout", func(t *testing.T) {
+		var database string
+		require.NoError(t, adapter.db.QueryRowContext(ctx, `SELECT current_database()`).Scan(&database))
+		_, err := adapter.db.ExecContext(ctx, `ALTER DATABASE "`+database+`" SET statement_timeout = '100ms'`)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, err := adapter.db.ExecContext(ctx, `ALTER DATABASE "`+database+`" RESET statement_timeout`)
+			require.NoError(t, err)
+		})
+		adapter.db.SetMaxIdleConns(0) // The setting only applies to new connections.
+		blockAgentQueries(t)
+		span, err := getAgentSpan(t, ctx, agent.ID)
+		require.Error(t, err)
+		assertStorageSpanResult(t, span, codes.Error, "timeout", "")
+	})
+
+	t.Run("database unavailable", func(t *testing.T) {
+		require.NoError(t, adapter.db.Close())
+		span, err := getAgentSpan(t, ctx, agent.ID)
+		require.Error(t, err)
+		assertStorageSpanResult(t, span, codes.Error, "connection", "")
+	})
+}
+
+// TestAgentRepository_UndecodableStoredValue checks that a stored value that cannot be decoded is
+// reported as a failure, not as rejected input.
+func TestAgentRepository_UndecodableStoredValue(t *testing.T) {
+	const (
+		clientID  = id.ClientID("undecodable-client")
+		clientURI = "https://example.com/undecodable-client"
+	)
+	corruptions := map[string]string{
+		"service_requirements": `UPDATE agents SET service_requirements = '"not a list"'`,
+		"permission_sets":      `UPDATE agents SET permission_sets = '"not a list"'`,
+	}
+
+	for column, corrupt := range corruptions {
+		t.Run(column, func(t *testing.T) {
+			adapter, cleanup := setupAgentTestDB(t)
+			defer cleanup()
+
+			repo := NewAgentRepository(adapter)
+			ctx := context.Background()
+			now := time.Now().UTC()
+			withClientID := &storage.Agent{ClientID: ptr.To(clientID), DisplayName: "Client ID", Description: "Client ID", CreatedAt: now, UpdatedAt: now}
+			withClientURI := &storage.Agent{ClientURIs: []string{clientURI}, DisplayName: "Client URI", Description: "Client URI", CreatedAt: now, UpdatedAt: now}
+			for _, agent := range []*storage.Agent{withClientID, withClientURI} {
+				attachTestPermissionSet(t, adapter, agent)
+				require.NoError(t, repo.Create(ctx, agent))
+			}
+			_, err := adapter.db.ExecContext(ctx, corrupt)
+			require.NoError(t, err)
+
+			recorder := recordStorageSpans(t)
+			_, err = repo.Get(ctx, withClientID.ID)
+			assertStorageErrorKind(t, err, "GetAgent", storage.ErrorKindUnknown)
+			assertStorageSpanResult(t, requireOneStorageSpan(t, recorder, "storage.get.agent"), codes.Error, "unknown", "")
+
+			_, err = repo.GetByClientID(ctx, clientID)
+			assertStorageErrorKind(t, err, "GetAgentByClientID", storage.ErrorKindUnknown)
+			_, err = repo.GetByClientURI(ctx, clientURI)
+			assertStorageErrorKind(t, err, "GetAgentByClientURI", storage.ErrorKindUnknown)
+			_, err = repo.List(ctx)
+			assertStorageErrorKind(t, err, "ListAgents", storage.ErrorKindUnknown)
+		})
+	}
 }
 
 // setupAgentTestDB creates an isolated migrated test database backed by the shared PostgreSQL container.
@@ -643,6 +795,40 @@ func TestAgentRepository_CIMD(t *testing.T) {
 			assert.Equal(t, []string{uri2}, retrieved.ClientURIs)
 		})
 	})
+	t.Run("RedirectURIs", func(t *testing.T) {
+		t.Run("private-use redirect URIs round-trip through Create, Get, and Update", func(t *testing.T) {
+			redirectURIs := []string{
+				"github-app://oauth/callback",
+				"com.example.app:/oauth2redirect/example-provider",
+				"http://127.0.0.1/callback",
+			}
+			now := time.Now().UTC()
+			agent := &storage.Agent{
+				DisplayName:  "Native CIMD Agent",
+				Description:  "Tests private-use redirect URI persistence",
+				ClientURIs:   []string{"https://example.com/native-client"},
+				RedirectURIs: redirectURIs,
+				CreatedAt:    now,
+				UpdatedAt:    now,
+			}
+			attachTestPermissionSet(t, adapter, agent)
+			require.NoError(t, repo.Create(ctx, agent))
+
+			retrieved, err := repo.Get(ctx, agent.ID)
+			require.NoError(t, err)
+			assert.Equal(t, redirectURIs, retrieved.RedirectURIs)
+
+			reversed := []string{redirectURIs[2], redirectURIs[1], redirectURIs[0]}
+			agent.RedirectURIs = reversed
+			agent.UpdatedAt = time.Now().UTC()
+			require.NoError(t, repo.Update(ctx, agent))
+
+			retrieved, err = repo.Get(ctx, agent.ID)
+			require.NoError(t, err)
+			assert.Equal(t, reversed, retrieved.RedirectURIs)
+		})
+	})
+
 }
 
 func TestAgentRepository_List_Empty(t *testing.T) {
@@ -767,6 +953,121 @@ func TestAgentRepository_List(t *testing.T) {
 				assert.Equal(t, "Mutation Test", a.DisplayName)
 			}
 		}
+	})
+}
+
+func TestAgentRepository_ExternalIDFormat(t *testing.T) {
+	adapter, cleanup := setupAgentTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewAgentRepository(adapter)
+	valid := &storage.Agent{DisplayName: "Valid", Description: "Definition", CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC()}
+	attachTestPermissionSet(t, adapter, valid)
+	require.NoError(t, repo.Create(ctx, valid))
+	before, err := repo.Get(ctx, valid.ID)
+	require.NoError(t, err)
+	for _, value := range []id.ExternalID{"bad\x00id", "\xff", id.ExternalID(strings.Repeat("界", 256))} {
+		t.Run(string(value), func(t *testing.T) {
+			candidate := valid.Copy()
+			candidate.ID = id.NewAgentID()
+			candidate.ExternalID = &value
+			require.Error(t, repo.Create(ctx, candidate))
+			candidate.ID = valid.ID
+			require.Error(t, repo.Update(ctx, candidate))
+			actual, err := repo.Get(ctx, valid.ID)
+			require.NoError(t, err)
+			require.Equal(t, before, actual)
+		})
+	}
+}
+
+func TestAgentRepository_GetByExternalID(t *testing.T) {
+	adapter, cleanup := setupAgentTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewAgentRepository(adapter)
+	missing, err := repo.GetByExternalID(ctx, "missing-registry-entry")
+	require.Nil(t, missing)
+	require.ErrorIs(t, err, ports.ErrNotFound)
+
+	newAgent := func(t *testing.T, name string, externalID *id.ExternalID) *storage.Agent {
+		t.Helper()
+		agent := &storage.Agent{
+			ExternalID: externalID, DisplayName: name, Description: "External ID lookup test",
+			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+		attachTestPermissionSet(t, adapter, agent)
+		require.NoError(t, repo.Create(ctx, agent))
+		return agent
+	}
+	check := func(t *testing.T, value id.ExternalID, expected ...id.AgentID) *storage.Agent {
+		t.Helper()
+		found, err := repo.GetByExternalID(ctx, value)
+		if len(expected) == 0 {
+			require.ErrorIs(t, err, ports.ErrNotFound)
+			return nil
+		}
+		require.NoError(t, err)
+		require.NotNil(t, found.ExternalID)
+		assert.Equal(t, value, *found.ExternalID)
+		assert.Equal(t, expected[0], found.ID)
+		return found
+	}
+
+	t.Run("zero or one exact match with full representation", func(t *testing.T) {
+		shared := id.ExternalID("urn:example:ai-registry:agent:7f3a9c")
+		other := id.ExternalID("urn:example:ai-registry:agent:other")
+		first := newAgent(t, "Research Assistant", &shared)
+		first.ClientURIs = []string{"https://example.com/research/client.json"}
+		require.NoError(t, repo.Update(ctx, first))
+		different := newAgent(t, "Other", &other)
+		canonical := "canonical-only"
+		clientID := id.ClientID("client-only")
+		withoutExternalID := &storage.Agent{
+			CanonicalID: &canonical, ClientID: &clientID, DisplayName: "No external ID", Description: "Other identifiers",
+			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+		}
+		attachTestPermissionSet(t, adapter, withoutExternalID)
+		require.NoError(t, repo.Create(ctx, withoutExternalID))
+
+		found := check(t, shared, first.ID)
+		assert.Equal(t, first.ClientURIs, found.ClientURIs)
+		assert.Equal(t, first.PermissionSets, found.PermissionSets)
+		check(t, other, different.ID)
+		check(t, id.ExternalID("urn:example:ai-registry:agent:missing"))
+		check(t, id.ExternalID("URN:EXAMPLE:AI-REGISTRY:AGENT:7F3A9C"))
+		check(t, id.ExternalID(" "+string(shared)))
+		check(t, id.ExternalID(canonical))
+		check(t, id.ExternalID(clientID))
+		check(t, id.ExternalID(first.ID.String()))
+		accented := id.ExternalID("urn:example:café")
+		accentedAgent := newAgent(t, "Accented", &accented)
+		check(t, accented, accentedAgent.ID)
+		check(t, id.ExternalID("urn:example:cafe\u0301"))
+	})
+
+	t.Run("wildcards and regular-expression metacharacters remain literal", func(t *testing.T) {
+		for _, value := range []id.ExternalID{"urn:example:*", "urn:example:%", "urn:example:_", "urn:example:?", "urn:example:literal"} {
+			agent := newAgent(t, string(value), &value)
+			check(t, value, agent.ID)
+		}
+	})
+
+	t.Run("created, updated and deleted state is visible on the next lookup", func(t *testing.T) {
+		oldID := id.ExternalID("urn:example:old")
+		newID := id.ExternalID("urn:example:new")
+		check(t, oldID)
+		agent := newAgent(t, "Lifecycle", &oldID)
+		check(t, oldID, agent.ID)
+		agent.ExternalID = &newID
+		agent.UpdatedAt = time.Now().UTC()
+		require.NoError(t, repo.Update(ctx, agent))
+		check(t, oldID)
+		check(t, newID, agent.ID)
+		deleted, err := repo.Delete(ctx, agent.ID)
+		require.NoError(t, err)
+		require.True(t, deleted)
+		check(t, newID)
 	})
 }
 

@@ -1,6 +1,9 @@
 package model
 
-import "errors"
+import (
+	"errors"
+	"log/slog"
+)
 
 // Secret is a value object representing an OAuth2 client secret in one of three mutually
 // exclusive states: absent, plaintext, or encrypted. The state design enforces at the type
@@ -102,4 +105,19 @@ func (s Secret) IsPlaintext() bool {
 // Use this for API responses and log output to avoid exposing the secret value.
 func (s Secret) Redacted() string {
 	return "REDACTED"
+}
+
+// LogValue implements slog.LogValuer so that no slog handler renders the secret's state.
+func (s Secret) LogValue() slog.Value {
+	return slog.StringValue(s.Redacted())
+}
+
+// String implements fmt.Stringer so that %v, %+v and %s render the redacted form.
+func (s Secret) String() string {
+	return s.Redacted()
+}
+
+// GoString implements fmt.GoStringer so that %#v renders the redacted form.
+func (s Secret) GoString() string {
+	return s.Redacted()
 }

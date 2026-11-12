@@ -41,12 +41,13 @@ type authorizationServerMetadata struct {
 }
 
 type discoveredProviderConfiguration struct {
-	issuer    string
-	endpoints model.OAuth2Endpoints
-	method    model.ClientBootstrapMethod
-	auth      model.TokenEndpointAuthMethod
-	clientID  id.ClientID
-	secret    model.Secret
+	issuer       string
+	endpoints    model.OAuth2Endpoints
+	method       model.ClientBootstrapMethod
+	auth         model.TokenEndpointAuthMethod
+	registration model.ClientRegistration
+	clientID     id.ClientID
+	secret       model.Secret
 }
 
 func discoveryFailure(code string) error { return &DiscoveryError{Code: code} }
@@ -507,6 +508,7 @@ func (s *ThirdpartyOAuth2ProviderService) discoverProtectedResource(ctx context.
 		return discoveredProviderConfiguration{
 			issuer: issuer, endpoints: endpoints,
 			method: model.ClientBootstrapCIMD, auth: model.TokenEndpointAuthMethodPrivateKeyJWT,
+			registration: model.ClientRegistrationCIMD,
 		}, nil
 	}
 	for _, method := range []model.TokenEndpointAuthMethod{
@@ -523,7 +525,8 @@ func (s *ThirdpartyOAuth2ProviderService) discoverProtectedResource(ctx context.
 		}
 		return discoveredProviderConfiguration{
 			issuer: issuer, endpoints: endpoints, method: model.ClientBootstrapDCR,
-			auth: method, clientID: clientID, secret: secret,
+			auth: method, registration: model.ClientRegistrationStatic,
+			clientID: clientID, secret: secret,
 		}, nil
 	}
 	return discoveredProviderConfiguration{}, discoveryFailure("no_compatible_client_method")

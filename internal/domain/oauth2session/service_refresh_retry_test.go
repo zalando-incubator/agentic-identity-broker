@@ -47,7 +47,7 @@ func TestRefreshAccessToken_RetryPolicy(t *testing.T) {
 			provider := createTestService(id.NewServiceID())
 			provider.Endpoints.TokenEndpoint = upstream.URL
 
-			_, err := service.RefreshAccessToken(ctx, provider, "stored-refresh")
+			_, err := service.RefreshAccessToken(ctx, provider, "stored-refresh", nil)
 			assertOperationMetadata(t, err, oauth2session.OperationRefresh, tc.wantDetail)
 			assert.Equal(t, tc.wantAttempts, attempts.Load())
 		})
@@ -72,7 +72,7 @@ func TestRefreshAccessToken_PreSendDialFailureIsRetried(t *testing.T) {
 	provider := createTestService(id.NewServiceID())
 	provider.Endpoints.TokenEndpoint = upstream.URL
 
-	token, err := service.RefreshAccessToken(ctx, provider, "stored-refresh")
+	token, err := service.RefreshAccessToken(ctx, provider, "stored-refresh", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "after-reset", token.AccessToken)
 	assert.EqualValues(t, 2, attempts.Load())
@@ -101,7 +101,7 @@ func TestRefreshAccessToken_PostSendConnectionFailureIsNotRetried(t *testing.T) 
 	provider := createTestService(id.NewServiceID())
 	provider.Endpoints.TokenEndpoint = upstream.URL
 
-	_, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh", nil)
 	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderUnavailable)
 	assert.EqualValues(t, 1, attempts.Load(), "a processed refresh must not be replayed after its response is lost")
 }
@@ -125,7 +125,7 @@ func TestRefreshAccessToken_RedirectedDialFailureIsNotRetried(t *testing.T) {
 	service, _, _, _, _, _ := setupServiceWithHTTPClient(t, nil, &http.Client{Transport: transport})
 	provider := createTestService(id.NewServiceID())
 	provider.Endpoints.TokenEndpoint = upstream.URL
-	_, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh")
+	_, err := service.RefreshAccessToken(context.Background(), provider, "stored-refresh", nil)
 	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderUnavailable)
 	assert.EqualValues(t, 1, posts.Load(), "a later dial failure must not replay an already-sent POST")
 }
@@ -143,7 +143,7 @@ func TestRefreshAccessToken_TimeoutIsNotRetried(t *testing.T) {
 	provider := createTestService(id.NewServiceID())
 	provider.Endpoints.TokenEndpoint = upstream.URL
 
-	_, err := service.RefreshAccessToken(ctx, provider, "stored-refresh")
+	_, err := service.RefreshAccessToken(ctx, provider, "stored-refresh", nil)
 	assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailProviderUnavailable)
 	assert.EqualValues(t, 1, attempts.Load())
 }
@@ -178,8 +178,8 @@ func TestHandleCallback_ReconnectDropsExpiredStoredRefreshToken(t *testing.T) {
 	seedExpiringSession(t, sessions, principal, serviceID, time.Now().Add(-time.Hour), "dead-refresh", []string{"repo"})
 	stored, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
 	require.NoError(t, err)
-	expired := time.Now().Add(-time.Minute)
-	stored.RefreshTokenExpiresAt = &expired
+	rejectedAt := time.Now().Add(-time.Minute)
+	stored.RefreshRejectedAt = &rejectedAt
 	require.NoError(t, sessions.Create(ctx, stored))
 
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://example.com/sessions")
@@ -187,6 +187,6 @@ func TestHandleCallback_ReconnectDropsExpiredStoredRefreshToken(t *testing.T) {
 	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{ServiceID: serviceID, Code: "code", State: flow.StateToken})
 	require.NoError(t, err)
 	assert.Empty(t, result.Session.EncryptedRefreshToken)
-	assert.Nil(t, result.Session.RefreshTokenExpiresAt)
+	assert.Nil(t, result.Session.RefreshRejectedAt)
 	assert.Equal(t, stored.ID, result.Session.ID, "re-connect keeps the session identity")
 }

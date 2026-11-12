@@ -2,10 +2,17 @@ package aib.extproc.authz
 
 import rego.v1
 
-# Allow MCP lifecycle methods (safe, no tool execution)
+# Allow MCP lifecycle and discovery methods (no tool execution)
 allow contains {"reason": "safe MCP lifecycle method"} if {
 	input.type == "mcp_method"
-	input.mcp.method in {"initialize", "ping", "notifications/initialized"}
+	input.mcp.method in {"initialize", "ping", "notifications/initialized", "tools/list"}
+}
+
+# Allow the authenticated MCP session stream after OPA checks the request target.
+allow contains {"reason": "MCP session stream"} if {
+	input.type == "mcp_headers_only"
+	input.attributes.request.http.method == "GET"
+	input.attributes.request.http.path == "/mcp"
 }
 
 # Allow read-only MCP tool calls

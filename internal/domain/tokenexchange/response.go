@@ -77,7 +77,7 @@ type TokenExchangeResponse struct {
 	// Keys are permission set UUID strings, values are arrays of service UUID strings.
 	GrantedPermissionSets map[string][]string `json:"granted_permission_sets,omitempty"`
 
-	Principal     string           `json:"principal,omitempty"`
+	Principal     id.Principal     `json:"principal,omitempty"`
 	AgentID       string           `json:"agent_id,omitempty"`
 	Service       ServiceRef       `json:"-"`
 	Authorization AuthorizationRef `json:"-"`

@@ -80,6 +80,15 @@ type Diagnostic struct {
 	action  RecoveryAction
 	target  RecoveryTarget
 	kind    ExchangeKind
+	// serverError is the error.type of a failure that the client receives as a 5xx response.
+	serverError ErrorKind
+}
+
+// asServerError marks a failure that the client receives as a 5xx response. Only these failures
+// set the error status on the extproc.token_exchange Server span.
+func (d Diagnostic) asServerError(kind ErrorKind) Diagnostic {
+	d.serverError = kind
+	return d
 }
 
 func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {

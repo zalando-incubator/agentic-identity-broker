@@ -8,6 +8,7 @@ import (
 	"maps"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/canonical"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -23,30 +24,33 @@ import (
 // This type is used exclusively within the postgres adapter; it is never exposed to
 // domain code. Conversion to/from domain entities uses entityToRecord and recordToEntity.
 type ThirdpartyOAuth2ProviderRecord struct {
-	ID                      string                      `db:"id"`
-	CanonicalID             *string                     `db:"canonical_id"`
-	DisplayName             string                      `db:"display_name"`
-	ClientID                string                      `db:"client_id"`
-	SecretCiphertext        []byte                      `db:"client_secret_encrypted"`
-	TokenEndpointAuthMethod *string                     `db:"token_endpoint_auth_method"`
-	Flavor                  string                      `db:"oauth2_flavor"`
-	IssuerURI               string                      `db:"issuer_uri"`
-	EnableDiscovery         bool                        `db:"enable_discovery"`
-	MetadataURL             *string                     `db:"metadata_url"`
-	ResourceURL             *string                     `db:"resource_url"`
-	ClientMethod            *string                     `db:"client_method"`
-	ResourceExplicit        bool                        `db:"resource_explicit"`
-	DiscoveryLastAttemptAt  *time.Time                  `db:"discovery_last_attempt_at"`
-	DiscoveryLastSuccessAt  *time.Time                  `db:"discovery_last_success_at"`
-	DiscoveryFailureReason  *string                     `db:"discovery_failure_reason"`
-	TokenEndpoint           string                      `db:"token_endpoint"`
-	AuthorizeEndpoint       string                      `db:"authorize_endpoint"`
-	Scopes                  providerScopeArray          `db:"scopes"`
-	ProtectedResources      []string                    `db:"-"` // scanned via pq.Array in query methods
-	AuthorizationParams     providerAuthorizationParams `db:"authorization_params"`
-	CreatedAt               time.Time                   `db:"created_at"`
-	UpdatedAt               time.Time                   `db:"updated_at"`
-	Version                 int64                       `db:"version"`
+	ID                           string                      `db:"id"`
+	CanonicalID                  *string                     `db:"canonical_id"`
+	DisplayName                  string                      `db:"display_name"`
+	ClientID                     *string                     `db:"client_id"`
+	SecretCiphertext             []byte                      `db:"client_secret_encrypted"`
+	TokenEndpointAuthMethod      *string                     `db:"token_endpoint_auth_method"`
+	ClientRegistration           string                      `db:"client_registration"`
+	CredentialSource             string                      `db:"credential_source"`
+	CredentialSourceTransitioned bool                        `db:"credential_source_transitioned"`
+	Flavor                       string                      `db:"oauth2_flavor"`
+	IssuerURI                    string                      `db:"issuer_uri"`
+	EnableDiscovery              bool                        `db:"enable_discovery"`
+	MetadataURL                  *string                     `db:"metadata_url"`
+	ResourceURL                  *string                     `db:"resource_url"`
+	ClientMethod                 *string                     `db:"client_method"`
+	ResourceExplicit             bool                        `db:"resource_explicit"`
+	DiscoveryLastAttemptAt       *time.Time                  `db:"discovery_last_attempt_at"`
+	DiscoveryLastSuccessAt       *time.Time                  `db:"discovery_last_success_at"`
+	DiscoveryFailureReason       *string                     `db:"discovery_failure_reason"`
+	TokenEndpoint                string                      `db:"token_endpoint"`
+	AuthorizeEndpoint            string                      `db:"authorize_endpoint"`
+	Scopes                       providerScopeArray          `db:"scopes"`
+	ProtectedResources           []string                    `db:"-"` // scanned via pq.Array in query methods
+	AuthorizationParams          providerAuthorizationParams `db:"authorization_params"`
+	CreatedAt                    time.Time                   `db:"created_at"`
+	UpdatedAt                    time.Time                   `db:"updated_at"`
+	Version                      int64                       `db:"version"`
 }
 
 // providerScopeArray handles JSONB serialization of model.OAuthScope slices for PostgreSQL.
@@ -126,13 +130,30 @@ func (p providerAuthorizationParams) Value() (driver.Value, error) {
 
 // entityToRecord converts a ThirdpartyOAuth2ProviderEntity to a ThirdpartyOAuth2ProviderRecord.
 // The entity's Secret must be encrypted or explicitly absent; plaintext secrets cannot be stored.
-// Returns an error if the entity is nil or the secret is neither absent nor encrypted.
+// Returns an error for invalid source-specific credentials or a non-encrypted stored secret.
 func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOAuth2ProviderRecord, error) {
 	if entity == nil {
 		return nil, errors.New("entity cannot be nil")
 	}
 	if err := entity.ValidateStoredClientAuthentication(); err != nil {
 		return nil, fmt.Errorf("invalid stored client authentication: %w", err)
+	}
+
+	source := entity.CredentialSource
+	if source == "" && !entity.CredentialSourceProvided {
+		source = model.CredentialSourceStored
+	}
+	if source == model.CredentialSourceFilesystem && (entity.ClientIDProvided || entity.ClientSecretProvided || entity.ClearCanonicalID) {
+		return nil, errors.New("filesystem credential_source requires absent inline credentials and a canonical_id")
+	}
+	var clientID *string
+	if !entity.ClientID.IsZero() {
+		value := entity.ClientID.String()
+		clientID = &value
+	}
+	flavor := entity.Flavor
+	if source == model.CredentialSourceFilesystem && flavor == "" {
+		flavor = model.DefaultOAuth2Flavor
 	}
 
 	var ciphertext []byte
@@ -151,22 +172,25 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 	}
 
 	record := &ThirdpartyOAuth2ProviderRecord{
-		ID:                      entity.ID.String(),
-		CanonicalID:             entity.CanonicalID,
-		DisplayName:             entity.DisplayName,
-		ClientID:                entity.ClientID.String(),
-		SecretCiphertext:        ciphertext,
-		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
-		Flavor:                  string(entity.Flavor),
-		IssuerURI:               entity.IssuerURI,
-		EnableDiscovery:         entity.Discovery.EnableDiscovery,
-		ResourceExplicit:        entity.ResourceExplicit,
-		TokenEndpoint:           entity.Endpoints.TokenEndpoint,
-		AuthorizeEndpoint:       entity.Endpoints.AuthorizeEndpoint,
-		Scopes:                  providerScopeArray(entity.Scopes),
-		CreatedAt:               entity.CreatedAt,
-		AuthorizationParams:     providerAuthorizationParams(maps.Clone(entity.AuthorizationParams)),
-		UpdatedAt:               entity.UpdatedAt,
+		ID:                           entity.ID.String(),
+		CanonicalID:                  entity.CanonicalID,
+		DisplayName:                  entity.DisplayName,
+		ClientID:                     clientID,
+		SecretCiphertext:             ciphertext,
+		TokenEndpointAuthMethod:      tokenEndpointAuthMethod,
+		ClientRegistration:           string(entity.ClientRegistration),
+		CredentialSource:             string(source),
+		CredentialSourceTransitioned: entity.CredentialSourceTransitioned,
+		Flavor:                       string(flavor),
+		IssuerURI:                    entity.IssuerURI,
+		EnableDiscovery:              entity.Discovery.EnableDiscovery,
+		ResourceExplicit:             entity.ResourceExplicit,
+		TokenEndpoint:                entity.Endpoints.TokenEndpoint,
+		AuthorizeEndpoint:            entity.Endpoints.AuthorizeEndpoint,
+		Scopes:                       providerScopeArray(entity.Scopes),
+		CreatedAt:                    entity.CreatedAt,
+		AuthorizationParams:          providerAuthorizationParams(maps.Clone(entity.AuthorizationParams)),
+		UpdatedAt:                    entity.UpdatedAt,
 	}
 
 	if entity.Discovery.MetadataURL != nil {
@@ -198,6 +222,9 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 		record.ProtectedResources = make([]string, len(entity.ProtectedResources))
 		copy(record.ProtectedResources, entity.ProtectedResources)
 	}
+	if _, err := clientAuthenticationFromRecord(record); err != nil {
+		return nil, err
+	}
 
 	return record, nil
 }
@@ -205,7 +232,7 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 // recordToEntity converts a ThirdpartyOAuth2ProviderRecord to a ThirdpartyOAuth2ProviderEntity.
 // The resulting entity's Secret is encrypted when ciphertext is stored or absent when it is NULL.
 // The domain service must decrypt encrypted secrets before they can be used for OAuth2 operations.
-// Returns an error if the stored ID is not a valid UUID (data integrity violation).
+// Invalid client registration or authentication state returns a storage validation error.
 func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	if record == nil {
 		return nil, nil
@@ -221,20 +248,27 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		)
 	}
 
-	tokenEndpointAuthMethod, secret, err := clientAuthenticationFromRecord(record)
+	tokenEndpointAuthMethod, err := clientAuthenticationFromRecord(record)
 	if err != nil {
-		return nil, err
+		return nil, storage.NewStorageError("recordToEntity", storage.ErrorKindValidation, err,
+			fmt.Sprintf("service %s: stored client registration or authentication is invalid", serviceID))
+	}
+	secret := model.NewAbsentSecret()
+	if record.SecretCiphertext != nil {
+		secret = model.NewEncryptedSecret(record.SecretCiphertext)
 	}
 
 	entity := &model.ThirdpartyOAuth2ProviderEntity{
-		ID:                      serviceID,
-		CanonicalID:             record.CanonicalID,
-		DisplayName:             record.DisplayName,
-		ClientID:                id.ClientID(record.ClientID),
-		Secret:                  secret,
-		TokenEndpointAuthMethod: tokenEndpointAuthMethod,
-		Flavor:                  model.OAuth2Flavor(record.Flavor),
-		IssuerURI:               record.IssuerURI,
+		ID:                           serviceID,
+		CanonicalID:                  record.CanonicalID,
+		DisplayName:                  record.DisplayName,
+		Secret:                       secret,
+		TokenEndpointAuthMethod:      tokenEndpointAuthMethod,
+		ClientRegistration:           model.ClientRegistration(record.ClientRegistration),
+		CredentialSource:             model.CredentialSource(record.CredentialSource),
+		CredentialSourceTransitioned: record.CredentialSourceTransitioned,
+		Flavor:                       model.OAuth2Flavor(record.Flavor),
+		IssuerURI:                    record.IssuerURI,
 		Discovery: model.DiscoveryConfig{
 			EnableDiscovery: record.EnableDiscovery,
 		},
@@ -247,6 +281,9 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		AuthorizationParams: maps.Clone(map[string]string(record.AuthorizationParams)),
 		UpdatedAt:           record.UpdatedAt,
 		Version:             record.Version,
+	}
+	if record.ClientID != nil {
+		entity.ClientID = id.ClientID(*record.ClientID)
 	}
 
 	if record.MetadataURL != nil {
@@ -290,28 +327,65 @@ func invalidProviderRecord(message string) error {
 	return storage.NewStorageError("recordToEntity", storage.ErrorKindValidation, nil, message)
 }
 
-func clientAuthenticationFromRecord(record *ThirdpartyOAuth2ProviderRecord) (model.TokenEndpointAuthMethod, model.Secret, error) {
+func clientAuthenticationFromRecord(record *ThirdpartyOAuth2ProviderRecord) (model.TokenEndpointAuthMethod, error) {
+	registration := model.ClientRegistration(record.ClientRegistration)
+	if registration != model.ClientRegistrationStatic && registration != model.ClientRegistrationCIMD {
+		return "", invalidProviderRecord("stored client_registration is invalid")
+	}
+	if registration == model.ClientRegistrationCIMD {
+		if record.CredentialSource != string(model.CredentialSourceStored) || record.SecretCiphertext != nil || record.Flavor == string(model.OAuth2FlavorGoogle) ||
+			(record.ClientMethod != nil && *record.ClientMethod == string(model.ClientBootstrapDCR)) ||
+			(record.TokenEndpointAuthMethod == nil || (*record.TokenEndpointAuthMethod != string(model.TokenEndpointAuthMethodPrivateKeyJWT) && *record.TokenEndpointAuthMethod != string(model.TokenEndpointAuthMethodNone))) {
+			return "", invalidProviderRecord("stored client_registration is incompatible with client authentication")
+		}
+	} else if (record.TokenEndpointAuthMethod != nil && *record.TokenEndpointAuthMethod == string(model.TokenEndpointAuthMethodPrivateKeyJWT)) ||
+		(record.ClientMethod != nil && *record.ClientMethod == string(model.ClientBootstrapCIMD)) {
+		return "", invalidProviderRecord("stored client_registration is incompatible with client authentication")
+	}
+	if record.ClientMethod != nil && *record.ClientMethod == string(model.ClientBootstrapCIMD) &&
+		(record.TokenEndpointAuthMethod == nil || *record.TokenEndpointAuthMethod != string(model.TokenEndpointAuthMethodPrivateKeyJWT)) {
+		return "", invalidProviderRecord("discovered CIMD requires private_key_jwt authentication")
+	}
+	switch model.CredentialSource(record.CredentialSource) {
+	case model.CredentialSourceFilesystem:
+		if record.ClientID != nil || record.SecretCiphertext != nil || record.TokenEndpointAuthMethod != nil || record.ResourceURL != nil || record.ClientMethod != nil {
+			return "", invalidProviderRecord("filesystem credentials and discovery client state must be absent in stored record")
+		}
+		if record.Flavor != string(model.OAuth2FlavorStandard) && record.Flavor != string(model.OAuth2FlavorGitHub) {
+			return "", invalidProviderRecord("filesystem credential_source is not supported for stored flavor")
+		}
+		if record.CanonicalID == nil || canonical.Validate(record.CanonicalID) != nil {
+			return "", invalidProviderRecord("filesystem credential_source requires a valid stored canonical_id")
+		}
+		return "", nil
+	case model.CredentialSourceStored:
+		if record.ClientID == nil || *record.ClientID == "" {
+			return "", invalidProviderRecord("stored client_id cannot be absent or empty")
+		}
+	default:
+		return "", invalidProviderRecord("stored credential_source is invalid")
+	}
 	if record.TokenEndpointAuthMethod != nil {
 		method := model.TokenEndpointAuthMethod(*record.TokenEndpointAuthMethod)
 		if method == "client_secret_basic" || method == "client_secret_post" {
 			if record.ClientMethod == nil || *record.ClientMethod != string(model.ClientBootstrapDCR) {
-				return "", model.Secret{}, invalidProviderRecord("stored token_endpoint_auth_method is invalid")
+				return "", invalidProviderRecord("stored token_endpoint_auth_method is invalid")
 			}
 			if len(record.SecretCiphertext) == 0 {
-				return "", model.Secret{}, invalidProviderRecord("stored confidential client secret ciphertext cannot be empty")
+				return "", invalidProviderRecord("stored confidential client secret ciphertext cannot be empty")
 			}
-			return method, model.NewEncryptedSecret(record.SecretCiphertext), nil
+			return method, nil
 		}
 		if err := method.Validate(); err != nil || method.IsAbsent() {
-			return "", model.Secret{}, invalidProviderRecord("stored token_endpoint_auth_method is invalid")
+			return "", invalidProviderRecord("stored token_endpoint_auth_method is invalid")
 		}
 		if record.SecretCiphertext != nil {
-			return "", model.Secret{}, invalidProviderRecord("stored token endpoint authentication method and client secret state must agree")
+			return "", invalidProviderRecord("stored token endpoint authentication method and client secret state must agree")
 		}
-		return method, model.NewAbsentSecret(), nil
+		return method, nil
 	}
 	if len(record.SecretCiphertext) == 0 {
-		return "", model.Secret{}, invalidProviderRecord("stored confidential client secret ciphertext cannot be empty")
+		return "", invalidProviderRecord("stored confidential client secret ciphertext cannot be empty")
 	}
-	return "", model.NewEncryptedSecret(record.SecretCiphertext), nil
+	return "", nil
 }

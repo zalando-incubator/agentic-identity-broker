@@ -41,6 +41,7 @@ func TestRefreshConsentEuropeBerlin(t *testing.T) {
 	validUntil := now.Add(time.Hour)
 	grant.ValidUntil = &validUntil
 	require.NoError(t, store.UserGrants().Create(ctx, grant))
+	require.NoError(t, fixtures.SeedGrantSessions(ctx, store, grant))
 	logger := e2ebootstrap.TestLogger(slog.LevelInfo)
 	config := fixtures.LocalConfig()
 	config.Storage.Backend = "postgres"

@@ -11,11 +11,25 @@ token_exchange:
   # It MUST be an external IdP; broker-minted tokens are never valid client assertions.
   # client_assertion:
   #   issuer_uri: "https://privileged-gateway-idp.example.com"
+  #   # Optional: defaults to token_exchange.expected_audience when omitted.
+  #   expected_audience: "https://broker.example.com/oauth2/token"
   #   # Optional when the IdP does not support discovery:
   #   jwks_uri: "https://privileged-gateway-idp.example.com/keys"
   #   # Refresh defaults: min 15m; max max(jwks_min_refresh, 1h).
   #   jwks_min_refresh: "15m"
   #   jwks_max_refresh: "1h"
+  #
+  # Alternatives to jwks_uri for an issuer that publishes no key endpoint. Set at most one
+  # of jwks_uri, jwks, and jwks_file. Neither alternative triggers discovery or any outbound request.
+  #   # Inline JWK Set (public keys only); never refreshed, so jwks_min_refresh and
+  #   # jwks_max_refresh are not allowed with it:
+  #   jwks: |
+  #     {"keys":[{"kty":"EC","crv":"P-256","kid":"gateway-2026-10","use":"sig","alg":"ES256",
+  #               "x":"<base64url>","y":"<base64url>"}]}
+  #   # Key-set file, re-read every jwks_min_refresh; requires security.trust_material_dir
+  #   # and must lie inside it:
+  #   jwks_file: "/etc/agentic-identity-broker/trust/gateway-jwks.json"
+  # See examples/config/trust-anchor-local-jwks.yaml for a complete example.
 
   # Claim extraction configures CEL expressions to extract claims from subject_token
   claim_extraction:
@@ -27,6 +41,31 @@ token_exchange:
     #   - "subject_token.email"                  # Custom: use email claim
     #   - "subject_token.preferred_username"     # Custom: use preferred_username
     principal_expression: "subject_token.sub"
+
+    # Optional agent-subject detector. Omitted/empty uses this exact guarded default:
+    # agent_subject_expression: >-
+    #   has(subject_token.sub) && has(subject_token.agent_id) &&
+    #   subject_token.sub == subject_token.agent_id
+    # Environment: IDENTITY_BROKER_TOKEN_EXCHANGE_CLAIM_EXTRACTION_AGENT_SUBJECT_EXPRESSION
+    # CLI: --token_exchange.claim_extraction.agent_subject_expression
+    # Explicit CLI > environment > YAML > evaluator default; an explicit empty
+    # highest-precedence value selects the default. Both inputs work without YAML.
+    # A configured non-empty expression REPLACES the default (no second built-in check)
+    # and must reference subject_token.sub, otherwise startup fails.
+    # Preserve broker agent-token matching, for example:
+    # agent_subject_expression: >-
+    #   (has(subject_token.sub) && has(subject_token.agent_id) &&
+    #    subject_token.sub == subject_token.agent_id) ||
+    #   (has(subject_token.token_use) && subject_token.token_use == 'machine')
+    # Matches: 403 access_denied, no consent error_uri and no human-state access.
+    # Compile errors/static non-boolean output fail startup. Runtime errors/timeouts
+    # or dynamic non-boolean output fail closed with 500 server_error, never false.
+    # The default also rejects colliding legacy/mapped/unsigned human tokens and
+    # trusted external issuer tokens with equal sub/agent_id. Correct human identity
+    # mappings and explicitly reestablish consent; do not rewrite stored grants.
+    # WARNING: a non-matching override that references sub removes categorical rejection
+    # AND protection against same-text human grant/session access. Existing checks
+    # then apply, possibly reading human credentials or returning consent errors.
 
     # agent_id_expression extracts the agent/application client ID from subject_token.
     # Expression MUST return the agent's internal UUID (agent.id), NOT the upstream client_id string.

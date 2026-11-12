@@ -287,7 +287,7 @@ Adapter methods create child spans using `otel.Tracer(instrumentationName).Start
 | Internal span propagation (FR-012) | Context-based — adapters call `otel.Tracer().Start(ctx, name)`, no port changes |
 | HTTP instrumentation library | `github.com/riandyrn/otelchi v0.12.2` |
 | OTel provider as port? | No port — wired entirely in `builder.go` |
-| PII enforcement (SR-001) | Trust-the-developer + code review; no automated filter |
+| PII enforcement (SR-001) | Trust-the-developer + code review for all PII categories except principals. Amended 2026-11-01: principals are the one automated exception, rendered by the central principal policy in the span pipeline |
 | Log correlation | `go.opentelemetry.io/contrib/bridges/otelslog`; active only when telemetry enabled |
 
 ---

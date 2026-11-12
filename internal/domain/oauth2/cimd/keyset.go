@@ -40,16 +40,17 @@ type ClientKeySetService struct {
 	clock   func() time.Time
 	logger  *slog.Logger
 	cache   map[clientKeySetCacheKey]*clientKeySetCacheEntry
+	fetch   singleflight.Group
 	refresh singleflight.Group
 }
 
 // NewClientKeySetService creates a key-set service with an injectable clock.
 func NewClientKeySetService(fetcher ports.CIMDFetcher, config ports.CIMDClientAuthenticationConfig, clock func() time.Time, logger *slog.Logger) *ClientKeySetService {
+	if logger == nil {
+		panic("cimd.NewClientKeySetService: logger must not be nil")
+	}
 	if clock == nil {
 		clock = time.Now
-	}
-	if logger == nil {
-		logger = slog.Default()
 	}
 	return &ClientKeySetService{
 		fetcher: fetcher,
@@ -90,34 +91,58 @@ func (s *ClientKeySetService) KeysFor(ctx context.Context, document *ports.CIMDM
 	}
 	s.mu.Unlock()
 
-	result, err := s.fetcher.Fetch(ctx, document.JWKSURI)
-	if err != nil {
-		s.auditRefresh(document, 0, "unavailable")
-		return nil, fmt.Errorf("%w: fetch key set: %v", ErrKeySetUnavailable, err)
-	}
-	if result == nil || len(result.Body) == 0 || len(result.Body) > s.config.KeySetMaxBytes {
-		s.auditRefresh(document, 0, "unavailable")
-		return nil, fmt.Errorf("%w: key set response is empty or exceeds %d bytes", ErrKeySetUnavailable, s.config.KeySetMaxBytes)
-	}
-	parsed, err := jwk.Parse(result.Body)
-	if err != nil {
-		s.auditRefresh(document, 0, "unavailable")
-		return nil, fmt.Errorf("%w: parse key set: %v", ErrKeySetUnavailable, err)
-	}
-	eligible, err := eligibleClientKeys(parsed, "")
-	if err != nil {
-		s.auditRefresh(document, 0, "unavailable")
-		return nil, fmt.Errorf("%w: filter key set: %v", ErrKeySetUnavailable, err)
-	}
+	flightKey := key.clientID + "\x00" + key.source
+	result, err, _ := s.fetch.Do(flightKey, func() (any, error) {
+		now := s.clock()
+		s.mu.Lock()
+		entry := s.cache[key]
+		if entry != nil && now.Sub(entry.fetchedAt) < s.config.KeySetCacheTTL {
+			keys, cloneErr := eligibleClientKeys(entry.keys, algorithm)
+			s.mu.Unlock()
+			if cloneErr != nil {
+				return nil, fmt.Errorf("%w: clone cached key set: %v", ErrKeySetUnavailable, cloneErr)
+			}
+			return keys, nil
+		}
+		s.mu.Unlock()
 
-	fetchedAt := s.clock()
-	s.storeCacheEntry(key, eligible, fetchedAt, fetchedAt)
-	currentKeys, err := eligibleClientKeys(eligible, algorithm)
+		fetched, fetchErr := s.fetcher.Fetch(ctx, document.JWKSURI)
+		if fetchErr != nil {
+			s.auditRefresh(ctx, document, 0, "unavailable")
+			return nil, fmt.Errorf("%w: fetch key set: %v", ErrKeySetUnavailable, fetchErr)
+		}
+		if fetched == nil || len(fetched.Body) == 0 || len(fetched.Body) > s.config.KeySetMaxBytes {
+			s.auditRefresh(ctx, document, 0, "unavailable")
+			return nil, fmt.Errorf("%w: key set response is empty or exceeds %d bytes", ErrKeySetUnavailable, s.config.KeySetMaxBytes)
+		}
+		parsed, parseErr := jwk.Parse(fetched.Body)
+		if parseErr != nil {
+			s.auditRefresh(ctx, document, 0, "unavailable")
+			return nil, fmt.Errorf("%w: parse key set: %v", ErrKeySetUnavailable, parseErr)
+		}
+		eligible, filterErr := eligibleClientKeys(parsed, "")
+		if filterErr != nil {
+			s.auditRefresh(ctx, document, 0, "unavailable")
+			return nil, fmt.Errorf("%w: filter key set: %v", ErrKeySetUnavailable, filterErr)
+		}
+
+		fetchedAt := s.clock()
+		s.storeCacheEntry(key, eligible, fetchedAt, fetchedAt)
+		currentKeys, filterErr := eligibleClientKeys(eligible, algorithm)
+		if filterErr != nil {
+			return nil, fmt.Errorf("%w: filter cached key set: %v", ErrKeySetUnavailable, filterErr)
+		}
+		s.auditRefresh(ctx, document, currentKeys.Len(), "success")
+		return cloneJWKSet(currentKeys)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: filter cached key set: %v", ErrKeySetUnavailable, err)
+		return nil, err
 	}
-	s.auditRefresh(document, currentKeys.Len(), "success")
-	return currentKeys, nil
+	keys, ok := result.(jwk.Set)
+	if !ok {
+		return nil, fmt.Errorf("%w: invalid fetch result", ErrKeySetUnavailable)
+	}
+	return keys, nil
 }
 
 // RefreshForKID refreshes a remote key set for an unknown key when its minimum
@@ -133,6 +158,10 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 
 	cacheKey := clientKeySetCacheKey{clientID: document.ClientID, source: document.JWKSURI}
 	flightKey := cacheKey.clientID + "\x00" + cacheKey.source
+	algorithm := document.SigningAlg
+	if algorithm == "" {
+		algorithm = "RS256"
+	}
 	result, err, _ := s.refresh.Do(flightKey, func() (any, error) {
 		now := s.clock()
 		s.mu.Lock()
@@ -142,7 +171,7 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 			return keys, nil
 		}
 		if now.Sub(entry.lastRefetchAt) < s.config.KeySetMinRefetchInterval {
-			cached, cloneErr := cloneJWKSet(entry.keys)
+			cached, cloneErr := eligibleClientKeys(entry.keys, algorithm)
 			s.mu.Unlock()
 			if cloneErr != nil {
 				return nil, fmt.Errorf("%w: clone cached key set: %v", ErrKeySetUnavailable, cloneErr)
@@ -152,27 +181,23 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 		entry.lastRefetchAt = now
 		s.mu.Unlock()
 
-		algorithm := document.SigningAlg
-		if algorithm == "" {
-			algorithm = "RS256"
-		}
 		fetched, fetchErr := s.fetcher.Fetch(ctx, document.JWKSURI)
 		if fetchErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: fetch key set: %v", ErrKeySetUnavailable, fetchErr)
 		}
 		if fetched == nil || len(fetched.Body) == 0 || len(fetched.Body) > s.config.KeySetMaxBytes {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: key set response is empty or exceeds %d bytes", ErrKeySetUnavailable, s.config.KeySetMaxBytes)
 		}
 		parsed, parseErr := jwk.Parse(fetched.Body)
 		if parseErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: parse key set: %v", ErrKeySetUnavailable, parseErr)
 		}
 		eligible, filterErr := eligibleClientKeys(parsed, "")
 		if filterErr != nil {
-			s.auditRefresh(document, 0, "unavailable")
+			s.auditRefresh(ctx, document, 0, "unavailable")
 			return nil, fmt.Errorf("%w: filter key set: %v", ErrKeySetUnavailable, filterErr)
 		}
 
@@ -182,8 +207,8 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 		if filterErr != nil {
 			return nil, fmt.Errorf("%w: filter cached key set: %v", ErrKeySetUnavailable, filterErr)
 		}
-		s.auditRefresh(document, currentKeys.Len(), "success")
-		return currentKeys, nil
+		s.auditRefresh(ctx, document, currentKeys.Len(), "success")
+		return cloneJWKSet(currentKeys)
 	})
 	if err != nil {
 		return nil, err
@@ -193,25 +218,6 @@ func (s *ClientKeySetService) RefreshForKID(ctx context.Context, document *ports
 		return nil, fmt.Errorf("%w: invalid refresh result", ErrKeySetUnavailable)
 	}
 	return refreshed, nil
-}
-
-func (s *ClientKeySetService) storeCacheEntry(key clientKeySetCacheKey, keys jwk.Set, fetchedAt, lastRefetchAt time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if previous := s.cache[key]; previous != nil {
-		lastRefetchAt = previous.lastRefetchAt
-	} else if len(s.cache) >= maxClientKeySetCacheEntries {
-		var oldestKey clientKeySetCacheKey
-		var oldestTime time.Time
-		for candidate, entry := range s.cache {
-			if oldestKey == (clientKeySetCacheKey{}) || entry.fetchedAt.Before(oldestTime) {
-				oldestKey = candidate
-				oldestTime = entry.fetchedAt
-			}
-		}
-		delete(s.cache, oldestKey)
-	}
-	s.cache[key] = &clientKeySetCacheEntry{keys: keys, fetchedAt: fetchedAt, lastRefetchAt: lastRefetchAt}
 }
 
 func eligibleClientKeys(source jwk.Set, signingAlgorithm string) (jwk.Set, error) {
@@ -280,6 +286,25 @@ func clientKeyEligible(key jwk.Key, signingAlgorithm string) bool {
 	}
 }
 
+func (s *ClientKeySetService) storeCacheEntry(key clientKeySetCacheKey, keys jwk.Set, fetchedAt, lastRefetchAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if previous := s.cache[key]; previous != nil {
+		lastRefetchAt = previous.lastRefetchAt
+	} else if len(s.cache) >= maxClientKeySetCacheEntries {
+		var oldestKey clientKeySetCacheKey
+		var oldestTime time.Time
+		for candidate, entry := range s.cache {
+			if oldestKey == (clientKeySetCacheKey{}) || entry.fetchedAt.Before(oldestTime) {
+				oldestKey = candidate
+				oldestTime = entry.fetchedAt
+			}
+		}
+		delete(s.cache, oldestKey)
+	}
+	s.cache[key] = &clientKeySetCacheEntry{keys: keys, fetchedAt: fetchedAt, lastRefetchAt: lastRefetchAt}
+}
+
 func hasPrivateKeyMaterial(key jwk.Key) bool {
 	privateMembers := map[string]struct{}{
 		"d": {}, "p": {}, "q": {}, "dp": {}, "dq": {}, "qi": {}, "k": {},
@@ -299,7 +324,7 @@ func cloneJWKSet(set jwk.Set) (jwk.Set, error) {
 	return set.Clone()
 }
 
-func (s *ClientKeySetService) auditRefresh(document *ports.CIMDMetadataDTO, keyCount int, outcome string) {
+func (s *ClientKeySetService) auditRefresh(ctx context.Context, document *ports.CIMDMetadataDTO, keyCount int, outcome string) {
 	sourceHost := "inline"
 	if document != nil && document.JWKSURI != "" {
 		if parsed, err := url.Parse(document.JWKSURI); err == nil {
@@ -310,5 +335,5 @@ func (s *ClientKeySetService) auditRefresh(document *ports.CIMDMetadataDTO, keyC
 	if document != nil {
 		clientID = document.ClientID
 	}
-	s.logger.Info("client_key_set_refreshed", "client_id", clientID, "source_host", sourceHost, "outcome", outcome, "key_count", keyCount)
+	s.logger.InfoContext(ctx, "client_key_set_refreshed", "client_id", clientID, "source_host", sourceHost, "outcome", outcome, "key_count", keyCount)
 }

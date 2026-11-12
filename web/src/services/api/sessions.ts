@@ -31,17 +31,17 @@ export interface SessionSummary {
   /** ISO 8601 timestamp when session was initiated */
   initiated_at: string;
 
-  /** Neither access nor stored refresh credentials are usable */
-  is_expired: boolean;
+  /**
+   * The broker cannot obtain another access token: the provider rejected the stored refresh
+   * token, or the access token expired without one. The user must log in again.
+   */
+  requires_reauthentication: boolean;
 
   /** Whether the access token specifically is expired */
   access_token_expired: boolean;
 
-  /** Whether a refresh token is stored for this session */
+  /** Whether a refresh token is stored for this session (it may have been rejected) */
   has_refresh_token: boolean;
-
-  /** Recorded refresh-token expiry; absent means unknown, not indefinite */
-  refresh_token_expires_at?: string;
 
   /** Number of agents depending on this session */
   dependent_agent_count: number;
@@ -170,14 +170,15 @@ export class SessionsApiService {
    * @throws {ApiError} if request fails or refresh token is invalid
    */
   async refreshSession(serviceId: string): Promise<SessionSummary> {
-    const response = await apiClient.post<{ data: SessionSummary }>(
-      `/third-party/${serviceId}/session/refresh`,
-    );
-
-    // Invalidate caches since data changed
-    apiCache.invalidatePattern('/third-party/*');
-
-    return response.data.data;
+    try {
+      const response = await apiClient.post<{ data: SessionSummary }>(
+        `/third-party/${serviceId}/session/refresh`,
+      );
+      return response.data.data;
+    } finally {
+      // A rejected refresh also changes the session: the broker records the provider rejection
+      apiCache.invalidatePattern('/third-party/*');
+    }
   }
 }
 

@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
 // TestNewCELEvaluatorSuccessfulCompilation tests successful evaluator creation.
@@ -80,7 +82,7 @@ func TestExtractPrincipalDefaultExpression(t *testing.T) {
 	principal, err := evaluator.ExtractPrincipal(claims)
 
 	require.NoError(t, err)
-	assert.Equal(t, "user123", principal)
+	assert.Equal(t, id.NewPrincipal("user123"), principal)
 }
 
 // TestExtractPrincipalCustomExpression tests principal extraction with custom expression.
@@ -99,7 +101,7 @@ func TestExtractPrincipalCustomExpression(t *testing.T) {
 	principal, err := evaluator.ExtractPrincipal(claims)
 
 	require.NoError(t, err)
-	assert.Equal(t, "john.doe", principal)
+	assert.Equal(t, id.NewPrincipal("john.doe"), principal)
 }
 
 // TestExtractPrincipalNestedClaim tests principal extraction from nested claim.
@@ -119,7 +121,7 @@ func TestExtractPrincipalNestedClaim(t *testing.T) {
 	principal, err := evaluator.ExtractPrincipal(claims)
 
 	require.NoError(t, err)
-	assert.Equal(t, "user@example.com", principal)
+	assert.Equal(t, id.NewPrincipal("user@example.com"), principal)
 }
 
 // TestExtractPrincipalMissingClaim tests error when claim is missing.
@@ -276,7 +278,7 @@ func TestAuthorizePrivilegedClientCustomExpressionAllow(t *testing.T) {
 	request := CELRequestContext{
 		Resource:  "https://api.example.com",
 		GrantType: TokenExchangeGrantType,
-		Principal: "user123",
+		Principal: id.NewPrincipal("user123"),
 		AgentID:   "agent-app-1",
 	}
 
@@ -304,7 +306,7 @@ func TestAuthorizePrivilegedClientCustomExpressionDeny(t *testing.T) {
 	request := CELRequestContext{
 		Resource:  "https://api.example.com",
 		GrantType: TokenExchangeGrantType,
-		Principal: "user123",
+		Principal: id.NewPrincipal("user123"),
 		AgentID:   "agent-app-1",
 	}
 
@@ -338,7 +340,7 @@ func TestAuthorizePrivilegedClientComplexExpression(t *testing.T) {
 	request := CELRequestContext{
 		Resource:  "https://api.example.com",
 		GrantType: TokenExchangeGrantType,
-		Principal: "user123",
+		Principal: id.NewPrincipal("user123"),
 		AgentID:   "trusted-privileged-client",
 	}
 
@@ -369,7 +371,7 @@ func TestAuthorizePrivilegedClientComplexExpressionFailsAdminCheck(t *testing.T)
 	request := CELRequestContext{
 		Resource:  "https://api.example.com",
 		GrantType: TokenExchangeGrantType,
-		Principal: "user123",
+		Principal: id.NewPrincipal("user123"),
 		AgentID:   "trusted-privileged-client",
 	}
 
@@ -555,7 +557,7 @@ func TestExtractPrincipalWithComplexNestedClaims(t *testing.T) {
 	principal, err := evaluator.ExtractPrincipal(claims)
 
 	require.NoError(t, err)
-	assert.Equal(t, "user-456", principal)
+	assert.Equal(t, id.NewPrincipal("user-456"), principal)
 }
 
 // TestExtractAgentIDWithComplexNestedClaims tests agent_id extraction from complex nested structure.
@@ -596,7 +598,7 @@ func TestAuthorizePrivilegedClientWithRequestContext(t *testing.T) {
 	request := CELRequestContext{
 		Resource:  "https://api.example.com",
 		GrantType: TokenExchangeGrantType,
-		Principal: "user123",
+		Principal: id.NewPrincipal("user123"),
 		AgentID:   "agent-app-1",
 	}
 
@@ -676,8 +678,18 @@ func TestExtractAgentIDComposeHybridExpression(t *testing.T) {
 			wantAgentID: localAgentID,
 		},
 		{
+			name: "broker-issued CIMD token uses azp UUID rather than agent_id URL",
+			claims: map[string]interface{}{
+				"iss":      "http://localhost:3000",
+				"agent_id": "https://claude.ai/oauth/claude-code-client-metadata",
+				"azp":      localAgentID,
+			},
+			wantAgentID: localAgentID,
+		},
+		{
 			name: "upstream token resolves its authorized party",
 			claims: map[string]interface{}{
+				"iss": "http://upstream-oauth2:9001",
 				"azp": "upstream-client",
 			},
 			wantAgentID:      upstreamAgent,
@@ -689,7 +701,7 @@ func TestExtractAgentIDComposeHybridExpression(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			resolverCalls := 0
 			config := validTokenExchangeConfig(t)
-			config.AgentIDExpression = "has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp)"
+			config.AgentIDExpression = `has(subject_token.azp) && subject_token.iss == "http://localhost:3000" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))`
 			config.ResolveAgentIDByClientID = func(clientID string) (string, error) {
 				resolverCalls++
 				if clientID != "upstream-client" {
@@ -782,4 +794,20 @@ func TestCELEvaluator_ResolveAgentIdByClientId_NotRegisteredWhenNil(t *testing.T
 	assert.Error(t, err, "NewCELEvaluator should fail when nil resolver and expression uses resolveAgentIdByClientId")
 	assert.Nil(t, evaluator)
 	assert.True(t, IsTokenExchangeError(err), "error should be a TokenExchangeError")
+}
+
+func TestAuthorizePrivilegedClientExposesPrincipalAsCELString(t *testing.T) {
+	t.Parallel()
+	config := validTokenExchangeConfig(t)
+	config.AuthorizationExpression = `type(request.principal) == string && request.principal == subject_token.sub`
+	evaluator, err := NewCELEvaluator(config)
+	require.NoError(t, err)
+
+	request := CELRequestContext{Principal: id.NewPrincipal("user123")}
+	assert.IsType(t, "", request.ToMap()["principal"])
+
+	authorized, err := evaluator.AuthorizePrivilegedClient(nil, map[string]any{"sub": "user123"}, request)
+
+	require.NoError(t, err)
+	assert.True(t, authorized)
 }
