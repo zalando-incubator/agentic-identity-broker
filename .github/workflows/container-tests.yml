@@ -87,10 +87,15 @@ jobs:
           TELEMETRY_LIVE_CHECK_ENDPOINT: ${{ steps.live-check.outputs.otlp-grpc-endpoint }}
         run: just verify-integration-infra-junit
       - name: Stop telemetry live check
+        id: live-check-report
         if: always() && steps.live-check.outcome == 'success'
         uses: open-telemetry/weaver/.github/actions/weaver-live-check-stop@51a5bf95bdbb2e20fb6e16638e6bbe7dde911e93 # v0.28.0
         with:
           report-artifact-name: telemetry-live-check-integration-infra
+      # A run that sends no telemetry has no findings, so the stop action passes it.
+      - name: Fail when the live check received no telemetry
+        if: steps.live-check-report.outputs.samples == '0'
+        run: exit 1
       - name: Upload infra integration test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
