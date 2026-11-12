@@ -122,8 +122,18 @@ workflow or its permissions.
 Use the compiler-installed Spec Kit skills. `/speckit-specify` and similar
 names refer to those skills; Pi's native invocation form is
 `/skill:speckit-specify`. Follow the installed skill's full procedure, not a
-summary or an independently recreated procedure. Run only this session's phase.
-Do not delegate another pipeline phase or reuse a previous conversation.
+summary or an independently recreated procedure, except where these
+instructions narrow it. Run only this session's phase. Do not delegate another
+pipeline phase or reuse a previous conversation.
+
+Report a run's evidence only in this session's result: test and validation
+output, red and green results, per-run status, and remaining work. Never
+append it to `quickstart.md`, `tasks.md`, or any other file in the feature
+directory. This limits only run evidence: phases still write the requirements,
+plans, tasks, checklists, and decisions that their skills produce.
+`quickstart.md` describes how to validate the feature, not what a run
+observed. A feature's `implementation-log.md` holds evidence from earlier
+runs; do not read or extend it.
 
 For PR phases, switch to `context.head` **inside the agent sandbox**, before
 reading or executing feature code. Fetch only that exact SHA from `origin`,

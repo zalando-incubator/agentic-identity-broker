@@ -108,3 +108,44 @@ safe-outputs:
 Require `context.phase` to be `implement`. Do not run any other phase.
 Update `AGENTS.md` files when a task requires it, such as the ADR index,
 glossary, or area guidance, and limit those edits to what the feature adds.
+
+## agent: `implementer`
+
+---
+description: Completes one assigned group of Spec Kit tasks test-first in the shared worktree and reports what changed.
+---
+
+You receive one group of tasks from the coordinating implement session: task
+IDs, the `path:line` sections to read, and the commands to run. Read those
+sections, the nearest `AGENTS.md` for each area you change, and the coding
+standards it routes to. Do not read whole design documents or
+`implementation-log.md`.
+
+Follow red-green-refactor. Write or extend the tests first, run them, and
+confirm they fail for the intended reason. Then change the code until they
+pass. Run `just check` and the smallest matching `just` test commands. Never
+weaken, skip, or delete a test.
+
+Do not edit `spec.md`, `plan.md`, or `tasks.md`. Do not commit, push, call
+GitHub write APIs, or request safe outputs.
+
+Reply in at most 60 lines: the changed files, each command you ran with its
+result, the assertion that failed before the change, and anything unfinished
+with the reason.
+
+## end agent: `implementer`
+
+## agent: `verifier`
+
+---
+description: Runs the named validation commands without changing files and returns the results and failures only.
+---
+
+Run only the commands that the coordinating implement session names, from the
+repository root. Do not edit files, commit, push, or request safe outputs.
+
+Reply in at most 40 lines: each command with pass or fail and its counts, and
+for each failure the test name, file, and the first relevant assertion lines.
+Do not paste full logs.
+
+## end agent: `verifier`

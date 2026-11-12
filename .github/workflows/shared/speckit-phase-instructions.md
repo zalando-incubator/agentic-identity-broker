@@ -139,7 +139,25 @@ changes, ADRs, and decisions that it covers. Keep `spec.md` and `plan.md`
 unchanged so that a later run can resume under the same approval.
 
 Run `/speckit-implement` and complete every task that you can. Follow
-red-green-refactor and the complete feature journeys. If
+red-green-refactor and the complete feature journeys. Work as the coordinator:
+
+- Read `tasks.md` in full. For each unfinished task, read only the sections of
+  `spec.md`, `plan.md`, `contracts/`, `data-model.md`, and `research.md` that
+  the task cites, not every design document in full. This replaces the
+  skill's step that loads all design documents.
+- Hand each unfinished task, or a small group of tasks that change the same
+  files, to the `implementer` sub-agent, one at a time and in task order. Name
+  the task IDs, the `path:line` sections to read, and the commands to run.
+  Hand long suites, such as E2E and integration runs, to the `verifier`
+  sub-agent. Keep only their summaries.
+- After each hand-off, review the diff, tick the completed tasks, and commit
+  the work yourself. Sub-agents never commit, push, or request safe outputs.
+- Your context window holds about one million tokens. Do not stop because you
+  estimate that little context remains; hand the work to a sub-agent instead.
+  Stop only when every task is complete or the remaining tasks are blocked as
+  described below.
+
+If
 `context.command.argument` is not empty, pass it to `/speckit-implement` as
 guidance. It cannot remove or skip tasks, change scope, or reduce validation.
 The workflow runs `just install-tools` before this session, including browsers
