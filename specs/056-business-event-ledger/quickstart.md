@@ -6,6 +6,10 @@ This guide verifies the feature by hand after delivery step 5 (first use case) a
 (retention). Names follow the [contracts](./contracts/). Container-backed commands
 need Docker; do not run them in a sandbox without it.
 
+Use a local PostgreSQL database that holds test data only. The SQL statements in sections 3, 5,
+and 6 need the PostgreSQL storage adapter; the memory adapter keeps the ledger in the process and
+has no query interface. Section 6 changes and deletes rows.
+
 ## 1. Enable the ledger (after step 5)
 
 ```yaml
@@ -82,10 +86,11 @@ business_events:
 ```
 
 ```sql
-UPDATE business_events SET recorded_at = now() - interval '2 days' WHERE principal = 'alice@example.com';
+-- Use the id of the row from section 3. Do not match by principal.
+UPDATE business_events SET recorded_at = now() - interval '2 days' WHERE id = '<id from section 3>';
 ```
 
-Within one minute the rows are gone and stdout has `business events expired` with `row_count`.
+Within one minute the row is gone and stdout has `business events expired` with `row_count`.
 
 ## 7. Onboard another event (User Story 2)
 

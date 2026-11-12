@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-12
 
-**Status**: Draft — planned. [ADR 048](../../adrs/048-business-events-as-typed-log-records.md) and the other decisions are registered in [plan.md](./plan.md#approval-items) and await maintainer sign-off. No approval is recorded.
+**Status**: Draft — planned. [ADR 048](../../adrs/048-business-events-as-typed-log-records.md) and the other decisions are registered in [plan.md](./plan.md#approval-items). The maintainer approved Decisions 5 and 9 of the ADR. The ADR as a whole is Proposed, and the other items await sign-off.
 
 **Input**: Issue #188, "Activity API for the broker UI", reduced to its storage foundation. This
 feature delivers the ledger and the rule to onboard events. The activity API, the activity page,
@@ -124,6 +124,11 @@ the table.
 - A record carries a nested group or a `slog.LogValuer` attribute: the row holds the resolved value.
 - An operator event has no resource owner: the row has no principal and is never returned by a
   per-user query.
+- A grant is deleted and the cleanup of its refresh sessions then fails: the deletion is
+  committed, so the audit record of that branch is a `consent.grant.revoked` business event. Its
+  attributes say that the cleanup failed. The operation still returns the error.
+- The ledger write times out: the result is unknown. The failure is counted, and the row can
+  exist.
 - The process stops between the commit and the ledger write: the row is missing. This is the
   accepted limit of ADR 048.
 
@@ -212,10 +217,12 @@ equal those of the stdout record and of the OpenTelemetry log record with the sa
   logged the event. It MUST increase a failure counter and produce one `Error` log record that
   does not enter the ledger handler again.
 - **FR-007**: The ledger MUST be controlled by one configuration flag that is off by default.
-  When it is off, the broker behaves as it does without this feature.
+  When it is off, the broker stores no business event and the logger chain is the chain without
+  this feature.
 - **FR-008**: A business event MUST be stored independently of the configured log level.
 - **FR-009**: The broker MUST delete ledger rows older than a configurable retention period, with
-  a default of 90 days.
+  a default of 90 days. Retention MUST run also when FR-007 disables the ledger, so that rows
+  stored earlier expire.
 - **FR-010**: A stored ledger row MUST NOT be updated by any operation. A row is removed only by FR-009.
 - **FR-011**: Both storage adapters (memory and PostgreSQL) MUST implement the ledger repository.
 - **FR-012**: Each onboarded event MUST satisfy the [onboarding checklist](./checklists/onboarding.md).

@@ -28,7 +28,9 @@ none enters the ledger.
 | `business event retention failed` | `Error` | `business_event.ledger.retention_failed` | `error_kind` | A retention run fails | 6 |
 
 `business event write failed` has no `principal` and no `error` value: a storage error can quote
-the row. `trace_id` and `actor` come from the context handler.
+the row. The record goes directly to the operational branch and does not pass the context
+handler again, so the ledger handler copies `trace_id` and `actor` from the record that it could
+not store.
 
 ## Spans
 

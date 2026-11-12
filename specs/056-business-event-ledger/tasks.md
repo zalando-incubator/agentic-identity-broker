@@ -37,7 +37,7 @@ commit, not as validated.
 - [X] T007 [P] Phase 2d: document table, indexes, and migration name in `data-model.md` (Principle IX)
 - [X] T008 [P] Phase 2g: read both coding standards; list every new log record and instrument in `contracts/observability.md` (Principle XV)
 - [X] T009 Phase 2f: map all acceptance scenarios to `It()` descriptions in `plan.md` Testing Strategy and review Journey 1 against `api/enduser/openapi.yaml` (Principles XIII, XIV)
-- [ ] T010 Record each approval that the maintainer supplies for ADR-048 and STD-LOGGING-8 in `plan.md` Approval Items and in the ADR status line, as `Accepted (approved by <login> on <date>)`. Do not infer an approval.
+- [ ] T010 Record each approval that the maintainer supplies for ADR-048 and STD-LOGGING-8 in `plan.md` Approval Items. Record each item separately in `plan.md` as `Approved by <login> on <date>`. Change the ADR status line to `Accepted (approved by <login> on <date>)` only when the maintainer accepts the ADR as a whole; the approval of one decision or of STD-LOGGING-8 does not change it. Do not infer an approval.
 
 **Checkpoint**: ADR 048 is Accepted. Steps 2 to 5 can start.
 
@@ -122,13 +122,13 @@ commit, not as validated.
 
 - [ ] T045 [US1] Write `tests/e2e/business_event_ledger_test.go` with one `It()` each for US1.1, US1.2, US1.3, and US2.2, with spec scenario references in comments; add the `business_events.enabled` configuration fixture and the matcher `HaveBusinessEvent` in `tests/e2e/matchers/` (Principle XIII)
 - [ ] T046 [P] [US1] Write the US1.4 scenario for the container E2E suite: make the insert fail in PostgreSQL, assert `204`, the write-failed record, and the failure counter (FR-006)
-- [ ] T047 [P] [US1] Extend the consent service tests in `internal/domain/consent/`: one stored `consent.grant.revoked` event with `principal`, `agent_id`, `grant_id` on revocation; none on `ErrGrantNotFound`; none when refresh cleanup fails after the delete (LOGGING.md section 8)
+- [ ] T047 [P] [US1] Extend the consent service tests in `internal/domain/consent/`: one stored `consent.grant.revoked` event with `principal`, `agent_id`, `grant_id` on revocation; none on `ErrGrantNotFound`; one event with `refresh_cleanup=failed`, and the returned error, when refresh cleanup fails after the committed delete (LOGGING.md section 8)
 - [ ] T048 [US1] Run T045 and T047, record the semantic failures (no event stored) in the pull request, and add the line numbers to the scenario table in `plan.md`
 
 ### Implementation
 
 - [ ] T049 [US1] Create `internal/domain/consent/events.go` with `GrantRevoked = bizevent.MustDefine("consent.grant.revoked", bizevent.OwnerVisible())`
-- [ ] T050 [US1] In `internal/domain/consent/service.go` `RevokeConsentForPrincipal`, replace `"action", "grant_revoked"` with `"event", GrantRevoked`; keep the other attributes; record the rename from `action=grant_revoked` as LOGGING.md section 2.2 requires
+- [ ] T050 [US1] In `internal/domain/consent/service.go` `RevokeConsentForPrincipal`, replace `"action", "grant_revoked"` with `"event", GrantRevoked`; keep the other attributes; in the branch where refresh cleanup fails after the committed delete, replace `"action", "grant_deleted"` with `"event", GrantRevoked` and keep `refresh_cleanup=failed`; record the rename from `action=grant_revoked` as LOGGING.md section 2.2 requires
 - [ ] T051 [P] [US1] Update existing assertions on the old key (for example `tests/integration/grant_lifecycle_audit_test.go`) to assert `event` (LOGGING.md section 9)
 - [ ] T052 [P] [US1] Revise the "Grant and Definition Lifecycle Audit" glossary entry in `ARCHITECTURE.md`: the grant revocation record is now also a business event (Principle II)
 - [ ] T053 [US1] Add a benchmark of the revocation request with the ledger on and off on PostgreSQL; record the result against SC-004 in the pull request
@@ -156,7 +156,7 @@ commit, not as validated.
 - [ ] T064 [US3] Add `BusinessEventRetention` to `internal/ports/storage.go` and implement it in both adapters with the accessor `BusinessEventRetention()`; update `internal/ports/AGENTS.md`
 - [ ] T065 [P] [US3] Add the retention keys to `internal/ports/config.go`, loader defaults, and validator
 - [ ] T066 [US3] Implement `internal/domain/bizevent/retention.go` and the `business_events.retention.deleted` counter
-- [ ] T067 [US3] Start the retention service in `internal/app/builder.go` when the ledger is enabled; stop it on shutdown
+- [ ] T067 [US3] Start the retention service in `internal/app/builder.go` independently of `business_events.enabled` (FR-009); stop it on shutdown
 - [ ] T069 [P] [US3] Write `docs/operations/business-events.md`: enabling, retention, the absence of an erasure operation, the loss window of ADR 048, and the production rule of SR-003; add the retention keys to `docs/configuration.md` and to `examples/config/business-events.yaml`
 - [ ] T070 [P] [US3] Add the retention values to the Helm chart (values, configmap, schema, README, tests)
 - [ ] T071 Run `just check`, `just test`, `just test-integration`, `just test-e2e-backend`; report the container suites as deferred to CI

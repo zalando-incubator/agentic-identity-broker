@@ -115,7 +115,9 @@ has `MarshalJSON` and encodes as its string form.
 **Decision**: On an `Append` error or timeout the handler (1) increments
 `business_events.write_failures` with the storage `error_kind`, (2) writes one record at `Error`
 with `event=business_event.ledger.write_failed` to the operational branch of the chain, not to the
-logger that contains the ledger handler, and (3) returns nil from `Handle`.
+logger that contains the ledger handler, with the `trace_id` and `actor` of the failed record, and
+(3) returns nil from `Handle`. After a timeout the result of the insert is unknown; the row can
+exist.
 
 **Rationale**: slog discards the error of `Handle`, so returning it has no effect; a metric and a
 log record make the miss visible. Writing to the operational branch prevents recursion. The

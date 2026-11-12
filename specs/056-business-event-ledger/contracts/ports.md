@@ -66,6 +66,8 @@ Operations respect the configured storage timeouts.
 ```go
 // NewLedgerHandler returns a slog.Handler that stores each record whose "event" attribute is a
 // bizevent.Definition. fallback receives the failure record and must not contain this handler.
+// fallback is behind the context handler, so the ledger handler copies trace_id and actor from
+// the failed record to the failure record.
 func NewLedgerHandler(appender ports.BusinessEventAppender, fallback slog.Handler,
 	meter metric.Meter, writeTimeout time.Duration) slog.Handler
 ```

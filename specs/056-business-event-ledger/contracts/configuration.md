@@ -14,7 +14,8 @@
 
 Validation (loader and `internal/config/validator.go`): values outside the valid range fail at
 start with the key name. Retention keys are validated also when `enabled` is false. Retention
-runs only when `enabled` is true.
+runs independently of `enabled`: if an operator disables the ledger, the rows that it stored
+earlier still expire (FR-009).
 
 ## Example (`examples/config/business-events.yaml`, added in step 4, extended in step 6)
 

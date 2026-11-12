@@ -99,8 +99,10 @@ the metric name are set in the implementing pull requests and their contracts in
   - If the process stops after the commit and before the log call, the ledger has no row and the
     operational log has no record of a state change that happened. No metric counts this loss.
     This window exists on `main` today for the audit record; the ledger inherits it.
-  - If the database rejects the insert or the write times out, the ledger has no row. The
-    operational log has the record, and the failure metric counts the miss.
+  - If the database rejects the insert, the ledger has no row. The operational log has the
+    record, and the failure metric counts the miss.
+  - If the write times out, the result is unknown: the database can commit the insert after the
+    handler stops waiting. The failure metric counts the attempt, and the row can exist.
   - If the process stops during the log call, either sink can be without the record.
 - Each onboarded state change costs one more database round trip on the request path.
 - The ledger holds personal data (principals) in a new table.

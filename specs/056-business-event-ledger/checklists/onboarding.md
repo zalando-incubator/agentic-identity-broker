@@ -25,8 +25,9 @@ It applies from delivery step 5.
       (LOGGING.md section 8).
 - [ ] The record has `principal` (an `id.Principal`) when the event has a resource owner.
 - [ ] Affected resources are identified by their canonical `<entity>_id` keys (LOGGING.md section 2.3).
-- [ ] A principal appears only under `principal` or `operator_principal`. No other attribute
-      holds a principal.
+- [ ] A principal that the log call supplies appears only under `principal` or
+      `operator_principal`. No other attribute that the call supplies holds a principal. The
+      `actor` attribute is not part of this rule: the context handler adds it.
 - [ ] The attributes are sufficient for a consumer to describe the event without a second lookup
       of data that the operation can delete.
 
