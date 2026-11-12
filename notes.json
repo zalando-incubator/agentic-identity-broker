@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 430
+    "investigation_after": 459
   },
   "issues": [
     {
@@ -142,6 +142,18 @@
       "state": "commented",
       "updated_at": "2026-11-12",
       "note": "Static-only validation-path assessment; no disclosure exercised. Return finite field/index/reason diagnostics separately from existing HTTP error across all three writes; never parse/log wrapped cause. Candidate awaits capacity; coordinate #347/#415."
+    },
+    {
+      "number": 458,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-12",
+      "note": "Posted verified-claims authorization-port and safe Envoy projection plan. Asked vault-only vs local impersonation scope and SDK bundles vs request-time external fetch. Keep CEL extraction/grant checks; raw ExtProc headers/body unsuitable."
+    },
+    {
+      "number": 459,
+      "state": "commented",
+      "updated_at": "2026-11-12",
+      "note": "Compared main CIMD matcher with live #318 redirect diff; posted policy matrix and contract-first extraction. Only identical numeric-port primitive candidate; preserve raw CIMD equality, callback isolation and distinct normalization/wildcards. Main race tests pass; #318 not executed."
     }
   ],
   "fixes": [
@@ -149,9 +161,9 @@
       "issue": 367,
       "pr": 403,
       "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
-      "status": "open",
+      "status": "blocked",
       "updated_at": "2026-11-12",
-      "note": "Accepted main integration (local 5649da78): human-only readiness, agent zero-read bypass, ADR046 usability and session regressions; corrected E2E fixtures. Check/build/test/integration/functional backend pass. Verify blocked by baseline GO-2026-6859; fresh CI pending, label missing."
+      "note": "Prior merge publication rejected: 9689 KB > 4096 KB. Live head 493a935 still dirty; DCO/pipeline pass only old head. Semantic human-only/ADR046 integration guidance in PR comment. Do not repeat oversized push; maintainer recovery required."
     },
     {
       "issue": 212,
@@ -165,9 +177,9 @@
       "issue": 416,
       "pr": 432,
       "branch": "repo-assist/fix-issue-416-broker-access-denied-d7b29c16dd0ed650",
-      "status": "open",
+      "status": "blocked",
       "updated_at": "2026-11-12",
-      "note": "Accepted append-only main merge (local 86ff7b39): combined downstream-status telemetry argument with case-specific recovery URI; retained both ADR entries. Check/ExtProc build/race units/non-Agentgateway E2E pass. Fresh external CI pending; remains draft."
+      "note": "Prior merge publication rejected: 9689 KB > 4096 KB. Live head 4426935 still dirty; DCO/pipeline pass only old head. Preserve denial/recovery plus downstream telemetry in maintainer conflict recovery; no repeat oversized push."
     },
     {
       "issue": 244,
@@ -182,8 +194,8 @@
       "pr": 448,
       "branch": "repo-assist/tests-approval-metric-contract-2026-11-08-2b7f82b08ef390de",
       "status": "open",
-      "updated_at": "2026-11-09",
-      "note": "Verified live draft #448 and published branch. Both checks/statuses read: DCO and pipeline/unit/integration/all E2E passed; classification label missing. No duplicate fix or push needed; partial #353 only."
+      "updated_at": "2026-11-12",
+      "note": "Live draft; both checks/statuses read: DCO and test pipeline pass. Required classification label still missing; earlier claim it was fixed was stale. No code push or duplicate fix."
     },
     {
       "issue": 386,
@@ -222,30 +234,6 @@
       "follow_up": "Retain #382 consumer-migration work and existing exception expiry; do not treat failed OSV lookup as a clean scan."
     },
     {
-      "area": "ci",
-      "checked_at": "2026-11-12",
-      "result": "Read check runs AND commit statuses for all eight PRs: DCO and all test pipelines pass, including #456 follow-up. #403/#420/#448 classification-label failures remain. #403/#432 were dirty and both integrations accepted; fresh CI not queried.",
-      "follow_up": "Check both updated heads next run; just verify reports baseline GO-2026-6859 (Go 1.27.3, fixed 1.27.4)."
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-12",
-      "result": "Maintenance-only at eight PRs. Resolved #403 five conflicts semantically and #432 two conflicts; append-only updates accepted. Other PRs not dirty. No new PR or rewritten history; #424 remains non-draft.",
-      "follow_up": "Fresh external CI for #403/#432 pending; drafts remain drafts."
-    },
-    {
-      "area": "hygiene",
-      "checked_at": "2026-11-12",
-      "result": "No unlabelled open issues. Read unlabelled #463 body and changed sources; labelled bug for silently deduplicated follow-up requests. Other PRs already labelled; required minor/bugfix/etc labels outside write allowlist.",
-      "follow_up": null
-    },
-    {
-      "area": "tests",
-      "checked_at": "2026-11-12",
-      "result": "#403 agent regressions caught four unwanted reads before human guard. Combined E2E 55/67 -> 67/67 after seeding required human sessions. Affected race packages, just test, self-contained integration and entire functional backend pass. #432 ExtProc race units and non-Agentgateway E2E pass.",
-      "follow_up": "No container/browser or full-gate pass. Added rejected delegated/mandatory and refreshable-mandatory coverage; no separate red evidence claimed for those rows."
-    },
-    {
       "area": "build",
       "checked_at": "2026-11-12",
       "result": "Broker/frontend builds pass on #403 integration; ExtProc build passes on #432 integration.",
@@ -258,16 +246,40 @@
       "follow_up": null
     },
     {
-      "area": "code",
-      "checked_at": "2026-11-12",
-      "result": "#403 semantic integration preserves human-only readiness and ADR045 agent bypass, uses ADR046 session usability and aligns branch docs. #432 integration preserves denial/recovery assertions with current telemetry helper. Investigated #427/#430 without new implementation.",
-      "follow_up": "#430 finite diagnostic metadata and #418 event mapping await capacity."
-    },
-    {
       "area": "release",
       "checked_at": "2026-11-12",
       "result": "Latest release v0.1.145. Verified #460 merged to release/v0.2 (not main). No new release PR in maintenance-only mode; avoid duplicating staged release work.",
       "follow_up": null
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-12",
+      "result": "Eight PRs, maintenance-only. #403/#432 prior pushes failed downstream size limit; both live heads remain dirty. Other PRs not dirty. No new push/retry/PR. #424 non-draft; other drafts retained.",
+      "follow_up": "Maintainer conflict/publication recovery for #403/#432; preserve semantic guidance, do not evade patch limit."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-12",
+      "result": "Both check runs/statuses read on all eight published heads: DCO and test pipelines pass. #403/#432 integration CI does not exist because publication failed. #403/#420/#448 required classification failures remain.",
+      "follow_up": "Required minor/bugfix/architectural classification outside safe-output allowlist; reported missing capability."
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-12",
+      "result": "All open issues labelled. Added enhancement #403 and performance #420 without redundant comments; these do not satisfy COMPR classification. No new acknowledgements or checked monthly actions.",
+      "follow_up": null
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-12",
+      "result": "Maintained just test package override passed race-enabled urivalidation, tokenexchange and ExtProc authorization packages on current main. Not a test of broker OPA, #318 proposed matcher or unpublished integrations.",
+      "follow_up": null
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-12",
+      "result": "Investigated #458 verified authorization seam and credential-safe input boundary; #459 raw CIMD vs exact/wildcard callback differences. Posted actionable scope/contract guidance; no source edits at capacity.",
+      "follow_up": "Resume after #459. Preserve #431 assigned work, #441 versioned migration approval, #452/#453 compiler-API release gates and prior holds."
     }
   ],
   "completed_actions": [
@@ -283,13 +295,13 @@
   "priorities": [
     {
       "task": 6,
-      "item": "Check #403 and #432 integration CI",
-      "note": "Both append-only main integrations accepted; local suites pass. Verify external checks AND statuses next run. #403/#420/#448 still need classification labels outside workflow allowlist."
+      "item": "Maintainer recovery for #403/#432 publication blockers",
+      "note": "Both oversized merge updates rejected downstream; original heads remain dirty. Preserve posted semantic integration guidance. Do not retry size-limited pushes or claim new CI; required classifications also need maintainers."
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #430",
-      "note": "#427 awaits tag contract/UI decisions; #430 finite diagnostics candidate at capacity. Preserve existing fixes, clarification holds, #388/#412 and #356 policy gate; implement #418 only below capacity."
+      "item": "Resume oldest-first after #459",
+      "note": "#458 waits scope/data-delivery decision; #459 contract-first extraction follows #318. #418/#430 fixes await capacity. Preserve clarification/approval holds, existing fixes, #388/#412 and #356 gate."
     },
     {
       "task": 3,
