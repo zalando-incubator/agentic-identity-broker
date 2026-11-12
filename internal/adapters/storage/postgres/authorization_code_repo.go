@@ -26,7 +26,10 @@ func NewAuthorizationCodeRepo(adapter *Adapter) *AuthorizationCodeRepo {
 	return &AuthorizationCodeRepo{adapter: adapter}
 }
 
-func (r *AuthorizationCodeRepo) Create(ctx context.Context, code *storage.AuthorizationCode) error {
+func (r *AuthorizationCodeRepo) Create(ctx context.Context, code *storage.AuthorizationCode) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.create.authorization_code", "AuthorizationCodeRepo.Create")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return storage.NewStorageError("AuthorizationCodeRepo.Create", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -34,7 +37,7 @@ func (r *AuthorizationCodeRepo) Create(ctx context.Context, code *storage.Author
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
+	_, err = r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
 		`INSERT INTO authorization_codes (id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		code.ID, code.CodeHash, code.AgentID, code.ClientID, code.Principal,
@@ -47,7 +50,10 @@ func (r *AuthorizationCodeRepo) Create(ctx context.Context, code *storage.Author
 	return nil
 }
 
-func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash string) (*storage.AuthorizationCode, error) {
+func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash string) (_ *storage.AuthorizationCode, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.find.authorization_code", "AuthorizationCodeRepo.FindByCodeHash")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError("AuthorizationCodeRepo.FindByCodeHash", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -56,7 +62,7 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 	defer cancel()
 
 	var code storage.AuthorizationCode
-	err := r.adapter.db.GetContext(queryCtx, &code,
+	err = r.adapter.db.GetContext(queryCtx, &code,
 		`SELECT id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name
 		 FROM authorization_codes WHERE code_hash = $1 AND expires_at > NOW()`, codeHash)
 	if err != nil {
@@ -71,7 +77,10 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 	return &code, nil
 }
 
-func (r *AuthorizationCodeRepo) MarkUsed(ctx context.Context, codeID id.AuthorizationCodeID) error {
+func (r *AuthorizationCodeRepo) MarkUsed(ctx context.Context, codeID id.AuthorizationCodeID) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.mark_used.authorization_code", "AuthorizationCodeRepo.MarkUsed")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return storage.NewStorageError("AuthorizationCodeRepo.MarkUsed", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -88,7 +97,10 @@ func (r *AuthorizationCodeRepo) MarkUsed(ctx context.Context, codeID id.Authoriz
 	return checkRowsAffected("AuthorizationCodeRepo.MarkUsed", result, "authorization code not found or already used")
 }
 
-func (r *AuthorizationCodeRepo) DeleteExpired(ctx context.Context) (int, error) {
+func (r *AuthorizationCodeRepo) DeleteExpired(ctx context.Context) (_ int, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.delete_expired.authorization_code", "AuthorizationCodeRepo.DeleteExpired")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return 0, storage.NewStorageError("AuthorizationCodeRepo.DeleteExpired", storage.ErrorKindConnection, nil, "database not initialized")
 	}

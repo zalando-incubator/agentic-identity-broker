@@ -240,11 +240,17 @@ func TestStorageSpans_FailedRepositoryCalls(t *testing.T) {
 	approvals := NewToolApprovalRepository(adapter)
 	syncState := NewApprovalSyncStateRepository(adapter)
 	grants := NewUserGrantRepository(adapter)
+	authCodes := NewAuthorizationCodeRepo(adapter)
+	pkce := NewPKCESessionRepo(adapter)
+	refreshTokens := NewRefreshTokenSessionRepo(adapter)
+	replays := NewClientAssertionReplayRepo(adapter)
+	credentials := NewClientCredentialRepo(adapter)
 	now := time.Now()
 
 	var (
 		agentID    id.AgentID
 		approvalID id.ApprovalID
+		codeID     id.AuthorizationCodeID
 		principal  id.Principal
 	)
 
@@ -306,6 +312,79 @@ func TestStorageSpans_FailedRepositoryCalls(t *testing.T) {
 		{"storage.list.user_grants_by_principal", func(ctx context.Context) error {
 			_, err := grants.ListByPrincipal(ctx, principal)
 			return err
+		}},
+		{"storage.create.authorization_code", func(ctx context.Context) error {
+			return authCodes.Create(ctx, &storage.AuthorizationCode{})
+		}},
+		{"storage.find.authorization_code", func(ctx context.Context) error {
+			_, err := authCodes.FindByCodeHash(ctx, "")
+			return err
+		}},
+		{"storage.mark_used.authorization_code", func(ctx context.Context) error {
+			return authCodes.MarkUsed(ctx, codeID)
+		}},
+		{"storage.delete_expired.authorization_code", func(ctx context.Context) error {
+			_, err := authCodes.DeleteExpired(ctx)
+			return err
+		}},
+		{"storage.create.pkce_session", func(ctx context.Context) error {
+			return pkce.Create(ctx, &storage.PKCESession{})
+		}},
+		{"storage.find.pkce_session", func(ctx context.Context) error {
+			_, err := pkce.FindBySignature(ctx, "")
+			return err
+		}},
+		{"storage.delete.pkce_session", func(ctx context.Context) error {
+			return pkce.Delete(ctx, "")
+		}},
+		{"storage.delete_expired.pkce_session", func(ctx context.Context) error {
+			_, err := pkce.DeleteExpired(ctx)
+			return err
+		}},
+		{"storage.create.refresh_token_session", func(ctx context.Context) error {
+			return refreshTokens.Create(ctx, &storage.RefreshTokenSession{})
+		}},
+		{"storage.find.refresh_token_session", func(ctx context.Context) error {
+			_, err := refreshTokens.FindBySignature(ctx, "")
+			return err
+		}},
+		{"storage.mark_used.refresh_token_session", func(ctx context.Context) error {
+			return refreshTokens.MarkUsed(ctx, "")
+		}},
+		{"storage.revoke_by_request.refresh_token_session", func(ctx context.Context) error {
+			return refreshTokens.RevokeByRequestID(ctx, "")
+		}},
+		{"storage.revoke_by_principal_and_agent.refresh_token_session", func(ctx context.Context) error {
+			_, err := refreshTokens.RevokeByPrincipalAndAgent(ctx, principal, agentID)
+			return err
+		}},
+		{"storage.revoke_by_agent.refresh_token_session", func(ctx context.Context) error {
+			_, err := refreshTokens.RevokeByAgent(ctx, agentID)
+			return err
+		}},
+		{"storage.delete_expired.refresh_token_session", func(ctx context.Context) error {
+			_, err := refreshTokens.DeleteExpired(ctx)
+			return err
+		}},
+		{"storage.consume.client_assertion_replay", func(ctx context.Context) error {
+			return replays.Consume(ctx, "", "", now)
+		}},
+		{"storage.delete_expired.client_assertion_replay", func(ctx context.Context) error {
+			_, err := replays.DeleteExpired(ctx)
+			return err
+		}},
+		{"storage.create.client_credential", func(ctx context.Context) error {
+			return credentials.Create(ctx, &storage.ClientCredential{})
+		}},
+		{"storage.get.client_credential", func(ctx context.Context) error {
+			_, err := credentials.GetByAgentID(ctx, agentID)
+			return err
+		}},
+		{"storage.delete.client_credential", func(ctx context.Context) error {
+			return credentials.Delete(ctx, agentID)
+		}},
+		{"storage.rotate.client_credential", func(ctx context.Context) error {
+			return credentials.Rotate(ctx, agentID, &storage.ClientCredential{})
 		}},
 	}
 

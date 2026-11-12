@@ -23,7 +23,10 @@ func NewClientCredentialRepo(adapter *Adapter) *ClientCredentialRepo {
 	return &ClientCredentialRepo{adapter: adapter}
 }
 
-func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.ClientCredential) error {
+func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.ClientCredential) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.create.client_credential", "ClientCredentialRepo.Create")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return storage.NewStorageError("ClientCredentialRepo.Create", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -31,7 +34,7 @@ func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.C
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
-	_, err := r.adapter.db.ExecContext(execCtx,
+	_, err = r.adapter.db.ExecContext(execCtx,
 		`INSERT INTO client_credentials (id, agent_id, secret_hash, created_at, rotated_at)
 		 VALUES ($1, $2, $3, $4, $5)`,
 		credential.ID, credential.AgentID,
@@ -43,7 +46,10 @@ func (r *ClientCredentialRepo) Create(ctx context.Context, credential *storage.C
 	return nil
 }
 
-func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.AgentID) (*storage.ClientCredential, error) {
+func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.AgentID) (_ *storage.ClientCredential, err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.get.client_credential", "ClientCredentialRepo.GetByAgentID")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return nil, storage.NewStorageError("ClientCredentialRepo.GetByAgentID", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -52,7 +58,7 @@ func (r *ClientCredentialRepo) GetByAgentID(ctx context.Context, agentID id.Agen
 	defer cancel()
 
 	var cred storage.ClientCredential
-	err := r.adapter.db.GetContext(queryCtx, &cred,
+	err = r.adapter.db.GetContext(queryCtx, &cred,
 		`SELECT id, agent_id, secret_hash, created_at, rotated_at
 		 FROM client_credentials WHERE agent_id = $1`, agentID)
 	if err != nil {
@@ -75,7 +81,10 @@ func (r *ClientCredentialRepo) GetByClientID(ctx context.Context, clientID id.Cl
 	return r.GetByAgentID(ctx, agentID)
 }
 
-func (r *ClientCredentialRepo) Delete(ctx context.Context, agentID id.AgentID) error {
+func (r *ClientCredentialRepo) Delete(ctx context.Context, agentID id.AgentID) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.delete.client_credential", "ClientCredentialRepo.Delete")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return storage.NewStorageError("ClientCredentialRepo.Delete", storage.ErrorKindConnection, nil, "database not initialized")
 	}
@@ -95,7 +104,10 @@ func (r *ClientCredentialRepo) Delete(ctx context.Context, agentID id.AgentID) e
 	return nil
 }
 
-func (r *ClientCredentialRepo) Rotate(ctx context.Context, agentID id.AgentID, newCredential *storage.ClientCredential) error {
+func (r *ClientCredentialRepo) Rotate(ctx context.Context, agentID id.AgentID, newCredential *storage.ClientCredential) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.rotate.client_credential", "ClientCredentialRepo.Rotate")
+	defer func() { endSpan(err) }()
+
 	if r.adapter.db == nil {
 		return storage.NewStorageError("ClientCredentialRepo.Rotate", storage.ErrorKindConnection, nil, "database not initialized")
 	}
