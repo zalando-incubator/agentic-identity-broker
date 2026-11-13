@@ -76,6 +76,7 @@ func TestRefreshScopeSecurityRecordClassifications(t *testing.T) {
 		"synthetic-access-token-sentinel", "synthetic-refresh-token-sentinel", "synthetic-subject-token-sentinel",
 		"synthetic-client-assertion-sentinel", "synthetic-client-secret-sentinel", "synthetic-code-sentinel",
 		"synthetic-PKCE-verifier-sentinel", "synthetic-state-sentinel", "synthetic-sealed-JWE-sentinel",
+		"synthetic-query-sentinel", "synthetic-fragment-sentinel",
 		"https://redirect.invalid/?credential=synthetic-query-sentinel#synthetic-fragment-sentinel",
 	}
 	cause := errors.New(strings.Join(secrets, " "))
@@ -128,7 +129,10 @@ func TestRefreshScopeSecurityRecordClassifications(t *testing.T) {
 				f.snapshots.snapshot.Usability = servicescope.UsabilityUnverifiableTransient
 			}
 			f.provider.WithServiceScopes(servicescope.NewResolver(lookup, scopePermissionSets{}, scopePublicURL), servicescope.NewEvaluator(permissions, f.snapshots))
-			_, err = f.refresh(issued.RefreshToken, "")
+			before := grant.Copy()
+			refreshed, err := f.refresh(issued.RefreshToken, "")
+			assert.Nil(t, refreshed, "a refusal issues no successor credential")
+			assert.Equal(t, before, grant, "a refusal leaves the grant unchanged")
 			description := "requested service usability cannot be verified"
 			if tc.kind == "definitive" {
 				description = "scope " + githubScope + " is no longer satisfied; interactive authorization required"
@@ -142,6 +146,11 @@ func TestRefreshScopeSecurityRecordClassifications(t *testing.T) {
 			assert.Equal(t, tc.kind, record["error_kind"])
 			assert.Equal(t, f.agent.ID.String(), record["agent_id"])
 			assert.Equal(t, id.Principal("user@example.com").LogValue().String(), record["principal"])
+			assert.NotContains(t, record, "error")
+			assert.NotContains(t, record, "kind")
+			if tc.kind == "definitive" {
+				assert.Equal(t, scopeGitHubID.String(), record["service_id"])
+			}
 			for _, secret := range append(secrets, issued.AccessToken, issued.RefreshToken, f.secret, code, scopeVerifier) {
 				assert.NotContains(t, logs.String(), secret)
 			}

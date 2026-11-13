@@ -39,6 +39,7 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 		"synthetic-access-token-sentinel", "synthetic-refresh-token-sentinel", "synthetic-subject-token-sentinel",
 		"synthetic-client-assertion-sentinel", "synthetic-client-secret-sentinel", "synthetic-code-sentinel",
 		"synthetic-PKCE-verifier-sentinel", "synthetic-state-sentinel", "synthetic-sealed-JWE-sentinel",
+		"synthetic-query-sentinel", "synthetic-fragment-sentinel",
 		"https://redirect.invalid/?credential=synthetic-query-sentinel#synthetic-fragment-sentinel",
 	}
 	secret := strings.Join(secrets, " ")
@@ -51,7 +52,10 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 		{"binding", "oauth2.requested_service.scope_rejected", "WARN", "binding_mismatch", "definitive"},
 		{"resolution", "oauth2.requested_service.resolution_failed", "ERROR", "dependency_failed", "transient"},
 		{"evaluation", "oauth2.requested_service.evaluation_failed", "ERROR", "dependency_failed", "transient"},
-		{"focused consent", "oauth2.authorization.incremental_required", "INFO", "missing", ""},
+		{"missing", "oauth2.authorization.incremental_required", "INFO", "missing", ""},
+		{"not_selected", "oauth2.authorization.incremental_required", "INFO", "not_selected", ""},
+		{"required_scopes_uncovered", "oauth2.authorization.incremental_required", "INFO", "required_scopes_uncovered", ""},
+		{"unusable_definitive", "oauth2.authorization.incremental_required", "INFO", "unusable_definitive", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newRequestedFixture(t, nil, true)
@@ -80,14 +84,38 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 				services = unsafeScopeServices{cause: errors.New(secret)}
 			case "evaluation":
 				permissions = unsafeScopePermissions{cause: errors.New(secret)}
-			case "focused consent":
+			case "missing":
 				f.snapshots.snapshot.Usability = servicescope.UsabilityMissing
+			case "unusable_definitive":
+				f.snapshots.snapshot.Usability = servicescope.UsabilityUnusableDefinitive
+			case "not_selected", "required_scopes_uncovered":
+				grant, err := f.grants.FindByPrincipalAndAgent(context.Background(), requestedPrincipal, f.agent.ID)
+				require.NoError(t, err)
+				if tc.name == "not_selected" {
+					grant.GrantedPermissionSets[0].IncludedServiceIDs = nil
+				} else {
+					grant.GrantedPermissionSets[0].PermissionSetID = requestedTriageSet
+				}
 			}
 			svc := NewAuthorizationService(f.grants, newConnectedSessionRepository(), NewAgentClientResolver(agents, logger), f.svc.config, logger, f.svc.sessionTokenService).
 				WithRequestedServices(servicescope.NewResolver(services, requestedPermissionSets{}, requestedPublicURL), servicescope.NewEvaluator(permissions, f.snapshots))
+			grant, err := f.grants.FindByPrincipalAndAgent(context.Background(), requestedPrincipal, f.agent.ID)
+			require.NoError(t, err)
+			before := grant.Copy()
 			decision, err := svc.HandleAuthorization(context.Background(), req, requestedPrincipal)
 			require.NoError(t, err)
-			assert.NotEqual(t, "proceed", decision.Action)
+			assert.Equal(t, before, grant, "a refusal must not mutate the grant")
+			if tc.kind == "" {
+				token := consentToken(t, decision)
+				require.NotEmpty(t, token)
+				assert.NotContains(t, buf.String(), token)
+			} else {
+				code, description := "invalid_scope", notPermitted
+				if tc.kind == "transient" {
+					code, description = "server_error", "server error"
+				}
+				requireAuthorizationError(t, decision, code, description)
+			}
 			for _, sentinel := range secrets {
 				assert.NotContains(t, buf.String(), sentinel)
 			}
@@ -104,8 +132,17 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 			if tc.kind != "" {
 				assert.Equal(t, tc.kind, record["error_kind"])
 			}
-			if tc.name == "focused consent" {
+			assert.Equal(t, f.agent.ID.String(), record["agent_id"])
+			assert.NotContains(t, record, "error")
+			assert.NotContains(t, record, "kind")
+			if tc.kind == "" || tc.name == "evaluation" {
+				// The central principal policy is identity; the typed-call policy test
+				// guards against bypassing it with a pre-rendered principal.
 				assert.Equal(t, requestedPrincipal.LogValue().String(), record["principal"])
+			}
+			if tc.kind == "" {
+				assert.Equal(t, requestedGitHubID.String(), record["service_id"])
+				assert.NotContains(t, record, "error_kind")
 			}
 		})
 	}
@@ -118,7 +155,14 @@ func TestContinuationRedirectBuildDiagnosticDoesNotLogURL(t *testing.T) {
 	svc := NewAuthorizationService(f.grants, newConnectedSessionRepository(), f.svc.clientResolver, f.svc.config, logger, f.svc.sessionTokenService)
 	req := f.request(requestedGitHub)
 	req.RedirectURI = "%synthetic-redirect-secret?state=synthetic-state#synthetic-fragment"
-	svc.redirectError(context.Background(), req, "access_denied", descriptionSessionInvalid)
+	req.State = "synthetic-state"
+	req.SessionToken = "synthetic-sealed-JWE"
+	req.OriginalURL = "/oauth2/authorize?code=synthetic-code&code_verifier=synthetic-PKCE#synthetic-fragment"
+	decision := svc.redirectError(context.Background(), req, "access_denied", descriptionSessionInvalid)
+	assert.Equal(t, "error", decision.Action)
+	assert.Equal(t, "access_denied", decision.ErrorCode)
+	assert.Equal(t, descriptionSessionInvalid, decision.ErrorDesc)
+	assert.Empty(t, decision.RedirectURL, "redirect-build failure preserves the existing fallback")
 	assert.NotContains(t, buf.String(), "synthetic-")
 	var record map[string]any
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &record))

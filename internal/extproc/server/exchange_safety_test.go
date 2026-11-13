@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,11 +23,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/oauth2"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -253,15 +256,57 @@ func TestInvalidChallengeMetadataNeverReachesTelemetry(t *testing.T) {
 			recorder, reader := installSafetyTelemetry(t)
 			var logs bytes.Buffer
 			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-			server := NewServer(&extprocconfig.Config{}, &safetyExchanger{}, logger)
-			err := &BrokerExchangeError{StatusCode: 400, Code: "invalid_grant", Description: "Login required", ErrorURI: "https://broker.invalid/login", Scope: "https://broker.invalid/sessions/github"}
-			response, _ := server.exchangeErrorResponse(context.Background(), err, structpb.NewStringValue(value))
+			secrets := []string{
+				"synthetic-access-token", "synthetic-refresh-token", "synthetic-subject-token",
+				"synthetic-client-assertion", "synthetic-client-secret", "synthetic-code",
+				"synthetic-PKCE-verifier", "synthetic-state", "synthetic-sealed-JWE",
+				"synthetic-query", "synthetic-fragment", "synthetic-metadata-secret", value,
+			}
+			brokerErr := &BrokerExchangeError{StatusCode: 400, Code: "invalid_grant", Description: "Login required", ErrorURI: "https://broker.invalid/login", Scope: "https://broker.invalid/sessions/github"}
+			cause := fmt.Errorf("https://redirect.invalid/?credential=%s#synthetic-fragment: %w", strings.Join(secrets, "/"), brokerErr)
+			cfg := &extprocconfig.Config{Telemetry: extprocconfig.TelemetryConfig{Enabled: true, Traces: extprocconfig.TracesConfig{Enabled: true}, Metrics: extprocconfig.MetricsConfig{Enabled: true}}}
+			server := NewServer(cfg, &safetyExchanger{err: cause}, logger)
+			headers := &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{}}
+			request := safetyRequest("synthetic-subject-token", "https://resource.invalid/", headers)
+			request.MetadataContext.FilterMetadata[tokenExchangeMetadataNamespace].Fields[resourceMetadataURLFieldKey] = structpb.NewStringValue(value)
+			response := server.processRequestHeaders(context.Background(), request, headers)
 			require.NotNil(t, response.GetImmediateResponse())
-			assertSafetyTelemetry(t, recorder, reader, logs.String(), value, "synthetic-metadata-secret")
-			assert.Contains(t, logs.String(), `"level":"WARN"`)
-			assert.Contains(t, logs.String(), `"field":"resource_metadata_url"`)
-			assert.Contains(t, logs.String(), `"challenge.scope_present":true`)
-			assert.Contains(t, logs.String(), `"challenge.resource_metadata_present":false`)
+			expected := reauthChallengeResponse(brokerErr.ErrorURI, brokerErr.Description, brokerErr.Scope, "").GetImmediateResponse()
+			actual := response.GetImmediateResponse()
+			assert.Equal(t, expected.Status, actual.Status)
+			assert.Equal(t, expected.Headers, actual.Headers)
+			elicitationID := regexp.MustCompile(`"elicitationId":"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"`)
+			require.Regexp(t, elicitationID, string(actual.Body))
+			assert.JSONEq(t, elicitationID.ReplaceAllString(string(expected.Body), `"elicitationId":"generated"`),
+				elicitationID.ReplaceAllString(string(actual.Body), `"elicitationId":"generated"`),
+				"invalid advisory metadata changes no body field except the generated elicitation ID")
+			assertSafetyTelemetry(t, recorder, reader, logs.String(), secrets...)
+			var invalid, challenge int
+			for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte{'\n'}) {
+				var record map[string]any
+				require.NoError(t, json.Unmarshal(line, &record))
+				if record["field"] == resourceMetadataURLFieldKey {
+					invalid++
+					assert.Equal(t, "WARN", record["level"])
+					assert.NotContains(t, record, "event", "advisory diagnostics are exempt")
+				}
+				if present, ok := record["challenge.scope_present"]; ok {
+					challenge++
+					assert.Equal(t, true, present)
+					assert.Equal(t, false, record["challenge.resource_metadata_present"])
+				}
+			}
+			assert.Equal(t, 1, invalid)
+			assert.Equal(t, 1, challenge)
+			spans := recorder.Ended()
+			require.Len(t, spans, 1, "exercise the traced production request, not just the error helper")
+			assert.Equal(t, "extproc.token_exchange", spans[0].Name())
+			assert.Equal(t, trace.SpanKindServer, spans[0].SpanKind())
+			assert.Equal(t, codes.Unset, spans[0].Status().Code, "reauthentication is not a server failure")
+			for _, attr := range spans[0].Attributes() {
+				assert.False(t, strings.HasPrefix(string(attr.Key), "challenge."), "challenge presence is log-only")
+				assert.False(t, strings.HasSuffix(string(attr.Key), ".principal"), "no principal span attributes before #356")
+			}
 		})
 	}
 }
