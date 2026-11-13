@@ -159,7 +159,8 @@ just verify             # full gate, E2E last
   requires receivers to ignore unknown request fields. The user running this session chose
   "follow the standard: ignore unknown members and `properties`" and "keep the approved
   `ErrorResponse` body". ADR 045 §1, its revision history, the OpenAPI and the docs record this.
-  It is user direction in this session, not the pipeline approval.
+  It is user direction in this session, not the pipeline approval. The maintainer confirmed it on
+  2026-10-31 (see "Maintainer acceptance" below).
 
 ### Phase 0 handoff (T002–T005)
 
@@ -256,18 +257,34 @@ US4.6 `tests/e2e/authzen_delegation_compat_test.go:25`.
 - No UI: the existing consent and revocation flows are reused. No design-system components,
   Wireloom sequences, Playwright tests or screenshots are added.
 
+### Maintainer acceptance (2026-10-31)
+
+The maintainer accepted the four items raised at the end of the implementation session:
+
+1. The API-2 revision: unknown request members, AuthZEN `properties` and other `context`
+   members are ignored per AuthZEN 1.0, and error bodies keep `ErrorResponse`.
+2. Finding F-1: on the body path, consent after a denial takes effect once the existing ADR 012
+   5 s re-consent cooldown lapses; the exchange cache stays unchanged (recorded in ADR 045
+   Consequences).
+3. The approval record in ADR 045 (mjungsbluth, 2026-10-30, approval comment
+   `issuecomment-6504077937`).
+4. The Phase 0 resolver extraction as commit `b882d7b` in this PR instead of a separate PR.
+
+With item 1 confirmed, the four spec journeys were rechecked against the shipped OpenAPI. Journey
+3's statuses, `X-Request-ID` echo and `no-store` match, and its 401 excerpt leaves the body to the
+OpenAPI. The spec excludes `context.actor` support, which ignoring it satisfies. Journeys 1, 2 and 4
+match the implemented permit, denial and `input.context` shapes (T028, T079).
+
 ### Tasks left unchecked and why
 
 | Task | Reason | Needed to close |
 |---|---|---|
-| T002 | No maintainer-arranged separate refactor PR; the extraction is commit `b882d7b` in this PR, by the session user's choice | Maintainer accepts the in-PR extraction, or asks to split it out |
 | T027, T036, T053, T065, T080, T094, T097 | Semantic-red evidence was recorded for the 28 in-memory broker scenarios only; unit tests and the consumer/startup E2E tests were written alongside the implementation | Maintainer accepts the recorded evidence, or a reviewer reruns those tests against the pre-feature commit (they need the new packages to compile, so this requires compile-only scaffolding) |
 | T029–T031 | No separate compile-only scaffolding step was done; the code was implemented directly | Superseded by the implementation; close as not applicable if the maintainer agrees |
-| T028, T079 | The four spec journeys were not formally re-reviewed against the shipped OpenAPI; the API-2 unknown-member revision changes Journey 3's strictness wording | Maintainer review of the API-2 revision |
 | T044 | The deferred-holder matcher test and credential-free audit assertions exist; the full trace-ID equality across context, audit, access log and `traceresponse` for evaluation is not asserted end to end | Add the composed HTTP-harness assertion |
 | T059 | ExtProc logs carry `operation=delegation_resolution`, `delegation.cache` hit/miss and bounded categories, but no test captures server log output | Add captured-log tests |
 | T064 | US4.6 asserts the deprecation marker in E2E; no separate `authzen_compat_test.go` unit test | Add the unit test or accept the E2E coverage |
 | T071, T099, T100 | The agentgateway container image cannot be pulled here (403), so 5 ExtProc E2E specs (including the agentgateway `metadata_input_test.go` scenario) fail; the frontend Playwright suite and `just verify` were not run; three unrelated unit tests fail on the base commit in this sandbox | Run `just verify` on a capable runner |
-| T074, T091 | Depend on T002 and T059 | As above |
+| T091 | Depends on T059 | As above |
 
 Pre-extraction baseline (T003): on base `a5042d5`, `go test ./internal/domain/tokenexchange/` passed and the four exchange regression files ran 58/58 green. The results after the extraction were identical.
