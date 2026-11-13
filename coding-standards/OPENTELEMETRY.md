@@ -7,6 +7,8 @@ Scope: OpenTelemetry traces and metrics. Log records, including log records expo
 Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
 spec `017-opentelemetry-support` (SR-001 to SR-004), `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
+`docs/reference/telemetry.md` lists each span, metric and attribute that the code emits. `tools/telemetrydoc` generates it (section 9).
+
 ## 1. Provider Plumbing
 
 | Rule | Reason |
@@ -139,7 +141,7 @@ if err != nil {
 | `oauth2.refresh` | Third-party session refresh | `specs/029-proactive-token-refresh/contracts/observability.md` |
 | `encryption` | Encryption operations | ADR 012 |
 | `impersonation` | OAuth2 impersonation | ADR 032 |
-| `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented` |
+| `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented`, `docs/reference/telemetry.md` |
 
 - Use the canonical keys in this table. Do not make synonyms.
 
@@ -283,3 +285,18 @@ These data classes are prohibited in span names, span attributes, span events, s
 - [ ] Principals are set on spans only through `id.Principal.SpanAttribute` under a `.principal` key, and only where section 4.3 permits. No principal is a metric attribute.
 - [ ] The observability contract lists each new instrument.
 - [ ] A test asserts that credentials on this path are not in span attributes, and asserts each new metric's attribute set.
+- [ ] `docs/reference/telemetry.md` is regenerated with `just telemetry-doc` (section 9).
+
+## 9. Telemetry Reference
+
+`docs/reference/telemetry.md` is the reference for operators and agents that query traces and metrics. `tools/telemetrydoc` reads the code with `go/packages` and generates the page. It does not run the code.
+
+| Rule | Reason |
+|---|---|
+| After you add, rename, or remove a span, a metric, or an attribute, run `just telemetry-doc` and commit the page. `TestReferenceIsCurrent` fails while the page is out of date. | The page stays the same as the code in each pull request. |
+| Do not edit the page by hand. Change the code or `tools/telemetrydoc`. | The next generation overwrites hand edits. |
+| Pass a span name, a metric name, and an attribute key as a constant, or as a constant argument to a function that passes it on, as with `id.Principal.SpanAttribute(key)`. | Sections 3.2 and 4.1 already require constant names. The generator cannot list a name it cannot resolve. |
+| Set each attribute, span status, span name, and measurement where the generator can follow it to the span or the instrument. It follows variables, struct fields, closures, the parameters of functions that the module only calls directly, and the span in a context back to its `Start` call. It fails at each call that it cannot follow. | A call that the generator cannot follow would be missing from the page. |
+| Give an enumerated value a typed string constant (section 4.2). | The page lists the constants of the type as the value set. |
+
+The page does not cover the `otelchi` server spans and metrics, metrics that the SDK, the Go runtime, or a library creates, span events, resource attributes, or log records. The generator fails when a span event has attributes.
