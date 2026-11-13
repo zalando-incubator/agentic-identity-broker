@@ -126,6 +126,9 @@ Submit a review using `submit_pull_request_review` with your overall verdict. Se
 - Use `APPROVE` when there are no issues that need fixing.
 - Use `REQUEST_CHANGES` when there are issues that must be fixed before merging.
 - (Optionally) use `COMMENT` when you only have non-blocking observations.
+
+If the pull request's author is `zalando-incubator-agent-workflows[bot]`, always use `COMMENT`: this workflow reviews as that App, and GitHub rejects approving or requesting changes on its own pull request. Start the review body with `**Verdict: approve**` or `**Verdict: changes requested**` so a maintainer still sees your conclusion.
+
 Keep the overall review comment brief and grumpy.
 
 ### Step 6: Update Memory
