@@ -1,8 +1,8 @@
 # ADR 045: AuthZEN Delegation Policy Information Point
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-11: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6805417890)
 
-Latest approval scope: F1/P1 fail-closed permit/exchange identity consistency while retaining ADR 036 approval identity; F2/P2 restores ADR 028's original Status and moves its supersession banner; F3/P3 tracks the deferred exchange-provenance redesign; F4/P4 completes ExchangeResultBinding file/log naming. Prior ADR-2/API-7/D-8 approval covers the existing reuse, conflict, expiry and provenance limits; ADR-3 guidance uses follow-up issue #441. Earlier approvals remain in Revision history. The exchange-provenance redesign itself remains unapplied.
+Latest approval scope: F1/P1 replaces §10's issue-search link with existing provenance tracking issue #462. Prior F1/P1–F4/P4 approval on 2026-11-11 covers fail-closed permit/exchange identity consistency retaining ADR 036 approval identity, ADR 028's restored Status and supersession banner, deferred provenance tracking and ExchangeResultBinding naming. Prior ADR-2/API-7/D-8 approval covers the existing reuse, conflict, expiry and provenance limits; ADR-3 guidance uses follow-up issue #441. Earlier approvals remain in Revision history. The exchange-provenance redesign itself remains unapplied.
 **Date**: 2026-10-29 (accepted 2026-10-30)
 **Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
 `/oauth2/token` `granted_permission_sets` deprecation
@@ -211,11 +211,10 @@ conflicting bindings to one handle, not conflicting broker reads. The permit dea
 policy snapshot age and ADR 012 TTL bounds token retention; neither proves exchange provenance
 or provides a stronger race bound. This residual limitation is explicitly approved in D-8.
 
-**Future Work**: [Follow-ups for #292](https://github.com/zalando-incubator/agentic-identity-broker/issues?q=is%3Aissue%20in%3Atitle%20%22Follow-ups%20for%20%23292%22)
+**Future Work**: [Issue #462](https://github.com/zalando-incubator/agentic-identity-broker/issues/462)
 tracks the selected `/oauth2/token` grant-version and effective-scope redesign, its ADR/API
 approval, consistency contract and replacement of first-claim provenance inference. It does
-not authorize that redesign or provider downscoping in this PR. The link locates the tracking
-issue by its unique title because issue creation is applied after this session.
+not authorize that redesign or provider downscoping in this PR.
 
 
 ## Alternatives considered
@@ -280,6 +279,11 @@ issue by its unique title because issue creation is applied after this session.
   the standard's source text before the OpenAPI was frozen.
 
 ## Revision history
+
+- **2026-11-13 (same PR, before merge)**: `mjungsbluth` approved F1/P1 at
+  `2026-11-13T08:20:44Z` on [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6805417890).
+  §10 references existing issue #462 for the deferred exchange-provenance redesign instead
+  of an issue-title search. The provenance limitation and current exchange contract remain unchanged.
 
 - **2026-11-11 (same PR, before merge)**: `mjungsbluth` approved F1/P1–F4/P4 at
   `2026-11-11T18:57:51Z` on [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783).

@@ -514,10 +514,18 @@ Approval: [mjungsbluth's selected F1/P1–F4/P4 proposal](https://github.com/zal
 
 - [X] T130 F1/P1: Include principal/agent UUID in ExchangeResultBinding equality and require exchange identities to match the permit before any handle claim. Return terminal API-7 503 on identity mismatch/absence without approval creation, mutation, forwarding or identity-repair retry. Remove the approval-state permit override under ADR 036. Add production-exchanger tests for each differing/missing field on both paths, preserve matched/disabled approval tests, and amend US3.1 to expect 503 through the real broker/ExtProc. Observe compiling semantic red then green; keep scope/grant retry, freshness and wire text unchanged. Reconcile ADR 048, architecture, spec/plan and consumer contracts/docs.
 - [X] T131 F2/P2: Restore ADR 028's original `**Status**: Accepted` and move the existing ADR 048 partial-supersession note into a banner below its header, retaining the original decision's attribution.
-- [X] T132 F3/P3: Request the follow-up issue [Follow-ups for #292](https://github.com/zalando-incubator/agentic-identity-broker/issues?q=is%3Aissue%20in%3Atitle%20%22Follow-ups%20for%20%23292%22) for the selected `/oauth2/token` grant-version/effective-scope redesign and consistency contract; link ADR 048 §10 and FR-020. The title link locates the issue created after this session. No redesigned API or reconciliation removal is implemented here.
+- [X] T132 F3/P3: Reference the existing follow-up [Issue #462](https://github.com/zalando-incubator/agentic-identity-broker/issues/462) for the selected `/oauth2/token` grant-version/effective-scope redesign and consistency contract; link ADR 048 §10 and FR-020. No redesigned API or reconciliation removal is implemented here.
 - [X] T133 F4/P4: Rename `token_binding.go` and its test to `exchange_result_binding*.go`; change the two mismatch/conflict log messages to exchange-result vocabulary. Retain the API-7 response text and existing event/attribute identifiers; extend redacted-formatting checks for the added identity fields.
 
 Validation: `just check`, `just test`, `just extproc-test` (race), `just test-integration` and `just test-e2e-backend` passed; all 46 local feature acceptance scenarios passed (42 broker/consumer and four startup). US2.19 and container-backed suites remain deferred to downstream tests, not locally validated.
+
+## Approved apply-review remediation (2026-11-13)
+
+Approval: [mjungsbluth's selected F1/P1–F3/P3 proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6805417890), `2026-11-13T08:20:44Z`.
+
+- [X] T134 F1/P1: Reference existing provenance follow-up issue #462 instead of the issue-title search in `adrs/048-authzen-delegation-pip.md` §10, `spec.md` FR-020, `plan.md` and T132. Preserve the residual limitation and defer the exchange grant-version/effective-scope API and consistency redesign to that issue.
+- [X] T135 F2/P2: Extend US3.1 in `tests/e2e/delegation_context_journey_test.go` with matching exchange/permit identities and no rewriting proxy: tool call, pending elicitation, sync with exchange-derived owner pair, user approval, forwarded retry and one-time consumption. Retain the mismatch rejection variant (US3.1; ADR 036; Principle XIII).
+- [X] T136 F3/P3: Align `AGENTS.md` ExchangeResultBinding and PermitResolver entries with `ARCHITECTURE.md` §12: binding includes principal and agent UUID; permit principal is checked against, not substituted for, the exchange-response approval identity (Principle V; ADR 036).
 
 ## Dependencies & Execution Order
 
