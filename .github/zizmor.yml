@@ -8,4 +8,4 @@ rules:
     ignore:
       - 'grumpy-reviewer.lock.yml:58:3'
       - 'repo-ask.lock.yml:68:3'
-      - 'repo-assist.lock.yml:78:3'
+      - 'repo-assist.lock.yml:79:3'
