@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -130,6 +131,115 @@ func TestTokenBinding_FailedReplacementCannotForwardThePriorToken(t *testing.T) 
 			assert.GreaterOrEqual(t, status, 500)
 			assert.Nil(t, response.GetRequestHeaders(), "a failed replacement emits no Authorization mutation")
 			assert.Equal(t, int32(2), calls.Load())
+		})
+	}
+}
+
+type observedExchange struct {
+	inner     server.Exchanger
+	delivered chan struct{}
+	once      sync.Once
+}
+
+func (e *observedExchange) Exchange(ctx context.Context, subject, resource string) (server.ExchangeResult, error) {
+	result, err := e.inner.Exchange(ctx, subject, resource)
+	e.once.Do(func() { close(e.delivered) })
+	return result, err
+}
+
+func (e *observedExchange) Shutdown() {}
+
+func awaitBindingBarrier(t *testing.T, barrier <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-barrier:
+	case <-time.After(5 * time.Second):
+		t.Fatal("binding fixture did not reach its synchronization barrier")
+	}
+}
+
+func TestTokenBinding_PreservesIdenticalTokenReplacementAndDetachedDelivery(t *testing.T) {
+	tests := []struct {
+		name      string
+		updatedAt string
+		wantCalls int32
+	}{
+		{"compatible replacement is reused", "2026-10-26T10:00:00Z", 2},
+		{"incompatible replacement requires one exchange", "2026-10-26T10:01:00Z", 3},
+		{"matching detached result remains usable", "2026-10-26T09:59:00Z", 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, _ int32) {
+				bindingSuccess(w, "SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", 3600)
+			})
+			original := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
+			warm := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return original, nil }, exchanger)
+			require.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, warm, false)))
+			require.Equal(t, int32(1), calls.Load())
+
+			resolved := make(chan struct{})
+			release := make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			observed := &observedExchange{inner: exchanger, delivered: make(chan struct{})}
+			waitingPermit := original
+			waitingPermit.Context.Grant.UpdatedAt = tt.updatedAt
+			waiting := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) {
+				close(resolved)
+				<-release
+				return waitingPermit, nil
+			}, observed)
+			t.Cleanup(unblock)
+			response := make(chan *extprocv3.ProcessingResponse, 1)
+			go func() { response <- bindingHarnessCall(t, waiting, false) }()
+			awaitBindingBarrier(t, resolved)
+			awaitBindingBarrier(t, observed.delivered)
+
+			successorPermit := original
+			successorPermit.Context.Grant.UpdatedAt = "2026-10-26T10:00:00Z"
+			successor := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return successorPermit, nil }, exchanger)
+			assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, successor, true)))
+			assert.Equal(t, int32(2), calls.Load(), "a changed binding installs a new generation even when token bytes repeat")
+			unblock()
+			select {
+			case result := <-response:
+				assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, result))
+			case <-time.After(5 * time.Second):
+				t.Fatal("request holding the detached result did not complete")
+			}
+			assert.Equal(t, tt.wantCalls, calls.Load(), "compare-and-delete must preserve the replacement identity")
+			assert.Equal(t, int32(1), waiting.resolver.calls.Load())
+			assert.Equal(t, int32(1), waiting.policies.Load())
+			assert.Contains(t, waiting.lastInput.Load().(string), tt.updatedAt)
+			assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, successor, true)))
+			wantAfterSuccessor := tt.wantCalls
+			if tt.wantCalls == 3 {
+				wantAfterSuccessor++
+			}
+			assert.Equal(t, wantAfterSuccessor, calls.Load(), "the successor remains reusable unless replaced by the later incompatible permit")
+		})
+	}
+}
+
+func TestTokenBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentity(t *testing.T) {
+	for _, headerOnly := range []bool{false, true} {
+		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
+			exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, _ int32) {
+				bindingSuccess(w, "SYNTHETIC_NONCACHEABLE_TOKEN", 0)
+			})
+			permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
+			h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+			for i := range 2 {
+				assert.Equal(t, "Bearer SYNTHETIC_NONCACHEABLE_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
+				assert.Equal(t, int32(i+1), calls.Load(), "binding does not create a cache lifetime for expires_in=0")
+			}
+			result, err := exchanger.Exchange(context.Background(), "subject", "https://api.example.com/repos")
+			require.NoError(t, err)
+			assert.Equal(t, "alice@example.com", result.Principal)
+			assert.Equal(t, "agent-uuid", result.AgentID)
+			assert.Equal(t, map[string][]string{"from-exchange": {"x"}}, result.GrantedPermissionSets)
+			assert.Equal(t, int32(3), calls.Load())
 		})
 	}
 }
