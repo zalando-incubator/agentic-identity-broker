@@ -167,7 +167,8 @@ These data classes are prohibited at all levels, including `Debug`.
 | URL (CIMD `client_id`, `redirect_uri`, resource URI) | Scheme, host, and path only. If a registered ID exists, log the ID (`service_id`, `agent_id`), not the URL. |
 | Error from an external system | Typed metadata (`slog.LogValuer`), an enumerated `error_kind`, or an allowlisted code (section 4) |
 | User-Agent | `SecurityContext.UserAgent` or `security.TruncateUserAgent` |
-| Request method, path, client IP | `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`). Take values from `SecurityContext`. |
+| Request path | `middleware.SanitizeLogPath` (section 7) |
+| Request method, client IP | `middleware.SanitizeLogValue` |
 | Caller-supplied header (for example `X-Request-ID`) | Validate the format and limit the length before you log it. If it is not valid, generate a new value. |
 | JWT | Header and claim metadata only: `kid`, `alg`, `iss`, `aud`, `jti`, `exp`, validation failure reason |
 | JWK Set | `kid` list or diff (`DiffKeyIDs()`), not the set |
@@ -188,7 +189,13 @@ These data classes are prohibited at all levels, including `Debug`.
 ## 7. Untrusted Input
 
 - Put untrusted values only in attributes. Do not put them in the message.
-- Escape line breaks with `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`) and limit the length of raw header and path values.
+- Take request method, path, and client IP from `SecurityContext`.
+- Escape line breaks with `middleware.SanitizeLogValue`
+  (`internal/adapters/http/middleware`) and limit the length of raw header values.
+- For request paths, use `middleware.SanitizeLogPath`. The escaped attribute value
+  is at most 2048 bytes, including the visible `...[truncated]` suffix when
+  shortened. Truncate on a UTF-8 boundary. Apply the limit after escaping so escape
+  expansion cannot exceed the budget; do not change the request used for routing.
 - Log a classification, not the value. For example, log `reason=invalid_redirect_uri`, not the rejected URI. If an operator needs the value for diagnosis, log the derived form from section 6.2.
 - The `log/slog` JSON and text handlers escape line breaks in the message and in every attribute value, so a record written through the injected logger cannot forge a log line. For this reason `.github/workflows/codeql.yml` excludes the CodeQL query `go/log-injection`, which does not model that escaping. The `forbidigo` linter (`.golangci.yml`) fails a call to `fmt.Print*`, a `log` package function, or a `*log.Logger` method outside `cmd/` and `tools/`, so log output cannot bypass slog.
 
