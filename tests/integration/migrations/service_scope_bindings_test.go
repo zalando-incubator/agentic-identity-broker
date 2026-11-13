@@ -26,8 +26,16 @@ func TestMigration048ServiceScopeBindings(t *testing.T) {
 		VALUES ('legacy-refresh', 'request', '10000000-0000-0000-0000-000000000048', 'client', 'user@example.com',
 			'openid offline_access', '2030-01-01', NULL, NULL, '');
 	`))
-	codeSnapshot := `SELECT jsonb_agg(to_jsonb(c) - 'service_scope_bindings' ORDER BY code_hash)::text FROM authorization_codes c`
-	refreshSnapshot := `SELECT jsonb_agg(to_jsonb(r) - 'service_scope_bindings' ORDER BY signature)::text FROM refresh_token_sessions r`
+	codeSnapshot := `SELECT jsonb_agg(to_jsonb(c) ORDER BY code_hash)::text FROM (
+		SELECT id, code_hash, agent_id, principal, redirect_uri, code_challenge, scope,
+			expires_at, used_at, created_at, client_id, email, display_name
+		FROM authorization_codes
+	) c`
+	refreshSnapshot := `SELECT jsonb_agg(to_jsonb(r) ORDER BY signature)::text FROM (
+		SELECT signature, request_id, agent_id, client_id, principal, scope,
+			expires_at, used_at, created_at, email, display_name, grant_id, client_auth_method
+		FROM refresh_token_sessions
+	) r`
 	codesBefore, err := f.QuerySQL(t, codeSnapshot)
 	require.NoError(t, err)
 	refreshBefore, err := f.QuerySQL(t, refreshSnapshot)
