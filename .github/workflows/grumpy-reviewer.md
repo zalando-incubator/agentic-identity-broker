@@ -40,8 +40,9 @@ safe-outputs:
     run-success: "😤 Fine. [{workflow_name}]({run_url}) finished the review. It wasn't completely terrible. I guess. 🙄"
     run-failure: "😤 Great. [{workflow_name}]({run_url}) {status}. As if my day couldn't get any worse..."
 
-timeout-minutes: 10
+timeout-minutes: 20
 engine: pi
+model: copilot/claude-opus-5.5
 
 source: githubnext/agentics/workflows/grumpy-reviewer.md@139fa09ef17cde4135e696ff8e7af09bc5ddfa6e
 ---
@@ -83,6 +84,8 @@ Use the GitHub tools to get the pull request details:
 - Get the PR with number `${{ github.event.issue.number }}` in repository `${{ github.repository }}`
 - Get the list of files changed in the PR
 - Review the diff for each changed file
+
+If the pull request, its file list, or a changed file's diff cannot be read (a tool error, an empty or filtered result), stop and call `report_incomplete` naming what was missing. Never call `noop` for a pull request you could not read.
 
 ### Step 3: Analyze the Code
 
@@ -128,6 +131,8 @@ Submit a review using `submit_pull_request_review` with your overall verdict. Se
 - (Optionally) use `COMMENT` when you only have non-blocking observations.
 
 If the pull request's author is `zalando-incubator-agent-workflows[bot]`, always use `COMMENT`: this workflow reviews as that App, and GitHub rejects approving or requesting changes on its own pull request. Start the review body with `**Verdict: approve**` or `**Verdict: changes requested**` so a maintainer still sees your conclusion.
+
+Always submit a review, including when you find nothing to fix. `noop` is only for the duplicate invocation in Step 1.
 
 Keep the overall review comment brief and grumpy.
 
