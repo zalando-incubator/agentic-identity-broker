@@ -93,3 +93,11 @@ These finding IDs belong to the latest analysis, not the earlier freshness/audit
 
 All three findings are resolved in feature documents. API-2, API-3 and ADR-1 remain Proposed
 alongside the other approval items; no approval or implementation is recorded here.
+
+## Analysis run 40916930972/1 — stale deferred finding
+
+LOW I1 is resolved: `ARCHITECTURE.md:1164-1176` already documents metadata-only
+`subject_token` and `resource_uri` input with no raw-header fallback, consistent with ADR 036.
+Research now marks the earlier architecture note obsolete, and the plan and tasks consistently
+retain only the two number-collision findings as deferred. No architecture edit, new issue,
+requirement change, approval, or implementation is needed for this correction.
