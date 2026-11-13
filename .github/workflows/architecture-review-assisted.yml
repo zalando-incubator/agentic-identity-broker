@@ -57,15 +57,24 @@ jobs:
       always() && (needs.route.result == 'failure' || (needs.route.result == 'success' && needs.route.outputs.action != 'noop'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      issues: write
-      pull-requests: write
+    permissions: {}
     steps:
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: zalando-incubator
+          repositories: agentic-identity-broker
+          permission-issues: write
+          permission-pull-requests: write
       - name: React to the maintainer command
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           ROUTE_RESULT: ${{ needs.route.result }}
         with:
+          github-token: ${{ steps.app.outputs.token }}
           script: |
             await github.rest.reactions.createForIssueComment({
               ...context.repo,
@@ -88,6 +97,7 @@ jobs:
       comment: ${{ fromJSON(needs.route.outputs.comment || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -134,8 +144,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
     steps:
       - name: Checkout trusted automation only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,11 +151,23 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: .github/scripts
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: zalando-incubator
+          repositories: agentic-identity-broker
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
       - name: Publish the status comment on failure
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           NEEDS: ${{ toJSON(needs) }}
         with:
+          github-token: ${{ steps.app.outputs.token }}
           script: |
             const { report } = require('./.github/scripts/architecture-review-automation.cjs');
             await report({ github, context, needs: JSON.parse(process.env.NEEDS) });
