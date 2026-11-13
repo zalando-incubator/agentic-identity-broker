@@ -2,6 +2,12 @@
 
 **Feature**: `specs/054-authzen-delegation-pip` | **Plan**: [plan.md](./plan.md)
 
+**Latest outcome**: Implementation and all 102 task dispositions are complete. Section 12
+records current local validation and downstream results satisfying approved D-6. Earlier
+pending or blocked statements in §§7–11 describe those sessions, not the current outcome.
+The original test-first sequence was not performed; its approved exception does not rewrite
+that history. The approved `spec.md` and `plan.md` remain unchanged.
+
 This guide proves the feature end to end after implementation. It is a validation guide, not an
 implementation description. The contracts are in [contracts/](./contracts/). The value objects
 are in [data-model.md](./data-model.md).
@@ -604,3 +610,107 @@ in frozen `plan.md:652-654`, and the conditional historical-task closure remains
 A permitted design-phase update must replace the blanket Complexity Tracking statement with
 D-6's deviation/validation disposition; the implementation phase cannot edit that plan.
 I2's historical-standards notes are corrected without changing any checklist markers.
+
+## 12. Conditional validation closure (run 42087219381/1)
+
+**Outcome**: All 102 tasks are closed, including the ten historical obligations through the
+approved D-6 alternative-validation disposition. No application code, API, configuration,
+security guarantee, test assertion or approved scope changed in this session.
+
+### Approval and independent review
+
+The supplied approval is unchanged: `mjungsbluth`, `2026-11-05T16:38:49Z`, on
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255>.
+It covers all thirteen approval items, including D-6. ADR 047 already records this approval;
+its accepted design and revision history need no further change.
+
+D-6 conditions 1–2 use the independent contract-to-test review and concrete coverage table
+in §11, including the genuine null-scope red/green correction. The 44 separate scenario
+comments and `It()` locations were rechecked on the supplied head; the mapping in §11 is
+unchanged and none of those six feature files contains skipped, pending or focused blocks.
+US2.19 remains under `Label("docker")` at
+`tests/e2e/authzen_delegation_errors_test.go:112-152`. Its production-bootstrap journey uses
+real PostgreSQL, renames `user_grants`, asserts 500/no consent recovery and the bounded
+repository-failure audit detail, and disposes of the database fixture. All existing exchange
+regression assertions remain unchanged.
+
+### Current local gate (D-6 condition 3)
+
+Code and tests validated: supplied head `277fec06b8b0ae735a6cfbd01cd7b8468c140d52`.
+This session changes only feature evidence and task disposition. All commands below passed;
+E2E followed the static, unit, integration, docs and security gates as the final local guard.
+
+| Command | Result |
+|---|---|
+| `just check` | Formatting, vet and lint pass; 0 issues. |
+| `just test` | Fast Go/package tests pass with the recipe's race coverage. |
+| `just extproc-test` | ExtProc and startup package tests pass with `-race`. |
+| `bash "$SECURITY_SCAN_SCRIPT" .` | Prepared default-branch security scan passes; existing exceptions unchanged. |
+| `just web-test` | 29 files, 261 tests pass. |
+| `just cdk-test` | Pass. |
+| `just mock-sample-agent-test` | Pass. |
+| `just mock-upstream-oauth2-test` | Pass. |
+| `just test-integration` | Self-contained integration suites pass. |
+| `just docs-build` | Pass; existing non-fatal build warnings remain. |
+| `just test-e2e-backend` | 985 selected scenarios pass; 12 performance/container scenarios excluded by the existing recipe. |
+| `just test-e2e-frontend` | 67/67 pass. |
+| `ginkgo -v --no-color --procs=2 --skip="Agentgateway" ./tests/e2e/extproc/` | 102/102 selected non-container scenarios pass; 17 Agentgateway cases excluded locally. |
+| `ginkgo -v --no-color --label-filter="authzen-delegation && !docker" ./tests/e2e/` | 28/28 pass. |
+| `ginkgo -v --no-color --label-filter="delegation-context" ./tests/e2e/` | 11/11 pass, including re-consent/cooldown and canonical-ID parity. |
+| `ginkgo -v --no-color --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 pass. |
+
+### Downstream results on the supplied head (D-6 condition 4)
+
+[CI run 42073656945](https://github.com/zalando-incubator/agentic-identity-broker/actions/runs/42073656945)
+completed successfully on the exact supplied head
+`277fec06b8b0ae735a6cfbd01cd7b8468c140d52`. These are downstream observations, not local
+container validation:
+
+| Job | Downstream evidence |
+|---|---|
+| [Container tests / Docker E2E tests](https://github.com/zalando-incubator/agentic-identity-broker/actions/runs/42073656945/job/127408080178) | `just verify-e2e-docker-junit` passed; log reports 9/9 selected specs, 0 failed, 0 pending. The recipe selects all backend `docker` scenarios, including US2.19. The 988 excluded non-docker scenarios are not container passes. |
+| [Container tests / Infra integration tests](https://github.com/zalando-incubator/agentic-identity-broker/actions/runs/42073656945/job/127408080289) | `just verify-integration-infra-junit` step and job succeeded; JUnit artifact upload succeeded. This is the downstream counterpart of `just test-integration-infra`. No per-test count is asserted from the job status. |
+| [ExtProc E2E tests](https://github.com/zalando-incubator/agentic-identity-broker/actions/runs/42073656945/job/127408072691) | Full ExtProc suite reports 119/119 passed, 0 failed, 0 pending, 0 skipped, including all 17 Agentgateway container cases excluded locally. |
+
+The artifact inventory also lists `e2e-docker-test-results`,
+`integration-infra-test-results` and `e2e-extproc-test-results`. Archive downloads returned
+HTTP 404, so this record relies on the accessible GitHub job/step results and suite logs,
+not an inspection of the unavailable XML archives. The Docker and ExtProc log summaries
+establish that every selected scenario passed. No container runtime was used locally.
+Any new pushed evidence-only commit remains subject to the workflow's downstream validation;
+these results apply only to the supplied head, not to a future commit.
+
+### Historical task disposition (D-6 condition 5)
+
+For every row, the original sequence was **not performed; covered by approved D-6**. The
+checked task marker records approved alternative-validation closure, never historical TDD
+compliance or a retrospective scaffold replay.
+
+| Task | Original obligation and closure evidence |
+|---|---|
+| T027 | Original 44-scenario test-first sequence unavailable. Retain the limited historical 28-scenario broker red run (§7); current 44-scenario review/mapping (§11), local 43-scenario gate and downstream US2.19 result above satisfy D-6 instead. |
+| T029 | Compile-only broker domain scaffolding not performed; existing typed-domain contract review (§11) and current package/acceptance gates provide alternative validation. |
+| T030 | Nonfunctional HTTP/builder/routing scaffolding not performed; request/response, deferred identity and production-bootstrap review (§11), package and broker E2E gates provide alternative validation. |
+| T031 | Nonfunctional ExtProc scaffolding not performed; typed input/config/cache/order/startup review (§11), race tests and full local/downstream ExtProc journeys provide alternative validation. |
+| T036 | Original broker unit semantic-red sequence not performed; independent broker test review and unchanged exchange regression gates remain the alternative, not a claim that a later green run was red evidence. |
+| T053 | Original consumer unit semantic-red sequence not performed; independent client/cache/input/concurrency review, genuine later null-scope correction evidence (§11), race and journey gates satisfy the approved alternative. |
+| T065 | Original startup/config semantic-red sequence not performed; independent defaults/precedence/discovery/credential-exclusion review, package and startup/full ExtProc gates satisfy the approved alternative. |
+| T080 | Original full acceptance red sequence not performed; retain authentic limited red evidence, the 44 separate-scenario mapping and combined local/downstream acceptance results. |
+| T094 | Original unit test-first sequencing not performed; retain isolated `b882d7b` refactor and unchanged-regression record (§7), independent review and the authentic later-correction red/green evidence (§§8,11). |
+| T097 | Original acceptance test-first sequencing not performed; reviewed full journeys and current local/downstream green evidence close only the approved alternative-validation obligation. |
+
+D-6's scope, residual risk and test-first requirement for all new corrections are unchanged.
+The earlier §11 statement that current-head downstream evidence was absent is superseded by
+these results. No task or checklist item remains unchecked.
+
+### Frozen-plan wording (reanalysis LOW I1)
+
+`plan.md:652-654` still contains the obsolete blanket statement that no constitutional
+violation needs justification. The authoritative D-6 document, supplied approval and this
+closure record explicitly preserve the historical VIII/XIII deviation and its completed
+alternative validation. ADR 047's partial supersession of ADR 028 separately follows
+Principle II. This implementation leaves the frozen plan unchanged as required; it does not
+claim the source wording was repaired. The remaining LOW wording inconsistency is disclosed,
+not used to gate independently completed implementation or to conceal the original deviation.
+A later authorized design-phase edit can reconcile that summary without changing any
+approved requirement, runtime behavior or validation obligation.
