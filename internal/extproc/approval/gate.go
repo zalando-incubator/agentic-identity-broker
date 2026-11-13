@@ -44,7 +44,9 @@ type Gate struct {
 }
 
 func NewGate(cache *Cache, broker Broker) *Gate {
-	decisionCounter, err := otel.GetMeterProvider().Meter("extproc").Int64Counter("extproc.approval.gate.decisions")
+	decisionCounter, err := otel.Meter("extproc").Int64Counter("extproc.approval.gate.decisions",
+		metric.WithDescription("Number of approval gate decisions by outcome"),
+		metric.WithUnit("{decision}"))
 	if err != nil {
 		slog.Warn("failed to create approval gate decision counter instrument", "error", err)
 	}
