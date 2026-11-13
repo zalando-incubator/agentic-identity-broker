@@ -9,21 +9,120 @@ import (
 	"testing"
 	"time"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
+	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 )
 
 type observedDelegationResolver struct {
-	hit bool
-	err error
+	hit    bool
+	err    error
+	result *delegation.Result
 }
 
 func (r observedDelegationResolver) Resolve(context.Context, string, string) (delegation.Result, bool, error) {
+	if r.result != nil {
+		return *r.result, r.hit, r.err
+	}
 	return delegation.Result{Deadline: time.Now().Add(time.Minute), Context: delegation.Context{Principal: "context-principal-marker"}}, r.hit, r.err
 }
 func (observedDelegationResolver) Shutdown() {}
+
+type permitBindingExchanger struct {
+	safetyExchanger
+	bindingErr error
+}
+
+func (e *permitBindingExchanger) ExchangeBound(context.Context, string, string, *ExchangeResult, TokenBinding) (ExchangeResult, error) {
+	return ExchangeResult{Token: "exchanged-token-secret-sentinel"}, e.bindingErr
+}
+
+type permitAuthorizer struct{}
+
+func (permitAuthorizer) Evaluate(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+	return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+}
+func (permitAuthorizer) Stop(context.Context) {}
+
+func TestDelegationUnavailableSpansAndLogs(t *testing.T) {
+	for _, headerOnly := range []bool{false, true} {
+		for _, failure := range []string{"unavailable", "permit expired", "binding conflict", "invalid grant timestamp"} {
+			path := "body"
+			if headerOnly {
+				path = "header-only"
+			}
+			t.Run(path+"/"+failure, func(t *testing.T) {
+				recorder, reader := installSafetyTelemetry(t)
+				var logs bytes.Buffer
+				logger := slog.New(slog.NewJSONHandler(&logs, nil))
+				now := time.Now()
+				permit := delegation.Result{Deadline: now.Add(time.Minute), Context: delegation.Context{
+					Principal: "context-principal-marker", Grant: delegation.Grant{UpdatedAt: "2026-10-26T09:59:00Z"},
+				}}
+				resolver := observedDelegationResolver{result: &permit}
+				exchanger := &permitBindingExchanger{}
+				wantKind := KindUnavailable
+				wantEvent := "extproc.delegation_context.unavailable"
+				wantBody := delegationUnavailableBody
+				switch failure {
+				case "unavailable":
+					resolver.err = errors.New("dependency-cause-marker")
+				case "permit expired":
+					permit.Deadline = now
+					wantEvent = "extproc.delegation_context.permit_expired"
+				case "binding conflict":
+					exchanger.bindingErr = ErrTokenBindingConflict
+					wantBody = delegationBindingUnavailableBody
+				case "invalid grant timestamp":
+					permit.Context.Grant.UpdatedAt = "grant-timestamp-marker"
+					wantKind = KindInvalidResponse
+				}
+				cfg := &extprocconfig.Config{}
+				cfg.Telemetry.Enabled = true
+				cfg.Telemetry.Traces.Enabled = true
+				s := NewServerWithAuthorizer(cfg, exchanger, permitAuthorizer{}, logger).WithDelegationResolver(resolver)
+				s.now = func() time.Time { return now }
+				method := "POST"
+				if headerOnly {
+					method = "GET"
+				}
+				headers := &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{{Key: ":method", RawValue: []byte(method)}}}}
+				req := safetyRequest("subject-token-marker", "https://resource.example/private-marker", headers)
+				response, state := s.processRequestHeadersOPA(context.Background(), headerOnly, req, headers)
+				if headerOnly {
+					require.NotNil(t, state)
+					response = s.processHeadersOnlyOPA(state.requestContext, state)
+				}
+				require.NotNil(t, response.GetImmediateResponse())
+				assert.Equal(t, int32(503), int32(response.GetImmediateResponse().GetStatus().GetCode()))
+				assert.JSONEq(t, wantBody, string(response.GetImmediateResponse().Body))
+				spans := recorder.Ended()
+				require.Len(t, spans, 1)
+				span := spans[0]
+				assert.Equal(t, "extproc.token_exchange", span.Name())
+				assert.Equal(t, trace.SpanKindServer, span.SpanKind())
+				assert.Equal(t, otelcodes.Error, span.Status().Code)
+				attributes := map[string]string{}
+				for _, attr := range span.Attributes() {
+					attributes[string(attr.Key)] = attr.Value.AsString()
+				}
+				assert.Equal(t, string(wantKind), attributes["error.type"])
+				var record map[string]any
+				require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
+				assert.Equal(t, "WARN", record["level"])
+				assert.Equal(t, wantEvent, record["event"])
+				assertSafetyTelemetry(t, recorder, reader, logs.String(), "subject-token-marker", "exchanged-token-secret-sentinel", "context-principal-marker", "dependency-cause-marker", "private-marker", "grant-timestamp-marker")
+			})
+		}
+	}
+}
 
 func TestDelegationExpiredLog(t *testing.T) {
 	var logs bytes.Buffer
@@ -79,6 +178,14 @@ func TestDelegationLogs_ContainOnlyBoundedMetadata(t *testing.T) {
 					event = "extproc.delegation_context.denied"
 				}
 				assert.Equal(t, event, record["event"])
+				if tt.detail == "delegation_unavailable" {
+					category := delegation.CategoryUnavailable
+					if tt.name == "invalid response" {
+						category = delegation.CategoryInvalidResponse
+					}
+					assert.Equal(t, category, record["error_kind"])
+					assert.NotContains(t, record, "delegation.error")
+				}
 			}
 			for _, sensitive := range []string{"subject-token-marker", "assertion-marker", "provider-token-marker", "context-principal-marker", "dependency-cause-marker", "private-marker"} {
 				assert.NotContains(t, logs.String(), sensitive)

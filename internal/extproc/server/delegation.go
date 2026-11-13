@@ -61,7 +61,7 @@ func (s *Server) resolveDelegation(ctx context.Context, logger *slog.Logger, sub
 			if errors.As(err, &resolveErr) {
 				category = resolveErr.Category
 			}
-			logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "delegation.error", category), slog.LevelWarn, "delegation context unavailable", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable))
+			logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", category), slog.LevelWarn, "delegation context unavailable", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable))
 		}
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func delegationFailureResponse(err error) (*extprocv3.ProcessingResponse, Diagno
 		})
 		return immediateResponse(httpv3.StatusCode_Forbidden, string(body)), NewDiagnostic(StageClientAuthorization, DetailDelegationDenied)
 	}
-	return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationUnavailableBody), NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+	return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationUnavailableBody), NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
 }
 
 // delegationExpired rejects a permit whose deadline has passed before a policy evaluation.
@@ -90,7 +90,7 @@ func (s *Server) delegationExpired(ctx context.Context, logger *slog.Logger, res
 	if s.now().Before(result.Deadline) {
 		return nil, false
 	}
-	logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.permit_expired", "operation", "delegation_resolution"), slog.LevelWarn, "delegation permit expired before policy evaluation", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable))
+	logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.permit_expired", "operation", "delegation_resolution"), slog.LevelWarn, "delegation permit expired before policy evaluation", NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable))
 	return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationUnavailableBody), true
 }
 

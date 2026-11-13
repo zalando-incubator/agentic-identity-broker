@@ -567,7 +567,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 			return response, nil
 		}
 		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
-			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
 			return response, nil
 		}
 	}
@@ -686,7 +686,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 			return response
 		}
 		if response, expired := s.delegationExpired(ctx, logger, result); expired {
-			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
 			return response
 		}
 		state.delegation = result
@@ -728,7 +728,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 	}
 	if state.delegation != nil {
 		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
-			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
 			return response
 		}
 	}
@@ -962,11 +962,17 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 
 func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
 	if errors.Is(err, ErrTokenBindingConflict) {
-		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationBindingUnavailableBody), NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+		diagnostic := NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
+		logger := loggerFromContext(ctx, s.logger)
+		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindUnavailable), slog.LevelWarn, "delegation token binding conflicted", diagnostic)
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationBindingUnavailableBody), diagnostic
 	}
 	var delegationErr *delegation.Error
 	if errors.As(err, &delegationErr) {
-		return delegationFailureResponse(delegationErr)
+		diagnostic := NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindInvalidResponse)
+		logger := loggerFromContext(ctx, s.logger)
+		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindInvalidResponse), slog.LevelWarn, "delegation grant timestamp invalid", diagnostic)
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationUnavailableBody), diagnostic
 	}
 	metadata := metadataFromError(ctx, err)
 	diagnostic := diagnosticFromError(ctx, err)

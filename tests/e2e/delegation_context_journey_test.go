@@ -10,6 +10,7 @@ import (
 	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
@@ -320,10 +321,34 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 		j := newDelegationJourney(time.Minute, false)
 		headersResp, bodyResp := j.BodyCall(authzenRepoResource)
 		Expect(bodyResp).To(BeNil())
-		status, body := immediateJSON(headersResp)
-		Expect(status).NotTo(BeZero())
-		Expect(body["error"]).NotTo(Equal("service_unavailable"))
-		Expect(body["error_description"]).NotTo(HavePrefix("delegation denied"))
+		Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
+		raw := extprochelpers.ExtractImmediateResponseBody(headersResp)
+		var envelope struct {
+			Error struct {
+				Data struct {
+					Elicitations []struct {
+						ID string `json:"elicitationId"`
+					} `json:"elicitations"`
+				} `json:"data"`
+			} `json:"error"`
+		}
+		Expect(json.Unmarshal([]byte(raw), &envelope)).To(Succeed())
+		Expect(envelope.Error.Data.Elicitations).To(HaveLen(1))
+		elicitationID := envelope.Error.Data.Elicitations[0].ID
+		_, err := uuid.Parse(elicitationID)
+		Expect(err).NotTo(HaveOccurred())
+		const message = "User session is unavailable. Please re-authenticate."
+		recoveryURI := j.broker.Enduser.BaseURL() + "/api/third-party/" + j.broker.Repo.ID.String() +
+			"/oauth2/authorize?redirect_uri=" + url.QueryEscape(j.broker.Enduser.BaseURL()+"/sessions")
+		expected, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": nil,
+			"error": map[string]any{"code": -32042, "message": message,
+				"data": map[string]any{"elicitations": []map[string]any{{
+					"mode": "url", "elicitationId": elicitationID, "url": recoveryURI, "message": message,
+				}}}},
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(raw).To(MatchJSON(expected))
 		Expect(j.broker.EvaluationCount()).To(Equal(1), "the delegation permitted; exchange failure decided")
 	})
 
