@@ -80,3 +80,16 @@ was regenerated after these decisions: T056 implements the typed direct members,
 T049/T050/T052/T057/T058 test the decided freshness semantics and the typed context mapping.
 Formal sign-off of the contracts and the ADR draft is tracked in the plan's Approval Items. The MEDIUM C1 Docker-label finding
 from the previous analysis is addressed in the task and validation documents: T006/T023/T098 require the `docker` label on US2.19, `just test-e2e-docker` and a capable runner; `quickstart.md` distinguishes the 28 non-Docker broker scenarios from the full 29. Runtime verification remains implementation work.
+
+## Analysis run 40902274709/1 — consistency remediation
+
+These finding IDs belong to the latest analysis, not the earlier freshness/audit findings above.
+
+| Finding | Resolution | Traceability |
+|---|---|---|
+| MEDIUM I1 — stale release baseline | Proposed end-user API `1.1.0` → `1.2.0`; keep exchange fields populated and later removal separately approved as `2.0.0`. Earlier review direction does not approve the corrected version. Alternative: reuse `1.1.0`, losing a distinct additive revision. | Contract §3; research R12; ADR §8; plan API-3; T013/T014/T070; spec Clarifications |
+| MEDIUM I2 — permit schema/consumer mismatch | Add `permission_sets.minItems: 1`, `subject.id.minLength: 1`, and `minLength: 1` for every optional `canonical_id`. Keep optional omissions and empty scope/service arrays valid. Retain the existing typed consumer invariants rather than relax validation. | Contract §2.2; FR-007/FR-008; plan API-2; data model §3.3.1 (unchanged); T014/T033/T049 |
+| LOW I3 — obsolete next-phase handoff | Record that R15 reconciliation and regeneration of the 101-task list are complete; retain sign-off, final-standard verification and implementation gates. | Spec Clarification handoff |
+
+All three findings are resolved in feature documents. API-2, API-3 and ADR-1 remain Proposed
+alongside the other approval items; no approval or implementation is recorded here.
