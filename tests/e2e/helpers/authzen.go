@@ -9,8 +9,8 @@ import (
 
 // AuthZEN request values used by the broker's Access Evaluation endpoint.
 const (
-	AuthZENSubjectTypeJWT        = "urn:ietf:params:oauth:token-type:jwt" // #nosec G101 -- RFC-defined token type URI, not a credential.
-	AuthZENActionTokenExchange   = "urn:ietf:params:oauth:grant-type:token-exchange"
+	AuthZENSubjectTypeJWT        = "urn:ietf:params:oauth:token-type:jwt"            // #nosec G101 -- RFC-defined token type URI, not a credential.
+	AuthZENActionTokenExchange   = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC 8693 grant type URI, not a credential.
 	AuthZENResourceTypeProtected = "protected_resource"
 	AuthZENEvaluationPath        = "/access/v1/evaluation"
 	AuthZENConfigurationPath     = "/.well-known/authzen-configuration"
