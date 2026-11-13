@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-authzen-delegation-pip` | **Plan**: [plan.md](./plan.md)
 
-**Latest outcome**: Partial implementation (run 42297225880/1): T103's approved D-7 telemetry migration is implemented and validated, including namespace registration and query migration. Token binding remains unfinished. The prepared security gate now fails on GO-2026-6911 in the existing sample-agent `mcp-go v1.4.0` dependency, with no fixed version reported. The previous compression finding is no longer the blocker. Follow-up issue creation was requested, but T104 still awaits its published URL. Current inventory: 123 tasks, 109 checked and 14 unchecked. See §16 for current evidence; historical D-6 does not cover new work.
+**Latest outcome**: Partial implementation (run 42381635025/1): 14 new retry-failure and shared-first-use cases compile and fail semantically, extending T111/T112 coverage. Binding runtime, terminal-conflict coverage and US3.13 remain unfinished. Static, security, integration and independent regression gates pass; unit suites and US3.11/US3.12 remain red. T103 and issue-backed T104 retain their completed approval records. Current inventory: 123 tasks, 112 checked and 11 unchecked. See §19 for current evidence; historical D-6 does not cover new work.
 
 This guide proves the feature end to end after implementation. It is a validation guide, not an
 implementation description. The contracts are in [contracts/](./contracts/). The value objects
@@ -1093,3 +1093,82 @@ No additional sign-off or permission is needed to continue. Resume implementatio
 remaining test-authoring and semantic-red gate, then runtime binding and green verification.
 US2.19, `just test-e2e-docker`, `just test-integration-infra` and Agentgateway-backed tests
 remain deferred to downstream container tests on the pushed commit, never validated locally.
+
+## 19. Retry-failure and competing-first-use tests (run 42381635025/1)
+
+### Outcome and approval boundary
+
+Partial implementation: T111/T112 have 14 additional semantic-red cases; neither task is
+complete. No production behavior, signature, approval, configuration, dependency or contract
+changes. T001's supplied approval by `mjungsbluth` at `2026-11-06T15:30:38Z` on
+https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728
+continues to cover ADR-2/API-7/ADR-3/D-7/D-8. T103/T104 remain completed. `spec.md`,
+`plan.md` and the requirements checklist are unchanged. No new sign-off is needed.
+
+The fixture extraction is isolated in preceding commit `a089e228`: existing successful
+non-cacheable/disabled controls and the direct-context/body-precedence tests pass unchanged
+before and after it. It adds request-aware callbacks and per-fixture configuration without
+changing existing fixture responses. This is a test-helper refactor, not runtime binding.
+The pre-existing replacement-expiry test remains red and is not claimed as a passing baseline.
+
+### Test-first assertions and observed failures
+
+New file: `internal/extproc/server/exchanger_binding_failure_test.go`.
+
+| Test | Location | New coverage and observed semantic red |
+|---|---|---|
+| `TestTokenBinding_ReplacementFailuresRetainExchangeErrorHandling` | `:22` | Ten cases, body/header-only for broker 503, timeout, malformed success, circuit-open and reauthentication. A changed permit must not emit the prior Authorization result. Non-recovery failures retain 500 handling, open circuit retains 503, and reauthentication retains the 403 insufficient-scope challenge/JSON-RPC recovery body and tokenless five-second cooldown. Current code returns RequestHeaders instead of ImmediateResponse before any replacement is attempted. |
+| `TestTokenBinding_CompetingFirstUseOfSharedResults` | `:121` | Cacheable and non-cacheable successful-result copies are delivered to two body requests before a shared resolver barrier releases different live permits. Exactly one may forward the initial result; the other must exchange once more. Current code forwards the initial token twice and makes one broker call instead of two. The wrapper delivers the same production result to both callers; this is not evidence of actual same-flight retry delivery. |
+| `TestTokenBinding_CanceledReplacementCannotForwardPriorResult` | `:170` | Body/header-only requests must enter the required replacement exchange before cancellation, then emit no response token and finish with gRPC Canceled. The broker barrier is released during cleanup. Current code instead returns Authorization-bearing RequestHeaders before the replacement begins. Cancellation after retry entry is authored, not yet reached or green-validated. |
+
+Command: `go test -race ./internal/extproc/server -run '^TestTokenBinding_(ReplacementFailuresRetainExchangeErrorHandling|CompetingFirstUseOfSharedResults|CanceledReplacementCannotForwardPriorResult)$' -count=1`.
+All 14 cases compile and fail semantically, with no race warning or pending tests. Existing
+passing assertions were not weakened. No scheduler sleep, custom production clock, token-byte
+identity logic or test-only production API is added. Tokens in assertions are synthetic.
+
+The new failure matrix does not certify the as-yet-unreached timeout, cancellation, breaker
+or cooldown branches as correct. Their current failure is the missing replacement operation.
+Shared first-use coverage does not close the required real singleflight and terminal-conflict
+permutations in T111, binding-aware port stubs in T112, or the complete US3.13 journey.
+
+### Current validation
+
+| Command | Result |
+|---|---|
+| `just check` | Pass, format/vet/lint with 0 issues. |
+| `just test` | Fails only in seven unfinished binding test functions, including the three new functions above. |
+| `just extproc-test` | Same seven semantically red functions; no race warning. All other ExtProc packages pass. |
+| `just test-integration` | Pass, including delegation producer/consumer contract conformance. |
+| `just web-test` | Pass, 261 tests. |
+| `just cdk-test` | Pass. |
+| `just mock-sample-agent-test` | Pass. |
+| `just mock-upstream-oauth2-test` | Pass. |
+| `bash "$SECURITY_SCAN_SCRIPT" .` | Pass using the prepared default-branch scan and its existing scoped exceptions. No scanner, dependency or exception changes. |
+| `just docs-build` | Pass. |
+| `just test-e2e-backend` | 999 pass, 2 fail: US3.11/US3.12 still do not perform the required replacement exchange. The recipe selects 1001 scenarios; its 19 excluded scenarios are not validated. |
+| `just test-e2e-frontend` | Pass, 67 scenarios. |
+| `ginkgo -v --no-color --procs=2 --skip='Agentgateway' ./tests/e2e/extproc/` | 103 non-container scenarios pass; 17 Agentgateway scenarios are excluded and not validated. |
+| `ginkgo -v --no-color --label-filter='authzen-delegation && !docker' ./tests/e2e/` | 28 pass. |
+| `ginkgo -v --no-color --label-filter='delegation-context' ./tests/e2e/` | 11 pass, US3.11/US3.12 fail. US3.13 is absent, not skipped or validated. |
+| `ginkgo -v --no-color --label-filter='delegation-context-startup' ./tests/e2e/extproc/` | 4 pass. |
+
+### Unfinished work
+
+- T111: real singleflight initial/retry delivery, typed terminal-conflict outcomes, and all
+  remaining ownership/delete/delivery permutations need assertions and genuine red evidence.
+- T112: binding-aware port stubs, precedence before binding, terminal API-7 mapping and the
+  remaining retry/body/batch integration cases are incomplete. Existing expiry checks remain.
+- T122: the barrier-controlled US3.13 complete journey on both paths is not authored.
+- T113: the complete test-first prerequisite remains open; passing old behavior and these
+  additional red cases do not replace its missing unit/E2E coverage.
+- T114–T117: binding types/port, shared identities/cells, cache deletion/retry, integration,
+  terminal conflict and safe mismatch diagnostic remain unimplemented behind T113.
+- T118: complete binding architecture/glossary/operator guidance remains unfinished.
+- T119/T120: green acceptance and current full compliance remain unfinished. The passing
+  independent checks above do not make the failed unit/consumer gates successful.
+
+All 11 boxes remain unchecked. This session is **blocked**, not feature completion. Resume
+with the remaining concurrency/terminal-conflict test authoring and US3.13, then binding
+runtime and green verification under the supplied approval. Container-backed US2.19,
+`just test-e2e-docker`, `just test-integration-infra` and Agentgateway suites are deferred to
+downstream tests on the pushed commit, never claimed validated locally or a sandbox blocker.
