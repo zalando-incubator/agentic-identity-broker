@@ -684,6 +684,52 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
   `delegation` client and `server` unit tests cover unknown-member exclusion. Their permit
   fixtures carry an unknown member at every object level.
 
+## R19. Permit-bound reuse of exchanged tokens (F1, maintainer direction 2026-11-06)
+
+**Stakeholder** (Proposed, approval item ADR-2): `mjungsbluth` directed in the planning
+command that the permit is authoritative for upstream scopes.
+
+**Finding**: Before this decision, enabled mode refreshed the policy input every
+`min(max-age, max_staleness)`, but the ADR 012 cache forwarded the exchanged token until its
+own expiry, up to `cache.max_ttl`. After a grant narrowed, policy saw the narrowed
+`resource.scopes` while upstream could still receive the token exchanged under the broader
+grant.
+
+**Decision**: Each ADR 012 token entry records a token binding: the set of the permit's
+`resource.scopes` and the instant of `grant.updated_at`. In enabled mode ExtProc forwards a
+cached token only when its binding equals the current request's permit. On a difference it
+removes the entry (compare-and-delete on the same token), exchanges again once, binds the new
+token, and forwards that token. A failed re-exchange uses existing exchange-error handling and
+never falls back to the removed token. Unbound entries are bound by the first permit that uses
+them. Disabled mode, the cache key, TTLs, and the D-5 cooldown are unchanged. The design and
+rules are in the [ADR 048 revision draft](./adr-048-revision-permit-bound-tokens.md), contract §3.1, and data model §3.6.
+
+**Rationale**:
+
+- The decision follows the maintainer's direction and closes the gap between policy freshness
+  and forwarded-token freshness without a broker contract change.
+- Comparison uses permit members that ExtProc already validates (data model §3.3.1). Comparing
+  sets and instants avoids re-exchanges caused by ordering or timestamp formatting.
+- Compare-and-delete keeps a concurrent request's freshly bound token in the cache.
+- The cost is at most one extra broker exchange per grant change and cache key.
+
+**Limitation**: The broker returns the provider session's current access token. Its scopes
+come from provider authorization (the service's configured scopes), not from the grant. So a
+narrowed grant alone does not narrow the provider token: the re-exchange re-validates the
+current grant and session but may return the same token. Upstream receives narrowed scopes when
+the provider session carries them, as Journey 5 shows after Alice re-authorizes the service.
+Narrowing provider tokens in the broker is out of scope; approval item ADR-2 records this limitation.
+
+**Alternatives**:
+
+- *Forward the cached token until ADR 012 expiry*: rejected by the maintainer's direction.
+- *Return a grant version from `/oauth2/token` and bind to it*: it closes the residual body-path
+  race (ADR 048 revision draft), but it changes the exchange contract. Rejected for this increment.
+- *Bypass the token cache in enabled mode*: it adds one broker exchange to every request and
+  changes ADR 012's latency goal. Rejected.
+- *Key the token cache by the binding*: it leaves earlier-version tokens in the map until
+  eviction and lets an older permit still select them. Rejected.
+
 ## Deferred findings (not tasks of this feature)
 
 These are actionable findings outside the feature's required work. Under the constitution

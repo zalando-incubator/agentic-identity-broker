@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-26
 
-**Status**: Draft — R15 OPA input-shape clarification integrated and reconciled with the design artifacts. Contract sign-off and architectural approval (including I2's audit-perimeter extension) remain required through the plan's [Approval Items](./plan.md#approval-items). The separate freshness and audit-seam handoff is recorded in [remediation.md](./remediation.md).
+**Status**: Draft — R15 OPA input-shape clarification integrated and reconciled with the design artifacts. Contract sign-off and architectural approval (including I2's audit-perimeter extension) remain required through the plan's [Approval Items](./plan.md#approval-items). The separate freshness and audit-seam handoff is recorded in [remediation.md](./remediation.md). The 2026-11-06 F1 planning direction (permit-bound exchanged tokens, FR-020, US3.11, Journey 5) is Proposed as approval item ADR-2.
 
 **Input**: The title and body supplied for [issue #289](https://github.com/zalando-incubator/agentic-identity-broker/issues/289): “Broker AuthZEN Access Evaluation endpoint as Delegation Policy Information Point”. No issue comments were used.
 
@@ -75,7 +75,27 @@ P1/F2 is selected but unapplied: the push allowlist rejects its required namespa
 registration in `coding-standards/OPENTELEMETRY.md`. Its code, tests and docs remain unchanged.
 P2/F3 is also selected but unapplied: filing its required follow-up issue is unavailable to
 this workflow. Existing enabled-mode compatibility requirements remain unchanged pending that work.
-No choice about the unassigned F1 scope-authority question is made here.
+No choice about the unassigned F1 scope-authority question is made here; the planning
+direction below later resolves it.
+
+### Planning direction 2026-11-06 (F1)
+
+- Q: When a fresh permit's scopes or grant version differ from those of the exchanged token
+  that ExtProc has cached, which one governs what goes upstream? → A: The permit is
+  authoritative for upstream scopes. In enabled mode ExtProc must not forward a cached ADR 012
+  token whose binding (the permit's `resource.scopes` and `grant.updated_at` at exchange or
+  first use) differs from the current permit. It removes that cache entry and exchanges again
+  before forwarding; a failed re-exchange never falls back to the removed token. Reason:
+  maintainer `mjungsbluth`'s planning command for this run; before it, policy saw a narrowed
+  grant within `min(max-age, max_staleness)` while upstream could receive a token exchanged
+  under the broader grant until `cache.max_ttl`. Main alternative: forward the cached token
+  until its ADR 012 expiry. Added FR-020, US3.11, SC-007, an edge case, and Journey 5.
+  **Approval item** ADR-2 in the plan ([ADR 048 revision draft](./adr-048-revision-permit-bound-tokens.md), contract §3.1).
+- Limitation recorded with the decision: the broker exchanges the provider session's current
+  token, whose scopes come from provider authorization, not from the grant. Upstream receives
+  narrowed scopes when the provider session carries them (Journey 5: Alice re-authorizes the
+  service). This feature does not narrow provider tokens in the broker. Main alternative:
+  require broker-side narrowing, which changes provider-session behavior outside this feature.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -160,6 +180,7 @@ As an operator who enables delegation context, I want both request paths to eval
 8. **US3.8 — Canonical policy and compatibility projection**: **Given** a valid permit and a policy keyed on `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id` rather than deployment UUIDs, **When** equivalent configured entities use different UUIDs, **Then** policy makes the same decision on both request paths, the documented direct context members retain the corresponding permit values through the typed mapping, and permanently retained `granted_permission_sets` and `granted_permission_sets_available: true` are derived from the permit, not the exchange response. Unknown permit fields never become policy inputs.
 9. **US3.9 — Policy denial still wins**: **Given** a permitted delegation but a header-only request forbidden by policy, **When** ExtProc evaluates it, **Then** it denies without invoking exchange or forwarding downstream; delegation permission is not tool-call permission.
 10. **US3.10 — Exchange failure still wins**: **Given** a permitted delegation but an unusable provider session, **When** a body-bearing request triggers concurrent exchange and resolution, **Then** exchange failure prevents forwarding despite successful delegation resolution and preserves existing exchange-error handling.
+11. **US3.11 — Narrowed grant reaches upstream**: **Given** enabled delegation context, a permit with `resource.scopes` `["read:repo","write:repo"]`, and a forwarded token exchanged under it that the ADR 012 cache still holds, **When** Alice narrows her grant to the reader permission set, re-authorizes Repository API so that the provider session holds only `read:repo`, and repeats body-bearing and header-only requests after the cached permit's deadline, **Then** ExtProc does not forward the cached token: it exchanges again before forwarding, upstream receives the token of the `read:repo` session, and policy sees `resource.scopes` `["read:repo"]` and the new `grant.updated_at`. A failed re-exchange forwards nothing.
 
 ### User Story 4 - Operators roll out discovery and migrate safely (Priority: P2)
 
@@ -191,6 +212,7 @@ As an operator, I want startup to reject discovery mix-ups and invalid opt-in se
 - Missing/invalid cache freshness must not extend the consumer's freshness allowance; denies and request errors are not reusable permits. Expired delegation cannot use the token cache's outage fallback.
 - A public broker identifier with a path prefix may differ from the origin default. Operators must set the explicit policy-decision-point identifier; comparison must not strip a path or otherwise turn a mismatch into a match.
 - Both concurrent operations must complete successfully before the body path proceeds. Cancellation or completion order cannot turn a deny/error into a forwarded request.
+- A cached exchanged token is bound to the permit scopes and grant version under which it was exchanged or first used. A permit whose scope set or `grant.updated_at` differs forces one re-exchange before forwarding; reordered scopes or a different timestamp format of the same instant do not. The re-consent cooldown entries hold no token and keep D-5 behavior.
 - Existing strict gateway JWT validation, metadata-only token/resource inputs, MCP transport checks, body limits, approval-gate behavior, and policy fail-closed behavior remain in force.
 
 ## Concrete Example Journeys *(mandatory)*
@@ -206,6 +228,7 @@ All identifiers, timestamps, token markers, and claims below are synthetic. HTTP
 | Service | Repository API, UUID `880e8400-e29b-41d4-a716-446655440010`, canonical ID `repo-api` |
 | Protected resource | `https://api.example.com/repos` |
 | Permission set | Repository Reader, UUID `770e8400-e29b-41d4-a716-446655440001`, canonical ID `repo-reader` |
+| Second permission set (Journey 5) | Repository Maintainer, UUID `770e8400-e29b-41d4-a716-446655440002`, canonical ID `repo-maintainer`, scopes `read:repo write:repo` on Repository API |
 | Grant | UUID `990e8400-e29b-41d4-a716-446655440020`; updated `2026-10-26T09:59:00Z`; expires `2026-10-26T10:30:00Z` |
 | Gateway assertion subject | `gateway-prod` |
 | Subject token marker | `SYNTHETIC_SUBJECT_JWT` |
@@ -528,6 +551,52 @@ Canonical-ID policy uses `input.context.agent.canonical_id`, `input.context.reso
 
 **Observable result**: Both request paths have delegation information before policy evaluation, and no permit, cache hit, or compatibility field bypasses caller authentication, delegation freshness, policy denial, exchange failure, or the existing approval gate.
 
+### Journey 5 — A narrowed grant reaches upstream before the cached token expires (User Story 3, US3.11; Proposed ADR-2)
+
+Journey 4's ExtProc configuration applies (`max_staleness: 60s`). Alice's grant starts with the Repository Maintainer permission set.
+
+**Step 1 — 10:00:00: a body-bearing request is forwarded under the broad grant**
+
+The permit's relevant members are:
+
+```json
+{
+  "resource": {"service_id": "880e8400-e29b-41d4-a716-446655440010", "resource_uri": "https://api.example.com/repos", "scopes": ["read:repo", "write:repo"]},
+  "grant": {"id": "990e8400-e29b-41d4-a716-446655440020", "updated_at": "2026-10-26T09:59:00Z"}
+}
+```
+
+Exchange returns the provider session's token `SYNTHETIC_PROVIDER_TOKEN_RW` (session scopes `read:repo write:repo`, `expires_in: 3600`). ExtProc caches it until 11:00:00 (subject to `cache.max_ttl`), binds it to `{read:repo, write:repo}` and `09:59:00Z`, and forwards:
+
+```http
+Authorization: Bearer SYNTHETIC_PROVIDER_TOKEN_RW
+```
+
+**Step 2 — 10:00:20: Alice narrows the grant through the existing consent journey**
+
+She replaces Repository Maintainer with Repository Reader. The grant keeps its UUID; `updated_at` becomes `2026-10-26T10:00:20Z`. She then re-authorizes Repository API through the existing provider journey, and the provider grants only `read:repo`, so the provider session now holds `SYNTHETIC_PROVIDER_TOKEN_R`. This feature changes neither journey.
+
+**Step 3 — 10:01:00: the same request arrives after the permit deadline**
+
+ExtProc re-resolves. The new permit carries:
+
+```json
+{
+  "resource": {"service_id": "880e8400-e29b-41d4-a716-446655440010", "resource_uri": "https://api.example.com/repos", "scopes": ["read:repo"]},
+  "grant": {"id": "990e8400-e29b-41d4-a716-446655440020", "updated_at": "2026-10-26T10:00:20Z"}
+}
+```
+
+The concurrent exchange returns the cached `SYNTHETIC_PROVIDER_TOKEN_RW`. Its binding differs in scopes and `grant.updated_at`, so ExtProc does not forward it. It removes the entry, exchanges again, binds the result to `{read:repo}` and `10:00:20Z`, and policy evaluates with `input.context.resource.scopes == ["read:repo"]`. Upstream receives:
+
+```http
+Authorization: Bearer SYNTHETIC_PROVIDER_TOKEN_R
+```
+
+A header-only request behaves the same way after policy allows. If the re-exchange fails, the existing exchange-error response is returned and `SYNTHETIC_PROVIDER_TOKEN_RW` is not used as a fallback.
+
+**Observable result**: Upstream receives the narrowed-scope token within the permit freshness bound (`min(60 s, max_staleness)`), not at the 11:00:00 token-cache expiry. Without Step 2's re-authorization, the re-exchange would still re-validate the narrowed grant, but the broker would return the unchanged provider token; narrowing provider tokens is outside this feature.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -557,6 +626,7 @@ Canonical-ID policy uses `input.context.agent.canonical_id`, `input.context.reso
   Unset optional `canonical_id` (including nested service entries) and `valid_until` fields MUST be omitted, never null. ExtProc MUST NOT copy the permit verbatim, expose unknown permit fields to policies, or add a `delegation` wrapper or `delegation_available` flag. `granted_permission_sets` and `granted_permission_sets_available` MUST remain in OPA input permanently, independently of FR-019's exchange-response deprecation. On both enabled paths, `granted_permission_sets` MUST be derived from permit permission-set IDs and included service IDs, not token-exchange extensions, and `granted_permission_sets_available: true` MUST guarantee that all five new members are present, subject to nested optional-field omissions. A resolution failure MUST return 503 before policy, never fall through with availability `false`. Existing `agent_session_id` behavior MUST remain unchanged.
 - **FR-018**: ExtProc MUST default `delegation_context.enabled` to false, require `authorization.enabled` when true, and preserve existing disabled-mode behavior byte-for-byte without discovery or evaluation calls, omitting the new `principal`, `agent`, `resource`, `grant`, and `permission_sets` members. Policy fixtures affected by enabled-mode acceptance MUST use `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id` rather than fixed deployment UUIDs.
 - **FR-019**: The broker-only increment MUST be additive. `granted_permission_sets` on exchange responses MUST be deprecated when the resolver ships and removed one release later under a confirmed contract change; `principal` and `agent_id` MUST stay. The new endpoint MUST not cause immediate removal or an unrelated change to impersonation or other token grants.
+- **FR-020**: With delegation context enabled, the permit MUST be authoritative for upstream scopes. ExtProc MUST bind each cached exchanged token to the permit's `resource.scopes` set and `grant.updated_at` instant under which it was exchanged or first used. When the current permit's scopes or `grant.updated_at` differ from that binding, ExtProc MUST NOT forward the cached token. It MUST remove that cache entry and exchange again before forwarding, at most once per request. A failed re-exchange MUST use the existing exchange-error handling and MUST NOT fall back to the removed token. Disabled mode and the D-5 re-consent cooldown are unchanged.
 
 ### Domain Model *(document before API or database design)*
 
@@ -654,6 +724,7 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 - **SC-004**: Every invalid-credential, caller-denied, malformed-request, dependency-outage, expired-context, and discovery-mismatch journey rejects safely, with zero credential disclosure in its observable responses and captured audit output.
 - **SC-005**: Equivalent named agents, permission sets, and services with different deployment UUIDs produce the same policy outcome on both request paths in acceptance fixtures using `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id`, without hardcoded UUID policy dependencies. Both enabled paths expose the documented direct context members and permanently retained permit-derived permission-set inputs; unknown permit fields never appear in policy input.
 - **SC-006**: Existing disabled-mode deployments require zero new settings and make zero delegation discovery/resolution requests; the additive broker release preserves existing exchange fields and session behavior.
+- **SC-007**: After a grant changes, no enabled-mode request whose permit reflects the change forwards a token bound to the earlier scopes or grant version; in the Journey 5 acceptance test, upstream receives the narrowed-scope token on the first request after the permit deadline, not at token-cache expiry.
 
 ## Assumptions
 
@@ -668,4 +739,4 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 
 ### Clarification handoff
 
-The two earlier material clarification questions are answered and integrated into FR-005/FR-008, US1.2/US1.8, the edge cases, the Delegation Context definition, and Journey 1. The 2026-10-27 maintainer guidance on reusing the token-exchange caller CEL policy without a new grant type is recorded above and integrated into FR-004, US1.2/US2.17, and Journeys 1 and 3. The 2026-10-28 guidance resolves R15's OPA shape, typed mapping, permanent compatibility, availability, and canonical-ID fixture questions in FR-017/FR-018, US3.1/US3.2/US3.6/US3.8/US4.1, Journey 4, and SC-005. FR-019's exchange-response deprecation is unchanged. No further product clarification questions remain. The subsequent planning and tasks phases reconciled R15, data model §3.5, ExtProc contract §4, and the other affected design artifacts, and regenerated the 101-task list; their pre-review input shapes are not implementation authority. The current task reconciliation preserves stable task IDs and historical implementation evidence, reopens approval/verification tasks affected by revised API-2 and D-5, and retains missing historical test-first/scaffolding evidence as unfinished. It neither resets working code nor certifies historical compliance. Analysis remediation corrected the proposed additive API version to `1.2.0` from the existing `1.1.0` baseline and aligned permit-schema constraints with typed consumer validation. The final AuthZEN verification is recorded in `quickstart.md` §7; current sign-off, supplied approval recording and unfinished test-first/compliance gates remain open. Clarification and design completion imply no additional approval. The 2026-11-05 planning direction replaced the strict request-member rule with the AuthZEN 1.0 ignore-unknown-fields behavior (FR-003) and recorded the body-path re-consent cooldown in US3.5; both are registered approval items. Specification quality checklist completion does not claim implementation, passing runtime tests, contract approval, or ADR acceptance.
+The two earlier material clarification questions are answered and integrated into FR-005/FR-008, US1.2/US1.8, the edge cases, the Delegation Context definition, and Journey 1. The 2026-10-27 maintainer guidance on reusing the token-exchange caller CEL policy without a new grant type is recorded above and integrated into FR-004, US1.2/US2.17, and Journeys 1 and 3. The 2026-10-28 guidance resolves R15's OPA shape, typed mapping, permanent compatibility, availability, and canonical-ID fixture questions in FR-017/FR-018, US3.1/US3.2/US3.6/US3.8/US4.1, Journey 4, and SC-005. FR-019's exchange-response deprecation is unchanged. The 2026-11-06 F1 planning direction adds FR-020, US3.11, SC-007 and Journey 5 (Proposed ADR-2). No further product clarification questions remain. The subsequent planning and tasks phases reconciled R15, data model §3.5, ExtProc contract §4, and the other affected design artifacts, and regenerated the 101-task list; their pre-review input shapes are not implementation authority. The current task reconciliation preserves stable task IDs and historical implementation evidence, reopens approval/verification tasks affected by revised API-2 and D-5, and retains missing historical test-first/scaffolding evidence as unfinished. It neither resets working code nor certifies historical compliance. Analysis remediation corrected the proposed additive API version to `1.2.0` from the existing `1.1.0` baseline and aligned permit-schema constraints with typed consumer validation. The final AuthZEN verification is recorded in `quickstart.md` §7; current sign-off, supplied approval recording and unfinished test-first/compliance gates remain open. Clarification and design completion imply no additional approval. The 2026-11-05 planning direction replaced the strict request-member rule with the AuthZEN 1.0 ignore-unknown-fields behavior (FR-003) and recorded the body-path re-consent cooldown in US3.5; both are registered approval items. Specification quality checklist completion does not claim implementation, passing runtime tests, contract approval, or ADR acceptance.

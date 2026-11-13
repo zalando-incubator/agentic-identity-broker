@@ -247,6 +247,33 @@ present. Only the nested optional `canonical_id` and `valid_until` members can b
 denial, a resolution error, or an expired deadline returns 403 or 503 before policy runs, never
 `false`.
 
+### 3.6 Token binding on the ADR 012 cache (Proposed ADR 048 revision draft, research R19)
+
+The ExtProc token cache (`server.cachedToken`) gains one field. The key, TTLs, and the
+re-consent cooldown entries are unchanged.
+
+| Element | Definition |
+|---|---|
+| `TokenBinding` | `{Scopes: sorted, de-duplicated set of Context.Resource.Scopes; GrantUpdatedAt: time.Time parsed from Context.Grant.UpdatedAt}`. Equal when both sets and both instants are equal. |
+| `cachedToken.binding` | `*TokenBinding`. `nil` means unbound: the token was exchanged in a request whose permit has not bound it yet. Always `nil` in disabled mode and on cooldown entries. |
+| Derivation | The server derives the binding from the validated permit (`delegation.Result`). The exchanger never parses permits. |
+
+**Per-key token states (enabled mode)**:
+
+```text
+  ABSENT ──exchange──▶ UNBOUND(token) ──first permit──▶ BOUND(token, b)
+                                                        │
+                       permit binding == b ─────────────┤ forward cached token
+                                                        │
+                       permit binding != b ──▶ remove if the entry still holds token
+                                               ──▶ exchange once ──success──▶ BOUND(token', b')
+                                                                  └─failure──▶ ABSENT or cooldown (no stale use)
+```
+
+`BOUND` and `UNBOUND` entries still expire under the existing ADR 012 rules. A failed
+re-exchange leaves no token entry (a re-authentication error may record the existing cooldown), so the existing stale-on-error window cannot serve the removed
+token.
+
 ## 4. Relationships
 
 ```mermaid
