@@ -2,8 +2,11 @@
 package telemetryhttp
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 
 	"go.opentelemetry.io/otel"
@@ -36,8 +39,7 @@ func (t *transport) RoundTrip(request *http.Request) (*http.Response, error) {
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(request.Header))
 	response, err := t.base.RoundTrip(request)
 	if err != nil {
-		span.SetAttributes(attribute.String("error.type", "network_error"))
-		span.SetStatus(codes.Error, "HTTP request failed")
+		recordFailure(span, err, "network_error", "HTTP request failed")
 		span.End()
 		return response, err
 	}
@@ -45,6 +47,7 @@ func (t *transport) RoundTrip(request *http.Request) (*http.Response, error) {
 		span.SetAttributes(attribute.Int("http.response.status_code", response.StatusCode))
 	}
 	if response.StatusCode >= 400 {
+		span.SetAttributes(attribute.String("error.type", statusErrorType(response.StatusCode)))
 		span.SetStatus(codes.Error, "HTTP request rejected")
 	}
 	if response.Body == nil {
@@ -84,11 +87,29 @@ func (b *spanBody) Close() error {
 func (b *spanBody) finish(err error, kind string) {
 	b.once.Do(func() {
 		if err != nil && err != io.EOF {
-			b.span.SetAttributes(attribute.String("error.type", kind))
-			b.span.SetStatus(codes.Error, "HTTP response failed")
+			recordFailure(b.span, err, kind, "HTTP response failed")
 		}
 		b.span.End()
 	})
+}
+
+// recordFailure marks the span as failed. A caller that canceled the request is not a failure, so
+// the span stays as it is. A timeout stays a failure because it does not wrap context.Canceled.
+func recordFailure(span trace.Span, err error, errorType, description string) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	span.SetAttributes(attribute.String("error.type", errorType))
+	span.SetStatus(codes.Error, description)
+}
+
+// statusErrorType returns the status code as a string. A code outside the HTTP range becomes
+// _OTHER, which keeps the value set bounded.
+func statusErrorType(status int) string {
+	if status > 599 {
+		return "_OTHER"
+	}
+	return strconv.Itoa(status)
 }
 
 func MethodName(method string) string {

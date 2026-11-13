@@ -67,6 +67,7 @@ oauth2session.background_refresh
 - Use lowercase `snake_case` segments separated by dots.
 - Use a constant string. Do not put IDs, URLs, principals, tool names, or other values in a span name. Put values in attributes (section 4).
 - A span name is a contract for trace queries. A rename is a breaking change. Record it in the changelog.
+- Exception: the span in the `telemetryhttp` scope is named `http.request`. It describes a protocol call, not a domain operation, and a rename would break existing trace queries.
 
 ### 3.3 Kind
 
@@ -110,6 +111,7 @@ if err != nil {
 - Do not call `span.RecordError`. A wrapped cause can contain a URL with its query, a provider body, or a SQL fragment. Record typed metadata instead (section 4).
 - Do not mark a client error (4xx) as an error on a `Server` span. `otelchi` derives the status from the response code. The ExtProc request span sets the error status only for the 5xx responses it sends.
 - Record caller cancellation as an outcome, for example `canceled`. Do not set `codes.Error`.
+  - Exception: the `http.request` span sets no outcome. The OpenTelemetry HTTP conventions leave the status unset on cancellation and define no attribute for it.
 
 ### 3.5 Background Work
 
