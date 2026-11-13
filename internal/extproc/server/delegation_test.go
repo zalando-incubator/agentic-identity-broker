@@ -78,6 +78,11 @@ type delegationHarness struct {
 
 func newDelegationHarness(t *testing.T, resolve func() (delegation.Result, error), loggers ...*slog.Logger) *delegationHarness {
 	t.Helper()
+	return newDelegationHarnessWithExchanger(t, resolve, nil, loggers...)
+}
+
+func newDelegationHarnessWithExchanger(t *testing.T, resolve func() (delegation.Result, error), exchanger server.Exchanger, loggers ...*slog.Logger) *delegationHarness {
+	t.Helper()
 	h := &delegationHarness{
 		clock:    &testClock{now: time.Unix(1_000, 0)},
 		resolver: &stubResolver{resolve: resolve},
@@ -89,10 +94,12 @@ func newDelegationHarness(t *testing.T, resolve func() (delegation.Result, error
 			return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
 		},
 	}
-	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
-		h.exchanges.Add(1)
-		return h.exchangeFn()
-	}}
+	if exchanger == nil {
+		exchanger = &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+			h.exchanges.Add(1)
+			return h.exchangeFn()
+		}}
+	}
 	authorizer := &mockAuthorizer{evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 		h.policies.Add(1)
 		raw, err := json.Marshal(input["context"])
