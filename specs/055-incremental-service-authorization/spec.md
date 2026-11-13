@@ -156,6 +156,11 @@ the pipeline's approval comment.
 
 - **FR-008 / merged ADR 046**: Valid, scope-sufficient, identity-matching access remains usable without a refresh token only when no rejection is recorded. A recorded `RefreshRejectedAt` makes the service unusable immediately, including before access expiry; the broker never predicts refresh-token expiry. Updated the edge case, FR-008 and Journey 2's active-session wireframe. *Reason*: the accepted observed-rejection contract takes precedence over historical expiry wording. *Main alternative*: continue issuing from valid access after a known rejection, which ADR 046 forbids. This is binding-ADR reconciliation, not a new approval or exception.
 
+### Planning — 2026-11-08 (maintainer direction on validation scope)
+
+- **US3 S3 acceptance boundary**: The owning US3 S3 E2E covers only malformed, unknown and agent-ineligible broker service scopes (`400 invalid_scope`, no upstream call). The agent/service lookup-failure outcome (`500 server_error`, no upstream call; FR-002, Journey 3) is unchanged and is validated by domain and handler tests only. No E2E lookup-failure variant and no failure-injection seam in the production bootstrap is added. *Reason*: maintainer direction; the scenario text never included lookup failure, and a production-bootstrap injection seam would be a test-only production API. *Main alternative*: an E2E variant through a failing-repository seam, rejected for that reason.
+- **Accessibility theme scope**: Validate WCAG 2.1 AA (text and UI contrast, keyboard operation, visible focus, screen-reader Save reasons) for this feature's pages in the existing light theme only. The default branch has no dark theme and this feature adds no design-system component, so Principle XI's both-theme story obligation does not arise; dark-theme support is a pre-existing gap outside this feature. Updated the Frontend/Design System Requirements. *Reason*: maintainer direction. *Main alternative*: build or validate a dark theme here, which would add scope beyond the issue.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Recover an optional-service tool call through focused consent (Priority: P1)
@@ -781,7 +786,7 @@ New domain terms require glossary additions during approved design; this specify
 
 - Preserve the consent page structure: agent header, End Date, Agent Permissions, Connect Your Accounts, Revoke and Save/Approve. Add requested-service explanation and markers without changing optional-toggle ownership.
 - Reuse the existing session card content, confirmation and actions for the service page. Explain no session, unusable session, not found, loading and retryable failure distinctly.
-- Use the repository design system and semantic tokens; retain WCAG 2.1 AA, keyboard operation, screen-reader explanations of disabled submission, and light/dark theme behavior. Mockup accents are explanatory, not permission to change the visual direction.
+- Use the repository design system and semantic tokens; retain WCAG 2.1 AA, keyboard operation, screen-reader explanations of disabled submission, and the existing light theme. The application has no dark theme today; this feature adds no design-system component and does not introduce one. Mockup accents are explanatory, not permission to change the visual direction.
 - Before implementation, review `web/src/design-system/docs/INDEX.md`, `COMMON_MISTAKES.md`, `DECISION_TREES.md` and `COMPONENT_PAIRING_GUIDE.md`. Application-specific banners and detail composition do not require new universal components unless design demonstrates reuse.
 - The ordered Wireloom source and generated SVG states above are specification assets. Future frontend acceptance tests must capture the corresponding meaningful UI states under the existing test conventions.
 

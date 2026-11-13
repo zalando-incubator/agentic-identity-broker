@@ -66,4 +66,4 @@ Before changing the corresponding production call, write tests through productio
 4. Invalid metadata containing quotes, backslashes, CR/LF or oversized text is absent from diagnostics; challenge presence attributes remain booleans.
 5. Recorded refresh rejection prevents new issuance even with valid access; transient failure leaves state unchanged, and reconnect clears the rejection under existing locking.
 
-Evidence belongs in the relevant `_test.go` files and `quickstart.md`, not in new test-only production APIs. Container-backed evidence remains separate from locally runnable safety tests.
+Evidence belongs in the relevant `_test.go` files and the implementation run's result, not in new test-only production APIs. Container-backed evidence remains separate from locally runnable safety tests.

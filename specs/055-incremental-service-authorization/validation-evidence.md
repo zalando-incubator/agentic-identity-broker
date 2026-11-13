@@ -49,7 +49,8 @@ acceptance-test evidence gap is covered by this exception.
    compliance open and report the actual limitation rather than weakening tests.
 3. Run both complete current browser journeys with the production bootstrap, four maintained
    screenshots and no skipped/pending specs; retain passing output and complete the existing
-   light/dark accessibility and full verification obligations.
+   light-theme accessibility (the application has no dark theme; see spec Clarifications,
+   Planning 2026-11-08) and full verification obligations.
 4. Implementation may close the browser-evidence portions of T022/T098/T109 only after the supplied
    approval explicitly covers DEC-006 and the evidence above is recorded. Other portions of those
    tasks still require their own evidence. Cite approval URL, maintainer and date; never relabel

@@ -5,6 +5,12 @@
 This guide proves the feature end to end after implementation. It references contracts instead of
 repeating them. All values are synthetic and follow the spec's shared cast.
 
+**Current validation scope (planning, 2026-11-08)**: The US3 S3 E2E validates malformed, unknown
+and agent-ineligible broker scopes only; lookup failure (`500 server_error`) is validated by domain
+and handler tests, with no E2E variant or production-bootstrap failure-injection seam. Accessibility
+is validated in the existing light theme only. Statements in the historical checkpoints below that
+require lookup-failure HTTP acceptance or dark-theme evidence are superseded.
+
 ## Implementation resumption — 2026-11-08
 
 **102/115 tasks complete; progress validated, final compliance still open.**
@@ -580,13 +586,14 @@ text as well as status color. Keep disabled-Save reasons outside the button, vis
 and screen-reader users, with stable IDs linked via `aria-describedby`; announce changing
 satisfaction/retry status without moving focus on each toggle.
 
-The existing light/dark tokens are the source of truth. Implementation must test both themes for
-4.5:1 text and 3:1 UI contrast, keyboard focus/order, switch names/state and confirmation focus
-restoration. Reusing an existing component does not prove accessibility or matching usability
-semantics; T080/T084/T112 must cover any minimum adaptation needed by this feature without
-unrelated restyling. Verify the four maintained browser captures against the current spec and
-complete the outstanding runtime checks; previous captures alone do not establish both-theme
-accessibility.
+The existing semantic tokens are the source of truth. Validate the feature's pages in the existing
+light theme for 4.5:1 text and 3:1 UI contrast, keyboard focus/order, switch names/state, visible
+focus, screen-reader Save reasons and confirmation focus restoration. The application has no dark
+theme on the default branch and this feature adds no design-system component, so dark-theme
+validation is out of scope (a pre-existing gap). Reusing an existing component does not prove
+accessibility or matching usability semantics; T080/T084/T112 must cover any minimum adaptation
+needed by this feature without unrelated restyling. Verify the four maintained browser captures
+against the current spec; captures alone do not establish accessibility.
 
 ## 4. Manual spot check (optional)
 

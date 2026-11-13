@@ -1,6 +1,6 @@
 # Implementation Plan: Incremental Service Authorization
 
-**Branch**: `speckit/issue-299` | **Date**: 2026-10-29 (revised 2026-11-07) | **Spec**: [spec.md](./spec.md)
+**Branch**: `speckit/issue-299` | **Date**: 2026-10-29 (revised 2026-11-08) | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `specs/055-incremental-service-authorization/spec.md`
 
@@ -120,8 +120,8 @@ browser execution evidence; there are now 15 sign-off items. No exception is gra
 | API-CONSENT | API | `GET /oauth2/authorize` accepts virtual scopes and optional JWE `session_token` for protected post-Save re-entry. It independently validates sealed request/bindings before issuance or proxy redirect. Forged/malformed/expired or request/principal/agent-mismatched JWE returns `302 access_denied` (`authorization session is invalid or expired`); a valid JWE with reassigned binding returns `302 invalid_scope` (`requested service scope is not permitted`). Both use only the validated client callback and echo request state (omit if absent), without code, JWE forwarding or fresh unbound fallback. It returns `temporarily_unavailable` when usability cannot be verified. Consent gains requested-service arrays including baseline and per-candidate contribution usability for live selection; submitted effective provider scopes follow exchange's union/ceiling rule. Unsatisfied submission returns `400 requested service not satisfied`. Successful `redirect_url` carries the same JWE. | specs/055-incremental-service-authorization/contracts/enduser-api.md:51-87; specs/055-incremental-service-authorization/contracts/enduser-api.md:162-250 |
 | API-SESSION-DETAIL | API | Add `GET /api/third-party/sessions/{service}`, where `{service}` is a canonical ID or UUID. It returns `200` with `session: null` when the service has no session, `404` for an unknown service, and `401` without a principal. The existing UUID route does not change. | specs/055-incremental-service-authorization/contracts/enduser-api.md:251-312 |
 | API-LOCAL-SCOPES | API | Local responses/JWT scope and successor `Scope` equal the requested subset or predecessor current `Scope` when omitted; narrowing cannot be undone by scope-less refresh. All original bindings remain inherited as assurance-only obligations and are rechecked with grant-derived effective provider scopes even after narrowing. Widening/definitive failure returns non-consuming `invalid_scope`, transient failure non-consuming `server_error`. `client_credentials` with a virtual scope returns `invalid_scope`. | specs/055-incremental-service-authorization/contracts/enduser-api.md:88-127 |
-| DEC-001 | Decision | Only UUID scopes survive canonical-ID renames, and no historical aliases are kept. A refresh bound to an old canonical scope returns `invalid_scope` without consuming the token. | specs/055-incremental-service-authorization/spec.md:699; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:73-81 |
-| DEC-002 | Decision | Proxy refresh strips virtual scopes and forwards the upstream outcome unchanged. It applies no post-response usability check and does not attest to usability. | specs/055-incremental-service-authorization/spec.md:701; specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161 |
+| DEC-001 | Decision | Only UUID scopes survive canonical-ID renames, and no historical aliases are kept. A refresh bound to an old canonical scope returns `invalid_scope` without consuming the token. | specs/055-incremental-service-authorization/spec.md:704; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:73-81 |
+| DEC-002 | Decision | Proxy refresh strips virtual scopes and forwards the upstream outcome unchanged. It applies no post-response usability check and does not attest to usability. | specs/055-incremental-service-authorization/spec.md:706; specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161 |
 | DEC-003 | Decision | Definitive provider refresh rejection stays persisted through merged ADR 046's observed rejection (`UserSession.RefreshRejectedAt`, `requires_reauthentication`) as the single unusability state for all consumers, with no schema change. Transient failures never write it. | specs/055-incremental-service-authorization/research.md:80-122 |
 | DEC-004 | Decision | Schema change: migration `048_add_service_scope_bindings` adds nullable `service_scope_bindings JSONB` to codes and refresh sessions. Code bindings lie within granted `Scope`; refresh bindings remain an immutable assurance set even after durable scope narrowing. Successors inherit the map exactly and cannot widen predecessor `Scope`. | specs/055-incremental-service-authorization/data-model.md:97-131; specs/055-incremental-service-authorization/data-model.md:147-173 |
 | ADR-RECOVERY | ADR | ADR 048. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records ADR 046's persisted rejection. It supersedes only those two ADR 044 clauses. | adrs/048-service-session-recovery-return.md:1-105; specs/055-incremental-service-authorization/contracts/enduser-api.md:318-325 |
@@ -129,7 +129,7 @@ browser execution evidence; there are now 15 sign-off items. No exception is gra
 | API-PROXY-REFRESH-VALIDATION | API | Before forwarding a proxy-mode refresh whose `scope` carries a broker-prefixed token, validate syntax, resolve the agent through the existing client resolution, and check service existence and eligibility. Malformed, unknown and ineligible scopes return `400 invalid_scope` (`requested service scope is not permitted`); lookup failure returns `500 server_error`; neither calls upstream. Ordinary-scope-only requests keep their existing path. No provider-usability check and no veto of upstream responses or rotation. | specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161; specs/055-incremental-service-authorization/spec.md:125-136 |
 | DEC-005 | Decision | Scope dropped: the canonical IDs `.` and `..` are accepted as a known defect. No UUID fallback for their scopes, service pages or recovery links, and no change to canonical-ID validation in this feature; issue #446 restricts them. | specs/055-incremental-service-authorization/spec.md:137-146; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:65-71; specs/055-incremental-service-authorization/research.md:421-439 |
 | ADR-SCOPES-REV1 | ADR | ADR 049 Revision 1 draft. Decision 6 gains proxy-refresh pre-forward validation (API-PROXY-REFRESH-VALIDATION); Consequences and Alternatives record the dot-segment limitation (DEC-005). Implementation applies it to `adrs/049-virtual-service-scopes.md` after approval. | specs/055-incremental-service-authorization/adrs/049-virtual-service-scopes-revision-1.md:1-70 |
-| DEC-006 | Decision | Proposed one-time exception for missing contemporaneous compiling semantic-red execution evidence for the original US1 S4/US2 S2 browser journeys only. Require retrospective pre-behavior sensitivity evidence and current complete green/browser/screenshot/accessibility/full-gate evidence; do not claim historical test-first execution or waive new revision TDD. | specs/055-incremental-service-authorization/validation-evidence.md:29-64 |
+| DEC-006 | Decision | Proposed one-time exception for missing contemporaneous compiling semantic-red execution evidence for the original US1 S4/US2 S2 browser journeys only. Require retrospective pre-behavior sensitivity evidence and current complete green/browser/screenshot/accessibility/full-gate evidence; do not claim historical test-first execution or waive new revision TDD. | specs/055-incremental-service-authorization/validation-evidence.md:29-65 |
 
 The approved API items also cover these mechanical consequences:
 
@@ -162,6 +162,7 @@ The approved API items also cover these mechanical consequences:
 | Frontend Playwright E2E | Pass | `tests/e2e/frontend/incremental_authorization_test.go` covers both consent states and both service-page states. |
 | Frontend screenshots | Designed; evidence review pending | Four screenshots correspond to the spec's Wireloom states; the active state follows ADR 046 and contains no predicted refresh expiry. |
 | Concrete example journeys (Principle XIV) | Pass (design) | Journeys 1–4 cover configuration, HTTP, Wireloom and JWT claims. The task-generation reconciliation aligns Journey 2 with merged ADR 046; implementation still verifies the examples against approved contracts. |
+| Design system (Principle XI) | Pass | Both new compositions are application-specific and reuse existing primitives and semantic tokens; no design-system component or story is added. WCAG 2.1 AA is validated in the existing light theme; the application has no dark theme on the default branch, a pre-existing gap outside this feature. |
 | Observability (Principle XV) | Pass (design); safety evidence pending | `contracts/observability.md` defines feature-owned log events and required credential/principal tests. No new metrics, spans or namespaces are proposed. |
 
 ### Implementation considerations
@@ -385,7 +386,7 @@ precondition → one `It` for each scenario.
 | US2 S4 | `tests/e2e/service_session_page_test.go` | `It("returns from the recovery link to the service page and the next exchange succeeds without agent authorization")` |
 | US3 S1 | `tests/e2e/incremental_authorization_test.go` | `It("rechecks granted service scopes on local refresh and returns invalid_scope once the service is unusable")` |
 | US3 S2 | `tests/e2e/incremental_authorization_proxy_test.go` | `It("verifies requested services then redirects upstream with only ordinary scopes")` |
-| US3 S3 | `tests/e2e/incremental_authorization_proxy_test.go` | `It("strips virtual scopes from proxy refresh, forwards the rotated upstream token, and the next exchange still challenges")`, with malformed, unknown and ineligible variants that return `invalid_scope` and make zero upstream calls |
+| US3 S3 | `tests/e2e/incremental_authorization_proxy_test.go` | `It("strips virtual scopes from proxy refresh, forwards the rotated upstream token, and the next exchange still challenges")`, with malformed, unknown and ineligible variants that return `invalid_scope` and make zero upstream calls. Lookup failure (`500 server_error`) is not an E2E variant; domain and handler tests own it, and the production bootstrap gains no failure-injection seam |
 | US3 S4 | `tests/e2e/incremental_authorization_test.go` | `It("includes the granted virtual scope in the token response and JWT scope and rechecks it on scope-less refresh")` |
 | US4 S1 | `tests/e2e/incremental_authorization_gateway_test.go` | `It("includes resource_metadata only when the route configures it, keeping scope and recovery link otherwise")` |
 | US4 S2 | `tests/e2e/incremental_authorization_test.go` | `It("resolves both identifier forms, keeps UUID scopes across rename, and fails old canonical refresh without consuming it")` |
@@ -439,6 +440,11 @@ and `sessions_page.go` page objects, which gain the new locators.
 | Service page State A: no active session | `tests/e2e/frontend/incremental_authorization_test.go` | `tests/e2e/screenshots/service_session_needs_login.png` |
 | Service page State B: active with actions | `tests/e2e/frontend/incremental_authorization_test.go` | `tests/e2e/screenshots/service_session_active.png` |
 
+Accessibility validation for these pages (4.5:1 text and 3:1 UI contrast, keyboard operation,
+visible focus and screen-reader Save reasons) uses the existing light theme only. The application
+has no dark theme on the default branch and this feature adds no design-system component, so no
+both-theme story obligation arises; dark-theme support is a pre-existing gap outside this feature.
+
 ### Validation Gate
 
 The generated [tasks.md](./tasks.md) requires compiling semantic-red acceptance tests before
@@ -463,7 +469,8 @@ execution proof; no other TDD or acceptance obligation is waived.
   fixed/all-scopes/no-requirements, candidate usability composition, and binding mismatch.
 - `oauth2`: authorize outcomes, protected post-Save JWE re-entry, proxy stripping and proxy-refresh
   pre-forward validation (malformed, unknown, ineligible, lookup failure, ordinary-only unchanged,
-  no upstream call on rejection).
+  no upstream call on rejection). Domain and proxy-handler tests are the only owners of the
+  lookup-failure `500 server_error` outcome.
 - `oauth2server`: durable narrowing then scope-less refresh, no restoration, full assurance-set
   effective-scope recheck before rotation, widening, and `client_credentials`.
 - `consent`: baseline/candidate snapshot usability, unsaved selection gating and fresh submission.
