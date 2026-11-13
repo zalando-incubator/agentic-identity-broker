@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-authzen-delegation-pip` | **Plan**: [plan.md](./plan.md)
 
-**Latest outcome**: Partial implementation (run 42243758976/1): the supplied five-item approval is recorded in ADR 048; final-forwarding permit expiry now fails closed on body, batch and header-only paths. Token binding remains unfinished. The security gate fails on GO-2026-6865 in the existing compression dependency; T103 publication permission and T104 follow-up issue remain unresolved. Current inventory: 123 tasks, 108 checked and 15 unchecked. See §15 for current evidence; historical D-6 does not cover new work.
+**Latest outcome**: Partial implementation (run 42297225880/1): T103's approved D-7 telemetry migration is implemented and validated, including namespace registration and query migration. Token binding remains unfinished. The prepared security gate now fails on GO-2026-6911 in the existing sample-agent `mcp-go v1.4.0` dependency, with no fixed version reported. The previous compression finding is no longer the blocker. Follow-up issue creation was requested, but T104 still awaits its published URL. Current inventory: 123 tasks, 109 checked and 14 unchecked. See §16 for current evidence; historical D-6 does not cover new work.
 
 This guide proves the feature end to end after implementation. It is a validation guide, not an
 implementation description. The contracts are in [contracts/](./contracts/). The value objects
@@ -862,3 +862,91 @@ Reanalysis LOW I2 is resolved by a serial T110 → T121 → T122 E2E lane. LOW I
 approval references are labeled historical; its spec.md wording is left immutable, with the
 approval provenance above resolving the current status. This run is **blocked**, not a completed
 feature or an approval to merge.
+
+## 16. Partial implementation (run 42297225880/1)
+
+### Completed D-7 telemetry migration (T103)
+
+The supplied approval remains the five-item approval by `mjungsbluth` at
+`2026-11-06T15:30:38Z` on
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728>.
+The current implementation workflow permits the required standard-file change. Both exact
+namespace rows (`access_evaluation` and `delegation`) are added to
+`coding-standards/OPENTELEMETRY.md` alongside the code/test migration. No workflow or
+permission change is part of this implementation.
+
+The broker now emits `tokenexchange.access_evaluation` and
+`tokenexchange.access_evaluation.permitted|denied|failed`, without dual-emitting old names.
+Broker and resolver spans explicitly select Internal; the outbound evaluation span retains
+explicit Client. Scope, bounded outcome/decision/cache attributes, levels and credential
+handling are unchanged. The operator reference has an old-to-new table and rolling-deployment
+query guidance; no metric changes. ADR 048 records this implementation under its existing
+approval provenance. `spec.md` and `plan.md` remain unchanged.
+
+### Genuine test-first evidence
+
+Before the production rename, the updated target-name assertions in
+`internal/adapters/http/enduser/authzen_evaluation_test.go` compiled and failed semantically:
+`TestAuthZENEvaluation_AuditRecords` (all six outcomes),
+`TestAuthZENEvaluation_EarlyFailureAudit`, and
+`TestAuthZENEvaluation_SpansExcludeCredentialsAndContext` observed old `authzen.*` identifiers
+where the approved `tokenexchange.*` identifiers were required. Command:
+
+```bash
+go test ./internal/adapters/http/enduser -run 'TestAuthZENEvaluation_(AuditRecords|EarlyFailureAudit|Spans)' -count=1
+```
+
+After the rename the unchanged target-name assertions pass. The broker span assertions also
+pin Internal kind, `tokenexchange` scope, `access_evaluation.decision=permit|deny|error`,
+permit-only `max_age=15`, and credential/context exclusion. ExtProc telemetry tests pin
+`extproc` scope, Internal resolver/Client evaluation kinds, cache hit/miss, bounded error
+metadata and exclusion of subject/assertion/resource/context/dependency markers. These test
+results cover T103 only, not the unimplemented binding diagnostic or acceptance scenarios.
+
+### Current validation
+
+Passed on this run's changes:
+
+- `just check`
+- `just test`
+- `just extproc-test` (race)
+- `just test-integration` (self-contained, including delegation contract conformance)
+- `just web-test` (261 tests)
+- `just cdk-test`
+- `just mock-sample-agent-test`
+- `just mock-upstream-oauth2-test`
+- `just docs-build`
+- `just test-e2e-backend` (999 passed)
+- `just test-e2e-frontend` (67 passed)
+- `ginkgo -v --label-filter="authzen-delegation && !docker" ./tests/e2e/` (28 passed)
+- `ginkgo -v --label-filter="delegation-context" ./tests/e2e/` (11 passed)
+- `ginkgo -v --label-filter="delegation-context-startup" ./tests/e2e/extproc/` (4 passed)
+- `ginkgo -v --focus="OPA Authorization|ExtProc Metadata Input" --label-filter="!docker" ./tests/e2e/extproc/` (30 non-container scenarios passed; Agentgateway cases did not execute)
+
+The focused feature coverage remains 43 local scenarios, not the target 46. US3.11–US3.13
+are not authored or validated. Container-backed US2.19, `just test-e2e-docker`,
+`just test-integration-infra` and Agentgateway suites are deferred to downstream container
+tests on a pushed completed implementation; no local validation is claimed for them.
+
+### Failed security gate and unfinished work
+
+`bash "$SECURITY_SCAN_SCRIPT" .` exited 3 at sample-agent govulncheck with
+**GO-2026-6911** in `github.com/mark3labs/mcp-go v1.4.0`
+(`mocks/sample-agent/go.mod:6`). The advisory reports no fixed version. The reported call
+paths originate in the sample-agent MCP client (`mocks/sample-agent/internal/handlers/handlers.go:473-506`),
+not this telemetry change. The earlier GO-2026-6865 compression finding is resolved by the
+already merged base update. No unrelated dependency/code change, exploit verification,
+security suppression or test weakening was made. A maintainer must arrange resolution of
+the sample-agent finding before the required full security gate can pass.
+
+| Unchecked work | Current disposition |
+|---|---|
+| T104 | The configured safe output accepted creation of `Follow-ups for #292` for the approved future OPA migration. It returned no concrete issue number/URL before downstream publication. The canonical-field ADR/docs change remains unapplied pending that published URL; the current two compatibility fields are unchanged. |
+| T110, T111, T112, T113, T121, T122 | Binding acceptance and cache/server tests plus their genuine semantic-red gate remain unfinished. No binding implementation is introduced ahead of that gate. |
+| T114, T115, T116, T117 | Binding-aware port/handles, atomic first claim, identity-safe delete/retry, terminal conflict and log-only mismatch diagnostic remain unimplemented; T123's already completed forwarding-expiry subset is preserved. |
+| T118 | Full binding architecture/glossary/operator guidance remains unfinished; this telemetry-only increment makes no binding runtime claim. |
+| T119, T120 | Full binding acceptance/compliance remains incomplete, independently of the failed external security gate. Passing existing suites does not close these tasks. |
+
+No new approval is requested for the telemetry migration. The follow-up issue tracks future
+compatibility removal only; creating it grants no removal/deprecation approval. Checklists
+remain read-only and unchanged. This phase is **blocked**, not feature completion.

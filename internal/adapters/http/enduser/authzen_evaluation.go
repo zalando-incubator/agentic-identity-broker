@@ -84,7 +84,7 @@ var errMalformedEvaluation = errors.New("malformed access evaluation request")
 
 func (h *AuthZENEvaluationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	echoRequestID(w, r)
-	ctx, span := otel.Tracer("tokenexchange").Start(r.Context(), "authzen.access_evaluation")
+	ctx, span := otel.Tracer("tokenexchange").Start(r.Context(), "tokenexchange.access_evaluation", trace.WithSpanKind(trace.SpanKindInternal))
 	defer span.End()
 
 	assertion, ok := bearerCredential(r)
@@ -224,15 +224,15 @@ func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span,
 		attribute.String("token_exchange.recovery_action", string(diagnostic.RecoveryAction())),
 		attribute.String("token_exchange.recovery_target", string(diagnostic.RecoveryTarget())),
 	}
-	level, event := slog.LevelInfo, "authzen.access_evaluation.permitted"
+	level, event := slog.LevelInfo, "tokenexchange.access_evaluation.permitted"
 	switch decision.Kind {
 	case tokenexchange.DecisionPermit:
 		attrs = append(attrs, attribute.String("access_evaluation.decision", "permit"), attribute.Int("access_evaluation.max_age", decision.MaxAge))
 	case tokenexchange.DecisionDeny:
-		event = "authzen.access_evaluation.denied"
+		event = "tokenexchange.access_evaluation.denied"
 		attrs = append(attrs, attribute.String("access_evaluation.decision", "deny"))
 	default:
-		level, event = slog.LevelError, "authzen.access_evaluation.failed"
+		level, event = slog.LevelError, "tokenexchange.access_evaluation.failed"
 		if decision.Status >= http.StatusBadRequest && decision.Status < http.StatusInternalServerError {
 			level = slog.LevelWarn
 		}

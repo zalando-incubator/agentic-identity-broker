@@ -134,6 +134,8 @@ if err != nil {
 | Namespace | Describes | Reference |
 |---|---|---|
 | `token_exchange` | RFC 8693 token exchange in the broker and ExtProc | `docs/reference/token-exchange.md#diagnostic-attributes` |
+| `access_evaluation` | Credential-free broker AuthZEN decision and freshness | `specs/054-authzen-delegation-pip/contracts/observability.md` |
+| `delegation` | ExtProc permit-cache lookup | `specs/054-authzen-delegation-pip/contracts/observability.md` |
 | `approval` | Tool approvals | `specs/024-approval-api-ui/` |
 | `authorization` | ExtProc OPA authorization | ADR 028 |
 | `oauth2.refresh` | Third-party session refresh | `specs/029-proactive-token-refresh/contracts/observability.md` |

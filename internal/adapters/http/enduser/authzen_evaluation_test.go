@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -88,12 +89,12 @@ func TestAuthZENEvaluation_AuditRecords(t *testing.T) {
 		event    string
 		level    string
 	}{
-		{"permit", permitDecision(), "authzen.access_evaluation.permitted", "INFO"},
-		{"denial", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionDeny}, "authzen.access_evaluation.denied", "INFO"},
-		{"malformed", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusBadRequest}, "authzen.access_evaluation.failed", "WARN"},
-		{"unauthenticated", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusUnauthorized}, "authzen.access_evaluation.failed", "WARN"},
-		{"forbidden", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusForbidden}, "authzen.access_evaluation.failed", "WARN"},
-		{"server failure", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError}, "authzen.access_evaluation.failed", "ERROR"},
+		{"permit", permitDecision(), "tokenexchange.access_evaluation.permitted", "INFO"},
+		{"denial", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionDeny}, "tokenexchange.access_evaluation.denied", "INFO"},
+		{"malformed", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusBadRequest}, "tokenexchange.access_evaluation.failed", "WARN"},
+		{"unauthenticated", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusUnauthorized}, "tokenexchange.access_evaluation.failed", "WARN"},
+		{"forbidden", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusForbidden}, "tokenexchange.access_evaluation.failed", "WARN"},
+		{"server failure", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError}, "tokenexchange.access_evaluation.failed", "ERROR"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -122,7 +123,7 @@ func TestAuthZENEvaluation_EarlyFailureAudit(t *testing.T) {
 	_, logs := serveEvaluation(t, &stubEvaluator{}, req.WithContext(ctx))
 	var record map[string]any
 	require.NoError(t, json.Unmarshal([]byte(logs), &record))
-	assert.Equal(t, "authzen.access_evaluation.failed", record["event"])
+	assert.Equal(t, "tokenexchange.access_evaluation.failed", record["event"])
 	assert.Equal(t, "WARN", record["level"])
 	assert.Equal(t, security.AnonymousActor, record["principal"])
 }
@@ -172,8 +173,8 @@ func TestAuthZENEvaluation_SpansExcludeCredentialsAndContext(t *testing.T) {
 	}
 	spans := recorder.Ended()
 	require.Len(t, spans, 3)
-	for _, span := range spans {
-		assert.Equal(t, "authzen.access_evaluation", span.Name())
+	for i, span := range spans {
+		assert.Equal(t, "tokenexchange.access_evaluation", span.Name())
 		encoded, err := json.Marshal(tracetest.SpanStubFromReadOnlySpan(span))
 		require.NoError(t, err)
 		for _, sensitive := range []string{evalSubjectMarker, evalAssertionMarker, "alice@example.com", "https://api.example.com/repos"} {
@@ -184,6 +185,14 @@ func TestAuthZENEvaluation_SpansExcludeCredentialsAndContext(t *testing.T) {
 			attrs[string(attr.Key)] = attr.Value.AsInterface()
 		}
 		assert.Equal(t, "access_evaluation", attrs["token_exchange.operation"])
+		assert.Equal(t, []string{"permit", "deny", "error"}[i], attrs["access_evaluation.decision"])
+		if i == 0 {
+			assert.Equal(t, int64(15), attrs["access_evaluation.max_age"])
+		} else {
+			assert.NotContains(t, attrs, "access_evaluation.max_age")
+		}
+		assert.Equal(t, trace.SpanKindInternal, span.SpanKind())
+		assert.Equal(t, "tokenexchange", span.InstrumentationScope().Name)
 	}
 }
 
