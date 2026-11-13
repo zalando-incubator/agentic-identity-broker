@@ -24,7 +24,18 @@ on:
         default: ""
   slash_command:
     name: repo-assist
-  reaction: "eyes"
+  # The App holds no Discussions permission, so the reaction and status comment skip discussions.
+  reaction:
+    type: eyes
+    discussions: false
+  status-comment:
+    discussions: false
+  # The reaction and run status comments come from the same App as the safe outputs.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
 
 concurrency:
   job-discriminator: ${{ github.event_name == 'schedule' && 'scheduled' || github.run_id }}
@@ -160,6 +171,12 @@ tools:
         console.log("repo-assist notes.json conforms to schema");
 
 safe-outputs:
+  # PRs, pushes, comments, and labels come from this App, so its pushes start CI without a CI trigger token.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
   threat-detection:
     # Keep detection on its small default model; without this it inherits the pinned agent model.
     model: ${{ vars.GH_AW_MODEL_DETECTION_COPILOT || vars.GH_AW_DEFAULT_MODEL_COPILOT || 'detection' }}
@@ -173,6 +190,7 @@ safe-outputs:
     target: "*"
     hide-older-comments: true
   create-pull-request:
+    github-token-for-extra-empty-commit: none
     draft: true
     title-prefix: "[repo-assist] "
     labels: [automation, repo-assist]
@@ -183,6 +201,9 @@ safe-outputs:
         - README.md
     max: 4
   push-to-pull-request-branch:
+    github-token-for-extra-empty-commit: none
+    # Reading branch protection needs Administration, which the App does not hold; GitHub still enforces protection on the push.
+    check-branch-protection: false
     target: "*"
     required-title-prefix: "[repo-assist] "
     max: 4

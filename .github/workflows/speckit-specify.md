@@ -22,11 +22,18 @@ permissions:
   issues: read
   pull-requests: read
 safe-outputs:
+  # The App opens the PR, so the pipeline acts under one identity and the new PR starts ordinary CI.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
   report-failure-as-issue:
     - "!report_incomplete"
   threat-detection:
     continue-on-error: false
   create-pull-request:
+    github-token-for-extra-empty-commit: none
     draft: true
     title-prefix: "[Spec Kit] "
     preserve-branch-name: true

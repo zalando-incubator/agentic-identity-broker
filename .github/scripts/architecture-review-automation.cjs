@@ -1,5 +1,5 @@
 const fs = require("node:fs");
-const { managedPR, validateReviewState, parseReview, reviewDimensions, retryReads } = require("./speckit-automation.cjs");
+const { managedPR, validateReviewState, parseReview, reviewDimensions, retryReads, pipelineBot } = require("./speckit-automation.cjs");
 
 const directory = "/tmp/gh-aw/architecture-review";
 const heading = "## 🏗️ Architectural Review";
@@ -19,10 +19,6 @@ const maxFocus = 2000;
 function parseCommand(body) {
   const match = typeof body === "string" && body.match(/^\/architecture-review(?=\s|$)([\s\S]*)$/);
   return match ? { argument: match[1].trim() } : null;
-}
-
-function actionsBot(user) {
-  return user?.login === "github-actions[bot]" && user?.type === "Bot";
 }
 
 async function maintainer(github, repo, login) {
@@ -216,7 +212,7 @@ async function verify({ github, context, comment }) {
 
 async function statusComments(github, repo, number) {
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
-  return comments.filter((entry) => actionsBot(entry.user) && (entry.body || "").includes(statusMarker) &&
+  return comments.filter((entry) => pipelineBot(entry.user) && (entry.body || "").includes(statusMarker) &&
     !(entry.body || "").includes("<!-- gh-aw-agentic-workflow:"));
 }
 
