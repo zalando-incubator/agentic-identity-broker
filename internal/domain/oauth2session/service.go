@@ -690,6 +690,9 @@ func (s *OAuth2SessionService) InitiateOAuth2Flow(
 	serviceID id.ServiceID,
 	redirectURI string,
 ) (*InitiateFlowResult, error) {
+	if redirectURI == "" {
+		redirectURI = strings.TrimRight(s.config.CallbackBaseURL, "/") + "/sessions"
+	}
 	return s.initiateOAuth2Flow(ctx, principal, serviceID, redirectURI, "")
 }
 
