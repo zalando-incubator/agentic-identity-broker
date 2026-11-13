@@ -273,8 +273,8 @@ proxy must also route the standard discovery URL. The docs will state this.
   CallingPeer before caller-policy authorization. Early decode/authentication errors must
   finalize the request-principal/anonymous fallback before in-handler audit, using the existing
   idempotent helper; the perimeter net remains a last resort. Preserve ordinary-request and
-  token-route behavior. The maintainer accepted this extension with the R16 decision set
-  (2026-10-28). It still needs the §3.1.4.2 documentation and T044/T047 test-first coverage;
+  token-route behavior. The maintainer endorsed this extension with the R16 decision set
+  (2026-10-28 review); sign-off is approval item ADR-1 in the plan. It still needs the §3.1.4.2 documentation and T044/T047 test-first coverage;
   it is not existing functionality (HIGH I2 in [remediation.md](./remediation.md)).
 
 ## R10. Request body bounds and strictness
@@ -292,7 +292,8 @@ caller believe it was evaluated (SR-002).
 
 **Stakeholder (contract review)**: AuthZEN permits extensible `properties`. Strict rejection is
 recorded in [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md). The
-maintainer accepted that contract on 2026-10-28, including this strictness.
+maintainer endorsed that contract in the 2026-10-28 review, including this strictness. Sign-off is
+approval item API-2 in the plan.
 
 ## R11. Denial representation
 
@@ -310,7 +311,7 @@ one of these forms:
 The contract file presents both forms. Implementation tasks depend only on the domain outcome
 (`Deny{Detail, ConsentURL}`), so the choice affects serialization only.
 
-**Contract acceptance (2026-10-28)**: The maintainer accepted the contract, whose
+**Contract review (2026-10-28)**: The maintainer endorsed the contract, whose
 `AccessEvaluationDenial` schema uses form (a). The API-003 check against the final AuthZEN 1.0
 text still runs before the OpenAPI is frozen. If that check finds a conflict with form (a), it
 goes back to the stakeholder. It is not resolved silently.
@@ -331,8 +332,8 @@ end-user API `2.0.0`, following the feature-051 precedent. It is **not** an impl
 of this feature, because it must ship in a later release. It needs a separately confirmed
 contract change (spec API-006 and Principles IV and X). The plan records it as follow-up work.
 
-**Stakeholder**: The accepted contract (2026-10-28) covers the 1.1.0 additive bump and the
-deprecation marker with its removal note (contract §3). The removal itself still needs a
+**Stakeholder**: The contract endorsed in the 2026-10-28 review covers the 1.1.0 additive bump
+and the deprecation marker with its removal note (contract §3). Sign-off is approval item API-3. The removal itself still needs a
 separately confirmed 2.0.0 contract change in a later release.
 
 ## R13. ExtProc resolver boundary
@@ -347,7 +348,7 @@ separately confirmed 2.0.0 contract change in a later release.
   `requestStart` is read from the clock just before the POST is sent. The `Result` carries
   the deadline. The cache, the singleflight followers, and `requestState` reuse it unchanged.
   ExtProc does no `Age` or transit accounting and applies no separate `grant.valid_until` cap.
-  The broker already caps `max-age` by the grant expiry, and the maintainer accepted the
+  The broker already caps `max-age` by the grant expiry, and the maintainer chose to accept the
   remaining skew.
 
 **Decision**: Add a new package, `internal/extproc/delegation/`, with no broker imports (ADR 011
@@ -478,7 +479,7 @@ the documented shape. Any violation is an `invalid_response` resolution error: E
 - `grant.updated_at` is an RFC 3339 timestamp. `grant.valid_until`, when present, is an RFC
   3339 timestamp.
 - An optional `canonical_id` or `valid_until` is either absent or a non-empty string. An
-  explicit `null` or empty string violates the accepted contract ("omitted, never null"), so
+  explicit `null` or empty string violates the contract ("omitted, never null"), so
   the client rejects it. It never forwards a null value.
 
 Timestamps are validated but kept as the received strings, so the policy sees the same values
@@ -538,17 +539,16 @@ flow). `input.context.principal` is policy input only.
 - *Decoding with `DisallowUnknownFields`*. Rejected because the clarification ignores unknown
   permit fields. Rejecting them would make every additive broker change a breaking change.
 - *Treating a `null` optional member as absent*. Rejected for fail-closed handling of a
-  response that contradicts the accepted contract.
+  response that contradicts the contract.
 
 This changes ADR 028's input schema, which is merged and Accepted. The new superseding ADR
 records it (R16).
 
 ## R16. Architecture decision record
 
-**Decision**: Phase 2a drafts a new ADR with status **Proposed** at the next unused number. On
-2026-10-27, `main` ends at 043, and unmerged branches `origin/046-cimd-public-client` and
-`origin/fix/extproc-reauth-403-challenge` each use 044. The planned number is therefore **045**,
-rechecked when the ADR is drafted. The ADR records these decisions:
+**Decision**: The plan drafts a new ADR with status **Proposed** at the next unused number. On
+2026-10-29, `main` ends at 044 (two merged ADRs use 044), and no remote branch uses 045. The
+planned number is therefore **045**, rechecked when the draft moves to `adrs/`. The ADR records these decisions:
 
 - the AuthZEN Access Evaluation information boundary on the end-user server, enabled by token
   exchange, with no new broker flag;
@@ -572,13 +572,16 @@ rechecked when the ADR is drafted. The ADR records these decisions:
   reconciliation;
 - the deprecation of the `granted_permission_sets` exchange field and its removal timing (R12).
 
-**Stakeholder**: Maintainer `mjungsbluth` accepted this ADR decision set in the 2026-10-28
-review ("ADR accepted"). T008 drafts the ADR file at the next unused number with status
-**Accepted** and records this approval. Its OPA input-schema bullet follows R15 as revised
-after the 2026-10-28 spec clarification. That clarification fixes the shape, but it does not
-by itself approve the ADR text. Under Principle II, the ADR may be revised in this PR before it
-merges, and the final ADR and the code must agree. The planning session itself accepts
-nothing.
+**Stakeholder**: Maintainer `mjungsbluth` endorsed this ADR decision set in the 2026-10-28
+review ("ADR accepted"). Under the pipeline's sign-off rules, review direction is not the
+approval record. The planning session drafted the ADR as
+[adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md) with status
+**Proposed**, and registered it as approval item ADR-1 in the plan. After the maintainer's 👍 on
+the pipeline's approval comment, T008 records that approval in the Status line and moves the
+draft to `adrs/045-authzen-delegation-pip.md`, rechecking the number. Its OPA input-schema
+section follows R15 as revised after the 2026-10-28 spec clarification. Under Principle II, the
+ADR may be revised in this PR before it merges, and the final ADR and the code must agree. The
+planning session itself accepts nothing.
 
 ## R17. ExtProc configuration
 
@@ -648,8 +651,10 @@ These are actionable findings outside the feature's required work. Under the con
 
 1. **Feature-number collision**: `specs/054-agent-external-id-filter` (merged on `main`) and
    this feature both use number 054. Renumbering is a process decision for the maintainer.
-2. **ADR number collision**: two unmerged branches each propose ADR 044. This feature avoids
-   the number. The collision between those two branches is theirs to resolve.
+2. **ADR number collision**: two ADRs on `main` both use 044
+   (`044-client-registration-independent-of-authentication.md` and
+   `044-service-specific-session-recovery-url.md`). This feature avoids the number. Renumbering
+   them is a process decision for the maintainer.
 3. **Stale ARCHITECTURE §3.2.3**: The section still describes extracting the bearer token and
    `:path` from raw headers, which contradicts accepted ADR 036. This feature updates only the
    ExtProc sections it changes, so the stale text remains unless separately approved.

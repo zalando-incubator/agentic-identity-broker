@@ -1,9 +1,10 @@
-# Contract (Accepted): AuthZEN Discovery and Access Evaluation
+# Contract (Proposed): AuthZEN Discovery and Access Evaluation
 
-**Status**: **Accepted** by maintainer `mjungsbluth` in the 2026-10-28 `/speckit-plan` review
-(Principles IV and X, spec API-002). The acceptance covers the contract as written here: the
-strict members (R10), the plain-UUID anchor, denial form (a), the error mapping, and the `1.1.0`
-deprecation marker. API-003 items marked **Verify** must still be checked against the final
+**Status**: **Proposed**. Maintainer `mjungsbluth` endorsed the contract as written here in the
+2026-10-28 `/speckit-plan` review (Principles IV and X, spec API-002): the strict members (R10),
+the plain-UUID anchor, denial form (a), the error mapping, and the `1.1.0` deprecation marker.
+Sign-off is approval items API-1–API-3 in the plan; `api/enduser/openapi.yaml` changes only after
+it. API-003 items marked **Verify** must still be checked against the final
 AuthZEN Authorization API 1.0 text before the OpenAPI is frozen. Any conflict found goes back to
 the stakeholder.
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-26
 
-**Status**: Draft — R15 OPA input-shape clarification integrated. Design-artifact reconciliation, contract review, and architectural approval (including I2's audit-perimeter extension) remain required. The separate freshness and audit-seam handoff is recorded in [remediation.md](./remediation.md).
+**Status**: Draft — R15 OPA input-shape clarification integrated and reconciled with the design artifacts. Contract sign-off and architectural approval (including I2's audit-perimeter extension) remain required through the plan's [Approval Items](./plan.md#approval-items). The separate freshness and audit-seam handoff is recorded in [remediation.md](./remediation.md).
 
 **Input**: The title and body supplied for [issue #289](https://github.com/zalando-incubator/agentic-identity-broker/issues/289): “Broker AuthZEN Access Evaluation endpoint as Delegation Policy Information Point”. No issue comments were used.
 
