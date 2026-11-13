@@ -141,7 +141,7 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 	})
 
 	// Scenario US3.5 from specs/054-authzen-delegation-pip/spec.md
-	It("does not cache denials and permits right after consent", func() {
+	It("re-consults after consent immediately and preserves the body exchange cooldown", func() {
 		j := newDelegationJourney(time.Second, true)
 		consentURL := j.broker.Enduser.BaseURL() + "/agents/" + j.broker.Agent.ID.String()
 		Expect(j.broker.Storage.UserGrants().Delete(context.Background(), j.broker.Grant.ID)).To(Succeed())
@@ -151,19 +151,23 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 			"consent takes effect immediately: the denial was not cached")
 		Expect(j.broker.EvaluationCount()).To(Equal(2))
 
-		Expect(j.broker.Storage.UserGrants().Delete(context.Background(), j.broker.Grant.ID)).To(Succeed())
-		Eventually(func() *extprocv3.ProcessingResponse {
-			headersResp, _ := j.BodyCall(authzenRepoResource)
-			return headersResp
-		}, 5*time.Second, 250*time.Millisecond).Should(extprochelpers.HaveImmediateResponseWithStatus(http.StatusForbidden))
-		evaluations := j.broker.EvaluationCount()
-		Expect(j.broker.Storage.UserGrants().Create(context.Background(), j.broker.Grant)).To(Succeed())
-		// The body path's concurrent exchange recorded the existing 5 s exchange re-consent
-		// cooldown (ADR 012) during the denied request; delegation itself holds no denial
-		// and consults the broker again on the very next request.
-		_, _ = j.BodyCall(authzenRepoResource)
-		Expect(j.broker.EvaluationCount()).To(Equal(evaluations + 1))
-		Eventually(func() bool { return forwarded(j.BodyCall(authzenRepoResource)) }, 8*time.Second, 250*time.Millisecond).Should(BeTrue())
+		// A separate consumer has no exchanged token from the header-only permit above.
+		bodyJourney := newDelegationJourney(time.Second, true)
+		bodyConsentURL := bodyJourney.broker.Enduser.BaseURL() + "/agents/" + bodyJourney.broker.Agent.ID.String()
+		Expect(bodyJourney.broker.Storage.UserGrants().Delete(context.Background(), bodyJourney.broker.Grant.ID)).To(Succeed())
+		headersResp, bodyResp := bodyJourney.BodyCall(authzenRepoResource)
+		Expect(bodyResp).To(BeNil())
+		expectDelegationDenied(headersResp, bodyConsentURL)
+		Expect(bodyJourney.broker.EvaluationCount()).To(Equal(1))
+		Expect(bodyJourney.broker.Storage.UserGrants().Create(context.Background(), bodyJourney.broker.Grant)).To(Succeed())
+		headersResp, bodyResp = bodyJourney.BodyCall(authzenRepoResource)
+		Expect(bodyResp).To(BeNil(), "the independent exchange cooldown still blocks forwarding")
+		Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
+		challenge := extprochelpers.ExtractImmediateResponseHeader(headersResp, "www-authenticate")
+		Expect(challenge).To(HavePrefix(`Bearer error="insufficient_scope"`))
+		Expect(challenge).To(ContainSubstring(`error_uri="` + bodyConsentURL + `"`))
+		Expect(bodyJourney.broker.EvaluationCount()).To(Equal(2), "the delegation denial was not cached")
+		Eventually(func() bool { return forwarded(bodyJourney.BodyCall(authzenRepoResource)) }, 8*time.Second, 250*time.Millisecond).Should(BeTrue())
 	})
 
 	// Scenario US3.6 from specs/054-authzen-delegation-pip/spec.md
