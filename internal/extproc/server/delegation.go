@@ -55,6 +55,7 @@ func (s *Server) resolveDelegation(ctx context.Context, logger *slog.Logger, sub
 		}
 		return nil, err
 	}
+	logDiagnostic(ctx, logger, slog.LevelDebug, "delegation permitted", SuccessDiagnostic(ExchangeUnknown))
 	return &result, nil
 }
 

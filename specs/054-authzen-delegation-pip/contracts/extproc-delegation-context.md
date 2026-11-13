@@ -198,3 +198,14 @@ The ExtProc logs and spans use the existing diagnostic vocabulary. They add thes
 - a cache attribute: `hit` or `miss`
 
 The subject token, the assertion, and the delegation context are never logged.
+
+Implementation signals: `extproc.delegation.resolve` (Internal) and
+`extproc.delegation.evaluate` (Client), both in scope `extproc`, carry
+`token_exchange.operation=delegation_resolution`, `token_exchange.outcome` and
+`token_exchange.failure_detail`. Outcome/detail pairs are `success`/`none`,
+`authorization_denied`/`delegation_denied`, `infrastructure_error`/`delegation_unavailable`,
+and `canceled`/`caller_canceled`. The resolver span adds `delegation.cache=hit|miss`.
+Infrastructure failures use a constant error status description and `error.type` from
+`timeout|unavailable|rejected|invalid_response`; denials do not set error status. No raw error,
+credential, principal, context, or requested resource URI is exported by these spans.
+Server logs classify the same resolution outcomes; permit hit/miss diagnostics are Debug.

@@ -35,24 +35,25 @@ const (
 // end-user server. Alice's grant covers the repo service through two permission sets; the
 // agent ceiling allows only read:repo. It deliberately creates no provider session.
 type authzenFixture struct {
-	Storage         *storageadapter.Adapter
-	Enduser         *bootstrap.TestServer
-	Upstream        *helpers.MockUpstreamOAuth2Server
-	Config          *ports.Config
-	Logs            *bootstrap.BufferedLogCapture
-	Principal       id.Principal
-	Agent           *storagedomain.Agent
-	OtherAgent      *storagedomain.Agent
-	Reader          *storagedomain.PermissionSet
-	Writer          *storagedomain.PermissionSet
-	Repo            *model.ThirdpartyOAuth2ProviderEntity
-	Wiki            *model.ThirdpartyOAuth2ProviderEntity
-	Grant           *storagedomain.UserGrant
-	SubjectToken    string
-	ClientAssertion string
-	client          *http.Client
-	storageFactory  *bootstrap.StorageFactory
-	logger          *slog.Logger
+	Storage            *storageadapter.Adapter
+	Enduser            *bootstrap.TestServer
+	Upstream           *helpers.MockUpstreamOAuth2Server
+	Config             *ports.Config
+	Logs               *bootstrap.BufferedLogCapture
+	EvaluationObserver *bootstrap.EvaluationSecurityObserver
+	Principal          id.Principal
+	Agent              *storagedomain.Agent
+	OtherAgent         *storagedomain.Agent
+	Reader             *storagedomain.PermissionSet
+	Writer             *storagedomain.PermissionSet
+	Repo               *model.ThirdpartyOAuth2ProviderEntity
+	Wiki               *model.ThirdpartyOAuth2ProviderEntity
+	Grant              *storagedomain.UserGrant
+	SubjectToken       string
+	ClientAssertion    string
+	client             *http.Client
+	storageFactory     *bootstrap.StorageFactory
+	logger             *slog.Logger
 }
 
 func newAuthZENFixture(configure func(*ports.Config)) *authzenFixture {
@@ -144,6 +145,7 @@ func (f *authzenFixture) Boot(configure func(*ports.Config)) {
 	}
 	application, err := bootstrap.NewServerFactory(f.Config, f.logger).BuildApp(f.Storage)
 	Expect(err).NotTo(HaveOccurred())
+	f.EvaluationObserver = bootstrap.ObserveAuthZENEvaluation(application)
 	f.Enduser, err = bootstrap.NewEndUserTestServer(application, f.logger)
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(f.Enduser.Close)
@@ -198,8 +200,12 @@ func (f *authzenFixture) SignSubject(exp time.Time) string {
 }
 
 func (f *authzenFixture) SignAssertion(exp time.Time) string {
+	return f.SignAssertionFor("authzen-gateway", exp)
+}
+
+func (f *authzenFixture) SignAssertionFor(subject string, exp time.Time) string {
 	token, err := helpers.SignTestJWT(map[string]interface{}{
-		"sub": "authzen-gateway", "iss": f.Upstream.URL(), "aud": "token-exchange-broker",
+		"sub": subject, "iss": f.Upstream.URL(), "aud": "token-exchange-broker",
 		"iat": time.Now().Add(-2 * time.Hour).Unix(), "exp": exp.Unix(), "marker": authzenPeerMarker,
 	}, f.Upstream.GetPrivateKeyPEM())
 	Expect(err).NotTo(HaveOccurred())
@@ -217,6 +223,50 @@ func (f *authzenFixture) EvaluateRaw(assertion string, body []byte) *helpers.Aut
 	Expect(resp.Header.Get("X-Request-ID")).To(Equal("delegation-001"), "the supplied request ID is echoed on every path")
 	f.ExpectCredentialFree(resp.Raw)
 	return resp
+}
+
+func (f *authzenFixture) ExpectEvaluationIdentity(resp *helpers.AuthZENResponse, actor, peer string, reachedService bool) {
+	parts := strings.Split(resp.Header.Get("traceresponse"), "-")
+	Expect(parts).To(HaveLen(4))
+	traceID := parts[1]
+	var matching []map[string]any
+	Eventually(func() int {
+		records, err := f.Logs.Records()
+		Expect(err).NotTo(HaveOccurred())
+		matching = nil
+		for _, record := range records {
+			if record["trace_id"] == traceID && (record["token_exchange.operation"] == "access_evaluation" || record["msg"] == "HTTP request") {
+				matching = append(matching, record)
+			}
+		}
+		return len(matching)
+	}).Should(Equal(2), "exactly one in-handler audit and one perimeter access log share the response trace ID")
+	for _, record := range matching {
+		Expect(record).To(HaveKeyWithValue("actor", actor))
+		if peer == "" {
+			Expect(record).NotTo(HaveKey("calling_peer"))
+		} else {
+			Expect(record).To(HaveKeyWithValue("calling_peer", peer))
+		}
+	}
+	observed := false
+	for _, observation := range f.EvaluationObserver.Snapshot() {
+		Expect(observation.Holder).NotTo(BeNil())
+		if observation.Holder.Capture().TraceID != traceID {
+			continue
+		}
+		observed = true
+		Expect(observation.FinalizedBeforeEvaluation).To(BeFalse(), "only the shared resolver may establish verified identities")
+		sc, finalized := observation.Holder.Finalized()
+		Expect(finalized).To(BeTrue())
+		Expect(sc.TraceID).To(Equal(traceID))
+		Expect(sc.Actor).To(Equal(actor))
+		Expect(sc.CallingPeer).To(Equal(peer))
+		second, changed := observation.Holder.Finalize("must-not-replace-actor", "must-not-replace-peer")
+		Expect(changed).To(BeFalse(), "the context must finalize exactly once")
+		Expect(second).To(Equal(sc))
+	}
+	Expect(observed).To(Equal(reachedService))
 }
 
 // Exchange performs the equivalent RFC 8693 exchange for comparison.
