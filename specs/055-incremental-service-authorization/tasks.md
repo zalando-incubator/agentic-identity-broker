@@ -1,7 +1,7 @@
 # Tasks: Incremental Service Authorization
 
 **Input**: `specs/055-incremental-service-authorization/` — `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, and `quickstart.md`.
-**Backlog**: 115 stable task IDs; preserve existing completion markers when resuming. T069/T077 require lookup-failure coverage at domain and handler level, never an E2E lookup-failure variant or production-bootstrap failure-injection seam. T112 validates WCAG in the existing light theme only. Narrowing these obligations does not itself complete them; verify the remaining applicable conditions. Container-backed validation is deferred to pushed-commit container tests, not a sandbox blocker.
+**Backlog**: 119 stable task IDs; preserve existing completion markers when resuming. T069/T077 require lookup-failure coverage at domain and handler level, never an E2E lookup-failure variant or production-bootstrap failure-injection seam. T112 validates WCAG in the existing light theme only. Narrowing these obligations does not itself complete them; verify the remaining applicable conditions. Container-backed validation is deferred to pushed-commit container tests, not a sandbox blocker.
 **Tests**: Mandatory red → green → refactor under Principles VIII and XIII. Write each test first, make it compile with only minimal structural scaffolding, and observe a semantic failure before implementing its behavior. Never use pending/skip markers, vacuous assertions, or red-phase annotations in test files.
 **Organization**: Setup → mandatory design preconditions → shared foundations → US1 (P1) → US3 (P1) → US2 (P1) → US4 (P2) → mandatory compliance. The three P1 stories share priority; this order follows the plan's dependency order, not a change to their priorities.
 
@@ -258,7 +258,7 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 **E2E Acceptance Testing** (Principle XIII):
 
-- [ ] T110 Run `just test-e2e-backend`, `just test-e2e-extproc`, and `just test-e2e-frontend`; verify all mapped scenarios in `tests/e2e/` turn green with only minimal fixture adjustments and concrete full-journey assertions, production bootstrap, Ginkgo/Gomega hierarchy, isolation and scenario comments intact (Principle XIII; SC-001–SC-006).
+- [X] T110 Run `just test-e2e-backend`, `just test-e2e-extproc`, and `just test-e2e-frontend`; verify all mapped scenarios in `tests/e2e/` turn green with only minimal fixture adjustments and concrete full-journey assertions, production bootstrap, Ginkgo/Gomega hierarchy, isolation and scenario comments intact (Principle XIII; SC-001–SC-006).
 - [X] T111 Capture the four meaningful UI states using the existing `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend` harness path, retain descriptive artifacts under `tests/e2e/screenshots/` using existing screenshot handling without changing workflows, and verify images against the consent C/D and session A/B Wireloom states (Principles XI, XIII, XIV).
 
 **Frontend** (Principle XI - if applicable):
@@ -269,6 +269,13 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 - [ ] T113 Run the full applicable `just verify` gate from `justfile`: `just check`, `just test`, `just web-test`, `just cdk-test`, `just mock-sample-agent-test`, `just mock-upstream-oauth2-test`, `just test-integration`, `just test-e2e-backend`, plus `just extproc-test` and complete frontend journeys. In the sandbox replace `just security` with `bash "$SECURITY_SCAN_SCRIPT" .`; run only container-free ExtProc cases without weakening suite selection. Defer `just test-integration-infra`, `just test-e2e-docker` and container-backed ExtProc cases to container tests on the pushed commit; never attempt Docker/Podman or claim deferred suites passed. Report actual evidence and change-caused failures only in the implementation session's result; local tasks do not wait for container evidence (Principles VIII, IX, XIII; full verification requirement).
 - [ ] T114 Verify `specs/055-incremental-service-authorization/checklists/requirements.md` is satisfied by evidence and every completed task in `tasks.md` is accurately checked; leave unfinished tasks/checklist items unchecked and report their dependency/blocker and required maintainer action, while keeping the PR draft and spec/plan unchanged (Principles II, VIII, XIII; implementation handoff rules).
+
+### Acceptance audit corrections
+
+- [X] T116 Complete T016's existing US4 S2 owner in `tests/e2e/incremental_authorization_test.go`: after successful Save, reassign the canonical ID to a different eligible, usable, grant-covered service, follow the server-built URL with its unchanged JWE, and assert `invalid_scope`, original state, no code or upstream redirect, and no credential consumption. Preserve rename-to-missing and UUID-durability variants (FR-019; US4 S2; API-CONSENT; Principles I, VIII, XIII).
+- [X] T117 Put the existing gateway, proxy, and documentation acceptance owners under meaningful `Context` blocks without changing their scenario ownership or assertions in `tests/e2e/incremental_authorization_gateway_test.go`, `incremental_authorization_proxy_test.go`, and `incremental_authorization_docs_test.go`; verify production bootstrap and per-test isolation remain intact (T098, T110; Principle XIII).
+- [X] T118 Complete T018's owning US3 S2/S3 proxy journeys with a signed upstream access-token response, asserting the broker forwards its exact token bytes and decoded claims unchanged alongside status, response headers, errors and refresh rotation. Use existing signing helpers and no production injection seam or new dependency (FR-013, FR-021; T018; DEC-002; Principles III, VIII, XIII).
+- [X] T119 Remove feature-introduced generated TypeScript build-info artifacts from version control and ignore `*.tsbuildinfo`; preserve application source, manifests, build commands and outputs required by the maintained test harness (T099, T114; feature scope).
 
 ## Acceptance Scenario → Task Mapping
 

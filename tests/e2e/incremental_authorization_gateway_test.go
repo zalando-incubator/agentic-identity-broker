@@ -90,56 +90,60 @@ var _ = Describe("Incremental Service Authorization Gateway Challenge", func() {
 		extprochelpers.ExpectReauthElicitationBody([]byte(extprochelpers.ExtractImmediateResponseBody(response)), recovery["error_uri"].(string), recovery["error_description"].(string))
 	}
 
-	// US1 S1 from specs/055-incremental-service-authorization/spec.md.
-	It("returns the service scope and recovery URL and the gateway challenges with insufficient_scope while keeping URL elicitation", func() {
-		first, _ := toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
-		Expect(journey.provider.GetTokenRequestsForGrant("refresh_token")).To(HaveLen(1))
-		session, err := journey.store.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.principal), journey.cast.GitHub.ID)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(session.RequiresReauthentication()).To(BeTrue(), "the definitive provider rejection must be persisted")
-		Expect(session.RefreshRejectedAt).NotTo(BeNil())
-		Expect(session.RefreshRejectedAt.Before(time.Now().Add(time.Second))).To(BeTrue())
+	Context("when a tool call requires provider-session recovery", func() {
+		// US1 S1 from specs/055-incremental-service-authorization/spec.md.
+		It("returns the service scope and recovery URL and the gateway challenges with insufficient_scope while keeping URL elicitation", func() {
+			first, _ := toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
+			Expect(journey.provider.GetTokenRequestsForGrant("refresh_token")).To(HaveLen(1))
+			session, err := journey.store.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.principal), journey.cast.GitHub.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(session.RequiresReauthentication()).To(BeTrue(), "the definitive provider rejection must be persisted")
+			Expect(session.RefreshRejectedAt).NotTo(BeNil())
+			Expect(session.RefreshRejectedAt.Before(time.Now().Add(time.Second))).To(BeTrue())
 
-		recovery := brokerRecovery()
-		Expect(journey.provider.GetTokenRequestsForGrant("refresh_token")).To(HaveLen(1), "persisted unusability needs no second provider refresh")
-		expectChallenge(first, recovery, incrementalResourceMetadataURL)
+			recovery := brokerRecovery()
+			Expect(journey.provider.GetTokenRequestsForGrant("refresh_token")).To(HaveLen(1), "persisted unusability needs no second provider refresh")
+			expectChallenge(first, recovery, incrementalResourceMetadataURL)
 
-		journey.provider.WithRefreshGrantError("")
-		recoveryURL, err := url.Parse(recovery["error_uri"].(string))
-		Expect(err).NotTo(HaveOccurred())
-		returned := journey.follow(recoveryURL.RequestURI())
-		returned = journey.followCallback(returned)
-		Expect(returned.Path).To(Equal("/sessions/github"))
-		// ExtProc's existing re-authentication cooldown (ADR 012) bounds how soon a retry reaches the broker.
-		var bodyResponse *extprocv3.ProcessingResponse
-		Eventually(func() string {
-			var retried *extprocv3.ProcessingResponse
-			retried, bodyResponse = toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
-			return extprochelpers.ExtractMutatedAuthorizationHeader(retried)
-		}, 10*time.Second, 250*time.Millisecond).Should(Equal("Bearer synthetic-github-access"))
-		Expect(bodyResponse).To(extprochelpers.BeForwardedRequestBody())
+			journey.provider.WithRefreshGrantError("")
+			recoveryURL, err := url.Parse(recovery["error_uri"].(string))
+			Expect(err).NotTo(HaveOccurred())
+			returned := journey.follow(recoveryURL.RequestURI())
+			returned = journey.followCallback(returned)
+			Expect(returned.Path).To(Equal("/sessions/github"))
+			// ExtProc's existing re-authentication cooldown (ADR 012) bounds how soon a retry reaches the broker.
+			var bodyResponse *extprocv3.ProcessingResponse
+			Eventually(func() string {
+				var retried *extprocv3.ProcessingResponse
+				retried, bodyResponse = toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
+				return extprochelpers.ExtractMutatedAuthorizationHeader(retried)
+			}, 10*time.Second, 250*time.Millisecond).Should(Equal("Bearer synthetic-github-access"))
+			Expect(bodyResponse).To(extprochelpers.BeForwardedRequestBody())
+		})
 	})
 
-	// US4 S1 from specs/055-incremental-service-authorization/spec.md.
-	It("includes resource_metadata only when the route configures it, keeping scope and recovery link otherwise", func() {
-		withMetadata, _ := toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
-		recovery := brokerRecovery()
-		expectChallenge(withMetadata, recovery, incrementalResourceMetadataURL)
+	Context("when route metadata is optional or invalid", func() {
+		// US4 S1 from specs/055-incremental-service-authorization/spec.md.
+		It("includes resource_metadata only when the route configures it, keeping scope and recovery link otherwise", func() {
+			withMetadata, _ := toolCall(structpb.NewStringValue(incrementalResourceMetadataURL))
+			recovery := brokerRecovery()
+			expectChallenge(withMetadata, recovery, incrementalResourceMetadataURL)
 
-		withoutMetadata, _ := toolCall(nil)
-		expectChallenge(withoutMetadata, recovery, "")
+			withoutMetadata, _ := toolCall(nil)
+			expectChallenge(withoutMetadata, recovery, "")
 
-		for _, invalid := range []*structpb.Value{
-			structpb.NewNumberValue(42),
-			structpb.NewStringValue("http://agentgateway.example.com/.well-known/oauth-protected-resource/mcp"),
-			structpb.NewStringValue("https://user@agentgateway.example.com/metadata"),
-			structpb.NewStringValue("https://agentgateway.example.com/metadata#fragment"),
-			structpb.NewStringValue(`https://agentgateway.example.com/meta"data`),
-			structpb.NewStringValue("https://agentgateway.example.com/" + string(make([]byte, 2048))),
-		} {
-			response, _ := toolCall(invalid)
-			expectChallenge(response, recovery, "")
-		}
+			for _, invalid := range []*structpb.Value{
+				structpb.NewNumberValue(42),
+				structpb.NewStringValue("http://agentgateway.example.com/.well-known/oauth-protected-resource/mcp"),
+				structpb.NewStringValue("https://user@agentgateway.example.com/metadata"),
+				structpb.NewStringValue("https://agentgateway.example.com/metadata#fragment"),
+				structpb.NewStringValue(`https://agentgateway.example.com/meta"data`),
+				structpb.NewStringValue("https://agentgateway.example.com/" + string(make([]byte, 2048))),
+			} {
+				response, _ := toolCall(invalid)
+				expectChallenge(response, recovery, "")
+			}
+		})
 	})
 })
 

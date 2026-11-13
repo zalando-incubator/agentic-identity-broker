@@ -292,7 +292,7 @@ var _ = Describe("Incremental Service Authorization", func() {
 			grant := journey.currentGrant()
 			grant.GrantedPermissionSets = grant.GrantedPermissionSets[:1]
 			Expect(journey.store.UserGrants().Create(context.Background(), grant)).To(Succeed())
-			location, _ := journey.authorize(ordinary + " " + journey.githubScope() + " " + uuidScope)
+			location, verifier := journey.authorize(ordinary + " " + journey.githubScope() + " " + uuidScope)
 			sessionToken := journey.expectConsentRedirect(location)
 			Expect(journey.consentDetail(sessionToken)["requested_service_ids"]).To(Equal([]any{journey.cast.GitHub.ID.String()}))
 			status, body := journey.submit(sessionToken, journey.grantSelection(journey.cast.IdentityAccess, journey.cast.GitHubRead), grant.ValidUntil)
@@ -300,7 +300,32 @@ var _ = Describe("Incremental Service Authorization", func() {
 			journey.renameGitHub(ptr.To("github-production"))
 			journey.expectAuthorizationError(journey.follow(continuation), "invalid_scope", notPermitted)
 
+			By("rejecting canonical reassignment even to an eligible, usable, grant-covered service")
+			ctx := context.Background()
+			replacement, err := journey.store.Services().Get(ctx, journey.cast.Identity.ID)
+			Expect(err).NotTo(HaveOccurred())
+			originalCanonicalID := replacement.CanonicalID
+			replacement.CanonicalID = ptr.To("github")
+			Expect(journey.store.Services().Update(ctx, replacement, nil)).To(Succeed())
+			savedGrant := journey.currentGrant()
+			providerRequests := len(journey.provider.GetTokenRequests())
+			journey.expectAuthorizationError(journey.follow(continuation), "invalid_scope", notPermitted)
+			Expect(journey.currentGrant()).To(Equal(savedGrant))
+			Expect(journey.provider.GetTokenRequests()).To(HaveLen(providerRequests))
+
+			By("proving the replacement is usable for a fresh request, but cannot replace the sealed identity")
+			replacementTokens := journey.issue(ordinary + " " + journey.githubScope())
+			Expect(scopeSet(replacementTokens["scope"])).To(ContainElement(journey.githubScope()))
+			journey.expectAuthorizationError(journey.follow(continuation), "invalid_scope", notPermitted)
+			replacement.CanonicalID = originalCanonicalID
+			Expect(journey.store.Services().Update(ctx, replacement, nil)).To(Succeed())
 			journey.renameGitHub(ptr.To("github"))
+			query := journey.expectClientRedirect(journey.follow(continuation))
+			Expect(query.Get("code")).NotTo(BeEmpty(), "failed continuations must not consume the sealed request")
+			status, body = journey.redeem(query.Get("code"), verifier)
+			Expect(status).To(Equal(http.StatusOK), "the original PKCE credential remains usable: %v", body)
+			Expect(scopeSet(body["scope"])).To(ContainElements(journey.githubScope(), uuidScope))
+
 			canonical := journey.issue(ordinary + " " + journey.githubScope())
 			durable := journey.issue(ordinary + " " + uuidScope)
 			Expect(scopeSet(durable["scope"])).To(ContainElement(uuidScope))
