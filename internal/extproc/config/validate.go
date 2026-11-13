@@ -223,6 +223,9 @@ func Validate(cfg *Config) error {
 			errs = append(errs, "tool_approvals.max_staleness must be at least tool_approvals.long_poll_timeout_seconds plus tool_approvals.request_timeout")
 		}
 	}
+	if cfg.DelegationContext.Enabled {
+		errs = append(errs, validateDelegationContext(cfg)...)
+	}
 	if !isHTTPFieldName(cfg.Sessions.Extraction.HTTPHeader) {
 		errs = append(errs, "sessions.extraction.http_header must be a non-empty valid HTTP field name")
 	}
@@ -411,4 +414,33 @@ func validateTelemetryEndpoint(endpoint, protocol string) error {
 	}
 
 	return nil
+}
+
+// validateDelegationContext applies the enabled-only delegation_context rules and resolves
+// the default PDP identifier to the origin of oauth2.token_endpoint.
+func validateDelegationContext(cfg *Config) []string {
+	var errs []string
+	dc := &cfg.DelegationContext
+	if !cfg.Authorization.Enabled {
+		errs = append(errs, "delegation_context.enabled requires authorization.enabled")
+	}
+	if dc.PolicyDecisionPoint == "" {
+		if endpoint, err := url.Parse(cfg.OAuth2.TokenEndpoint); err == nil && endpoint.Scheme != "" && endpoint.Host != "" {
+			dc.PolicyDecisionPoint = endpoint.Scheme + "://" + endpoint.Host
+		}
+	}
+	pdp, err := url.Parse(dc.PolicyDecisionPoint)
+	if err != nil || !pdp.IsAbs() || pdp.Host == "" || (pdp.Scheme != "http" && pdp.Scheme != "https") ||
+		pdp.User != nil || pdp.RawQuery != "" || pdp.ForceQuery || pdp.Fragment != "" || strings.Contains(dc.PolicyDecisionPoint, "#") {
+		errs = append(errs, "delegation_context.policy_decision_point must be an absolute URL with a host and no userinfo, query, or fragment")
+	} else if pdp.Scheme == "http" && !cfg.OAuth2.TLS.AllowHTTP {
+		errs = append(errs, "delegation_context.policy_decision_point must use https:// scheme (set oauth2.tls.allow_http: true to disable — DEV ONLY)")
+	}
+	if dc.RequestTimeout <= 0 {
+		errs = append(errs, "delegation_context.request_timeout must be positive")
+	}
+	if dc.MaxStaleness <= 0 {
+		errs = append(errs, "delegation_context.max_staleness must be positive")
+	}
+	return errs
 }
