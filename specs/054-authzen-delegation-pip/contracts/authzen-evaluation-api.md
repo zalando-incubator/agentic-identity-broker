@@ -161,9 +161,9 @@ DelegationContext:
     agent:    { $ref: "#/components/schemas/DelegationEntityRef" }
     resource:
       type: object
-      required: [id, resource_uri, scopes]
+      required: [service_id, resource_uri, scopes]
       properties:
-        id:           { type: string, format: uuid, description: Resolved service UUID }
+        service_id:   { type: string, format: uuid, description: Resolved service UUID }
         canonical_id: { type: string, minLength: 1, description: Omitted when unset }
         resource_uri: { type: string, format: uri, description: Normalized URI }
         scopes:       { type: array, items: { type: string }, description: Effective scopes after the agent ceiling }

@@ -144,7 +144,7 @@ step 3:
   "principal": "alice@example.com",
   "agent": {"id": "550e8400-e29b-41d4-a716-446655440000", "canonical_id": "data-assistant"},
   "resource": {
-    "id": "880e8400-e29b-41d4-a716-446655440010",
+    "service_id": "880e8400-e29b-41d4-a716-446655440010",
     "canonical_id": "repo-api",
     "resource_uri": "https://api.example.com/repos",
     "scopes": ["read:repo"]
@@ -226,3 +226,8 @@ Infrastructure failures use a constant error status description and `error.type`
 `timeout|unavailable|rejected|invalid_response`; denials do not set error status. No raw error,
 credential, principal, context, or requested resource URI is exported by these spans.
 Server logs classify the same resolution outcomes; permit hit/miss diagnostics are Debug.
+Security records carry `event=extproc.delegation_context.denied` for a delegation denial,
+`event=extproc.delegation_context.unavailable` for resolution failure, and
+`event=extproc.delegation_context.permit_expired` when the permit expires before policy use.
+The last two retain the `delegation_unavailable` detail. These identifiers follow the
+`extproc.delegation_context.enabled` lifecycle family (F6, approved remediation proposal).

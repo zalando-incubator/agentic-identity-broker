@@ -25,6 +25,20 @@ func (r observedDelegationResolver) Resolve(context.Context, string, string) (de
 }
 func (observedDelegationResolver) Shutdown() {}
 
+func TestDelegationExpiredLog(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	now := time.Now()
+	s := &Server{now: func() time.Time { return now }}
+	response, expired := s.delegationExpired(context.Background(), logger, &delegation.Result{Deadline: now})
+	require.True(t, expired)
+	require.NotNil(t, response)
+	var record map[string]any
+	require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
+	assert.Equal(t, "extproc.delegation_context.permit_expired", record["event"])
+	assert.Equal(t, "delegation_unavailable", record["token_exchange.failure_detail"])
+}
+
 func TestDelegationLogs_ContainOnlyBoundedMetadata(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -60,6 +74,11 @@ func TestDelegationLogs_ContainOnlyBoundedMetadata(t *testing.T) {
 			assert.Equal(t, tt.outcome, record["token_exchange.outcome"])
 			if tt.detail != "" {
 				assert.Equal(t, tt.detail, record["token_exchange.failure_detail"])
+				event := "extproc.delegation_context.unavailable"
+				if tt.detail == "delegation_denied" {
+					event = "extproc.delegation_context.denied"
+				}
+				assert.Equal(t, event, record["event"])
 			}
 			for _, sensitive := range []string{"subject-token-marker", "assertion-marker", "provider-token-marker", "context-principal-marker", "dependency-cause-marker", "private-marker"} {
 				assert.NotContains(t, logs.String(), sensitive)

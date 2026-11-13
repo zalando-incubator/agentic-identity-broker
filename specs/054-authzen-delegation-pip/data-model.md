@@ -64,7 +64,7 @@ Any violation returns the existing `*TokenExchangeError` with its `FailureDetail
 DelegationContext
 ├── subject         { id: Principal }
 ├── agent           { id: AgentID, canonical_id?: string }
-├── resource        { id: ServiceID, canonical_id?: string, resource_uri: string, scopes: []string }
+├── resource        { service_id: ServiceID, canonical_id?: string, resource_uri: string, scopes: []string }
 ├── grant           { id: GrantID, updated_at: RFC 3339, valid_until?: RFC 3339 }
 └── permission_sets [] { id: PermissionSetID, canonical_id?: string,
                          services [] { id: ServiceID, canonical_id?: string, scopes: []string } }
@@ -173,7 +173,7 @@ any level are ignored and never copied. It then validates the struct and exports
 Context
 ├── Principal       string                        ← context.subject.id
 ├── Agent           { ID, CanonicalID? }
-├── Resource        { ID, CanonicalID?, ResourceURI, Scopes []string }
+├── Resource        { ServiceID, CanonicalID?, ResourceURI, Scopes []string }
 ├── Grant           { ID, UpdatedAt string (RFC 3339), ValidUntil? string (RFC 3339) }
 └── PermissionSets  [] { ID, CanonicalID?, Services [] { ID, CanonicalID?, Scopes []string } }
 ```
@@ -233,7 +233,7 @@ There is no `delegation` wrapper, no `subject` member, and no `delegation_availa
 | `agent_session_id` | `string` (existing) | Unchanged | Unchanged |
 | `principal` | `string`, `omitempty` | **omitted** | `Context.Principal` |
 | `agent` | `*AgentContext{ID; CanonicalID omitempty}`, `omitempty` | **omitted** | `Context.Agent` |
-| `resource` | `*ResourceContext{ID; CanonicalID omitempty; ResourceURI; Scopes}`, `omitempty` | **omitted** | `Context.Resource` (`scopes` always an array) |
+| `resource` | `*ResourceContext{ServiceID; CanonicalID omitempty; ResourceURI; Scopes}`, `omitempty` | **omitted** | `Context.Resource` (`scopes` always an array) |
 | `grant` | `*GrantContext{ID; UpdatedAt; ValidUntil omitempty}`, `omitempty` | **omitted** | `Context.Grant` |
 | `permission_sets` | `[]PermissionSetContext{ID; CanonicalID omitempty; Services []ServiceContext{ID; CanonicalID omitempty; Scopes}}`, `omitempty` | **omitted** | `Context.PermissionSets` |
 

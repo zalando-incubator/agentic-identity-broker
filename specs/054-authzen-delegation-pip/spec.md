@@ -25,7 +25,7 @@ This clarification records maintainer `mjungsbluth`'s phase guidance in command 
 
 ### Session 2026-10-28
 
-- Q: Where must ExtProc expose delegation members to policies? → A: Directly in the existing `input.context`, beside `granted_permission_sets_available`, `granted_permission_sets`, and `agent_session_id`: `principal` (string from permit `subject.id`), `agent {id, canonical_id}`, `resource {id, canonical_id, resource_uri, scopes}`, `grant {id, updated_at, valid_until}`, and `permission_sets[] {id, canonical_id, services[] {id, canonical_id, scopes}}`. No `delegation` wrapper; unset optional `canonical_id` and `valid_until` fields are omitted, never null.
+- Q: Where must ExtProc expose delegation members to policies? → A: Directly in the existing `input.context`, beside `granted_permission_sets_available`, `granted_permission_sets`, and `agent_session_id`: `principal` (string from permit `subject.id`), `agent {id, canonical_id}`, `resource {service_id, canonical_id, resource_uri, scopes}`, `grant {id, updated_at, valid_until}`, and `permission_sets[] {id, canonical_id, services[] {id, canonical_id, scopes}}`. No `delegation` wrapper; unset optional `canonical_id` and `valid_until` fields are omitted, never null.
 - Q: Must the policy context be a verbatim copy of the AuthZEN permit? → A: No. ExtProc decodes the permit into its own typed struct and emits only the documented fields. Unknown permit fields do not reach policies, and AuthZEN wire-format details do not leak into Rego.
 - Q: How long must the existing OPA permission-set inputs remain? → A: `granted_permission_sets` and `granted_permission_sets_available` remain permanently, populated from the permit on both enabled request paths. This is separate from FR-019's unchanged exchange-response deprecation.
 - Q: Which availability signal applies to the extended context? → A: Use only `granted_permission_sets_available`. In enabled mode, `true` guarantees all five new members are present, including on the header-only path, subject to nested optional-field omissions. Resolution failure returns 503 before policy, never an availability-false fallback. Disabled mode omits the new members and keeps existing behavior byte-for-byte unchanged; no `delegation_available` field is added.
@@ -55,6 +55,27 @@ These points record maintainer `mjungsbluth`'s planning direction in command [66
 ### Task reconciliation
 
 - Q: Does Journey 2 promise immediate body-path forwarding after renewed consent? → A: No. Immediate broker re-evaluation is distinct from downstream forwarding: the header-only path permits immediately, while the body path waits for the unchanged 5 s exchange re-consent cooldown recorded in US3.5. Reason: keep the concrete journey consistent with the 2026-11-05 clarification and Proposed D-5. Main alternative: bypass that cooldown, which changes exchange-cache semantics and remains outside this proposal. No additional scope or approval is implied.
+
+### Review remediation 2026-11-06
+
+Reason for the following scoped requirement changes: `mjungsbluth` selected P3/P4/P5
+(F4/F5/F6) on [the approved remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407)
+at `2026-11-06T06:59:39Z`.
+
+- **F4 (FR-007/FR-014/FR-017)**: The permit and enabled OPA context use
+  `resource.service_id` for the owning service UUID, distinct from the unchanged AuthZEN
+  request's URI-valued `resource.id`. The ExtProc port is `DelegationContextResolver`, not
+  the broker domain's `DelegationResolver`. Delegation and Access Evaluation are glossary terms.
+- **F5 (SR-004)**: A conformance test under `tests/` must compare the complete domain denial
+  code set, ExtProc denial allowlist, and nested producer/consumer context field sets to OpenAPI.
+- **F6 (SR-004)**: ExtProc security logs identify denial, unavailability and permit expiry
+  with `extproc.delegation_context.{denied,unavailable,permit_expired}` events.
+
+P1/F2 is selected but unapplied: the push allowlist rejects its required namespace
+registration in `coding-standards/OPENTELEMETRY.md`. Its code, tests and docs remain unchanged.
+P2/F3 is also selected but unapplied: filing its required follow-up issue is unavailable to
+this workflow. Existing enabled-mode compatibility requirements remain unchanged pending that work.
+No choice about the unassigned F1 scope-authority question is made here.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -277,7 +298,7 @@ Cache-Control: private, max-age=60
     "subject": {"id": "alice@example.com"},
     "agent": {"id": "550e8400-e29b-41d4-a716-446655440000", "canonical_id": "data-assistant"},
     "resource": {
-      "id": "880e8400-e29b-41d4-a716-446655440010",
+      "service_id": "880e8400-e29b-41d4-a716-446655440010",
       "canonical_id": "repo-api",
       "resource_uri": "https://api.example.com/repos",
       "scopes": ["read:repo"]
@@ -300,7 +321,7 @@ Cache-Control: private, max-age=60
 }
 ```
 
-`resource.id` identifies the resolved service, not the protected-resource child record. The example uses a string Agent UUID anchor and a minimal principal subject object as proposed contract representations; these require explicit contract review. The response subject is the verified principal, never the original JWT. The optional anchor checks consistency only; it never supplies the agent identity in place of verified token extraction. The following variant illustrates the maintainer's omission decisions.
+`resource.service_id` identifies the resolved service, not the protected-resource child record. The example uses a string Agent UUID anchor and a minimal principal subject object as proposed contract representations; these require explicit contract review. The response subject is the verified principal, never the original JWT. The optional anchor checks consistency only; it never supplies the agent identity in place of verified token extraction. The following variant illustrates the maintainer's omission decisions.
 
 **Step 3a — Optional metadata variant: 10:00:01 (US1.2, US1.8)**
 
@@ -330,7 +351,7 @@ Cache-Control: private, max-age=60
     "subject": {"id": "alice@example.com"},
     "agent": {"id": "550e8400-e29b-41d4-a716-446655440000"},
     "resource": {
-      "id": "880e8400-e29b-41d4-a716-446655440010",
+      "service_id": "880e8400-e29b-41d4-a716-446655440010",
       "resource_uri": "https://api.example.com/repos",
       "scopes": ["read:repo"]
     },
@@ -473,7 +494,7 @@ The gateway's existing strict JWT validation supplies `aib.tokenexchange.subject
     "canonical_id": "data-assistant"
   },
   "resource": {
-    "id": "880e8400-e29b-41d4-a716-446655440010",
+    "service_id": "880e8400-e29b-41d4-a716-446655440010",
     "canonical_id": "repo-api",
     "resource_uri": "https://api.example.com/repos",
     "scopes": ["read:repo"]
@@ -517,20 +538,20 @@ Canonical-ID policy uses `input.context.agent.canonical_id`, `input.context.reso
 - **FR-004**: Evaluation MUST resolve principal and agent using the same subject-token validation and `token_exchange.claim_extraction` CEL semantics as third-party token exchange. Evaluation MUST authenticate the PEP through a bearer client assertion and reuse the existing privileged-client CEL policy unchanged. For the supported `action: {"name": "urn:ietf:params:oauth:grant-type:token-exchange"}`, it MUST supply `request.grant_type = "urn:ietf:params:oauth:grant-type:token-exchange"`, with the same verified assertion/subject claims, extracted principal/agent, resource, and absent-scope semantics as the equivalent token-exchange request. It MUST NOT introduce a new grant type or require an evaluation-specific caller-policy discriminator. Unsupported actions MUST return 400, not select another grant type. An ordinary authenticated browser principal is not a substitute, and policy reuse does not authorize token issuance from evaluation.
 - **FR-005**: `context.agent` MUST be optional. If it is absent, including when the request `context` object is omitted, evaluation MUST use the agent resolved from the verified subject token. The broker MUST compare any supplied anchor against that resolved agent; mismatch returns 400. An anchor MUST NOT replace or override verified token-derived agent resolution.
 - **FR-006**: Evaluation and exchange MUST share one authoritative delegation resolution, preserving subject/assertion validation, claim extraction, caller authorization, resource normalization/resolution, registered-agent resolution, active-grant verification, declared permission-set checks, service coverage, scope union, and agent scope ceilings. The issue calls this `ResolveDelegation` (exchange steps 2–9a); it MUST not duplicate or weaken those invariants. Existing token-exchange session retrieval, refresh, decryption, session-scope checks, diagnostics, and response behavior remain downstream of this shared resolution and unchanged except for the explicitly staged deprecation.
-- **FR-007**: A permit MUST return `decision: true` and a credential-free Delegation Context: the verified principal in `subject`; `agent {id, canonical_id}`; resolved service in `resource {id, canonical_id, resource_uri, scopes}` with effective scopes; `grant {id, updated_at, valid_until}`; and granted `permission_sets[] {id, canonical_id, services[] {id, canonical_id, scopes}}`. The verified principal in `subject.id` MUST be non-empty, and `permission_sets` MUST contain at least one entry. Only grant-included service entries may appear; empty scope/service arrays remain valid. Permission-set scopes describe the included permission-set contributions; `resource.scopes` is the final union after agent ceilings. Permission-set entries MUST NOT be interpreted as an override of that effective resource scope ceiling.
+- **FR-007**: A permit MUST return `decision: true` and a credential-free Delegation Context: the verified principal in `subject`; `agent {id, canonical_id}`; resolved service in `resource {service_id, canonical_id, resource_uri, scopes}` with effective scopes; `grant {id, updated_at, valid_until}`; and granted `permission_sets[] {id, canonical_id, services[] {id, canonical_id, scopes}}`. The verified principal in `subject.id` MUST be non-empty, and `permission_sets` MUST contain at least one entry. Only grant-included service entries may appear; empty scope/service arrays remain valid. Permission-set scopes describe the included permission-set contributions; `resource.scopes` is the final union after agent ceilings. Permission-set entries MUST NOT be interpreted as an override of that effective resource scope ceiling.
 - **FR-008**: Context identities MUST retain real UUIDs and include configured canonical IDs for stable readable policy keys. When an agent, service, or permission set has no configured canonical ID, its `canonical_id` field MUST be omitted wherever that entity appears, including `permission_sets[].services[]`. A present `canonical_id` MUST be a non-empty string at every nesting level. It MUST NOT be null or fabricated, and absence alone MUST NOT fail evaluation or change its delegation decision. Configuring canonical IDs is not an evaluation rollout prerequisite.
 - **FR-009**: Permit freshness MUST be `Cache-Control: private, max-age=min(60, whole seconds remaining until grant.valid_until)`, bounded below by zero. With no grant expiry it MUST be at most 60 seconds. Expired grants MUST deny. The 60-second broker cap is fixed for this increment; no configurable broker cap is introduced without a later explicit decision.
 - **FR-010**: Each grant-denial condition in US2.1–US2.10 MUST return HTTP 200 with `decision: false`, the matching existing `FailureDetail` in the administrative reason and the resolved agent's consent URL in the user reason, and `Cache-Control: no-store`. It MUST not include a permit's delegation data or any credential. Denials MUST not be cached.
 - **FR-011**: Malformed/unsupported requests, invalid/expired subjects, and agent-anchor mismatches MUST return 400. Missing/invalid gateway credentials MUST return 401; authenticated but unauthorized gateways MUST return 403; internal dependency/configuration failures MUST return 500. These request failures MUST not be represented as successful decisions. Unregistered resources are 400; resource ambiguity is a configuration failure. Request errors MUST not be cached as permits.
 - **FR-012**: Every response MUST echo a supplied `X-Request-ID`, including permit, denial, and request-error responses, while preserving existing trace correlation behavior. Transport MUST use the AuthZEN 1.0 JSON contract and HTTP status semantics.
 - **FR-013**: Evaluation MUST be read-only policy information: it MUST not retrieve/decrypt/refresh provider tokens, mint tokens, create grants, create tool approvals, or prove that a provider session is usable. A delegation permit MUST not bypass exchange or policy authorization.
-- **FR-014**: ExtProc MUST offer a `DelegationResolver` boundary independent of token exchange, discover its endpoint from the metadata document, authenticate through its existing assertion provider, and fail startup on discovery failure or policy-decision-point identifier mismatch. It MUST preserve the accepted metadata-only gateway input boundary for subject token and resource URI.
+- **FR-014**: ExtProc MUST offer a `DelegationContextResolver` boundary independent of token exchange, discover its endpoint from the metadata document, authenticate through its existing assertion provider, and fail startup on discovery failure or policy-decision-point identifier mismatch. It MUST preserve the accepted metadata-only gateway input boundary for subject token and resource URI.
 - **FR-015**: ExtProc MUST cache only permit contexts per exact `{subjectToken, resourceURI}` pair for no longer than the shorter of the advertised freshness and `max_staleness`. It MUST not cache denies or serve stale delegation on errors, including when exchanged-token fallback succeeds. Missing usable freshness MUST not imply an unbounded lifetime.
 - **FR-016**: With delegation context enabled, body-bearing requests MUST start exchange and resolution concurrently during request headers and require both successes before body policy processing; delegation denial MUST return 403 `access_denied` with the consent URL before policy. Header-only requests MUST resolve, evaluate policy, and only then exchange on policy allow. Every error/deny MUST prevent forwarding, irrespective of concurrent completion order.
 - **FR-017**: With delegation context enabled, ExtProc MUST decode the permit into its own typed struct and emit only these documented members directly in the existing `input.context`, beside `granted_permission_sets_available`, `granted_permission_sets`, and `agent_session_id`, before both body and header-only policy evaluation:
   - `principal`: string mapped from the permit's `subject.id`, using the broker term rather than exposing an AuthZEN `subject` object.
   - `agent`: `{id, canonical_id}`.
-  - `resource`: `{id, canonical_id, resource_uri, scopes}`.
+  - `resource`: `{service_id, canonical_id, resource_uri, scopes}`.
   - `grant`: `{id, updated_at, valid_until}`.
   - `permission_sets[]`: `{id, canonical_id, services[] {id, canonical_id, scopes}}`.
   Unset optional `canonical_id` (including nested service entries) and `valid_until` fields MUST be omitted, never null. ExtProc MUST NOT copy the permit verbatim, expose unknown permit fields to policies, or add a `delegation` wrapper or `delegation_available` flag. `granted_permission_sets` and `granted_permission_sets_available` MUST remain in OPA input permanently, independently of FR-019's exchange-response deprecation. On both enabled paths, `granted_permission_sets` MUST be derived from permit permission-set IDs and included service IDs, not token-exchange extensions, and `granted_permission_sets_available: true` MUST guarantee that all five new members are present, subject to nested optional-field omissions. A resolution failure MUST return 503 before policy, never fall through with availability `false`. Existing `agent_session_id` behavior MUST remain unchanged.
