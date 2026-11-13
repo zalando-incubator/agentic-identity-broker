@@ -180,6 +180,30 @@ Set `tool_approvals.enabled: true` only with `authorization.enabled: true`. Set 
 
 `sessions.extraction.http_header` defaults to `Mcp-Session-Id`. ExtProc uses this value to scope session approvals.
 
+## ExtProc delegation context configuration
+
+The standalone ExtProc service can supply a fresh broker delegation permit to OPA before every policy decision ([ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-authzen-delegation-pip.md)). These keys belong to ExtProc's `EXTPROC_` namespace (ADR 011). The broker has no new keys: its AuthZEN endpoints exist whenever token exchange is configured. The broker Helm chart does not deploy ExtProc and is unchanged.
+
+| Key | Environment variable | Flag | Default |
+|---|---|---|---|
+| `delegation_context.enabled` | `EXTPROC_DELEGATION_CONTEXT_ENABLED` | `--delegation_context.enabled` | `false` |
+| `delegation_context.policy_decision_point` | `EXTPROC_DELEGATION_CONTEXT_POLICY_DECISION_POINT` | `--delegation_context.policy_decision_point` | `""` (origin of `oauth2.token_endpoint`) |
+| `delegation_context.request_timeout` | `EXTPROC_DELEGATION_CONTEXT_REQUEST_TIMEOUT` | `--delegation_context.request_timeout` | `5s` |
+| `delegation_context.max_staleness` | `EXTPROC_DELEGATION_CONTEXT_MAX_STALENESS` | `--delegation_context.max_staleness` | `60s` |
+
+Precedence is flags, then environment variables, then YAML, then defaults. ExtProc validates the keys only when `delegation_context.enabled` is `true`:
+
+- `delegation_context.enabled requires authorization.enabled`.
+- `delegation_context.policy_decision_point must be an absolute URL with a host and no userinfo, query, or fragment`.
+- `delegation_context.policy_decision_point must use https://` unless `oauth2.tls.allow_http` is true for development.
+- `delegation_context.request_timeout must be positive` and `delegation_context.max_staleness must be positive`.
+
+An empty `policy_decision_point` defaults to the scheme, host and port of `oauth2.token_endpoint`; for `https://broker.example.com:8443/oauth2/token` the identifier is `https://broker.example.com:8443`. The value must equal the broker's `server.enduser.public_url` without a trailing slash. When the broker's public URL has a path prefix, for example `https://example.com/broker`, set the identifier explicitly. ExtProc then discovers `https://example.com/.well-known/authzen-configuration/broker` (the AuthZEN well-known string goes between the host and the path), so the reverse proxy must route that URL to the broker's `/.well-known/authzen-configuration`.
+
+At startup ExtProc fetches the metadata without credentials, requires the advertised `policy_decision_point` to equal the expected identifier exactly, and validates the advertised `access_evaluation_endpoint`. Any failure stops startup; ExtProc never guesses an endpoint or silently disables the feature. A permit is reused for at most `min(max-age, max_staleness)` from the moment the evaluation request was sent; the broker caps `max-age` at 60 seconds and at the grant expiry. A delegation denial returns 403 with the consent URL, and a broker failure or an expired permit returns 503; a cached exchanged token is never a fallback.
+
+See [`examples/config/extproc-delegation-context.yaml`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/extproc-delegation-context.yaml).
+
 
 ## Environment-Specific Configuration
 

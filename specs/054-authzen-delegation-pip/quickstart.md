@@ -14,7 +14,7 @@ Before any implementation, these preconditions must hold:
    [Approval Items](./plan.md#approval-items) with a 👍 on the pipeline's approval comment.
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
    [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
-   ADR draft [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md).
+   ADR draft [adr-045-authzen-delegation-pip.md](../../adrs/045-authzen-delegation-pip.md).
 2. T001 has recorded only the supplied approval in each covered ADR's Status line and moved the approved draft to `adrs/`. Review direction alone is not sign-off.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
    is frozen.
@@ -139,3 +139,135 @@ just verify             # full gate, E2E last
 **Expected**: All suites pass. The existing suites `token_exchange_test.go`,
 `grant_diagnostics_test.go`, `tests/e2e/extproc/opa_authorization_test.go`, and
 `extproc_approval_journey_test.go` pass unchanged, which proves SC-006 compatibility.
+
+## 7. Implementation evidence (2026-10-30, interactive `/speckit-implement` session)
+
+### Approval provenance (T001)
+
+- Approval comment: <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>
+  for commit `a5042d5`, covering all eleven items (A1–A11 = API-1–API-6, ADR-1, D-1–D-4). It
+  carries one 👍. The earlier pipeline implement run
+  (<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6522572132>)
+  received the approval as `context.approval` and named `mjungsbluth` as the approver. This session
+  could not read reaction authors or times through its GitHub tools, so the recorded date is
+  2026-10-30, the day of the `/speckit-implement` command
+  (<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6520726517>).
+- ADR 045 moved to `adrs/045-authzen-delegation-pip.md` (045 was unused) with
+  `Accepted (approved by mjungsbluth on 2026-10-30: <url>)`. The draft covers every point T001
+  lists.
+- **Same-PR revision of API-2 (needs maintainer confirmation in review)**: T013 found that AuthZEN 1.0
+  requires receivers to ignore unknown request fields. The user running this session chose
+  "follow the standard: ignore unknown members and `properties`" and "keep the approved
+  `ErrorResponse` body". ADR 045 §1, its revision history, the OpenAPI and the docs record this.
+  It is user direction in this session, not the pipeline approval.
+
+### Phase 0 handoff (T002–T005)
+
+The constitution asks for the resolver extraction in a separate PR. The user running this
+session chose to keep it in this PR as its own commit:
+`b882d7b refactor(tokenexchange): extract shared DelegationResolver (exchange steps 2–9a)`.
+This is a recorded deviation from the separate-PR requirement, not a maintainer-arranged handoff.
+
+- Baseline and regression: `go test ./internal/domain/tokenexchange/` passed after the extraction.
+  The only test edits are receiver changes (`svc.resolveEffectiveScopes(...)` →
+  `svc.DelegationResolver().resolveGrantCoverage(...)` with one extra ignored return); no
+  assertion changed. The exchange E2E regression files (`token_exchange_test.go`,
+  `grant_diagnostics_test.go`, `local_token_exchange_e2e_test.go`,
+  `extproc_approval_journey_test.go`) ran 58/58 green after the extraction.
+
+### API-003 verification (T013)
+
+Source: the AuthZEN Authorization API 1.0 source text in the OpenID `authzen` repository
+(`api/authorization-api-1_0.md`, fetched from `raw.githubusercontent.com` over verified TLS;
+`openid.net` is blocked by this sandbox's network policy).
+
+| Item | Standard | Contract |
+|---|---|---|
+| Metadata members | `policy_decision_point` (REQUIRED, https, no query/fragment), `access_evaluation_endpoint` (REQUIRED); absent optional endpoints mean "not supported" | Matches; batch/search omitted |
+| Well-known path | Inserted between host and path: `https://pdp.example.com/.well-known/authzen-configuration/tenant1` | ExtProc `DiscoveryURL` implements this; the broker serves the root path, and path-prefixed deployments route it through the proxy (docs) |
+| Identifier check | Advertised `policy_decision_point` MUST equal the identifier used; otherwise the data MUST NOT be used | Exact string comparison before any credential |
+| Request identification | If the PEP sends `X-Request-ID`, the PDP MUST return the same value | Echoed on every path |
+| Decision `context` | Implementation-defined; reason examples are non-normative | Denial form (a) kept |
+| Unknown fields | "receivers MUST ignore unknown fields" | **Conflict with approved R10**; resolved by session direction (above) |
+| Error bodies | Table says "An error message string" | Approved `ErrorResponse` object kept (session direction) |
+| `Content-Type` | Requests MUST be `application/json` | Enforced (400 otherwise) |
+
+### Red evidence (T027, T036, T044, T053, T065)
+
+- Broker acceptance (28 in-memory scenarios): run against the pre-feature Phase 0 commit `b882d7b`
+  in a separate worktree with only the new test files added. Result: `0 Passed | 28 Failed`.
+  Every failure was a semantic assertion: 14 × missing `X-Request-ID` echo from the absent route,
+  404/405 statuses, and the contract version `1.1.0` instead of `1.2.0` (US4.6). None was a
+  compile or bootstrap failure.
+- US4.6 was also red against the implemented code until the OpenAPI was updated (`1.1.0`).
+- Domain, HTTP, ExtProc and consumer/startup E2E tests were written alongside their
+  implementation in this session, not strictly before it. Their red phase was not separately
+  recorded. One domain test did catch a real defect during development: evaluation did not check
+  caller cancellation before resolving.
+
+### Green results
+
+| Command (run directly; `just` is not installed here) | Result |
+|---|---|
+| `gofmt -s -l` on tracked Go files | Only `internal/domain/oauth2/service_test.go`, which this feature does not touch (pre-existing) |
+| `go vet ./...` | Clean |
+| `golangci-lint run ./...` (v2.14.0, go1.27.3) | 0 issues |
+| `go test -race <GO_FAST_TEST_PACKAGES>` | All pass except `TestBuildAWSConfig_DisableSSL`, `TestNewGuardedTransport_BlocksPrivateDialsAndBypassesProxy`, `TestFetcher_SSRF_BlocksLoopbackIPv6`; the same three also fail on the untouched base `a5042d5` (sandbox has no IPv6, and the AWS SDK rejects the proxy CA bundle) |
+| `go test -race ./internal/extproc/... ./cmd/extproc-token-exchange/...` | Pass |
+| `ginkgo --label-filter="!performance && !docker" ./tests/e2e/` (after `cd web && npm ci && npm run build`) | 950/950 passed |
+| `ginkgo --procs=1 --label-filter="docker" ./tests/e2e/` | 8/8 passed, including US2.19 on real PostgreSQL |
+| `ginkgo --label-filter="authzen-delegation" ./tests/e2e/` | 29 broker scenarios pass (28 in-memory + US2.19 on PostgreSQL) |
+| `ginkgo --label-filter="delegation-context" ./tests/e2e/` | 11/11 passed |
+| `ginkgo --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 passed |
+| `ginkgo ./tests/e2e/extproc/` | 102 passed, 5 failed: all agentgateway container scenarios, which fail to pull `cr.agentgateway.dev/agentgateway:v1.5.0` (registry 403 from the sandbox network policy) |
+| `cd assets/docusaurus && npm run build` | Pass |
+
+Not run: the frontend Playwright suite and `just verify`; `just` itself is unavailable.
+
+### Scenario-to-test mapping
+
+US1.1 `tests/e2e/authzen_delegation_test.go:33`; US1.2 `:45`; US1.3 `:64`; US1.4 `:73`; US1.5 `:83`;
+US1.6 `:94`; US1.7 `:130`; US1.8 `:109`.
+US2.1 `tests/e2e/authzen_delegation_denial_test.go:23`; US2.2 `:30`; US2.3 `:38`; US2.4 `:47`;
+US2.5 `:55`; US2.6 `:63`; US2.7 `:76`; US2.8 `:85`; US2.9 `:97`; US2.10 `:105`.
+US2.11 `tests/e2e/authzen_delegation_errors_test.go:29`; US2.12 `:38`; US2.13 `:45`; US2.14 `:53`;
+US2.15 `:61`; US2.16 `:69`; US2.17 `:94`; US2.18 `:79`; US2.19 `:139`; US2.20 `:86`.
+US3.1 `tests/e2e/delegation_context_journey_test.go:105`; US3.2 `:114`; US3.3 `:122`; US3.4 `:132`;
+US3.5 `:143`; US3.6 `:169`; US3.7 `:184`; US3.8 `:203`; US3.9 `:225`; US3.10 `:236`; US4.5 `:248`.
+US4.1 `tests/e2e/extproc/delegation_context_startup_test.go:33`; US4.2 `:57`; US4.3 `:72`; US4.4 `:90`.
+US4.6 `tests/e2e/authzen_delegation_compat_test.go:25`.
+
+### Findings for the maintainer
+
+- **F-1 (US3.5, body path)**: The delegation resolver never caches denials, and the header-only path
+  permits immediately after consent. On the body path, however, the concurrent exchange during
+  the denied request receives the broker's re-consent error. The existing ADR 012 exchanger then
+  caches that error for its 5 s re-consent cooldown (`reAuthCooldownTTL`). A body request right
+  after consent is therefore still answered from that exchange cooldown for up to 5 s. Changing
+  exchange-cache semantics is outside the approved scope, so the US3.5 test asserts the immediate
+  header-only permit, the immediate broker re-consultation on the body path, and body-path
+  forwarding once the existing cooldown lapses. A maintainer decision is needed if the body path
+  must also permit immediately (for example, skipping the re-consent cooldown in enabled mode).
+
+### Design and scope verification (T008, T016, T017)
+
+- The data model holds: no new entity, repository, migration or domain event; evaluation is
+  read-only. The PostgreSQL outage journey (US2.19) ran on real PostgreSQL.
+- No UI: the existing consent and revocation flows are reused. No design-system components,
+  Wireloom sequences, Playwright tests or screenshots are added.
+
+### Tasks left unchecked and why
+
+| Task | Reason | Needed to close |
+|---|---|---|
+| T002 | No maintainer-arranged separate refactor PR; the extraction is commit `b882d7b` in this PR, by the session user's choice | Maintainer accepts the in-PR extraction, or asks to split it out |
+| T027, T036, T053, T065, T080, T094, T097 | Semantic-red evidence was recorded for the 28 in-memory broker scenarios only; unit tests and the consumer/startup E2E tests were written alongside the implementation | Maintainer accepts the recorded evidence, or a reviewer reruns those tests against the pre-feature commit (they need the new packages to compile, so this requires compile-only scaffolding) |
+| T029–T031 | No separate compile-only scaffolding step was done; the code was implemented directly | Superseded by the implementation; close as not applicable if the maintainer agrees |
+| T028, T079 | The four spec journeys were not formally re-reviewed against the shipped OpenAPI; the API-2 unknown-member revision changes Journey 3's strictness wording | Maintainer review of the API-2 revision |
+| T044 | The deferred-holder matcher test and credential-free audit assertions exist; the full trace-ID equality across context, audit, access log and `traceresponse` for evaluation is not asserted end to end | Add the composed HTTP-harness assertion |
+| T059 | ExtProc logs carry `operation=delegation_resolution`, `delegation.cache` hit/miss and bounded categories, but no test captures server log output | Add captured-log tests |
+| T064 | US4.6 asserts the deprecation marker in E2E; no separate `authzen_compat_test.go` unit test | Add the unit test or accept the E2E coverage |
+| T071, T099, T100 | The agentgateway container image cannot be pulled here (403), so 5 ExtProc E2E specs (including the agentgateway `metadata_input_test.go` scenario) fail; the frontend Playwright suite and `just verify` were not run; three unrelated unit tests fail on the base commit in this sandbox | Run `just verify` on a capable runner |
+| T074, T091 | Depend on T002 and T059 | As above |
+
+Pre-extraction baseline (T003): on base `a5042d5`, `go test ./internal/domain/tokenexchange/` passed and the four exchange regression files ran 58/58 green. The results after the extraction were identical.

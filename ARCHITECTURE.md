@@ -275,7 +275,7 @@ internal/adapters/storage/postgres/
 
 - **[api/enduser/openapi.yaml](api/enduser/openapi.yaml)** - End-user server (Port 8000)
   - Canonical OpenAPI documentation for all end-user facing APIs
-  - Endpoints: Health check, user info, consent management (agent delegations, service grants)
+  - Endpoints: Health check, user info, consent management (agent delegations, service grants), and, whenever token exchange is configured, the AuthZEN delegation PDP (`GET /.well-known/authzen-configuration`, `POST /access/v1/evaluation`; [ADR 045](adrs/045-authzen-delegation-pip.md))
   - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT) + session-based
   - Response envelope: Consistent `{"data": ...}` structure for resource endpoints
   - Error handling: Standardized error response format with code and message
@@ -515,6 +515,8 @@ This ordering is intentional. `TraceContextNormalizationMiddleware` collapses du
 
 - **Non-RFC 8693 grants** (`client_credentials`, `authorization_code`) finalize in `OAuth2TokenHandler` at the `/oauth2/token` seam, before the grant handler runs, so its context-aware `TokenIssued` audit logs already carry `Actor` and `TraceID`. These requests have no distinct calling peer.
 - **Delegated RFC 8693 token exchange** finalizes at the post-validation token-exchange seam (`tokenexchange.Exchange`), the only seam with a distinct authenticated peer. There the broker finalizes the immutable `SecurityContext` exactly once from the previously captured transport metadata, the validated subject-token principal as `Actor`, and `client_assertion.sub` as `CallingPeer`. Finalization precedes the privileged-client authorization decision, so a denied exchange whose tokens validated still carries `Actor`/`CallingPeer` on the failure audit path.
+
+- **AuthZEN Access Evaluation** (`POST /access/v1/evaluation`, [ADR 045](adrs/045-authzen-delegation-pip.md)) also receives a deferred capture holder. The shared `tokenexchange.DelegationResolver` finalizes the verified subject-token principal as `Actor` and the client-assertion subject as `CallingPeer` before the caller CEL decision, so permits and caller-policy denials carry both. Decode and missing-assertion failures finalize the request-principal or anonymous fallback through `FinalizeRequestSecurityContext` before the handler's audit event. Ordinary requests and `/oauth2/token` are unchanged.
 
 A last-resort net in `LoggingMiddleware` finalizes any still-open holder after the handler returns, so perimeter access logs and early-error `/oauth2/token` responses still carry a finalized context. `CallingPeer` is omitted when unavailable or when it resolves to the same identity as `Actor`.
 
@@ -979,15 +981,18 @@ This can exceed reported expiry. The fresh-cache margin does not guarantee valid
 
 **Long-Poll Syncer**: One background ExtProc goroutine that receives broker approval snapshots. It uses ETags, replaces returned pair state, and retries with bounded backoff.
 
-**Three policy gates on one request chain**:
+**Delegation Resolver** (Port, [ADR 045](adrs/045-authzen-delegation-pip.md)): The fourth ExtProc port, implemented in `internal/extproc/delegation` without broker imports. When `delegation_context.enabled`, startup discovers the broker's AuthZEN metadata from the expected PDP identifier and verifies it exactly. The resolver calls `POST /access/v1/evaluation` with the client assertion and caches only permits, per `(subjectToken, resourceURI)` struct key, until `requestStart + min(max-age, max_staleness)`. That deadline is computed once and is never extended by hits or singleflight. Denials and errors are never cached, and the ADR 012 token-cache stale fallback never applies. The permit cache is independent of the token cache.
+
+**Four policy gates on one request chain**:
 
 | Gate | Service / Boundary | Question Answered | Inputs | Config Surface | Default |
 |------|--------------------|-------------------|--------|----------------|---------|
 | Broker CEL | Broker `POST /oauth2/token` token-exchange boundary | May this gateway perform token exchange for this resource? | `CELAuthorizationContext` built from client assertion claims and RFC 8693 request fields | `token_exchange.authorization.cel.*` in broker config | CEL expression defaults to `true` |
 | ExtProc OPA | `extproc-token-exchange` request path | May this proxied request or MCP tool call proceed? | `OPAInput` built from ExtProc metadata, headers, and optional request body | `authorization.*` in ExtProc config | Disabled |
 | ExtProc approval gate | `extproc-token-exchange` request path | May this standalone MCP tool call proceed after OPA returns `approval_required`? | OPA action, broker-issued `principal` and `agent_id`, invocation data, and cache or broker approval state | `tool_approvals.*` in ExtProc config | Disabled |
+| Broker delegation (AuthZEN) | Broker `POST /access/v1/evaluation`, consumed by the ExtProc delegation resolver | Does the verified user's current delegation to the agent cover this resource? | Subject token, client assertion, resource URI; the same resolution as token exchange steps 2–9a | Broker: none (on with token exchange). ExtProc: `delegation_context.*` | ExtProc consumer disabled |
 
-All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can further restrict the request after broker token exchange. The approval gate runs only for a standalone MCP tool call after OPA returns `approval_required`.
+All four gates fail closed. A delegation denial returns 403 with the consent URL and a resolution failure or an expired permit returns 503, before policy. Broker CEL gates token exchange. ExtProc OPA can further restrict the request after broker token exchange. The approval gate runs only for a standalone MCP tool call after OPA returns `approval_required`.
 
 **Body input construction**: In OPA mode, ExtProc decodes each body or JSON-RPC batch element once, preserving JSON numbers with `json.Number` and the original raw bytes for `attributes.request.http.body`. MCP fields and approval invocations use the decoded value. `InputBuilder` converts Envoy-compatible headers once per request; batch elements receive independent input documents. The authorizer converts each document to `ast.Value` before policy evaluation. Header-only requests retain their separate input path, and requests without OPA do not inspect bodies.
 
@@ -1011,6 +1016,13 @@ All three gates fail closed. Broker CEL gates token exchange. ExtProc OPA can fu
 3. Call `Exchanger.Exchange()` with the validated metadata values.
 4. On success, replace `Authorization` with `Bearer <exchanged token>`.
 5. On a non-transient broker error with `error_uri`, return the 403 challenge from the request-headers phase. A client that supports MCP step-up can discover protected-resource metadata at `/.well-known/oauth-protected-resource/mcp` when the gateway serves that separate route.
+
+**Enabled delegation context** ([ADR 045](adrs/045-authzen-delegation-pip.md) supersedes ADR 028's ordering and input schema in this mode only):
+
+- Body-bearing requests run exchange and delegation resolution concurrently in the headers phase and wait for both. Precedence: delegation denial (403 `access_denied` with `error_uri`), resolution error (503 `service_unavailable`), exchange error (existing handling), then buffer the body.
+- Header-only requests resolve first, then evaluate OPA, then exchange only on allow.
+- Immediately before every OPA evaluation that receives delegation input (header-only, body, and each batch element), ExtProc requires `now < Deadline`; otherwise it returns 503 without policy evaluation, forwarding or re-resolution.
+- `input.context` gains `principal`, `agent`, `resource`, `grant` and `permission_sets` from the typed permit, and `granted_permission_sets` and `granted_permission_sets_available: true` are derived from the permit. Disabled-mode input is unchanged.
 
 See [ADR 036](adrs/036-extproc-metadata-token-exchange-input.md) for the metadata trust boundary and [Feature 023](specs/023-extproc-mcp-elicitation/spec.md#user-story-1-amendment---http-403-re-authentication-challenge-2026-10-26) for the response contract.
 
@@ -1292,60 +1304,51 @@ The status column reflects each linked file's decision status, not its implement
 Only accepted decisions are binding under [Constitution II](.specify/memory/constitution.md#ii-architecture-documentation--decision-records).
 Partial supersessions and amendments apply only to the subjects named in those decisions.
 
-| Decision file | Status | Scope or later decision |
-|---|---|---|
-| [002-configuration-libraries.md](adrs/002-configuration-libraries.md) | Accepted | Viper, Cobra, and godotenv |
-| [003-chi-framework.md](adrs/003-chi-framework.md) | Accepted | HTTP routing |
-| [004-dual-server-isolation.md](adrs/004-dual-server-isolation.md) | Accepted | Separate end-user and admin listeners |
-| [004-storage-layer-architecture.md](adrs/004-storage-layer-architecture.md) | Accepted | Segregated storage ports and sqlx adapters |
-| [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md) | Accepted, partly superseded | Mount, build paths, and SPA configuration replaced by [035-root-mounted-spa.md](adrs/035-root-mounted-spa.md) |
-| [006-frontend-stack.md](adrs/006-frontend-stack.md) | Accepted | Frontend stack decision. Current versions are in [web/package.json](web/package.json) |
-| [007-e2e-testing-with-ginkgo.md](adrs/007-e2e-testing-with-ginkgo.md) | Accepted | Ginkgo acceptance tests |
-| [008-encryption-context-optimization.md](adrs/008-encryption-context-optimization.md) | Accepted, amended | Single-subject context. Amendment adds `kid` for non-session assets |
-| [008-token-exchange-jwks-adapter-pattern.md](adrs/008-token-exchange-jwks-adapter-pattern.md) | Accepted | JWKS retrieval and caching |
-| [009-cel-for-authorization-policies.md](adrs/009-cel-for-authorization-policies.md) | Accepted | CEL authorization and claim extraction |
-| [009-envelope-encryption-design.md](adrs/009-envelope-encryption-design.md) | Accepted, configuration clarified | Original configuration is historical. See its implementation note and the amendment in [008-encryption-context-optimization.md](adrs/008-encryption-context-optimization.md) |
-| [009-separate-migration-docker-image.md](adrs/009-separate-migration-docker-image.md) | Accepted | Separate migration image |
-| [010-cdk-encryption-infrastructure.md](adrs/010-cdk-encryption-infrastructure.md) | Accepted | Encryption infrastructure. OIDC trust clarified by [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) |
-| [011-extproc-standalone-binary.md](adrs/011-extproc-standalone-binary.md) | Accepted | Separate ExtProc process and configuration |
-| [011-opentelemetry-provider-pattern.md](adrs/011-opentelemetry-provider-pattern.md) | Accepted | Broker telemetry lifecycle |
-| [012-encryption-layer-separation.md](adrs/012-encryption-layer-separation.md) | Accepted, partly superseded | Two-state `Secret` description replaced by [036-public-client-token-endpoint-auth.md](adrs/036-public-client-token-endpoint-auth.md) |
-| [012-extproc-in-memory-token-cache.md](adrs/012-extproc-in-memory-token-cache.md) | Accepted | In-memory token cache, singleflight refresh, periodic eviction, and maximum TTL |
-| [013-strongly-typed-entity-ids.md](adrs/013-strongly-typed-entity-ids.md) | Accepted | Typed entity identifiers |
-| [014-long-poll-listen-notify.md](adrs/014-long-poll-listen-notify.md) | Accepted | Broker approval long polling and PostgreSQL notifications |
-| [014-oauth2-server-mode.md](adrs/014-oauth2-server-mode.md) | Accepted | Proxy, local, and hybrid OAuth2 modes |
-| [015-cimd-fetcher-architecture.md](adrs/015-cimd-fetcher-architecture.md) | Accepted | CIMD fetch boundary |
-| [016-authorization-session-anti-spoofing.md](adrs/016-authorization-session-anti-spoofing.md) | Accepted, amended | Amendment extends sealed authorization sessions to all modes |
-| [017-optional-agent-client-id.md](adrs/017-optional-agent-client-id.md) | Accepted | Optional agent client ID |
-| [018-approval-endpoint-auth-boundaries.md](adrs/018-approval-endpoint-auth-boundaries.md) | Accepted | Browser and machine approval authentication |
-| [027-extproc-telemetry-shared-dependency.md](adrs/027-extproc-telemetry-shared-dependency.md) | Accepted | ExtProc telemetry dependencies |
-| [028-opa-extproc-authorization.md](adrs/028-opa-extproc-authorization.md) | Accepted, amended | Amendment requires MCP `target_server_name` |
-| [029-token-exchange-client-assertion-trust-anchor.md](adrs/029-token-exchange-client-assertion-trust-anchor.md) | Proposed | Dedicated client-assertion trust anchor |
-| [030-normalize-protected-resources.md](adrs/030-normalize-protected-resources.md) | Accepted | Normalized protected-resource children |
-| [030-vendor-neutral-oidc-trust.md](adrs/030-vendor-neutral-oidc-trust.md) | Accepted | Parameterized OIDC trust |
-| [031-unverified-subject-unsigned-jwt.md](adrs/031-unverified-subject-unsigned-jwt.md) | Accepted | Bounded local-impersonation subject exception under Constitution I |
-| [032-impersonation-requires-user-delegation.md](adrs/032-impersonation-requires-user-delegation.md) | Accepted, partly superseded | Human delegation required. Decisions 1–2 partly superseded by [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) for agent-category requests |
-| [033-request-security-context-propagation.md](adrs/033-request-security-context-propagation.md) | Proposed | Request security context and audit identity |
-| [034-audience-absent-impersonation-credentials.md](adrs/034-audience-absent-impersonation-credentials.md) | Accepted | Explicit absent-audience policy |
-| [035-root-mounted-spa.md](adrs/035-root-mounted-spa.md) | Accepted | Partly supersedes [005-spa-serving-pattern.md](adrs/005-spa-serving-pattern.md) |
-| [035-shared-tool-pattern-matching.md](adrs/035-shared-tool-pattern-matching.md) | Accepted | Shared matcher in [internal/domain/approval/toolpattern/](internal/domain/approval/toolpattern/) |
-| [036-extproc-approval-cache-and-gate.md](adrs/036-extproc-approval-cache-and-gate.md) | Accepted | Approval snapshots, cache, and request gate |
-| [036-extproc-metadata-token-exchange-input.md](adrs/036-extproc-metadata-token-exchange-input.md) | Accepted | Supersedes Feature 015 raw-input descriptions, not its standalone or cache decisions |
-| [036-public-client-token-endpoint-auth.md](adrs/036-public-client-token-endpoint-auth.md) | Accepted | Explicit public clients and absent secrets. CIMD key domain extended by [037-cimd-client-authentication-key-domain.md](adrs/037-cimd-client-authentication-key-domain.md) |
-| [037-cimd-client-authentication-key-domain.md](adrs/037-cimd-client-authentication-key-domain.md) | Accepted | Separate CIMD authentication keys |
-| [037-consent-selection-oauth-redirect-state.md](adrs/037-consent-selection-oauth-redirect-state.md) | Proposed | Claims a replacement for Feature 008 selection transport. Acceptance remains unresolved |
-| [038-proactive-token-refresh.md](adrs/038-proactive-token-refresh.md) | Accepted, partly superseded | Background refresh and synchronous session sweep. Terminal rejection consequence superseded by [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) |
-| [039-concurrent-session-expiry-index.md](adrs/039-concurrent-session-expiry-index.md) | Accepted | Migration `037` non-atomic exception and recovery |
-| [040-trust-anchor-local-key-sets.md](adrs/040-trust-anchor-local-key-sets.md) | Accepted | Inline and file key sources, trust directory, and health |
-| [040-protected-resource-discovery-and-dcr.md](adrs/040-protected-resource-discovery-and-dcr.md) | Accepted | Discovery and DCR. Supersedes ADR 015 package locations and ADR 036 decision 2 for discovery-backed DCR |
-| [041-oauth2-client-secret-file-overrides.md](adrs/041-oauth2-client-secret-file-overrides.md) | Accepted | Stored and filesystem credential sources |
-| [042-agent-allowlisted-private-use-redirect-uris.md](adrs/042-agent-allowlisted-private-use-redirect-uris.md) | Accepted | Agent-allowlisted private-use redirects with CIMD document validation |
-| [043-inbound-cimd-private-key-jwt.md](adrs/043-inbound-cimd-private-key-jwt.md) | Accepted | CIMD assertion validation, replay protection, and refresh authentication strength |
-| [044-service-specific-session-recovery-url.md](adrs/044-service-specific-session-recovery-url.md) | Accepted | Service-specific OAuth2 recovery URL with same-origin `/sessions` return URI |
-| [044-client-registration-independent-of-authentication.md](adrs/044-client-registration-independent-of-authentication.md) | Accepted | Independent registration and authentication, keyless CIMD public clients, and guarded migration |
-| [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) | Accepted | Self-agent issuance without human delegation. Partly supersedes ADR 032 |
-| [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
-| [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
+### Core Infrastructure
+
+- [ADR 002: Configuration Libraries](adrs/002-configuration-libraries.md) - Multi-source configuration with Viper, Cobra, and godotenv
+- [ADR 003: Chi Framework Selection](adrs/003-chi-framework.md) - HTTP routing framework choice
+- [ADR 004: Dual-Server Isolation](adrs/004-dual-server-isolation.md) - Separate end-user and admin servers
+- [ADR 004: Storage Layer Architecture](adrs/004-storage-layer-architecture.md) - Hexagonal architecture for persistence
+
+### Frontend & User Interface
+
+- [ADR 005: SPA Serving Pattern](adrs/005-spa-serving-pattern.md) - Serving React SPA from Go backend
+- [ADR 006: Frontend Stack](adrs/006-frontend-stack.md) - React 18 + Vite + Tailwind CSS v4
+
+### Testing & Quality
+
+- [ADR 007: E2E Testing with Ginkgo](adrs/007-e2e-testing-with-ginkgo.md) - BDD-style E2E tests using production bootstrap
+
+### RFC 8693 Token Exchange
+
+- [ADR 008: Token Exchange JWKS Adapter Pattern](adrs/008-token-exchange-jwks-adapter-pattern.md) - HTTP abstraction for JWKS fetching and caching
+- [ADR 040: Inline and File-Based Key Sets for Trust Anchors](adrs/040-trust-anchor-local-key-sets.md) - Accepted. Mutually exclusive `jwks_uri`, `jwks`, and `jwks_file` sources, a `security.trust_material_dir` boundary through `os.Root`, file re-read with fail-closed staleness, and the `trust_anchor_key_files` health component
+- [ADR 044: Service-Specific Session Recovery URL](adrs/044-service-specific-session-recovery-url.md) - Accepted. Recoverable RFC 8693 session errors link to the resolved service's third-party OAuth2 GET with an encoded same-origin `/sessions` return URI.
+- [ADR 045: AuthZEN Delegation Policy Information Point](adrs/045-authzen-delegation-pip.md) - Accepted (approved by mjungsbluth on 2026-10-30). AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc delegation resolver (supersedes ADR 028's enabled-mode ordering and input), the ADR 033 seam extension, and the `granted_permission_sets` deprecation.
+
+### Security & Encryption
+
+- [ADR 008: Encryption Context Optimization](adrs/008-encryption-context-optimization.md) - Service-ID-only context binding performance optimization
+- [ADR 009: Envelope Encryption Design](adrs/009-envelope-encryption-design.md) - DEK-per-session with AWS KMS and context binding
+- [ADR 010: CDK Encryption Infrastructure](adrs/010-cdk-encryption-infrastructure.md) - AWS CDK (Go) for KMS, DynamoDB, and IAM provisioning
+- [ADR 012: Encryption Layer Separation](adrs/012-encryption-layer-separation.md) - Domain service encryption pattern for hexagonal architecture
+
+### Observability
+
+- [ADR 011: OpenTelemetry Provider Pattern](adrs/011-opentelemetry-provider-pattern.md) - App-layer OTel provider, otelchi middleware choice, context-based span propagation
+- [ADR 033: Request Security Context Propagation](adrs/033-request-security-context-propagation.md) - Perimeter security-context capture, additive `traceresponse` response header, and delegated `calling_peer` semantics
+
+### Client ID Metadata Document (CIMD)
+
+- [ADR 015: CIMD Fetcher Architecture](adrs/015-cimd-fetcher-architecture.md) - Binding CIMD fetch, cache, validation, and strategy pattern. ADR 040 supersedes its package locations only.
+- [ADR 037: CIMD Client-Authentication Key Domain](adrs/037-cimd-client-authentication-key-domain.md) - Separate broker key domains and public JWK trust surfaces for outbound CIMD client authentication
+- [ADR 036: Public Client Token-Endpoint Authentication](adrs/036-public-client-token-endpoint-auth.md) - Binding manual public and negotiated confidential methods. ADR 040 extends decision 2 only for discovery-backed DCR.
+- [ADR 040: Protected Resource Discovery and Dynamic Client Registration](adrs/040-protected-resource-discovery-and-dcr.md) - Discovery, client selection, guarded HTTP, and status design. Supersedes only ADR 015's package locations and ADR 036 decision 2 for discovery-backed DCR clients.
+- [ADR 044: Client Registration Independent of Authentication](adrs/044-client-registration-independent-of-authentication.md) - Accepted independent registration and four-mode service contract, keyless CIMD public document, and guarded persistence migration.
+
+### Tool Approval
+- [ADR 014: Long-Poll with PostgreSQL LISTEN/NOTIFY](adrs/014-long-poll-listen-notify.md) - Cross-instance approval sync via long-poll HTTP + PostgreSQL LISTEN/NOTIFY with coalesce window
 
 ## 11. Project Identification
 
@@ -1601,6 +1604,12 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **TokenExchangeRequest**: RFC 8693 token exchange request containing grant_type, subject_token, client_assertion, and resource parameters. Parsed from form-urlencoded POST body to /oauth2/token endpoint. Immutable value object after parsing.
 
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
+
+**Delegation Decision**: The outcome of an AuthZEN Access Evaluation: a permit carrying a Delegation Context and a bounded freshness (`max-age` ≤ 60 s and ≤ the grant expiry), a consent denial carrying one of nine grant details and the consent URL, or a request failure (400/401/403/500) that is never a decision.
+
+**Delegation Context**: The credential-free projection of an authorized delegation: verified principal, agent, resolved resource with effective scopes, grant version and expiry, and granted permission sets with grant-included services. Optional canonical IDs and the grant expiry are omitted when unset, never null.
+
+**Policy Decision Point (PDP) identifier**: The AuthZEN `policy_decision_point`, the broker's `server.enduser.public_url` without a trailing slash. A consumer compares it exactly with its expected value before sending credentials.
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
 
