@@ -29,6 +29,9 @@ safe-outputs:
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
     owner: zalando-incubator
     repositories: [agentic-identity-broker]
+  threat-detection:
+    # Keep detection on its small default model; without this it inherits the pinned agent model.
+    model: ${{ vars.GH_AW_MODEL_DETECTION_COPILOT || vars.GH_AW_DEFAULT_MODEL_COPILOT || 'detection' }}
   create-pull-request-review-comment:
     max: 5
     side: "RIGHT"
