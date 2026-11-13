@@ -127,10 +127,36 @@ var errDiscoveryInfrastructure = errors.New("discovery infrastructure unavailabl
 
 func (s *ThirdpartyOAuth2ProviderService) auditCIMD(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, operation, outcome string) {
 	if entity.IsCIMDPublicClient() {
-		s.logger.InfoContext(ctx, "cimd public service", "service_id", entity.ID, "operation", operation, "outcome", outcome)
+		s.logger.InfoContext(ctx, "cimd public service", "event", cimdPublicServiceAuditEvent(operation, outcome), "service_id", entity.ID, "operation", operation, "outcome", outcome)
 		return
 	}
-	s.logger.InfoContext(ctx, "cimd confidential service", "service_id", entity.ID, "operation", operation, "outcome", outcome)
+	s.logger.InfoContext(ctx, "cimd confidential service", "event", cimdConfidentialServiceAuditEvent(operation, outcome), "service_id", entity.ID, "operation", operation, "outcome", outcome)
+}
+
+func cimdPublicServiceAuditEvent(operation, outcome string) string {
+	switch {
+	case operation == "create" && outcome == "success":
+		return "service.thirdparty.cimd_public_service_created"
+	case operation == "create":
+		return "service.thirdparty.cimd_public_service_create_rejected"
+	case outcome == "success":
+		return "service.thirdparty.cimd_public_service_updated"
+	default:
+		return "service.thirdparty.cimd_public_service_update_rejected"
+	}
+}
+
+func cimdConfidentialServiceAuditEvent(operation, outcome string) string {
+	switch {
+	case operation == "create" && outcome == "success":
+		return "service.thirdparty.cimd_confidential_service_created"
+	case operation == "create":
+		return "service.thirdparty.cimd_confidential_service_create_rejected"
+	case outcome == "success":
+		return "service.thirdparty.cimd_confidential_service_updated"
+	default:
+		return "service.thirdparty.cimd_confidential_service_update_rejected"
+	}
 }
 
 // auditDiscovery uses validated metadata or persisted state for issuer and method.

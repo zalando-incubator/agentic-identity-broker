@@ -676,7 +676,7 @@ func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *test
 					if client == "CIMD" {
 						assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "rejected")
 					} else {
-						assert.NotContains(t, logs.String(), "cimd client token acquisition")
+						assert.NotContains(t, logs.String(), `"event":"session.oauth2.cimd_`)
 					}
 				})
 			}
@@ -1567,15 +1567,24 @@ func assertSecurityEventsMarkPublicClient(t *testing.T, logs string, wantedEvent
 	}
 }
 
+var cimdTokenAcquisitionAuditEvents = map[string]string{
+	"code_exchange/success":  "session.oauth2.cimd_code_exchanged",
+	"code_exchange/rejected": "session.oauth2.cimd_code_exchange_rejected",
+	"refresh/success":        "session.oauth2.cimd_token_refreshed",
+	"refresh/rejected":       "session.oauth2.cimd_refresh_rejected",
+}
+
 func assertCIMDTokenAcquisitionAudit(t *testing.T, logs string, serviceID id.ServiceID, operation, outcome string) {
 	t.Helper()
+	wantEvent, ok := cimdTokenAcquisitionAuditEvents[operation+"/"+outcome]
+	require.True(t, ok, "no CIMD token acquisition audit event for %s/%s", operation, outcome)
 	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
 		if line == "" {
 			continue
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] != "cimd client token acquisition" {
+		if record["event"] != wantEvent {
 			continue
 		}
 		if record["service_id"] != serviceID.String() || record["operation"] != operation || record["outcome"] != outcome {
@@ -1589,7 +1598,7 @@ func assertCIMDTokenAcquisitionAudit(t *testing.T, logs string, serviceID id.Ser
 		}
 		return
 	}
-	assert.Failf(t, "missing CIMD token acquisition audit", "service_id=%q operation=%q outcome=%q", serviceID, operation, outcome)
+	assert.Failf(t, "missing CIMD token acquisition audit", "event=%q service_id=%q operation=%q outcome=%q", wantEvent, serviceID, operation, outcome)
 }
 
 func assertPublicTokenExchangeRequest(

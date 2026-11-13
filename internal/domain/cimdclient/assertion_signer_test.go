@@ -57,7 +57,7 @@ func TestAssertionSigner_SignsInteroperableCIMDClientAssertions(t *testing.T) {
 
 	records := assertionSignerAuditRecords(t, logOutput.String())
 	require.Len(t, records, 2)
-	assertAssertionSigningAuditRecord(t, records, keyID, "success")
+	assertAssertionSigningAuditRecord(t, records, keyID, "success", "cimd.assertion.signed")
 	assertCredentialFreeAssertionSigningAudit(t, records, logOutput.String())
 }
 
@@ -190,7 +190,7 @@ func assertAssertionSigningFailsClosed(
 	logs := logOutput()
 	records := assertionSignerAuditRecords(t, logs)
 	require.Len(t, records, 1)
-	assertAssertionSigningAuditRecord(t, records, wantKeyID, "rejected")
+	assertAssertionSigningAuditRecord(t, records, wantKeyID, "rejected", "cimd.assertion.sign_rejected")
 	assertCredentialFreeAssertionSigningAudit(t, records, logs)
 }
 
@@ -341,22 +341,22 @@ func assertionSignerAuditRecords(t *testing.T, logs string) []map[string]any {
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] == "cimd client assertion signing" {
+		if event, ok := record["event"].(string); ok && strings.HasPrefix(event, "cimd.assertion.") {
 			records = append(records, record)
 		}
 	}
 	return records
 }
 
-func assertAssertionSigningAuditRecord(t *testing.T, records []map[string]any, wantKeyID, wantOutcome string) {
+func assertAssertionSigningAuditRecord(t *testing.T, records []map[string]any, wantKeyID, wantOutcome, wantEvent string) {
 	t.Helper()
 
 	for _, record := range records {
-		if record["key_id"] == wantKeyID && record["operation"] == "sign" && record["outcome"] == wantOutcome {
+		if record["event"] == wantEvent && record["key_id"] == wantKeyID && record["operation"] == "sign" && record["outcome"] == wantOutcome {
 			return
 		}
 	}
-	assert.Failf(t, "missing client assertion signing audit record", "key_id=%q operation=%q outcome=%q", wantKeyID, wantOutcome)
+	assert.Failf(t, "missing client assertion signing audit record", "event=%q key_id=%q outcome=%q", wantEvent, wantKeyID, wantOutcome)
 }
 
 func assertCredentialFreeAssertionSigningAudit(t *testing.T, records []map[string]any, logs string) {
@@ -379,6 +379,7 @@ func assertCredentialFreeAssertionSigningAudit(t *testing.T, records []map[strin
 		"time":      {},
 		"level":     {},
 		"msg":       {},
+		"event":     {},
 		"key_id":    {},
 		"operation": {},
 		"outcome":   {},

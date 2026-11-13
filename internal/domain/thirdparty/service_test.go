@@ -633,11 +633,26 @@ func (unavailableCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) er
 }
 
 func assertCIMDProviderAuditRecord(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome string, sentinels ...string) {
-	assertCIMDProviderAuditMessage(t, logs, serviceID, operation, wantOutcome, "cimd confidential service", sentinels...)
+	t.Helper()
+	assertCIMDProviderAuditEvent(t, logs, serviceID, operation, wantOutcome, "confidential", sentinels...)
 }
 
-func assertCIMDProviderAuditMessage(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome, wantMessage string, sentinels ...string) {
+var cimdProviderAuditEvents = map[string]string{
+	"confidential/create/success":  "service.thirdparty.cimd_confidential_service_created",
+	"confidential/create/rejected": "service.thirdparty.cimd_confidential_service_create_rejected",
+	"confidential/update/success":  "service.thirdparty.cimd_confidential_service_updated",
+	"confidential/update/rejected": "service.thirdparty.cimd_confidential_service_update_rejected",
+	"public/create/success":        "service.thirdparty.cimd_public_service_created",
+	"public/create/rejected":       "service.thirdparty.cimd_public_service_create_rejected",
+	"public/update/success":        "service.thirdparty.cimd_public_service_updated",
+	"public/update/rejected":       "service.thirdparty.cimd_public_service_update_rejected",
+}
+
+func assertCIMDProviderAuditEvent(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome, client string, sentinels ...string) {
 	t.Helper()
+
+	wantEvent, ok := cimdProviderAuditEvents[client+"/"+operation+"/"+wantOutcome]
+	require.True(t, ok, "no CIMD provider audit event for %s/%s/%s", client, operation, wantOutcome)
 
 	var auditRecord map[string]any
 	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
@@ -647,14 +662,13 @@ func assertCIMDProviderAuditMessage(t *testing.T, logs *bytes.Buffer, serviceID 
 
 		var entry map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &entry))
-		if entry["service_id"] == serviceID.String() && entry["operation"] == operation && entry["outcome"] == wantOutcome {
+		if entry["event"] == wantEvent && entry["service_id"] == serviceID.String() && entry["operation"] == operation && entry["outcome"] == wantOutcome {
 			auditRecord = entry
 			break
 		}
 	}
 
-	require.NotNil(t, auditRecord, "expected %s/%s audit record for service %s", operation, wantOutcome, serviceID)
-	assert.Equal(t, wantMessage, auditRecord["msg"])
+	require.NotNil(t, auditRecord, "expected %s audit record for service %s", wantEvent, serviceID)
 	for _, field := range []string{
 		"client_secret",
 		"secret",
@@ -1028,7 +1042,7 @@ func TestThirdpartyOAuth2ProviderService_CIMDPublicCreateAndUpdateWithoutKey(t *
 				if counter, ok := readiness.check.(*countingCIMDKeyReadiness); ok {
 					assert.Zero(t, counter.calls)
 				}
-				assertCIMDProviderAuditMessage(t, logs, serviceID, operation, "success", "cimd public service", "previous-ciphertext")
+				assertCIMDProviderAuditEvent(t, logs, serviceID, operation, "success", "public", "previous-ciphertext")
 			})
 		}
 	}
@@ -1092,7 +1106,7 @@ func TestThirdpartyOAuth2ProviderService_CIMDPublicRejectionAuditDoesNotExposeCr
 			repo.AssertNotCalled(t, "Create")
 			repo.AssertNotCalled(t, "Get")
 			repo.AssertNotCalled(t, "Update")
-			assertCIMDProviderAuditMessage(t, logs, serviceID, operation, "rejected", "cimd public service", "sentinel-secret-value")
+			assertCIMDProviderAuditEvent(t, logs, serviceID, operation, "rejected", "public", "sentinel-secret-value")
 		})
 	}
 }
@@ -1391,7 +1405,7 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDPublicModeTransitions(t *tes
 	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
 	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
 	assert.Zero(t, readiness.calls)
-	assertCIMDProviderAuditMessage(t, logs, serviceID, "update", "success", "cimd public service")
+	assertCIMDProviderAuditEvent(t, logs, serviceID, "update", "success", "public")
 
 	require.ErrorIs(t, service.Update(ctx, confidential(), nil), ports.ErrCIMDPublicKeyUnavailable)
 	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod, "failed confidential replacement must not change stored mode")
@@ -1403,7 +1417,7 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDPublicModeTransitions(t *tes
 	assert.Equal(t, hostedID, stored.ClientID)
 	assert.Equal(t, model.TokenEndpointAuthMethodPrivateKeyJWT, stored.TokenEndpointAuthMethod)
 	assert.Equal(t, 2, readiness.calls)
-	assertCIMDProviderAuditMessage(t, logs, serviceID, "update", "success", "cimd confidential service")
+	assertCIMDProviderAuditEvent(t, logs, serviceID, "update", "success", "confidential")
 }
 
 func TestThirdpartyOAuth2ProviderService_Update_StaticAndCIMDPublicIdentitySwitch(t *testing.T) {

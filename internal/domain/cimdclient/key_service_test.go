@@ -421,24 +421,24 @@ func TestKeyService_LifecycleAuditRecordsAreCredentialFree(t *testing.T) {
 
 	records := cimdLifecycleAuditRecords(t, logs)
 	require.Len(t, records, 7)
-	assertCIMDKeyLifecycleAuditRecord(t, records, first.KID.String(), "generate", "success")
-	assertCIMDKeyLifecycleAuditRecord(t, records, second.KID.String(), "generate", "success")
-	assertCIMDKeyLifecycleAuditRecord(t, records, first.KID.String(), "promote", "success")
-	assertCIMDKeyLifecycleAuditRecord(t, records, second.KID.String(), "remove", "success")
-	assertCIMDKeyLifecycleAuditRecord(t, records, "", "generate", "rejected")
-	assertCIMDKeyLifecycleAuditRecord(t, records, "missing-cimd-key", "promote", "rejected")
-	assertCIMDKeyLifecycleAuditRecord(t, records, "missing-cimd-key", "remove", "rejected")
+	assertCIMDKeyLifecycleAuditRecord(t, records, first.KID.String(), "generate", "success", "cimd.client_key.generated")
+	assertCIMDKeyLifecycleAuditRecord(t, records, second.KID.String(), "generate", "success", "cimd.client_key.generated")
+	assertCIMDKeyLifecycleAuditRecord(t, records, first.KID.String(), "promote", "success", "cimd.client_key.promoted")
+	assertCIMDKeyLifecycleAuditRecord(t, records, second.KID.String(), "remove", "success", "cimd.client_key.removed")
+	assertCIMDKeyLifecycleAuditRecord(t, records, "", "generate", "rejected", "cimd.client_key.generate_rejected")
+	assertCIMDKeyLifecycleAuditRecord(t, records, "missing-cimd-key", "promote", "rejected", "cimd.client_key.promote_rejected")
+	assertCIMDKeyLifecycleAuditRecord(t, records, "missing-cimd-key", "remove", "rejected", "cimd.client_key.remove_rejected")
 
 	allowedFields := map[string]struct{}{
 		"time":      {},
 		"level":     {},
 		"msg":       {},
+		"event":     {},
 		"key_id":    {},
 		"operation": {},
 		"outcome":   {},
 	}
 	for _, record := range records {
-		assert.Equal(t, "cimd client-authentication key lifecycle", record["msg"])
 		for field := range record {
 			_, allowed := allowedFields[field]
 			assert.Truef(t, allowed, "audit field %q must not be recorded", field)
@@ -464,7 +464,7 @@ func TestKeyService_InternalLifecycleFailuresAreAudited(t *testing.T) {
 		_, err := service.GenerateKey(context.Background(), "ES256")
 
 		require.Error(t, err)
-		assertCIMDKeyLifecycleAuditRecord(t, cimdLifecycleAuditRecords(t, logs.String()), "", "generate", "rejected")
+		assertCIMDKeyLifecycleAuditRecord(t, cimdLifecycleAuditRecords(t, logs.String()), "", "generate", "rejected", "cimd.client_key.generate_rejected")
 	})
 
 	t.Run("bootstrap lock failure", func(t *testing.T) {
@@ -478,7 +478,7 @@ func TestKeyService_InternalLifecycleFailuresAreAudited(t *testing.T) {
 		_, _, err := service.EnsureInitialKey(context.Background())
 
 		require.Error(t, err)
-		assertCIMDKeyLifecycleAuditRecord(t, cimdLifecycleAuditRecords(t, logs.String()), "", "bootstrap", "rejected")
+		assertCIMDKeyLifecycleAuditRecord(t, cimdLifecycleAuditRecords(t, logs.String()), "", "bootstrap", "rejected", "cimd.client_key.bootstrap_rejected")
 	})
 }
 
@@ -506,22 +506,22 @@ func cimdLifecycleAuditRecords(t *testing.T, logs string) []map[string]any {
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] == "cimd client-authentication key lifecycle" {
+		if event, ok := record["event"].(string); ok && strings.HasPrefix(event, "cimd.client_key.") {
 			records = append(records, record)
 		}
 	}
 	return records
 }
 
-func assertCIMDKeyLifecycleAuditRecord(t *testing.T, records []map[string]any, keyID, operation, outcome string) {
+func assertCIMDKeyLifecycleAuditRecord(t *testing.T, records []map[string]any, keyID, operation, outcome, event string) {
 	t.Helper()
 
 	for _, record := range records {
-		if record["key_id"] == keyID && record["operation"] == operation && record["outcome"] == outcome {
+		if record["event"] == event && record["key_id"] == keyID && record["operation"] == operation && record["outcome"] == outcome {
 			return
 		}
 	}
-	assert.Failf(t, "missing CIMD key lifecycle audit record", "key_id=%q operation=%q outcome=%q", keyID, operation, outcome)
+	assert.Failf(t, "missing CIMD key lifecycle audit record", "event=%q key_id=%q operation=%q outcome=%q", event, keyID, operation, outcome)
 }
 
 func TestKeyService_PublicJWKSetRejectsNilRowAlongsideValidKey(t *testing.T) {

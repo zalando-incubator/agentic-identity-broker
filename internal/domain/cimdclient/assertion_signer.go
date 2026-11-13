@@ -154,7 +154,11 @@ func cimdES256PrivateKeyFromPEM(privatePEM []byte) (*ecdsa.PrivateKey, error) {
 }
 
 func (s *AssertionSigner) audit(ctx context.Context, keyID id.KeyID, outcome string) {
-	s.logger.InfoContext(ctx, "cimd client assertion signing", "key_id", keyID, "operation", "sign", "outcome", outcome)
+	event := "cimd.assertion.sign_rejected"
+	if outcome == "success" {
+		event = "cimd.assertion.signed"
+	}
+	s.logger.InfoContext(ctx, "cimd client assertion signing", "event", event, "key_id", keyID, "operation", "sign", "outcome", outcome)
 }
 
 var _ ports.CIMDClientAssertionSigner = (*AssertionSigner)(nil)
