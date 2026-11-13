@@ -408,7 +408,7 @@ and the AGENTS invariant). It contains:
   - Denials and errors are never cached.
   - There is no stale-on-error fallback.
 
-`server.DelegationContextResolver` becomes the fourth ExtProc port, next to `Exchanger`, `Authorizer`,
+`server.PermitResolver` becomes the fourth ExtProc port, next to `Exchanger`, `Authorizer`,
 and `ApprovalGate`.
 
 **Alternatives**:
@@ -432,7 +432,7 @@ re-resolve or retry.
 **Body-bearing path** (`processRequestHeadersOPA`):
 
 1. After metadata, protocol, and transport checks, start `Exchanger.Exchange` and
-   `DelegationContextResolver.Resolve` concurrently.
+   `PermitResolver.Resolve` concurrently.
 2. **Wait for both results.** No sibling is canceled. Each call is bounded by its own timeout
    (`oauth2.exchange_timeout` and `delegation_context.request_timeout`). This makes the outcome
    independent of completion order (FR-016).
@@ -590,7 +590,7 @@ revisions. The ADR records these decisions:
   also records the 2026-10-28 freshness decisions: an unusable `max-age` fails closed (I1), a
   single deadline based on request start with accepted skew (U1), and a 503 rejection when the
   context expires before policy use (U2);
-- the ExtProc `DelegationContextResolver` as a fourth port, with concurrent body-path ordering (R14);
+- the ExtProc `PermitResolver` as a fourth port, with concurrent body-path ordering (R14);
 - the superseded parts of ADR 028: the input schema (R15: the five direct `input.context`
   members, the typed permit mapping, the currently retained permit-derived compatibility `granted_permission_sets*`
   inputs, and `true` availability on both enabled paths) and the header-only and body-bearing

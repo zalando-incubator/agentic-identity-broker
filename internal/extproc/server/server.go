@@ -67,7 +67,7 @@ type Exchanger interface {
 	// Returns an ExchangeResult containing the token and any granted permission sets, or an error.
 	Exchange(ctx context.Context, subjectToken, resourceURI string) (ExchangeResult, error)
 	// ExchangeBound validates an observed result or exchanges after policy allow.
-	ExchangeBound(ctx context.Context, subjectToken, resourceURI string, observed *ExchangeResult, binding TokenBinding) (ExchangeResult, error)
+	ExchangeBound(ctx context.Context, subjectToken, resourceURI string, observed *ExchangeResult, binding ExchangeResultBinding) (ExchangeResult, error)
 	// Shutdown releases any resources held by the exchanger (e.g., background goroutines).
 	Shutdown()
 }
@@ -89,7 +89,7 @@ type Server struct {
 	authorizer   authorization.Authorizer
 	approvalGate ApprovalGate
 	// delegationResolver is nil unless delegation_context is enabled.
-	delegationResolver DelegationContextResolver
+	delegationResolver PermitResolver
 	now                func() time.Time
 	logger             *slog.Logger
 	requestCounter     metric.Int64Counter
@@ -574,6 +574,10 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
 	state.principal = exchangeResult.Principal
 	state.agentID = exchangeResult.AgentID
+	if state.delegation != nil {
+		state.principal = state.delegation.Context.Principal
+		state.agentID = state.delegation.Context.Agent.ID
+	}
 	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA: token exchanged in headers phase, buffering body for OPA evaluation", diagnostic)
 	return requestBodyBufferingResponseWithAuth("Bearer " + exchangeResult.Token), state
 }
@@ -961,14 +965,13 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 }
 
 func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
-	if errors.Is(err, ErrTokenBindingConflict) {
+	if errors.Is(err, ErrExchangeResultBindingConflict) {
 		diagnostic := NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
 		logger := loggerFromContext(ctx, s.logger)
 		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindUnavailable), slog.LevelWarn, "delegation token binding conflicted", diagnostic)
 		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationBindingUnavailableBody), diagnostic
 	}
-	var delegationErr *delegation.Error
-	if errors.As(err, &delegationErr) {
+	if errors.Is(err, errInvalidGrantTimestamp) {
 		diagnostic := NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindInvalidResponse)
 		logger := loggerFromContext(ctx, s.logger)
 		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindInvalidResponse), slog.LevelWarn, "delegation grant timestamp invalid", diagnostic)

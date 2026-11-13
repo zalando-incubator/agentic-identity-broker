@@ -9,32 +9,32 @@ import (
 	"time"
 )
 
-// TokenBinding identifies the permit that first claims an exchange result, not exchange provenance.
-type TokenBinding struct {
+// ExchangeResultBinding identifies the permit that first claims an exchange result, not exchange provenance.
+type ExchangeResultBinding struct {
 	Scopes         []string
 	GrantUpdatedAt time.Time
 }
 
-func (TokenBinding) String() string         { return "token binding [redacted]" }
-func (b TokenBinding) GoString() string     { return b.String() }
-func (b TokenBinding) LogValue() slog.Value { return slog.StringValue(b.String()) }
+func (ExchangeResultBinding) String() string         { return "exchange result binding [redacted]" }
+func (b ExchangeResultBinding) GoString() string     { return b.String() }
+func (b ExchangeResultBinding) LogValue() slog.Value { return slog.StringValue(b.String()) }
 
-// ErrTokenBindingConflict means the single permitted retry delivered an incompatible result.
-var ErrTokenBindingConflict = errors.New("delegation token binding unavailable")
+// ErrExchangeResultBindingConflict means the single permitted retry delivered an incompatible result.
+var ErrExchangeResultBindingConflict = errors.New("delegation token binding unavailable")
 
 type tokenResultHandle struct {
 	mu      sync.Mutex
-	binding *TokenBinding
+	binding *ExchangeResultBinding
 }
 
-func (b TokenBinding) normalized() TokenBinding {
+func (b ExchangeResultBinding) normalized() ExchangeResultBinding {
 	b.Scopes = slices.Clone(b.Scopes)
 	slices.Sort(b.Scopes)
 	b.Scopes = slices.Compact(b.Scopes)
 	return b
 }
 
-func (h *tokenResultHandle) bindOnce(binding TokenBinding) bool {
+func (h *tokenResultHandle) bindOnce(binding ExchangeResultBinding) bool {
 	if h == nil {
 		return false
 	}
@@ -47,7 +47,7 @@ func (h *tokenResultHandle) bindOnce(binding TokenBinding) bool {
 	return slices.Equal(h.binding.Scopes, binding.Scopes) && h.binding.GrantUpdatedAt.Equal(binding.GrantUpdatedAt)
 }
 
-func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resourceURI string, observed *ExchangeResult, binding TokenBinding) (ExchangeResult, error) {
+func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resourceURI string, observed *ExchangeResult, binding ExchangeResultBinding) (ExchangeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ExchangeResult{}, NewOperationError(NewErrorMetadata(OperationExchange, KindCallerCanceled, DependencyLocal, 0, ""), err)
 	}
@@ -92,7 +92,7 @@ func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resou
 		return ExchangeResult{}, err
 	}
 	if !result.handle.bindOnce(binding) {
-		return ExchangeResult{}, ErrTokenBindingConflict
+		return ExchangeResult{}, ErrExchangeResultBindingConflict
 	}
 	return result, nil
 }

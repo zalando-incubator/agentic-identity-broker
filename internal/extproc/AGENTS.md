@@ -38,7 +38,7 @@ internal/extproc/
     context.go       Typed permit context validation (unknown members dropped)
     resolver.go      Permit-only cache with singleflight, no stale fallback
     telemetry.go     Bounded resolution outcomes; no credentials, context, URLs or causes
-    setup.go         NewResolverFromConfig: production composition shared by root.go and E2E
+    setup.go         NewPermitResolverFromConfig: production composition shared by root.go and E2E
 
   httpclient/
     httpclient.go    Traced outbound HTTP client construction
@@ -121,10 +121,10 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 
 | Type/Symbol | Purpose |
 |---|---|
-| `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)`, `ExchangeBound(ctx, subjectToken, resourceURI, observed *ExchangeResult, TokenBinding)` + `Shutdown()` |
-| `TokenBinding` | Sorted, de-duplicated permit resource scopes and parsed grant-update instant; never broker grant-version provenance |
+| `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)`, `ExchangeBound(ctx, subjectToken, resourceURI, observed *ExchangeResult, ExchangeResultBinding)` + `Shutdown()` |
+| `ExchangeResultBinding` | Sorted, de-duplicated permit resource scopes and parsed grant-update instant; never broker grant-version provenance |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
-| `DelegationContextResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 047) |
+| `PermitResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 048) |
 | `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `delegationResolver`, `logger` |
 | `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
@@ -153,17 +153,14 @@ Read `ARCHITECTURE.md` and `.specify/memory/constitution.md` before boundary cha
 
 `Exchanger` in `server/server.go`, `authorization.Authorizer` in `authorization/authorizer.go`, `ApprovalGate` in `server/server.go`, and `DelegationContextResolver` in `server/delegation.go` are the service boundaries in this process.
 
-- `Server` depends on the first three interfaces and optionally on `DelegationContextResolver`. Use `TokenExchanger` as the production `Exchanger` implementation. Use `OPAAuthorizer` as the production `Authorizer` implementation. Use `approval.Gate` as the production `ApprovalGate` implementation.
-- Use `_test.go` helpers or `tests/e2e/extproc/bootstrap/` for ExtProc startup and readiness tests.
-- Keep the `authorizer` field on `Server` as `authorization.Authorizer`. Keep the `approvalGate` field as `ApprovalGate`. Do not add an adapter layer or `map[string]any` indirection.
-- If `authorizer == nil` (OPA disabled), run token exchange during `RequestHeaders`. Do not buffer the body. This adds zero overhead.
-- If a request has a body and OPA is enabled, exchange tokens in `RequestHeaders`. Then evaluate OPA in `RequestBody`.
-- For header-only requests, evaluate first.
-- Run `ApprovalGate` only after OPA returns `approval_required` for a standalone MCP tool call.
-- `DelegationContextResolver` (ADR 047) is set with `Server.WithDelegationResolver` only when `delegation_context.enabled`; its production implementation is `delegation.Resolver` from `delegation.NewResolverFromConfig`. With it disabled, the request paths and OPA input are unchanged byte-for-byte.
-- Use mock or stub implementations of all four interfaces in tests.
+`Exchanger` and `ApprovalGate` live in `internal/extproc/server/server.go`.
+`Authorizer` lives in `internal/extproc/authorization/authorizer.go`.
+`PermitResolver` lives in `internal/extproc/server/delegation.go`.
 
 - Inject `TokenExchanger`, `OPAAuthorizer`, and `approval.Gate` through these interfaces.
+- Set `PermitResolver` (ADR 048) with `Server.WithPermitResolver` only when `delegation_context.enabled`.
+  Its production implementation is `delegation.PermitResolver` from `delegation.NewPermitResolverFromConfig`.
+  With it disabled, the request paths and OPA input are unchanged byte for byte.
 - Keep the typed interface fields on `Server`. Do not add an adapter layer or map-based indirection.
 - Use mock or stub implementations for these interfaces in tests.
 - Use `tests/e2e/extproc/bootstrap/` for startup and readiness coverage.
@@ -221,16 +218,16 @@ With `delegation_context.enabled` (ADR 045 supersedes ADR 028's ordering and inp
 
 ```
 Body-bearing:  RequestHeaders → metadata/protocol/transport checks
-               → Exchanger.Exchange ∥ DelegationContextResolver.Resolve (wait for both)
+               → Exchanger.Exchange ∥ PermitResolver.Resolve (wait for both)
                → denial 403 (error_uri) > resolution error 503 > exchange error > buffer body
 RequestBody    → now < Deadline? else 503 → OPA with permit-derived context (each batch element re-checks)
-Header-only:   → DelegationContextResolver.Resolve → denial 403 / error 503
+Header-only:   → PermitResolver.Resolve → denial 403 / error 503
                → now < Deadline? else 503 → OPA → allow: Exchange
 ```
 
 - Map the permit through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
 - Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility fields remain unchanged today; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
-- Leave `agent_session_id` unchanged. The approval gate still uses the exchange identity.
+- Leave `agent_session_id` unchanged. The enabled approval gate uses the same permit principal and agent UUID as OPA. Disabled mode still uses exchange identity.
 - After body-path precedence and before buffering/mutation, call `ExchangeBound` with the observed exchange result. Header-only passes no observed result and uses the evaluated permit after allow.
 - Every successful result has an opaque handle and shared binding cell, including non-cacheable flights. Atomically claim once; compare scope sets and timestamp instants thereafter. Never rebind or compare credential bytes.
 - On mismatch, compare-and-delete only the observed identity. Preserve same-token replacements, read a replacement once and use only a compatible handle. Otherwise exchange at most once more, bypassing success-cache reuse and stale fallback while retaining cooldown handling. Revalidate delivery; conflict returns 503 `delegation token binding unavailable` without a third exchange or deletion of the competing result.
@@ -247,7 +244,7 @@ Header-only:   → DelegationContextResolver.Resolve → denial 403 / error 503
 Read `adrs/036-extproc-approval-cache-and-gate.md` and the Feature 026 contracts before approval changes.
 
 - Gate only standalone MCP tool calls after `approval_required`. Deny approval-required batches and `ciba_required`.
-- Scope approval records with broker-provided `principal` and `agent_id`. Do not parse tokens for identity.
+- Scope approval records with the permit principal and agent UUID when delegation context is enabled, otherwise broker exchange `principal` and `agent_id`. Do not parse tokens for identity.
 - Keep approvals outside OPA. Permission sets come from the exchange snapshot.
 - Keep configured `context.agent_session_id` separate from fixed MCP `mcp.session_id`.
 - Replace full snapshots on `200`. Refresh confirmation time on `304`.

@@ -176,7 +176,7 @@ calling peer, and the trace ID returned in `traceresponse`.
 
 ## Deprecation of `granted_permission_sets`
 
-End-user API `1.2.0` marks the token-exchange response field `granted_permission_sets` deprecated.
+End-user API `1.3.0` marks the token-exchange response field `granted_permission_sets` deprecated.
 It remains populated, and `principal` and `agent_id` are unchanged. Removal is scheduled for one
 release after the ExtProc delegation resolver ships and requires a separately approved end-user API
 `2.0.0`.

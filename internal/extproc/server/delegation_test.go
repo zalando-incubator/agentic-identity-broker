@@ -116,7 +116,7 @@ func newDelegationHarnessWithExchanger(t *testing.T, resolve func() (delegation.
 	if len(loggers) > 0 {
 		logger = loggers[0]
 	}
-	srv := server.NewServerWithAuthorizer(cfg, exchanger, authorizer, logger).WithDelegationResolver(h.resolver)
+	srv := server.NewServerWithAuthorizer(cfg, exchanger, authorizer, logger).WithPermitResolver(h.resolver)
 	srv.SetClock(h.clock.Now)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -151,10 +151,10 @@ var mcpCall = []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"n
 
 type bindingPortStub struct {
 	*mockExchanger
-	bind func(context.Context, *server.ExchangeResult, server.TokenBinding) (server.ExchangeResult, error)
+	bind func(context.Context, *server.ExchangeResult, server.ExchangeResultBinding) (server.ExchangeResult, error)
 }
 
-func (e *bindingPortStub) ExchangeBound(ctx context.Context, _, _ string, observed *server.ExchangeResult, binding server.TokenBinding) (server.ExchangeResult, error) {
+func (e *bindingPortStub) ExchangeBound(ctx context.Context, _, _ string, observed *server.ExchangeResult, binding server.ExchangeResultBinding) (server.ExchangeResult, error) {
 	return e.bind(ctx, observed, binding)
 }
 
@@ -173,7 +173,7 @@ func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
 						return server.ExchangeResult{}, errors.New("initial failure")
 					}
 					return server.ExchangeResult{Token: "prior"}, nil
-				}}, bind: func(_ context.Context, observed *server.ExchangeResult, binding server.TokenBinding) (server.ExchangeResult, error) {
+				}}, bind: func(_ context.Context, observed *server.ExchangeResult, binding server.ExchangeResultBinding) (server.ExchangeResult, error) {
 					binds.Add(1)
 					assert.Equal(t, []string{"read:repo"}, binding.Scopes)
 					assert.True(t, binding.GrantUpdatedAt.Equal(time.Date(2026, 10, 26, 9, 59, 0, 0, time.UTC)))
@@ -185,7 +185,7 @@ func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
 						assert.Zero(t, h.policies.Load())
 					}
 					if failure == "binding conflict" {
-						return server.ExchangeResult{}, server.ErrTokenBindingConflict
+						return server.ExchangeResult{}, server.ErrExchangeResultBindingConflict
 					}
 					return server.ExchangeResult{}, errors.New("replacement failure")
 				}}

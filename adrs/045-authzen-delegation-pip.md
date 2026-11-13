@@ -1,8 +1,8 @@
 # ADR 045: AuthZEN Delegation Policy Information Point
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-06: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-09: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)
 
-Approval scope: ADR-2 permit-bound result reuse, API-7 terminal conflict and forwarding expiry, and D-8 provider/provenance limitations. Earlier approvals remain in Revision history. ADR-3 canonical policy-input guidance is incorporated with the maintainer-supplied follow-up issue #441.
+Latest approval scope: F2/P2 permit-derived approval identity, F3/P3 API-version and supersession corrections, and F6/P6 naming. Prior ADR-2/API-7/D-8 approval covers the existing reuse, conflict, expiry and provenance limits; ADR-3 guidance uses the maintainer-supplied follow-up issue #441. Earlier approvals remain in Revision history. The selected F1/P1 redesign remains unapplied.
 **Date**: 2026-10-29 (accepted 2026-10-30)
 **Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
 `/oauth2/token` `granted_permission_sets` deprecation
@@ -75,9 +75,9 @@ evaluation is never more permissive than exchange, and it issues no token.
   `now < deadline`. Otherwise it returns 503 without policy evaluation, forwarding, or
   re-resolution.
 
-### 4. ExtProc `DelegationContextResolver` (fourth port) and ordering — supersedes ADR 028 ordering when enabled
+### 4. ExtProc `PermitResolver` (fourth port) and ordering — supersedes ADR 028 ordering when enabled
 
-- `server.DelegationContextResolver` joins `Exchanger`, `Authorizer`, and `ApprovalGate`. Its
+- `server.PermitResolver` joins `Exchanger`, `Authorizer`, and `ApprovalGate`. Its
   implementation lives in `internal/extproc/delegation` and imports no broker package (ADR 011).
 - At startup ExtProc discovers the metadata from the expected PDP identifier (default: the origin
   of `oauth2.token_endpoint`), compares `policy_decision_point` by exact string, and refuses to
@@ -126,8 +126,9 @@ authenticated and authorized; it has no opt-out.
 
 ### 8. Exchange-field deprecation
 
-`TokenExchangeResponse.granted_permission_sets` is marked `deprecated: true` in end-user API
-`1.2.0` (an additive bump from the current `1.1.0`) and stays populated. `principal` and `agent_id` are unchanged. Removal happens one release
+The AuthZEN paths and `TokenExchangeResponse.granted_permission_sets` deprecation ship in
+end-user API `1.3.0`, an additive bump from the released `1.2.0`. The field stays populated;
+`principal` and `agent_id` are unchanged. Removal happens one release
 after the ExtProc resolver ships, as a separately approved end-user API `2.0.0` change.
 
 ### 9. Standard-defined naming
@@ -136,16 +137,26 @@ The permit's `context.resource.service_id` and the enabled OPA context's
 `resource.service_id` identify the resolved owning service UUID. `resource.resource_uri`
 identifies the protected resource. The AuthZEN request's `resource.id` remains the URI,
 unchanged. This separates service identity from protected-resource identity (ADR 030).
-The ExtProc port is `server.DelegationContextResolver`, distinct from the broker's
+The ExtProc port is `server.PermitResolver`, distinct from the broker's
 `tokenexchange.DelegationResolver`; the former retrieves fresh permit context, the latter
-enforces delegation invariants shared by exchange and evaluation.
+enforces delegation invariants shared by exchange and evaluation. The implementation is
+`delegation.PermitResolver`. **ExchangeResultBinding** is a local result-reuse constraint,
+not the IETF Token Binding proof-of-possession protocol (RFC 8471).
 
 The AuthZEN paths (`/access/v1/...`, `/.well-known/authzen-configuration`) and snake_case members
 are defined by the standard and are a documented exception to general REST naming conventions.
 
+### 9.1. Approval identity in enabled mode
+
+With delegation context enabled, the approval gate takes its principal and agent UUID from
+that request's permit, exactly as OPA does. Exchange identities, including cached or absent
+extensions, cannot select another approval owner. Disabled mode continues to use the exchange
+response identity under ADR 036. Session extraction and the remaining approval controls are
+unchanged.
+
 ### 10. The permit governs enabled-mode token reuse
 
-- A **Token Binding** is the sorted, de-duplicated set of permit `resource.scopes` and the
+- An **ExchangeResultBinding** is the sorted, de-duplicated set of permit `resource.scopes` and the
   instant parsed from `grant.updated_at`. Equality compares both sets and both instants.
   It records the permit that first claimed an exchange result, not the grant under which
   the broker actually minted or obtained the credential.
@@ -259,6 +270,15 @@ or provides a stronger race bound. This residual limitation is explicitly approv
 
 ## Revision history
 
+- **2026-11-09 (same PR, before merge)**: `mjungsbluth` approved F2/P2, F3/P3 and F6/P6 on
+  [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)
+  at `2026-11-09T20:20:21Z`. §9.1 makes the permit authoritative for enabled-mode approval
+  identity; §8 corrects the released API baseline and bumps the contract to `1.3.0`;
+  §§4/9/10 name `PermitResolver` and `ExchangeResultBinding`. The ADR 028 cross-reference
+  records this ADR's existing partial supersession, without changing disabled-mode behavior.
+  Prior approvals remain recorded below. F1/P1's exchange-provenance redesign is not applied
+  by this revision; §10's provenance limitation remains explicit pending that redesign.
+
 - **2026-11-07 (same PR, before merge)**: Incorporated ADR-3 into §5 using the supplied approval by `mjungsbluth` on 2026-11-06 at [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728). The maintainer supplied [issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441) in this run, satisfying T104's prerequisite. Canonical guidance changes; current compatibility values, serialization and response deprecation do not.
 
 - **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved ADR-2, API-7, ADR-3, D-7 and D-8 at `2026-11-06T15:30:38Z` on [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728). §10 incorporates ADR-2 and its API-7/D-8 constraints. ADR-3 incorporation remains pending the required maintainer-created follow-up issue. D-7 telemetry migration is implemented in run 42297225880/1 after the publication path became available: the broker span/events use `tokenexchange.access_evaluation*`, both required namespaces are registered, span kinds are explicit, and the breaking-telemetry changelog/query migration is published. Test-first and current validation evidence are in quickstart §16.
@@ -266,7 +286,7 @@ or provides a stronger race bound. This residual limitation is explicitly approv
 - **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved P3/F4 on
   [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407)
   at `2026-11-06T06:59:39Z`: rename the ExtProc resolver port to
-  `DelegationContextResolver`, define Delegation and Access Evaluation in the architecture
+  `DelegationContextResolver` (subsequently renamed `PermitResolver` under F6/P6), define Delegation and Access Evaluation in the architecture
   glossary, and use `resource.service_id` in permits and enabled OPA input. The request URI
   member is unchanged. P2/F3's issue-dependent permission-set revision remains unapplied
   because this workflow cannot create its required follow-up issue.

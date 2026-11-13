@@ -179,7 +179,7 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `expires_in` | Optional | Remaining lifetime in whole seconds. Omitted means unknown; zero means less than one second remains and must not use default caching. |
 | `scope` | Optional | Scopes associated with the token, when they differ from the request. |
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
-| `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. Deprecated in end-user API `1.2.0` in favor of the AuthZEN Delegation Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)); still populated. Removal is scheduled for one release after the ExtProc delegation resolver ships and requires end-user API `2.0.0`. `principal` and `agent_id` are not deprecated. |
+| `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. Deprecated in end-user API `1.3.0` in favor of the AuthZEN Delegation Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)); still populated. Removal is scheduled for one release after the ExtProc delegation resolver ships and requires end-user API `2.0.0`. `principal` and `agent_id` are not deprecated. |
 
 New enabled ExtProc policies should use canonical `input.context.permission_sets` and the
 effective ceiling in `input.context.resource.scopes`. The OPA compatibility fields

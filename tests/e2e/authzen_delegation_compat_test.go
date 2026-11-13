@@ -38,7 +38,7 @@ var _ = Describe("Token exchange compatibility during the AuthZEN deprecation wi
 		}))
 
 		document := enduserOpenAPI()
-		Expect(document["info"].(map[string]any)["version"]).To(Equal("1.2.0"))
+		Expect(document["info"].(map[string]any)["version"]).To(Equal("1.3.0"))
 		properties := document["components"].(map[string]any)["schemas"].(map[string]any)["TokenExchangeResponse"].(map[string]any)["properties"].(map[string]any)
 		Expect(properties["granted_permission_sets"]).To(HaveKeyWithValue("deprecated", true))
 		Expect(properties["principal"]).NotTo(HaveKey("deprecated"))

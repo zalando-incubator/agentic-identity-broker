@@ -234,7 +234,8 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 | **Delegation Decision** | AuthZEN evaluation outcome: permit with a Delegation Context and ≤60 s freshness, consent denial with a grant detail and consent URL, or a request failure that is never a decision. |
 | **Delegation Context** | Credential-free projection of an authorized delegation: principal, agent, resource and effective scopes, grant version and expiry, granted permission sets. Unset canonical IDs are omitted. |
-| **Token Binding** | Permit effective scope set and grant update instant that atomically first claimed an exchange-result handle. Shared results cannot be rebound; new identities may carry identical provider bytes. This guarantees compatible reuse, not provider downscoping or exchange provenance (ADR 048 §10). |
+| **ExchangeResultBinding** | Permit effective scope set and grant update instant that atomically first claimed an exchange-result handle. Shared results cannot be rebound; new identities may carry identical provider bytes. This guarantees compatible reuse, not provider downscoping or exchange provenance, and is not IETF Token Binding proof of possession (ADR 048 §10). |
+| **PermitResolver** | ExtProc port and permit-cache implementation (`server.PermitResolver`, `delegation.PermitResolver`), distinct from the broker's invariant-enforcing `tokenexchange.DelegationResolver`. The permit's wire `subject.id` becomes the principal for OPA and enabled-mode approvals. |
 | **PDP identifier** | AuthZEN `policy_decision_point`: the end-user public URL without a trailing slash, compared exactly by consumers before sending credentials. |
 
 ## Development Workflow

@@ -2,7 +2,7 @@
 
 **Status**: Historical baseline **Accepted** under approval items API-1–API-3 (👍 on
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>) and
-applied to `api/enduser/openapi.yaml` (`1.2.0`). The API-003 verification against the AuthZEN 1.0
+applied to `api/enduser/openapi.yaml` (`1.3.0`, corrected by approved F3/P3). The API-003 verification against the AuthZEN 1.0
 source text is recorded in [quickstart.md](../quickstart.md) §7. It found one conflict: AuthZEN
 requires receivers to ignore unknown request fields. The request contract in §2.1 therefore
 follows the AuthZEN 1.0 HTTPS binding (ADR 047 §1, research R10): unknown members, AuthZEN
@@ -25,7 +25,7 @@ completed research evidence in quickstart §7.
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
 configured (the builder's `tokenExchangeEnabled`). No admin API change is made.
 
-**OpenAPI version (Proposed)**: `info.version` changes from the current `1.1.0` to `1.2.0`. The change is additive; see §3.
+**OpenAPI version (approved F3/P3)**: `info.version` changes from the released `1.2.0` to `1.3.0`. The change is additive; see §3.
 
 ---
 
@@ -263,11 +263,11 @@ Requests and responses follow spec Journeys 1–3 exactly. Each scenario becomes
 
 ## 3. `/oauth2/token` response deprecation (additive documentation)
 
-**Proposed release version**: end-user OpenAPI `info.version` increases from the existing
-`1.1.0` (`api/enduser/openapi.yaml:92`) to `1.2.0` for the additive endpoints and deprecation
-marker. This corrects the stale `1.0.0` baseline used in the earlier design review; it does not
-claim maintainer approval of the corrected version. Alternative: intentionally reuse `1.1.0`,
-which would not identify this additive contract revision separately. Sign-off remains API-3.
+**Approved release version (F3/P3)**: end-user OpenAPI `info.version` increases from the
+released `1.2.0` to `1.3.0` for the additive endpoints and deprecation marker. The earlier
+API-3 baseline was stale; [mjungsbluth's 2026-11-09 proposal approval](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)
+supersedes that version choice. Response behavior and the separately approved removal boundary
+are unchanged.
 
 The `TokenExchangeResponse.granted_permission_sets` property gains `deprecated: true` and this
 description suffix: "Deprecated: superseded by the AuthZEN Delegation Context from

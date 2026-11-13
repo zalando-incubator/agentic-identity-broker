@@ -69,7 +69,7 @@ func bindingHarnessCall(t *testing.T, h *delegationHarness, headerOnly bool) *ex
 	return headers
 }
 
-func TestTokenBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing.T) {
+func TestExchangeResultBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing.T) {
 	tests := []struct {
 		name      string
 		scopes    []string
@@ -119,7 +119,7 @@ func TestTokenBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing.T) {
 	}
 }
 
-func TestTokenBinding_FailedReplacementCannotForwardThePriorToken(t *testing.T) {
+func TestExchangeResultBinding_FailedReplacementCannotForwardThePriorToken(t *testing.T) {
 	for _, headerOnly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
 			exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, call int32) {
@@ -155,7 +155,7 @@ func (e *observedExchange) Exchange(ctx context.Context, subject, resource strin
 	return result, err
 }
 
-func (e *observedExchange) ExchangeBound(ctx context.Context, subject, resource string, observed *server.ExchangeResult, binding server.TokenBinding) (server.ExchangeResult, error) {
+func (e *observedExchange) ExchangeBound(ctx context.Context, subject, resource string, observed *server.ExchangeResult, binding server.ExchangeResultBinding) (server.ExchangeResult, error) {
 	return e.inner.ExchangeBound(ctx, subject, resource, observed, binding)
 }
 
@@ -170,7 +170,7 @@ func awaitBindingBarrier(t *testing.T, barrier <-chan struct{}) {
 	}
 }
 
-func TestTokenBinding_PreservesIdenticalTokenReplacementAndDetachedDelivery(t *testing.T) {
+func TestExchangeResultBinding_PreservesIdenticalTokenReplacementAndDetachedDelivery(t *testing.T) {
 	tests := []struct {
 		name      string
 		updatedAt string
@@ -234,7 +234,7 @@ func TestTokenBinding_PreservesIdenticalTokenReplacementAndDetachedDelivery(t *t
 	}
 }
 
-func TestTokenBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentity(t *testing.T) {
+func TestExchangeResultBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentity(t *testing.T) {
 	for _, headerOnly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
 			exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, _ int32) {
@@ -256,7 +256,7 @@ func TestTokenBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentit
 	}
 }
 
-func TestTokenBinding_DisabledExchangeRetainsCacheSemantics(t *testing.T) {
+func TestExchangeResultBinding_DisabledExchangeRetainsCacheSemantics(t *testing.T) {
 	exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, _ int32) { bindingSuccess(w, "SYNTHETIC_OLD_RESULT", 3600) }, false)
 	first, err := exchanger.Exchange(context.Background(), "subject", "https://api.example.com/repos")
 	require.NoError(t, err)

@@ -42,9 +42,9 @@ func (e *scriptedEvaluator) Evaluate(_ context.Context, subject, resource string
 	return e.respond(subject, resource)
 }
 
-func newTestResolver(t *testing.T, evaluator Evaluator, clock *fakeClock) *Resolver {
+func newTestResolver(t *testing.T, evaluator Evaluator, clock *fakeClock) *PermitResolver {
 	t.Helper()
-	r := NewResolver(evaluator, time.Minute)
+	r := NewPermitResolver(evaluator, time.Minute)
 	r.now = clock.Now
 	t.Cleanup(r.Shutdown)
 	return r

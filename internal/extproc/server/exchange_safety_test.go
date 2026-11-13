@@ -252,7 +252,7 @@ type safetyExchanger struct{ err error }
 func (e *safetyExchanger) Exchange(context.Context, string, string) (ExchangeResult, error) {
 	return ExchangeResult{Token: "exchanged-token-secret-sentinel"}, e.err
 }
-func (e *safetyExchanger) ExchangeBound(ctx context.Context, subject, resource string, _ *ExchangeResult, _ TokenBinding) (ExchangeResult, error) {
+func (e *safetyExchanger) ExchangeBound(ctx context.Context, subject, resource string, _ *ExchangeResult, _ ExchangeResultBinding) (ExchangeResult, error) {
 	return e.Exchange(ctx, subject, resource)
 }
 func (*safetyExchanger) Shutdown() {}
