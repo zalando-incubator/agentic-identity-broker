@@ -1,9 +1,11 @@
-# Contract (Proposed): AuthZEN Discovery and Access Evaluation
+# Contract (Accepted): AuthZEN Discovery and Access Evaluation
 
-**Status**: **Proposed. Not approved.** Under Principles IV and X and spec API-002, the
-stakeholder must confirm this contract before `api/enduser/openapi.yaml` changes or any
-implementation starts. API-003 items marked **Verify** must be checked against the final
-AuthZEN Authorization API 1.0 text before the contract is frozen.
+**Status**: **Accepted** by maintainer `mjungsbluth` in the 2026-10-28 `/speckit-plan` review
+(Principles IV and X, spec API-002). The acceptance covers the contract as written here: the
+strict members (R10), the plain-UUID anchor, denial form (a), the error mapping, and the `1.1.0`
+deprecation marker. API-003 items marked **Verify** must still be checked against the final
+AuthZEN Authorization API 1.0 text before the OpenAPI is frozen. Any conflict found goes back to
+the stakeholder.
 
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
 configured (the builder's `tokenExchangeEnabled`). No admin API change is made.

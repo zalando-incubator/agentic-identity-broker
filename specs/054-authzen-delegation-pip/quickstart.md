@@ -10,11 +10,13 @@ are in [data-model.md](./data-model.md).
 
 Before any implementation, these preconditions must hold:
 
-1. The stakeholder has confirmed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
-   including the API-003 **Verify** choices.
-2. The new ADR (research R16) is Accepted.
-
-Neither precondition holds yet.
+1. The stakeholder has confirmed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md).
+   This was done on 2026-10-28. The API-003 **Verify** checks against the final AuthZEN text
+   still have to pass before the OpenAPI is frozen.
+2. The new ADR decision set (research R16) is Accepted. This was done on 2026-10-28. The ADR file
+   is drafted in T008.
+3. The spec revision for the OPA input shape (research R15) has landed, and `tasks.md` has been
+   regenerated. This is still open.
 
 Tooling: `just install-tools` (Go 1.27.3, Ginkgo, golangci-lint). Docker or Podman is needed
 only for the PostgreSQL-backed scenario US2.19.
@@ -70,6 +72,7 @@ composition against the real broker test server. Confirm these outcomes:
 - After revocation, a repeat request past `max_staleness` is denied with 403 and `error_uri`
   set to the consent URL.
 - A broker outage with a still-cached exchanged token returns 503, not a stale permit.
+- A permit with a missing or zero `max-age`, or one that expires before policy use, returns 503.
 
 ## 4. ExtProc startup journeys (US4.1–US4.4)
 
