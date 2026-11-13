@@ -39,10 +39,10 @@ acceptance-test evidence gap is covered by this exception.
 
 1. Preserve and inspect the original browser test revision above and the subsequent test/behavior
    diffs; verify concrete scenario assertions and account for every later change, especially Save
-   navigation. Record exact full revisions and the relevant assertions in `quickstart.md`.
+   navigation. Report exact full revisions and the relevant assertions in the implementation session's result.
 2. In an isolated local checkout under `/tmp/gh-aw/agent/`, run those original browser tests against
    their pre-behavior revision with the supported harness and dependencies. Any compile-enabling
-   scaffolding must contain no feature behavior and be recorded as an explicit patch. Record the
+   scaffolding must contain no feature behavior and be reported as an explicit patch. Report the
    exact revision, command, successful compilation and semantic assertion failures for both
    scenarios. Label this **retrospective sensitivity evidence**, never a historical test-first run.
    Tool/setup failures do not satisfy this condition; if the baseline cannot be reproduced, leave
@@ -52,8 +52,8 @@ acceptance-test evidence gap is covered by this exception.
    light-theme accessibility (the application has no dark theme; see spec Clarifications,
    Planning 2026-11-08) and full verification obligations.
 4. Implementation may close the browser-evidence portions of T022/T098/T109 only after the supplied
-   approval explicitly covers DEC-006 and the evidence above is recorded. Other portions of those
-   tasks still require their own evidence. Cite approval URL, maintainer and date; never relabel
+   approval explicitly covers DEC-006 and the evidence above is reported in the session's result.
+   Other portions still require their own evidence. Cite approval URL, maintainer and date; never relabel
    the original missing execution as a pass.
 
 ## Main alternative

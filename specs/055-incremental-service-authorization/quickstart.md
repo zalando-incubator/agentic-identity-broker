@@ -539,9 +539,10 @@ Keep these variants inside their existing owning scenarios, with semantic-red as
 - US3 S3: proxy refresh with a malformed (`/sessions/github/`), unknown (`/sessions/unknown`) or
   agent-ineligible broker scope returns `400 invalid_scope` with
   `requested service scope is not permitted`; the mock upstream IdP records zero calls and the
-  upstream refresh token still works afterwards. Supporting unit cases cover a lookup failure,
-  which returns `500 server_error` with zero upstream calls. An ordinary-only refresh and a lookalike-origin scope keep the existing
-  forwarding path.
+  upstream refresh token still works afterwards. Domain and handler tests cover agent/service/permission-set
+  lookup failures (`500 server_error`, zero upstream calls); add no E2E lookup-failure variant or
+  production-bootstrap failure-injection seam. Ordinary-only refresh and lookalike-origin scopes keep
+  the existing forwarding path.
 - US3 S1: full → narrowed → scope-less refresh retains narrowed scopes and every assurance binding;
   test subsequent unusability and attempts to restore removed scopes without consuming the token.
 - Supporting T030/T032 unit cases: valid scope-sufficient, identity-matching access without refresh
