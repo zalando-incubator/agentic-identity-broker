@@ -50,7 +50,7 @@ For other feature changes, read the relevant specification, plan, and tasks befo
 | `internal/domain/thirdparty/` | Third-party OAuth2 provider management | `ThirdpartyOAuth2ProviderService` |
 | `internal/domain/tokenexchange/` | RFC 8693 token exchange and CEL evaluation | `TokenExchangeService` |
 | `internal/domain/trustanchor/` | Trust-anchor key-source resolution and local key-set validation | `ResolveKeySetSource()`, `ParseLocalKeySet()` |
-| `internal/domain/urivalidation/` | Redirect and resource URI validation | `MatchesRedirectURI()`, `NormalizeResourceURI()` |
+| `internal/domain/urivalidation/` | Redirect and resource URI validation | `IsRegisteredRedirectURI()`, `RedirectURIClientKind`, `IsAgentRedirectURIHostPattern()`, `MatchesRedirectURI()`, `MatchesAgentRedirectURI()`, `NormalizeResourceURI()` |
 
 ## Critical Rules
 
@@ -61,7 +61,7 @@ Use port interfaces for infrastructure dependencies.
 Existing `net/http` use is limited to `internal/domain/oauth2session/`, `internal/domain/storage/`, and `internal/domain/oauth2server/`.
 Read those call sites before changes. They include upstream calls, metadata discovery, and protocol error classification.
 SQL serialization uses `database/sql/driver` in domain values. This does not permit database access.
-Use declared domain libraries such as `jwx`, `oauth2`, and `cel-go`.
+Use declared domain libraries such as `jwx`, `oauth2`, `cel-go`, and `golang.org/x/net` (`idna`, `publicsuffix`).
 Keep fosite types inside `internal/domain/oauth2server/`, as required by ADR 014.
 
 ### Domain Services Pattern

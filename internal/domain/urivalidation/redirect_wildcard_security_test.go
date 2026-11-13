@@ -1,0 +1,210 @@
+package urivalidation
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestValidateAgentRedirectURIRegistration(t *testing.T) {
+	tests := []struct {
+		name    string
+		uri     string
+		wantErr bool
+	}{
+		{"accepts valid wildcard pattern", "https://preview*.app-*.example.com/api/oidc/callback", false},
+		{"preserves exact HTTPS IP registration", "https://192.0.2.1/callback", false},
+		{"preserves exact single-label HTTPS registration", "https://internal/callback", false},
+		{"preserves loopback HTTP registration", "http://localhost/callback", false},
+		{"preserves private-use registration", "com.example.app:/oauth2redirect/callback", false},
+		{"rejects wildcard in public suffix", "https://preview*.app-*.example.*/api/oidc/callback", true},
+		{"rejects wildcard in effective registrable domain", "https://preview*.app-*.*.com/api/oidc/callback", true},
+		{"rejects wildcard with numeric final hostname label", "https://*.168.1.1/api/oidc/callback", true},
+		{"rejects wildcard with hexadecimal IPv4 labels", "https://*.0xa8.0x1.0x1/callback", true},
+		{"rejects wildcard replacing entire host", "https://*/api/oidc/callback", true},
+		{"rejects wildcard in IP-shaped hostname", "https://192.0.2.*/api/oidc/callback", true},
+		{"rejects empty hostname label", "https://preview*.app-*.example..com/api/oidc/callback", true},
+		{"rejects invalid IDNA label", "https://preview*.app-*.xn--/api/oidc/callback", true},
+		{"rejects invalid DNS label character", "https://preview*.app-*.exa_mple.com/api/oidc/callback", true},
+		{"rejects trailing dot in wildcard hostname", "https://preview*.app-*.example.com./api/oidc/callback", true},
+		{"accepts exact HTTPS registration with wildcard in path", "https://preview.example.com/*", false},
+		{"accepts exact HTTPS registration with wildcard in query", "https://preview.example.com/callback?target=*", false},
+		{"accepts wildcard in one subdomain label", "https://*.example.com/callback", false},
+		{"rejects non-loopback HTTP registration", "http://preview*.example.com/callback", true},
+		{"rejects fragment", "https://preview*.example.com/callback#fragment", true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateAgentRedirectURIRegistration(test.uri)
+			if test.wantErr && err == nil {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) = nil, want error", test.uri)
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) = %v, want nil", test.uri, err)
+			}
+		})
+	}
+}
+
+func TestMatchesAgentRedirectURIRejectsIPLiteralCallback(t *testing.T) {
+	registered := "https://*.168.1.1/callback"
+	incoming := "https://192.168.1.1/callback"
+	if MatchesAgentRedirectURI(registered, incoming) {
+		t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", registered, incoming)
+	}
+}
+
+func TestMatchesAgentRedirectURIRejectsHexadecimalIPv4Callback(t *testing.T) {
+	registered := "https://*.0xa8.0x1.0x1/callback"
+	incoming := "https://0xc0.0xa8.0x1.0x1/callback"
+	if MatchesAgentRedirectURI(registered, incoming) {
+		t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", registered, incoming)
+	}
+}
+
+func TestValidateAgentRedirectURIRegistrationIDNASeparators(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		wantErr bool
+	}{
+		{"accepts wildcard in subdomain", "preview*.example.com", false},
+		{"accepts wildcard above multi-label suffix", "preview*.example.co.uk", false},
+		{"rejects wildcard in registrable domain", "preview.*.com", true},
+		{"rejects wildcard in public suffix", "preview.example.*", true},
+		{"rejects wildcard in multi-label public suffix", "preview.example.*.uk", true},
+	}
+	for _, separator := range []string{"\u3002", "\uff0e", "\uff61"} {
+		t.Run(separator, func(t *testing.T) {
+			for _, test := range tests {
+				t.Run(test.name, func(t *testing.T) {
+					uri := "https://" + strings.ReplaceAll(test.host, ".", separator) + "/callback"
+					if err := ValidateAgentRedirectURIRegistration(uri); (err != nil) != test.wantErr {
+						t.Errorf("ValidateAgentRedirectURIRegistration(%q) = %v, want error %v", uri, err, test.wantErr)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestAgentRedirectURIWildcardPSLBoundaries(t *testing.T) {
+	tests := []struct {
+		name       string
+		registered string
+		incoming   string
+		wantMatch  bool
+	}{
+		{
+			name:       "keeps multi-label public suffix literal",
+			registered: "https://preview*.example.co.uk/callback",
+			incoming:   "https://preview-pr.example.co.uk/callback",
+			wantMatch:  true,
+		},
+		{
+			name:       "keeps private suffix registrable domain literal",
+			registered: "https://preview*.team.github.io/callback",
+			incoming:   "https://preview-pr.team.github.io/callback",
+			wantMatch:  true,
+		},
+		{
+			name:       "rejects wildcard in multi-label registrable domain",
+			registered: "https://preview*.co.uk/callback",
+		},
+		{
+			name:       "rejects wildcard in private suffix registrable domain",
+			registered: "https://preview*.github.io/callback",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateAgentRedirectURIRegistration(test.registered)
+			if test.wantMatch && err != nil {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) = %v, want nil", test.registered, err)
+			}
+			if !test.wantMatch && err == nil {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) = nil, want error", test.registered)
+			}
+			if got := MatchesAgentRedirectURI(test.registered, test.incoming); got != test.wantMatch {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = %v, want %v", test.registered, test.incoming, got, test.wantMatch)
+			}
+		})
+	}
+}
+
+func TestMatchesAgentRedirectURIMarkerCollisions(t *testing.T) {
+	tests := []struct {
+		name       string
+		registered string
+		incoming   string
+	}{
+		{
+			name:       "mixed-case marker remains literal",
+			registered: "https://*.AIBWILDCARDMARKER.preview.example.com/callback",
+			incoming:   "https://preview.attacker.preview.example.com/callback",
+		},
+		{
+			name:       "IDNA-mapped marker remains literal",
+			registered: "https://*.\uff41\uff49\uff42\uff57\uff49\uff4c\uff44\uff43\uff41\uff52\uff44\uff4d\uff41\uff52\uff4b\uff45\uff52.preview.example.com/callback",
+			incoming:   "https://preview.attacker.preview.example.com/callback",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if MatchesAgentRedirectURI(test.registered, test.incoming) {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = true, want false", test.registered, test.incoming)
+			}
+		})
+	}
+}
+
+func TestMatchesAgentRedirectURIPunycodeLiteralLabel(t *testing.T) {
+	registered := "https://*.xn--bcher-kva.example.com/callback"
+	incoming := "https://foo.b\u00fccher.example.com/callback"
+	if !MatchesAgentRedirectURI(registered, incoming) {
+		t.Errorf("MatchesAgentRedirectURI(%q, %q) = false, want true", registered, incoming)
+	}
+}
+
+func TestAgentRedirectURIWildcardLengthLimits(t *testing.T) {
+	pattern := "https://" + strings.Repeat("a", 50) + "*.example.com/callback"
+	tests := []struct {
+		name            string
+		registered      string
+		incoming        string
+		wantRegisterErr bool
+		wantMatch       bool
+	}{
+		{
+			name:       "accepts a wildcard pattern matching a maximum-length label",
+			registered: pattern,
+			incoming:   "https://" + strings.Repeat("a", 63) + ".example.com/callback",
+			wantMatch:  true,
+		},
+		{
+			name:            "rejects an overlong wildcard pattern literal",
+			registered:      "https://" + strings.Repeat("a", 64) + "*.example.com/callback",
+			wantRegisterErr: true,
+		},
+		{
+			name:       "rejects an overlong concrete callback label",
+			registered: pattern,
+			incoming:   "https://" + strings.Repeat("a", 64) + ".example.com/callback",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateAgentRedirectURIRegistration(test.registered)
+			if (err != nil) != test.wantRegisterErr {
+				t.Fatalf("ValidateAgentRedirectURIRegistration(%q) error = %v, want error %v", test.registered, err, test.wantRegisterErr)
+			}
+			if test.incoming == "" {
+				return
+			}
+			if got := MatchesAgentRedirectURI(test.registered, test.incoming); got != test.wantMatch {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = %v, want %v", test.registered, test.incoming, got, test.wantMatch)
+			}
+		})
+	}
+}

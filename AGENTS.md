@@ -203,6 +203,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 048 | `adrs/048-wildcard-web-redirect-uris.md` | Bounded HTTPS host wildcards for opaque Agent redirect URIs; CIMD callbacks remain exact |
 
 ## Domain Glossary
 
