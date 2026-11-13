@@ -26,9 +26,11 @@ decision, rationale, and the alternatives considered. Entries marked **Stakehold
 - `tests/e2e/bootstrap/extproc.go`, `tests/e2e/extproc/bootstrap/`, `tests/e2e/impersonation_test.go`
   (grant-repository outage technique), and `specs/052-inline-jwks-trust-anchors/plan.md` (plan precedent)
 
-The AuthZEN Authorization API 1.0 text could not be downloaded in this session. The request
-failed TLS certificate verification, and it was not retried insecurely. Everything below that
-depends on the exact standard text is marked **Verify** (spec API-003).
+The original planning session could not download the AuthZEN 1.0 text because verified TLS
+failed. Later API-003 verification is recorded with its sources in `quickstart.md` §7:
+discovery names/path insertion, unknown-member handling and denial form (a) are settled.
+Earlier **Verify** descriptions below are retained as research history, not unresolved
+choices. Revised API-2 and the cooldown consequence D-5 still require current sign-off.
 
 ---
 
@@ -330,13 +332,14 @@ one of these forms:
 - (a) keep the machine-readable members above, or
 - (b) use language-tagged strings with the code and URL in separate extension members.
 
-The contract file presents both forms. Implementation tasks depend only on the domain outcome
-(`Deny{Detail, ConsentURL}`), so the choice affects serialization only.
+The contract retains form (b) as the historical alternative, not a current implementation
+option. API-003 verification in `quickstart.md` §7 confirms that decision context is
+implementation-defined; form (a) remains the confirmed representation.
 
 **Contract review (2026-10-28)**: The maintainer endorsed the contract, whose
-`AccessEvaluationDenial` schema uses form (a). The API-003 check against the final AuthZEN 1.0
-text still runs before the OpenAPI is frozen. If that check finds a conflict with form (a), it
-goes back to the stakeholder. It is not resolved silently.
+`AccessEvaluationDenial` schema uses form (a). The later API-003 check against final AuthZEN 1.0
+is recorded in `quickstart.md` §7 and confirms form (a). A genuinely new conflict still needs
+a Proposed approval item; it is not resolved through an unapproved implementation change.
 
 ## R12. Exchange-response deprecation and release timing
 
@@ -572,9 +575,12 @@ records it (R16).
 
 ## R16. Architecture decision record
 
-**Decision**: The plan drafts a new ADR with status **Proposed** at the next unused number. On
-2026-10-29, `main` ends at 044 (two merged ADRs use 044), and no remote branch uses 045. The
-planned number is therefore **045**, rechecked when the draft moves to `adrs/`. The ADR records these decisions:
+**Decision**: The original plan drafted a new ADR with status **Proposed**, checking the
+number before moving it to `adrs/`. The original 045 reservation was superseded when main
+assigned 045 to agent-subject impersonation; this feature's ADR is now
+`adrs/047-authzen-delegation-pip.md`. Its recorded historical acceptance and move are not
+repeated during task regeneration. T001 records only supplied approval for current covered
+revisions. The ADR records these decisions:
 
 - the AuthZEN Access Evaluation information boundary on the end-user server, enabled by token
   exchange, with no new broker flag;
@@ -589,7 +595,10 @@ planned number is therefore **045**, rechecked when the draft moves to `adrs/`. 
   inputs, and `true` availability on both enabled paths) and the header-only and body-bearing
   ordering when enabled. The rest of ADR 028 stays in force;
 - the relation to ADR 012: a separate permit cache, with the exchange cache's stale fallback
-  never applied to delegation;
+  never applied to delegation; Proposed D-5 preserves the existing 5 s exchange re-consent
+  cooldown on the body path, without delegation denial caching; header-only permits are
+  immediate after consent. Rationale: preserve exchange-cache semantics. Alternative: bypass
+  the cooldown in enabled mode, which changes ADR 012 semantics;
 - the ADR 036 metadata-only input boundary, unchanged;
 - extension of ADR 033's token-only deferred-finalization seam to evaluation (R9), with
   verified Actor/CallingPeer before caller authorization, early-error fallback and unchanged
@@ -601,10 +610,11 @@ planned number is therefore **045**, rechecked when the draft moves to `adrs/`. 
 **Stakeholder**: Maintainer `mjungsbluth` endorsed this ADR decision set in the 2026-10-28
 review ("ADR accepted"). Under the pipeline's sign-off rules, review direction is not the
 approval record. The planning session drafted the ADR as
-[adr-045-authzen-delegation-pip.md](../../adrs/045-authzen-delegation-pip.md) with status
-**Proposed**, and registered it as approval item ADR-1 in the plan. After the maintainer's 👍 on
-the pipeline's approval comment, T001 records that approval in the Status line and moves the
-draft to `adrs/045-authzen-delegation-pip.md`, rechecking the number. Its OPA input-schema
+[adr-047-authzen-delegation-pip.md](../../adrs/047-authzen-delegation-pip.md) with status
+**Proposed**, and registered it as approval item ADR-1 in the plan. The historical implementation recorded approval and moved the draft to
+`adrs/047-authzen-delegation-pip.md`, as documented in `quickstart.md` §7. T001 is now
+reopened to verify supplied approval for current revisions, explicitly revised API-2 and
+D-5; it does not repeat the move or invent a new acceptance. Its OPA input-schema
 section follows R15 as revised after the 2026-10-28 spec clarification. Under Principle II, the
 ADR may be revised in this PR before it merges, and the final ADR and the code must agree. The
 planning session itself accepts nothing.
@@ -648,7 +658,11 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
   production ExtProc composition against the real broker through `tests/e2e/bootstrap/extproc.go`.
   That file is extended with a delegation-context option. Revocation uses the real consent API.
   Freshness scenarios use a short `delegation_context.max_staleness` (for example, `2s`), not
-  clock injection, so no test-only production API is needed.
+  clock injection, so no test-only production API is needed. US3.5 distinguishes immediate
+  broker re-consultation on both paths from forwarding: header-only permits immediately;
+  body-path forwarding follows the unchanged 5 s exchange re-consent cooldown (Proposed D-5).
+  Use request-count assertions and bounded `Eventually`, never fixed sleeps or an exchange
+  cooldown bypass.
 - **Startup-only scenarios** (US4.1–US4.4) go in the ExtProc suite `tests/e2e/extproc/`. A new
   `MockAuthZENBroker` in `tests/e2e/extproc/bootstrap/` counts discovery and evaluation requests,
   and can serve a mismatched identifier or fail discovery.

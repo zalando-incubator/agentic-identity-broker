@@ -214,6 +214,13 @@ Consumers copy its slices (§3.5).
 
 An unusable `max-age` counts as an error.
 
+**Separate exchange state (Proposed D-5)**: Absence of a delegation negative-cache entry
+means both paths re-consult the broker immediately after renewed consent. It does not erase
+the ADR 012 exchange re-consent cooldown (5 s) recorded by a concurrent exchange on the body
+path. Header-only forwarding can resume immediately; body-path forwarding resumes once
+that existing cooldown lapses. No cache key, stored value, transition or exchange-cache
+behavior changes for D-5.
+
 ### 3.5 OPA `ContextInput` (changes)
 
 `authorization.ContextInput` gains five members directly beside the existing ones (FR-017).
