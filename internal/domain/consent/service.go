@@ -354,7 +354,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 
 	var grant *storage.UserGrant
 	var previousFields []any
-	action, message := "grant_created", "grant created"
+	event := "consent.grant.created"
 	if existingGrant != nil {
 		if grantMatchesRequest(existingGrant, req) {
 			return existingGrant.Copy(), nil
@@ -384,7 +384,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("failed to update grant: %w", err)
 		}
 		grant = existingGrant
-		action, message = "grant_updated", "grant updated"
+		event = "consent.grant.updated"
 	} else {
 		// Create new grant (FR-011)
 		grant = &storage.UserGrant{
@@ -406,12 +406,12 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("failed to create grant: %w", err)
 		}
 		if grant.ID != candidateID {
-			action, message = "grant_updated", "grant updated"
+			event = "consent.grant.updated"
 		}
 	}
 
 	fields := []any{
-		"action", action,
+		"event", event,
 		"principal", grant.Principal,
 		"agent_id", grant.AgentID,
 		"grant_id", grant.ID,
@@ -421,7 +421,11 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
 	}
 	fields = append(fields, previousFields...)
-	s.logger.InfoContext(ctx, message, fields...)
+	if event == "consent.grant.updated" {
+		s.logger.InfoContext(ctx, "grant updated", fields...)
+	} else {
+		s.logger.InfoContext(ctx, "grant created", fields...)
+	}
 
 	return grant.Copy(), nil
 }
@@ -644,7 +648,7 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 	}
 	if err := s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked"); err != nil {
 		s.logger.InfoContext(ctx, "grant deleted but refresh cleanup failed",
-			"action", "grant_deleted",
+			"event", "consent.grant.deleted",
 			"principal", grant.Principal,
 			"agent_id", grant.AgentID,
 			"grant_id", grant.ID,
@@ -653,7 +657,7 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 	}
 
 	s.logger.InfoContext(ctx, "grant revoked",
-		"action", "grant_revoked",
+		"event", "consent.grant.revoked",
 		"principal", grant.Principal,
 		"agent_id", grant.AgentID,
 		"grant_id", grant.ID,

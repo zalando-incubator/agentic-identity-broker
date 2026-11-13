@@ -344,7 +344,7 @@ func cimdPublicJWKFromPEM(privatePEM []byte, kid id.KeyID) (jwk.Key, error) {
 }
 
 func (s *KeyService) audit(ctx context.Context, kid id.KeyID, operation, outcome string) {
-	s.logger.InfoContext(ctx, "CIMD client-authentication key lifecycle", "key_id", kid, "operation", operation, "outcome", outcome)
+	s.logger.InfoContext(ctx, "cimd client-authentication key lifecycle", "key_id", kid, "operation", operation, "outcome", outcome)
 }
 
 var _ ports.CIMDClientKeyService = (*KeyService)(nil)

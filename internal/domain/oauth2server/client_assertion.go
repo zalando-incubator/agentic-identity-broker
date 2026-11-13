@@ -141,7 +141,8 @@ func (v *ClientAssertionVerifier) Verify(ctx context.Context, document *ports.CI
 		return nil, v.unavailable(ctx, document)
 	}
 
-	v.logger.InfoContext(ctx, "client_authenticated",
+	v.logger.InfoContext(ctx, "client authenticated",
+		"event", "oauth2_server.client.authenticated",
 		"client_id", document.ClientID,
 		"algorithm", algorithm.String(),
 		"kid", kid,
@@ -220,22 +221,22 @@ func clientAssertionJTIHash(jti string) string {
 }
 
 func (v *ClientAssertionVerifier) reject(ctx context.Context, document *ports.CIMDMetadataDTO, category, jti string) error {
-	attributes := []any{"failure_category", category}
+	attributes := []any{"event", "oauth2_server.client.authentication_rejected", "failure_category", category}
 	if document != nil && document.ClientID != "" {
 		attributes = append(attributes, "client_id", document.ClientID)
 	}
 	if jti != "" {
 		attributes = append(attributes, "jti_hash", clientAssertionJTIHash(jti))
 	}
-	v.logger.WarnContext(ctx, "client_authentication_rejected", attributes...)
+	v.logger.WarnContext(ctx, "client authentication rejected", attributes...)
 	return ErrClientAuthentication
 }
 
 func (v *ClientAssertionVerifier) unavailable(ctx context.Context, document *ports.CIMDMetadataDTO) error {
-	attributes := []any{"failure_category", "key_unavailable"}
+	attributes := []any{"event", "oauth2_server.client.authentication_rejected", "failure_category", "key_unavailable"}
 	if document != nil && document.ClientID != "" {
 		attributes = append(attributes, "client_id", document.ClientID)
 	}
-	v.logger.ErrorContext(ctx, "client_authentication_rejected", attributes...)
+	v.logger.ErrorContext(ctx, "client authentication rejected", attributes...)
 	return ErrClientAuthenticationUnavailable
 }

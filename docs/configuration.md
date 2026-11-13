@@ -300,7 +300,7 @@ This section lists all configuration options. See [Available Settings](#availabl
 | `log.level` | enum | `info` | `debug`, `info`, `warn`, `error` | No | `IDENTITY_BROKER_LOG_LEVEL` | `--log-level` | Sets logging verbosity. Use `info` to retain security audit events; `warn` and `error` suppress Info-level success records. |
 | `log.format` | enum | `text` | `text`, `json` | No | `IDENTITY_BROKER_LOG_FORMAT` | `--log-format` | Sets log output format. Use `json` for production and log aggregation systems. |
 
-Each successful confidential-provider secret decryption emits `service_secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
+Each successful confidential-provider secret decryption emits `event` `service.thirdparty.secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
 
 #### Token Refresh Configuration
 
@@ -1589,7 +1589,7 @@ Grant deletion, expiration, or replacement ends refresh authority. Renewal of ex
 Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
 Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
 
-If deletion commits but refresh cleanup fails, the audit event uses `action=grant_deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
+If deletion commits but refresh cleanup fails, the audit event uses `event=consent.grant.deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
 
 Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
 

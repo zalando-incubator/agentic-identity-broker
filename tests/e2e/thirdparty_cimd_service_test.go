@@ -31,7 +31,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 
 	serviceRequest := func() map[string]any {
 		return map[string]any{
-			"display_name":               "CIMD confidential service",
+			"display_name":               "cimd confidential service",
 			"oauth2_flavor":              "standard",
 			"token_endpoint_auth_method": "private_key_jwt",
 			"issuer_uri":                 "https://cimd-provider.example.test",

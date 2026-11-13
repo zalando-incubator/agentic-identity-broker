@@ -204,7 +204,7 @@ func TestNewProvider_HTTPWithGzipCompression(t *testing.T) {
 	})
 }
 
-// Grpc + insecure=true logs a "TLS disabled" warning (insecure flag actually changes behavior).
+// Grpc + insecure=true logs a "tls disabled" warning (insecure flag actually changes behavior).
 func TestNewProvider_InsecureLogsWarning(t *testing.T) {
 	saveAndRestoreGlobalProviders(t)
 
@@ -225,7 +225,7 @@ func TestNewProvider_InsecureLogsWarning(t *testing.T) {
 	})
 
 	output := buf.String()
-	assert.Contains(t, output, "TLS disabled",
+	assert.Contains(t, output, "tls disabled",
 		"expected gRPC insecure warning to mention TLS disabled, got: %s", output)
 }
 
@@ -252,7 +252,7 @@ func TestNewProvider_HTTPInsecureIgnoredWarning(t *testing.T) {
 	output := buf.String()
 	assert.Contains(t, output, "no effect",
 		"expected http insecure warning to say insecure has no effect, got: %s", output)
-	assert.NotContains(t, output, "TLS disabled",
+	assert.NotContains(t, output, "tls disabled",
 		"expected no 'TLS disabled' warning for protocol=http, got: %s", output)
 }
 
@@ -526,7 +526,7 @@ func TestNewProvider_HTTPLogsDeliverCorrelatedRecords(t *testing.T) {
 
 	logger := slog.New(otelslog.NewHandler(cfg.ServiceName, otelslog.WithLoggerProvider(otel.GetLoggerProvider())))
 	spanCtx, span := otel.Tracer("test").Start(ctx, "token-exchange")
-	logger.ErrorContext(spanCtx, "Token exchange failed", "thirdparty_error_code", "invalid_grant")
+	logger.ErrorContext(spanCtx, "token exchange failed", "thirdparty_error_code", "invalid_grant")
 	span.End()
 
 	lp, ok := otel.GetLoggerProvider().(*sdklog.LoggerProvider)
@@ -552,7 +552,7 @@ func TestNewProvider_HTTPLogsDeliverCorrelatedRecords(t *testing.T) {
 	require.Len(t, req.ResourceLogs[0].ScopeLogs, 1)
 	require.Len(t, req.ResourceLogs[0].ScopeLogs[0].LogRecords, 1)
 	record := req.ResourceLogs[0].ScopeLogs[0].LogRecords[0]
-	assert.Equal(t, "Token exchange failed", record.Body.GetStringValue())
+	assert.Equal(t, "token exchange failed", record.Body.GetStringValue())
 	traceID := span.SpanContext().TraceID()
 	spanID := span.SpanContext().SpanID()
 	assert.Equal(t, traceID[:], record.TraceId)

@@ -435,14 +435,14 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	}
 
 	if b.config.Encryption.AWSKMS != nil {
-		b.logger.Info("AWS KMS encryption adapter initialized",
+		b.logger.Info("aws kms encryption adapter initialized",
 			"dynamodb_table", b.config.Encryption.AWSKMS.DynamoDBTableName,
 			"dynamodb_region", b.config.Encryption.AWSKMS.DynamoDBRegion,
 			"branch_key_ttl", b.config.Encryption.AWSKMS.BranchKeyTTL,
 			"dynamodb_timeout", b.config.Encryption.AWSKMS.DynamoDBTimeout,
 			"branch_key_manager_wired", branchKeyManager != nil)
 	} else {
-		b.logger.Info("Memory encryption adapter initialized")
+		b.logger.Info("memory encryption adapter initialized")
 	}
 
 	if branchKeyManager != nil {
@@ -628,7 +628,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 				var concreteFetcher *outboundhttp.Fetcher
 				var fetchErr error
 				if b.config.Security.SkipCIMDSSRFValidation {
-					b.logger.Warn("CIMD SSRF validation disabled — dev/test only, never use in production")
+					b.logger.Warn("cimd ssrf validation disabled; dev and test only, never use in production")
 					concreteFetcher, fetchErr = outboundhttp.NewFetcherInsecure(
 						ov.cimdConfig.FetchTimeout,
 						int64(ov.cimdConfig.MaxResponseBytes),
@@ -689,7 +689,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 				nil,
 				b.logger,
 			)
-			b.logger.Info("CIMD client resolution enabled",
+			b.logger.Info("cimd client resolution enabled",
 				"fetch_timeout", ov.cimdConfig.FetchTimeout,
 				"max_response_bytes", ov.cimdConfig.MaxResponseBytes,
 			)
@@ -966,7 +966,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			}
 			return errors.Join(jwtAuthenticator.Shutdown(ctx), prevErr)
 		}
-		b.logger.Info("JWT pre-authentication enabled",
+		b.logger.Info("jwt pre-authentication enabled",
 			"server", server.name,
 			"header_name", jwtCfg.HeaderName,
 			"verification", jwtCfg.Verification,
@@ -1137,7 +1137,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		impersonationIssuer = provider
 		grantHandler = enduser.NewLocalGrantStrategy(newLocalMintingStrategy(provider), b.logger)
 		proceedHandler = enduser.NewLocalProceedStrategy(newLocalCodeIssuer(provider), b.logger)
-		b.logger.Info("OAuth2 server mode: local — local token minting enabled",
+		b.logger.Info("oauth2 server mode local: local token minting enabled",
 			"issuer_uri", localIssuerURI,
 			"token_ttl", cfg.TokenTTL,
 		)
@@ -1160,7 +1160,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 
 		grantHandler = enduser.NewHybridTokenGrantStrategy(proxyGrant, localGrant, b.logger)
 		proceedHandler = enduser.NewHybridProceedStrategy(proxyProceed, localProceed, b.logger)
-		b.logger.Info("OAuth2 server mode: hybrid — proxy and local token minting enabled",
+		b.logger.Info("oauth2 server mode hybrid: proxy and local token minting enabled",
 			"issuer_uri", localIssuerURI,
 			"token_ttl", cfg.Local.TokenTTL,
 		)
@@ -1177,9 +1177,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			_, kidErr := svc.PublishJWKS(kidCtx)
 			kidCancel()
 			if errors.Is(kidErr, ports.ErrKidConflict) {
-				b.logger.Error("startup kid conflict in hybrid JWKS aggregation — /oauth2/jwks.json will return 500 until resolved", "error", kidErr)
+				b.logger.Error("startup kid conflict in hybrid jwks aggregation; /oauth2/jwks.json returns 500 until resolved", "error", kidErr)
 			} else if kidErr != nil {
-				b.logger.Warn("startup upstream JWKS probe failed — /oauth2/jwks.json will return 503 until upstream recovers", "error", kidErr)
+				b.logger.Warn("startup upstream jwks probe failed; /oauth2/jwks.json returns 503 until upstream recovers", "error", kidErr)
 			}
 			hybridPublisher = svc
 		}
@@ -1256,7 +1256,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			return nil, fmt.Errorf("failed to build impersonation service: %w", err)
 		}
 		impersonationService = svc
-		b.logger.Info("OAuth2 impersonation enabled", "audience_prefix", impCfg.AudiencePrefix, "rules", len(impCfg.Rules))
+		b.logger.Info("oauth2 impersonation enabled", "audience_prefix", impCfg.AudiencePrefix, "rules", len(impCfg.Rules))
 	}
 
 	app.ApprovalRequestAuthenticator = httpmiddleware.NewApprovalRequestAuthenticator(nil, nil)

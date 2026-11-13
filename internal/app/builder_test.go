@@ -1259,7 +1259,7 @@ func TestBuilder_HybridJWKSWarnsWhenStartupProbeFails(t *testing.T) {
 		_ = app.Shutdown(shutdownCtx)
 	}()
 
-	if !strings.Contains(logs.String(), "startup upstream JWKS probe failed") {
+	if !strings.Contains(logs.String(), "startup upstream jwks probe failed") {
 		t.Fatalf("expected startup JWKS probe warning, got logs: %s", logs.String())
 	}
 }

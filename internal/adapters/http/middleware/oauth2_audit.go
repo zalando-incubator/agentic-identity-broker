@@ -105,7 +105,7 @@ func logAuditEvent(ctx context.Context, logger *slog.Logger, event *auditEvent) 
 	logger.Log(
 		ctx,
 		level,
-		"OAuth2 Authorization Request",
+		"oauth2 authorization request",
 		slog.String("request_id", event.RequestID),
 		slog.Any("principal", event.Principal),
 		slog.String("method", event.Method),

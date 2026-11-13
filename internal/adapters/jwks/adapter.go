@@ -126,7 +126,7 @@ func NewJWKSAdapter(
 			// httprc only routes worker-scheduled background sync failures through the
 			// errsink. Caller-driven ctrl.Refresh failures are recorded in startRefresh.
 			adapter.recordFailure(err)
-			adapter.logger.WarnContext(ctx, "JWKS refresh failed",
+			adapter.logger.WarnContext(ctx, "jwks refresh failed",
 				"dependency", "jwks",
 				"operation", "refresh",
 				"error_kind", "dependency_failed",
@@ -213,7 +213,7 @@ func (a *Adapter) GetKeySet(ctx context.Context) (_ jwk.Set, err error) {
 		return nil, fmt.Errorf("failed to fetch jwks from %s: %w", a.jwksURI, staleErr)
 	}
 	if a.markStaleServeLogged() {
-		a.logger.WarnContext(ctx, "serving cached JWKS after refresh failure",
+		a.logger.WarnContext(ctx, "serving cached jwks after refresh failure",
 			"dependency", "jwks",
 			"operation", "fetch",
 			"error_kind", "dependency_failed",
@@ -245,7 +245,7 @@ func (a *Adapter) HealthState() ports.ComponentHealth {
 
 func shutdownControllerWithWarning(ctrl controllerShutdowner, logger *slog.Logger, reason string) {
 	if err := ctrl.ShutdownContext(context.Background()); err != nil {
-		logger.Warn("failed to shut down JWKS controller during constructor cleanup",
+		logger.Warn("failed to shut down jwks controller during constructor cleanup",
 			"reason", reason,
 			"error_kind", "shutdown_failed",
 			"dependency", "jwks",

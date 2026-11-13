@@ -61,7 +61,7 @@ func run(cmd *cobra.Command, args []string) error {
 	// Initialize logger
 	logger := initializeLogger(cfg.Log)
 	slog.SetDefault(logger)
-	logger.Info("Agentic Identity Broker starting",
+	logger.Info("agentic identity broker starting",
 		"log_level", cfg.Log.Level,
 		"log_format", cfg.Log.Format)
 
@@ -88,7 +88,7 @@ func run(cmd *cobra.Command, args []string) error {
 			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Server.Shutdown.Timeout)
 			defer shutdownCancel()
 			if err := application.Shutdown(shutdownCtx); err != nil {
-				logger.Error("Application shutdown error", "error", err)
+				logger.Error("application shutdown error", "error", err)
 			}
 		}
 	}()
@@ -151,7 +151,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Start servers with atomic startup pattern (both must bind, or neither runs)
 	// ADR 004-dual-server-isolation.md compliance
-	logger.Info("Starting dual-port HTTP servers",
+	logger.Info("starting dual-port http servers",
 		"enduser_port", cfg.Server.EndUser.Port,
 		"admin_port", cfg.Server.Admin.Port)
 
@@ -159,7 +159,7 @@ func run(cmd *cobra.Command, args []string) error {
 	g, ctx := errgroup.WithContext(sigCtx)
 
 	// Phase 1: Concurrent Listen (bind to ports)
-	logger.Debug("Phase 1: Concurrent port binding")
+	logger.Debug("phase 1: concurrent port binding")
 
 	// Use channels to safely communicate listener values from goroutines
 	enduserListenerCh := make(chan net.Listener, 1)
@@ -167,27 +167,27 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Bind end-user server
 	g.Go(func() error {
-		logger.Debug("Binding end-user server")
+		logger.Debug("binding end-user server")
 		listener, err := enduserServer.Listen()
 		if err != nil {
-			logger.Error("End-user server bind failed", "error", err)
+			logger.Error("end-user server bind failed", "error", err)
 			return fmt.Errorf("enduser server bind failed: %w", err)
 		}
 		enduserListenerCh <- listener
-		logger.Info("End-user server bound successfully")
+		logger.Info("end-user server bound successfully")
 		return nil
 	})
 
 	// Bind admin server
 	g.Go(func() error {
-		logger.Debug("Binding admin server")
+		logger.Debug("binding admin server")
 		listener, err := adminServer.Listen()
 		if err != nil {
-			logger.Error("Admin server bind failed", "error", err)
+			logger.Error("admin server bind failed", "error", err)
 			return fmt.Errorf("admin server bind failed: %w", err)
 		}
 		adminListenerCh <- listener
-		logger.Info("Admin server bound successfully")
+		logger.Info("admin server bound successfully")
 		return nil
 	})
 
@@ -200,7 +200,7 @@ func run(cmd *cobra.Command, args []string) error {
 			_ = listener.Close()
 		default:
 		}
-		logger.Error("Atomic startup failed during bind phase", "error", err)
+		logger.Error("atomic startup failed during bind phase", "error", err)
 		return err
 	}
 
@@ -208,18 +208,18 @@ func run(cmd *cobra.Command, args []string) error {
 	enduserListener := <-enduserListenerCh
 	adminListener := <-adminListenerCh
 
-	logger.Info("Phase 1 complete: Both servers bound successfully")
+	logger.Info("phase 1 complete: both servers bound successfully")
 
 	// Phase 2: Concurrent Serve (start accepting connections)
-	logger.Debug("Phase 2: Starting HTTP servers")
+	logger.Debug("phase 2: starting http servers")
 
 	g, ctx = errgroup.WithContext(ctx)
 
 	// Serve end-user server
 	g.Go(func() error {
-		logger.Info("Starting end-user server")
+		logger.Info("starting end-user server")
 		if err := enduserServer.Serve(ctx, enduserListener); err != nil {
-			logger.Error("End-user server failed", "error", err)
+			logger.Error("end-user server failed", "error", err)
 			return fmt.Errorf("enduser server failed: %w", err)
 		}
 		return nil
@@ -227,9 +227,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Serve admin server
 	g.Go(func() error {
-		logger.Info("Starting admin server")
+		logger.Info("starting admin server")
 		if err := adminServer.Serve(ctx, adminListener); err != nil {
-			logger.Error("Admin server failed", "error", err)
+			logger.Error("admin server failed", "error", err)
 			return fmt.Errorf("admin server failed: %w", err)
 		}
 		return nil
@@ -238,9 +238,9 @@ func run(cmd *cobra.Command, args []string) error {
 	// Start approval sync subscriber if configured (PostgreSQL LISTEN/NOTIFY)
 	if application.ApprovalSyncSubscriber != nil {
 		g.Go(func() error {
-			logger.Info("Starting approval sync subscriber (LISTEN/NOTIFY)")
+			logger.Info("starting approval sync subscriber")
 			if err := application.ApprovalSyncSubscriber.Listen(ctx); err != nil && ctx.Err() == nil {
-				logger.Error("Approval sync subscriber failed", "error", err)
+				logger.Error("approval sync subscriber failed", "error", err)
 				return fmt.Errorf("approval sync subscriber failed: %w", err)
 			}
 			return nil
@@ -259,7 +259,7 @@ func run(cmd *cobra.Command, args []string) error {
 	<-sigCtx.Done()
 
 	// Signal received, initiate graceful shutdown
-	logger.Info("Shutdown signal received, initiating graceful shutdown")
+	logger.Info("shutdown signal received, initiating graceful shutdown")
 
 	// Create context with shutdown timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), cfg.Server.Shutdown.Timeout)
@@ -275,18 +275,18 @@ func run(cmd *cobra.Command, args []string) error {
 	})
 
 	if err := shutdownGroup.Wait(); err != nil {
-		logger.Error("Shutdown error", "error", err)
+		logger.Error("shutdown error", "error", err)
 		return fmt.Errorf("shutdown error: %w", err)
 	}
 
 	// Wait for servers to finish
 	<-done
 	if startErr != nil && startErr != context.Canceled {
-		logger.Error("Server error", "error", startErr)
+		logger.Error("server error", "error", startErr)
 		return fmt.Errorf("server error: %w", startErr)
 	}
 
-	logger.Info("Servers shut down successfully")
+	logger.Info("servers shut down successfully")
 	return nil
 }
 

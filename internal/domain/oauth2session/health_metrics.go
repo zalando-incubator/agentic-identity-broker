@@ -154,7 +154,7 @@ func (m *SessionHealthMetrics) snapshot(ctx context.Context) (SessionHealthSnaps
 	snapshot.CanonicalIDs, err = m.services.CanonicalIDs(queryCtx, serviceIDs)
 	if err != nil {
 		// Same rule as the counters: a service without a resolvable canonical ID keeps its UUID.
-		m.logger.WarnContext(ctx, "session health canonical ID lookup failed, using service UUIDs", "error_kind", string(storageErrorKind(err)))
+		m.logger.WarnContext(ctx, "session health canonical id lookup failed, using service uuids", "error_kind", string(storageErrorKind(err)))
 		snapshot.CanonicalIDs = nil
 	}
 	return snapshot, nil
