@@ -14,6 +14,14 @@ must not be treated as acceptance of revised API-2. This document and
 `api/enduser/openapi.yaml` agree on request handling; implementation records any new approval
 only from the supplied `context.approval`.
 
+**Current approval (2026-11-05)**: supplied `context.approval` records `mjungsbluth` at
+`2026-11-05T16:38:49Z` on
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255>,
+covering all thirteen items, including revised API-2 and the `1.2.0` version in API-3.
+This supersedes the pending-sign-off descriptions above and in §3, without treating the
+historical approval as approval of revisions. API-003 verification remains the separate,
+completed research evidence in quickstart §7.
+
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
 configured (the builder's `tokenExchangeEnabled`). No admin API change is made.
 
