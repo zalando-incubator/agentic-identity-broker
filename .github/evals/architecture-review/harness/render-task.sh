@@ -4,9 +4,12 @@
 # checkout.
 # Usage: render-task.sh <dimension-name> <clone-dir> <out-file>
 set -euo pipefail
-name=$1 clone=$2 out=$3
-workflow="$(git rev-parse --show-toplevel)/.github/workflows/architecture-review.md"
-mkdir -p "$clone/.git/probe-tmp" "$(dirname "$out")"
+name=$1
+clone=$(cd "$2" && pwd)
+mkdir -p "$(dirname "$3")"
+out="$(cd "$(dirname "$3")" && pwd)/$(basename "$3")"
+workflow="$(cd "$(dirname "$0")/../../../.." && pwd)/.github/workflows/architecture-review.md"
+mkdir -p "$clone/.git/probe-tmp"
 awk -v start="## agent: \`$name\`" '
   $0 == start { on = 1; print; next }
   on && /^## agent: / { exit }
@@ -27,7 +30,8 @@ Task from the lead reviewer:
 Sandbox rules for this run: work only inside \`$clone\` (use it as the working
 directory for every command). Do not read any other checkout or directory on
 this machine, do not use the network, GitHub, or \`gh\`, and do not modify
-tracked files. Temporary files go under \`$clone/.git/probe-tmp/\`.
+tracked files. Temporary files go under \`$clone/.git/probe-tmp/\`. The only
+file you may write outside the clone is the reply file named below.
 
 When you finish, write your complete reply (both parts) to \`$out\` and return
 it as your final message.

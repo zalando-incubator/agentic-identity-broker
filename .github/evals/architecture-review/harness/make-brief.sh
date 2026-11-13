@@ -36,8 +36,8 @@ area() {
   fi
   echo
   echo "## Changed files by area"
-  git diff --numstat --find-renames "$base...$head" | while read -r add del path; do
-    status=$(git diff --name-status --find-renames "$base...$head" -- "$path" | awk '{print $1}' | head -1)
+  git diff --numstat --no-renames "$base...$head" | while read -r add del path; do
+    status=$(git diff --name-status --no-renames "$base...$head" -- "$path" | awk '{print $1}' | head -1)
     echo "$(area "$path")|$status|+$add/-$del|$path"
   done | sort | awk -F'|' '$1!=prev{print "\n### " $1; prev=$1} {print "- " $2 " `" $4 "` " $3}'
   echo
