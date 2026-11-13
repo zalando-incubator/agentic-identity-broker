@@ -15,14 +15,15 @@ Before any implementation, these preconditions must hold:
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
    [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
    ADR draft [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md).
-2. T008 has recorded that approval in the ADR's Status line and moved the ADR to `adrs/`.
+2. T001 has recorded only the supplied approval in each covered ADR's Status line and moved the approved draft to `adrs/`. Review direction alone is not sign-off.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
    is frozen.
 4. The spec revision for the OPA input shape (research R15) has landed. This was done on
    2026-10-28.
 
-Tooling: `just install-tools` (Go 1.27.3, Ginkgo, golangci-lint). Docker or Podman is needed
-only for the PostgreSQL-backed scenario US2.19.
+Tooling: `just install-tools` (Go 1.27.3, Ginkgo, golangci-lint). The focused broker run needs Docker or Podman for the real PostgreSQL outage scenario US2.19; the full gate also includes existing container-backed ExtProc/agentgateway and integration suites. Docker-in-Docker is unavailable in this sandbox. Run infrastructure gates on a capable runner; report any unfinished gate as a blocker, never as passed or waived.
+
+Implementation evidence belongs in this guide: record approval provenance, the separate refactor PR and integrated revision, scenario-to-test `file:line` mappings, semantic-red assertions, green commands/results and deferred-task reasons. Keep the approved `spec.md` and `plan.md` unchanged throughout implementation.
 
 ## 1. Static checks and fast tests
 
@@ -41,7 +42,14 @@ resolver extraction, which proves FR-006 does not regress.
 ginkgo -v --label-filter="authzen-delegation" ./tests/e2e/
 ```
 
-**Expected**: 29 specs pass:
+US2.19 MUST have both the shared `authzen-delegation` label and `Label("docker")`. The command above includes it and requires real PostgreSQL infrastructure. The ordinary `just test-e2e-backend` recipe excludes `docker`; it therefore covers 28 of these broker scenarios, not all 29.
+
+```bash
+just test-e2e-backend     # excludes US2.19; not the complete broker acceptance gate
+just test-e2e-docker      # includes US2.19; requires a capable container runner
+```
+
+**Expected with infrastructure available**: 29 focused specs pass:
 
 - US1.1–US1.8 (8)
 - US2.1–US2.20 (20)
@@ -112,6 +120,7 @@ The mismatch case makes **zero** evaluation requests.
 ## 6. Full gate
 
 ```bash
+just test-e2e           # backend + docker + ExtProc + frontend, including US2.19
 just docs-build         # docs/api/authzen-evaluation.md renders
 just verify             # full gate, E2E last
 ```
