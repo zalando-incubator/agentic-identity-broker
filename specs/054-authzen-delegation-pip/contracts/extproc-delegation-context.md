@@ -125,14 +125,15 @@ approval does not automatically cover this consequence.
 
 ### 3.1 Permit-bound exchanged tokens (Proposed, [ADR 048 §10](../../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse))
 
-The permit governs local policy and token-result reuse. It does not prove provider-token scopes or the grant version read by exchange. A binding is the permit resource scope set and grant update instant that first claimed a result handle.
+The permit governs local policy and token-result reuse. It does not prove provider-token scopes or the grant version read by exchange. A binding is the permit principal, agent UUID, resource scope set and grant update instant that first claimed a result handle. Exchange response identities must match the permit before any claim; mismatch or absence returns terminal API-7 503 without an identity-repair retry.
 
 **Binding-aware port/result**: retain disabled `Exchange` semantics. The body path's initial exchange returns the credential plus an opaque result handle (entry identity and synchronized binding cell); the enabled binding-aware call accepts that observed handle and the desired `ExchangeResultBinding`. Header-only supplies no initial handle and exchanges after allow. Both return either a validated compatible handle with original token/identities/extensions or a typed exchange/binding error. Every successful flight, including a non-cacheable success, creates one handle shared by all followers. New installations have distinct identities even for identical token bytes. Atomic `BindOnce` claims an unbound cell; subsequent callers compare, never rebind. The exchanger never parses permits. Caller/leader status confers no exclusive ownership of a shared result.
 
 | Situation (after body precedence, or header policy allow) | Behavior |
 |---|---|
-| Unbound handle, whether cached, initial exchange, detached or singleflight delivery | Atomically claim with this permit. If another caller wins, compare its binding using the rows below; never overwrite. |
-| Handle matches scope set and grant instant | Use that result; cache reuse adds no broker call. |
+| Exchange principal or agent UUID differs from permit, or either exchange field is absent | Terminal API-7 503; no handle claim, approval lookup/creation, forwarding or identity-repair retry. |
+| Unbound handle with matching exchange identity, whether cached, initial exchange, detached or singleflight delivery | Atomically claim with this permit. If another caller wins, compare its binding using the rows below; never overwrite. |
+| Handle matches principal, agent UUID, scope set and grant instant | Use that result; cache reuse adds no broker call. |
 | Initial handle mismatches | Never forward it; compare-and-delete the observed entry identity only. |
 | Delete succeeds or observed entry is absent | Perform at most one additional exchange, with stale-on-error forbidden for removed/mismatched results. |
 | Delete fails because a replacement exists | Preserve and read the replacement once. Compare/claim its handle; use it if compatible, otherwise perform the one additional exchange. Never delete by token bytes, including equal-token/different-binding replacements. |
@@ -150,8 +151,8 @@ The log-only Debug diagnostic remains `delegation_binding=mismatch`, without cre
 
 Metadata validation (ADR 036), protocol checks, transport checks, the body-size limit, the
 approval controls, and policy fail-closed behavior still apply. In enabled mode, the approval
-gate principal and agent UUID come from the same permit as OPA, not from exchange-result
-identity (approved F2/P2 on [the 2026-11-09 proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)). Disabled-mode identity and session extraction are unchanged.
+gate principal and agent UUID come only from the exchange result under ADR 036, after
+checking equality with the permit identities (approved F1/P1 on [the 2026-11-11 proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783)). Disabled-mode identity and session extraction are unchanged.
 
 ## 4. OPA input (`input.context`)
 

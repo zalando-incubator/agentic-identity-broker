@@ -31,7 +31,8 @@ func (s *Server) exchangeWithDelegation(ctx context.Context, state *requestState
 	if err != nil {
 		return ExchangeResult{}, errInvalidGrantTimestamp
 	}
-	binding := ExchangeResultBinding{Scopes: copyStrings(state.delegation.Context.Resource.Scopes), GrantUpdatedAt: updatedAt}
+	binding := ExchangeResultBinding{Principal: state.delegation.Context.Principal, AgentID: state.delegation.Context.Agent.ID,
+		Scopes: copyStrings(state.delegation.Context.Resource.Scopes), GrantUpdatedAt: updatedAt}
 	return s.exchanger.ExchangeBound(ctx, state.subjectToken, state.resourceURI, observed, binding)
 }
 

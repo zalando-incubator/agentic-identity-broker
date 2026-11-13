@@ -508,6 +508,17 @@ Approval: [mjungsbluth's selected proposal](https://github.com/zalando-incubator
 - [X] T128 F5/P5: Correct `contracts/observability.md` to specify `error_kind` and list resolution, terminal binding-conflict and local grant-timestamp emitters, their levels, bounded classifications, response and span handling.
 - [X] T129 F6/P6: Rename the reuse value to `ExchangeResultBinding` and ExtProc port/cache to `PermitResolver`, including constructors, wiring and test doubles. Update ADR 048, both glossaries, instructions and current feature contracts without changing wire fields, error bodies or telemetry identifiers.
 
+## Approved apply-review remediation (2026-11-11)
+
+Approval: [mjungsbluth's selected F1/P1–F4/P4 proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783), `2026-11-11T18:57:51Z`. No unticked tasks added by earlier apply-review runs remain. Historical T125 is superseded by T130's fail-closed correction, not a current forwarding requirement.
+
+- [X] T130 F1/P1: Include principal/agent UUID in ExchangeResultBinding equality and require exchange identities to match the permit before any handle claim. Return terminal API-7 503 on identity mismatch/absence without approval creation, mutation, forwarding or identity-repair retry. Remove the approval-state permit override under ADR 036. Add production-exchanger tests for each differing/missing field on both paths, preserve matched/disabled approval tests, and amend US3.1 to expect 503 through the real broker/ExtProc. Observe compiling semantic red then green; keep scope/grant retry, freshness and wire text unchanged. Reconcile ADR 048, architecture, spec/plan and consumer contracts/docs.
+- [X] T131 F2/P2: Restore ADR 028's original `**Status**: Accepted` and move the existing ADR 048 partial-supersession note into a banner below its header, retaining the original decision's attribution.
+- [X] T132 F3/P3: Request the follow-up issue [Follow-ups for #292](https://github.com/zalando-incubator/agentic-identity-broker/issues?q=is%3Aissue%20in%3Atitle%20%22Follow-ups%20for%20%23292%22) for the selected `/oauth2/token` grant-version/effective-scope redesign and consistency contract; link ADR 048 §10 and FR-020. The title link locates the issue created after this session. No redesigned API or reconciliation removal is implemented here.
+- [X] T133 F4/P4: Rename `token_binding.go` and its test to `exchange_result_binding*.go`; change the two mismatch/conflict log messages to exchange-result vocabulary. Retain the API-7 response text and existing event/attribute identifiers; extend redacted-formatting checks for the added identity fields.
+
+Validation: `just check`, `just test`, `just extproc-test` (race), `just test-integration` and `just test-e2e-backend` passed; all 46 local feature acceptance scenarios passed (42 broker/consumer and four startup). US2.19 and container-backed suites remain deferred to downstream tests, not locally validated.
+
 ## Dependencies & Execution Order
 
 ### Current continuation dependency graph

@@ -1,8 +1,8 @@
 # ADR 045: AuthZEN Delegation Policy Information Point
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-09: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-11: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783)
 
-Latest approval scope: F2/P2 permit-derived approval identity, F3/P3 API-version and supersession corrections, and F6/P6 naming. Prior ADR-2/API-7/D-8 approval covers the existing reuse, conflict, expiry and provenance limits; ADR-3 guidance uses the maintainer-supplied follow-up issue #441. Earlier approvals remain in Revision history. The selected F1/P1 redesign remains unapplied.
+Latest approval scope: F1/P1 fail-closed permit/exchange identity consistency while retaining ADR 036 approval identity; F2/P2 restores ADR 028's original Status and moves its supersession banner; F3/P3 tracks the deferred exchange-provenance redesign; F4/P4 completes ExchangeResultBinding file/log naming. Prior ADR-2/API-7/D-8 approval covers the existing reuse, conflict, expiry and provenance limits; ADR-3 guidance uses follow-up issue #441. Earlier approvals remain in Revision history. The exchange-provenance redesign itself remains unapplied.
 **Date**: 2026-10-29 (accepted 2026-10-30)
 **Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
 `/oauth2/token` `granted_permission_sets` deprecation
@@ -148,16 +148,21 @@ are defined by the standard and are a documented exception to general REST namin
 
 ### 9.1. Approval identity in enabled mode
 
-With delegation context enabled, the approval gate takes its principal and agent UUID from
-that request's permit, exactly as OPA does. Exchange identities, including cached or absent
-extensions, cannot select another approval owner. Disabled mode continues to use the exchange
-response identity under ADR 036. Session extraction and the remaining approval controls are
-unchanged.
+The approval gate takes its principal and agent UUID only from the exchange response under
+ADR 036, in both enabled and disabled modes. With delegation context enabled, the exchange
+principal and agent UUID must match the request permit's principal and agent UUID before
+result reuse, approval or forwarding. A mismatch, including an absent exchange identity field,
+returns the terminal API-7 503 without approval lookup/creation or an identity-repair retry.
+OPA continues to use the permit. Session extraction and the remaining approval controls are
+unchanged; this ADR does not supersede ADR 036.
 
 ### 10. The permit governs enabled-mode token reuse
 
-- An **ExchangeResultBinding** is the sorted, de-duplicated set of permit `resource.scopes` and the
-  instant parsed from `grant.updated_at`. Equality compares both sets and both instants.
+- An **ExchangeResultBinding** contains the permit principal and agent UUID, the sorted,
+  de-duplicated set of permit `resource.scopes`, and the instant parsed from `grant.updated_at`.
+  Equality compares both identities, both sets and both instants. The exchange response's
+  `principal` and `agent_id` must match those permit identities before any handle claim;
+  an identity mismatch is terminal API-7 503, not a scope/grant-change retry.
   It records the permit that first claimed an exchange result, not the grant under which
   the broker actually minted or obtained the credential.
 - Every successful exchange result carries an opaque **entry identity** and a shared,
@@ -205,6 +210,12 @@ permit without evidence that exchange read that version. First-claim serializati
 conflicting bindings to one handle, not conflicting broker reads. The permit deadline bounds
 policy snapshot age and ADR 012 TTL bounds token retention; neither proves exchange provenance
 or provides a stronger race bound. This residual limitation is explicitly approved in D-8.
+
+**Future Work**: [Follow-ups for #292](https://github.com/zalando-incubator/agentic-identity-broker/issues?q=is%3Aissue%20in%3Atitle%20%22Follow-ups%20for%20%23292%22)
+tracks the selected `/oauth2/token` grant-version and effective-scope redesign, its ADR/API
+approval, consistency contract and replacement of first-claim provenance inference. It does
+not authorize that redesign or provider downscoping in this PR. The link locates the tracking
+issue by its unique title because issue creation is applied after this session.
 
 
 ## Alternatives considered
@@ -269,6 +280,14 @@ or provides a stronger race bound. This residual limitation is explicitly approv
   the standard's source text before the OpenAPI was frozen.
 
 ## Revision history
+
+- **2026-11-11 (same PR, before merge)**: `mjungsbluth` approved F1/P1–F4/P4 at
+  `2026-11-11T18:57:51Z` on [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783).
+  §§9.1/10 require exchange/permit identity equality with terminal API-7 503 on mismatch,
+  retaining exchange-response approval authority under ADR 036. This replaces the prior
+  permit override. ADR 028's original Status is restored with a separate supersession banner.
+  §10 links the deferred provenance redesign's tracking issue, without implementing the
+  redesigned API. ExchangeResultBinding file names and log messages use the current vocabulary.
 
 - **2026-11-09 (same PR, before merge)**: `mjungsbluth` approved F2/P2, F3/P3 and F6/P6 on
   [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)

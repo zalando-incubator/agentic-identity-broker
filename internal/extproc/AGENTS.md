@@ -122,7 +122,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | Type/Symbol | Purpose |
 |---|---|
 | `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)`, `ExchangeBound(ctx, subjectToken, resourceURI, observed *ExchangeResult, ExchangeResultBinding)` + `Shutdown()` |
-| `ExchangeResultBinding` | Sorted, de-duplicated permit resource scopes and parsed grant-update instant; never broker grant-version provenance |
+| `ExchangeResultBinding` | Permit principal/agent UUID, sorted, de-duplicated resource scopes and parsed grant-update instant; exchange identities must match; never broker grant-version provenance |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
 | `PermitResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 048) |
 | `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `delegationResolver`, `logger` |
@@ -227,9 +227,9 @@ Header-only:   → PermitResolver.Resolve → denial 403 / error 503
 
 - Map the permit through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
 - Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility fields remain unchanged today; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
-- Leave `agent_session_id` unchanged. The enabled approval gate uses the same permit principal and agent UUID as OPA. Disabled mode still uses exchange identity.
+- Leave `agent_session_id` unchanged. The approval gate uses exchange response identity under ADR 036 in both modes. Enabled mode requires exchange principal/agent UUID to match the permit; mismatch or absence returns terminal API-7 503 before approval or forwarding, without an identity-repair retry.
 - After body-path precedence and before buffering/mutation, call `ExchangeBound` with the observed exchange result. Header-only passes no observed result and uses the evaluated permit after allow.
-- Every successful result has an opaque handle and shared binding cell, including non-cacheable flights. Atomically claim once; compare scope sets and timestamp instants thereafter. Never rebind or compare credential bytes.
+- Every successful result has an opaque handle and shared binding cell, including non-cacheable flights. Atomically claim once; compare principal/agent UUID, scope sets and timestamp instants thereafter. Exchange identities must match the permit before any claim. Never rebind or compare credential bytes.
 - On mismatch, compare-and-delete only the observed identity. Preserve same-token replacements, read a replacement once and use only a compatible handle. Otherwise exchange at most once more, bypassing success-cache reuse and stale fallback while retaining cooldown handling. Revalidate delivery; conflict returns 503 `delegation token binding unavailable` without a third exchange or deletion of the competing result.
 - Disabled mode, cache key/TTL and five-second cooldown remain unchanged. Compatibility reuse does not attest broker grant reads or downscope provider credentials; concurrent unbound first use may join different grant reads.
 - Keep the permit cache independent of the token cache. Never cache denials or errors, and never fall back to a stale permit.
@@ -244,7 +244,7 @@ Header-only:   → PermitResolver.Resolve → denial 403 / error 503
 Read `adrs/036-extproc-approval-cache-and-gate.md` and the Feature 026 contracts before approval changes.
 
 - Gate only standalone MCP tool calls after `approval_required`. Deny approval-required batches and `ciba_required`.
-- Scope approval records with the permit principal and agent UUID when delegation context is enabled, otherwise broker exchange `principal` and `agent_id`. Do not parse tokens for identity.
+- Scope approval records only with broker exchange `principal` and `agent_id`. Enabled delegation context checks their equality with permit identities; it never overrides them. Do not parse tokens for identity.
 - Keep approvals outside OPA. Permission sets come from the exchange snapshot.
 - Keep configured `context.agent_session_id` separate from fixed MCP `mcp.session_id`.
 - Replace full snapshots on `200`. Refresh confirmation time on `304`.

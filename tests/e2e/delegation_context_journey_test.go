@@ -26,7 +26,6 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	extprochelpers "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
-	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 // delegationJourney runs the real broker and the production ExtProc composition with
@@ -195,7 +194,7 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(HavePrefix("Bearer "))
 		Expect(j.broker.EvaluationCount()).To(Equal(1))
 
-		By("requiring approval under the permit identity despite a cached exchange with different identity")
+		By("rejecting an exchange identity that differs from the permit before approval or forwarding")
 		var exchangeCalls atomic.Int32
 		withApproval := newDelegationJourneyConfigured("approval_journey.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
 			options.DisableToolApprovals = false
@@ -228,29 +227,17 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 			options.ExchangeEndpoint = endpoint.URL + "/oauth2/token"
 			options.DelegationContext.PolicyDecisionPoint = f.Enduser.BaseURL()
 		})
-		toolCall := func() *extprocv3.ProcessingResponse {
-			body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}`)
-			_, response := extprochelpers.SendHeadersAndBody(context.Background(), withApproval.client,
-				withApproval.request(http.MethodPost, false, authzenRepoResource, nil), body)
-			return response
-		}
-		first := toolCall()
-		approvalURL := approvalJourneyElicitationURL(first)
-		Expect(first).NotTo(extprochelpers.BeForwardedRequestBody())
+		body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}`)
+		headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), withApproval.client,
+			withApproval.request(http.MethodPost, false, authzenRepoResource, nil), body)
+		status, responseBody := immediateJSON(headersResp)
+		Expect(status).To(Equal(uint32(http.StatusServiceUnavailable)))
+		Expect(responseBody).To(Equal(map[string]string{"error": "service_unavailable", "error_description": "delegation token binding unavailable"}))
+		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(BeEmpty())
+		Expect(bodyResp).To(BeNil(), "an identity mismatch must fail before body policy or approval")
 		snapshot := approvalJourneySync(withApproval.broker.Enduser, withApproval.broker.ClientAssertion)
-		Expect(snapshot.Data.Pairs).To(HaveLen(1))
-		pair := snapshot.Data.Pairs[0]
-		Expect(pair.Principal).To(Equal(withApproval.broker.Principal.String()))
-		Expect(pair.AgentID).To(Equal(withApproval.broker.Agent.ID.String()))
-		Expect(pair.Approvals).To(HaveLen(1))
-		pending := pair.Approvals[0]
-		Expect(approvalJourneyDetail(withApproval.broker.Enduser, pending.ID, pair.Principal).Data.ApprovalURL).To(Equal(approvalURL))
-		approved, err := postJSON(withApproval.broker.Enduser, "/api/approvals/"+pending.ID+"/approve", pair.Principal, helpers.ApproveRequest{Persistence: "permanent"})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(approved.StatusCode).To(Equal(http.StatusOK))
-		Expect(approved.Body.Close()).To(Succeed())
-		Eventually(toolCall, 3*time.Second, 50*time.Millisecond).Should(extprochelpers.BeForwardedRequestBody())
-		Expect(exchangeCalls.Load()).To(Equal(int32(1)), "the repeated approved request reuses the conflicting-identity exchange result")
+		Expect(snapshot.Data.Pairs).To(BeEmpty(), "no approval is created for either identity")
+		Expect(exchangeCalls.Load()).To(Equal(int32(1)), "an identity mismatch is terminal")
 	})
 
 	// Scenario US3.2 from specs/054-authzen-delegation-pip/spec.md

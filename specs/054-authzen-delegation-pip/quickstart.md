@@ -89,7 +89,10 @@ ginkgo -v --label-filter="delegation-context" ./tests/e2e/
 
 **Expected**: 14 specs pass (US3.1–US3.13 and US4.5). They run the production ExtProc composition against the real broker test server, including the approved ADR-2 binding journeys. Confirm these outcomes:
 
-- The body path forwards only after both exchange and resolution succeed.
+- The body path forwards only after both exchange and resolution succeed. US3.1 also proves
+  that different exchange principal/agent UUID returns terminal API-7 503 before buffering,
+  Authorization mutation or approval creation. The gate retains exchange-derived identity
+  under ADR 036 after permit/exchange equality is checked.
 - The header-only path never calls exchange when policy denies.
 - US3.5 re-consults the broker immediately after renewed consent on both paths. Header-only
   forwarding permits immediately; body-path forwarding resumes once the unchanged ADR 012
@@ -117,7 +120,8 @@ expired decision reaches policy, with no forwarding or re-resolution. These chec
 the real-broker journeys above; they are not extra acceptance scenarios or evidence that the
 real broker emits malformed responses.
 
-**ADR-2 unit gates** (`just extproc-test`, `-race`): binding equality by scope set and instant,
+**ADR-2 unit gates** (`just extproc-test`, `-race`): binding equality by principal/agent UUID,
+scope set and instant; terminal 503 for each different or absent exchange identity on both paths,
 compare-and-delete under concurrency, one re-exchange per request, no stale-on-error fallback to
 a removed token, unbound-token binding, and unchanged disabled mode and cooldown entries
 (contract §3.1, data model §3.6).
