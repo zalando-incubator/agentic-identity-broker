@@ -227,11 +227,15 @@ Header-only:   → DelegationContextResolver.Resolve → denial 403 / error 503
                → now < Deadline? else 503 → OPA → allow: Exchange
 ```
 
-The permit maps through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets` and `granted_permission_sets_available: true`; `agent_session_id` is unchanged and the approval gate still uses the exchange identity. The permit cache is independent of the token cache: no stale-on-error, denials and errors never cached. Retain the original permit in header-only request state and check its deadline after exchange, before Authorization mutation. Body, batch and approval-authorized body paths check that same deadline again before final body forwarding; expiry returns the existing delegation-unavailable 503 without re-resolution.
-
-Permit scope arrays may be empty, but each element must be a JSON string. Preserve null detection in the wire decoder: Go's `encoding/json` otherwise silently turns a null element in `[]string` into an empty string. Reject malformed permits as `invalid_response` before policy or caching.
-
-`authorization.InputBuilder.Build` selects a parser by `protocol`:
+- Map the permit through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
+- Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility fields remain unchanged today; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
+- Leave `agent_session_id` unchanged. The approval gate still uses the exchange identity.
+- Keep the permit cache independent of the token cache. Never cache denials or errors, and never fall back to a stale permit.
+- Retain the original permit in header-only request state. Check its deadline after exchange, before Authorization mutation.
+- Check that same deadline again before final body forwarding on body, batch, and approval-authorized body paths. Expiry returns the existing delegation-unavailable 503 without re-resolution.
+- Permit scope arrays may be empty, but each element must be a JSON string.
+  Preserve null detection in the wire decoder: Go's `encoding/json` otherwise turns a null `[]string` element into an empty string.
+  Reject malformed permits as `invalid_response` before policy or caching.
 
 ### Approval gate and cache
 
