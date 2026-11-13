@@ -5,8 +5,10 @@ package storage_test
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"testing"
 	"time"
 
@@ -802,6 +804,31 @@ func testDCRPersistenceEntity(name, issuer string, method model.TokenEndpointAut
 	entity.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
 	entity.Endpoints = model.OAuth2Endpoints{AuthorizeEndpoint: issuer + "/authorize", TokenEndpoint: issuer + "/token"}
 	return entity
+}
+
+// RFC 6749 section 2.2 leaves the client identifier size undefined. A stateless
+// DCR server can encode the whole registration in the client ID it issues.
+// Random bytes keep the ID incompressible, so it exceeds the B-tree entry limit
+// unless the unique index stores a fixed-size key.
+func TestDCRLongClientIDPersistsAndStaysUnique(t *testing.T) {
+	ctx, repo, _, cleanup := setupThirdpartyProviderTestHarness(t)
+	defer cleanup()
+
+	randomBytes := make([]byte, 6000)
+	_, _ = rand.NewChaCha8([32]byte{}).Read(randomBytes)
+	clientID := id.ClientID("dcr-" + base64.RawURLEncoding.EncodeToString(randomBytes))
+
+	entity := testDCRPersistenceEntity("dcr-long-client-id", "https://long.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	entity.ClientID = clientID
+	require.NoError(t, repo.Create(ctx, entity))
+
+	stored, err := repo.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, clientID, stored.ClientID)
+
+	duplicate := testDCRPersistenceEntity("dcr-long-client-id-duplicate", entity.IssuerURI, model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	duplicate.ClientID = clientID
+	require.ErrorIs(t, repo.Create(ctx, duplicate), storage.ErrDuplicateDCRClientIdentity)
 }
 
 func TestDCRIssuerScopedCredentialsSurviveNewPostgresAdapter(t *testing.T) {
