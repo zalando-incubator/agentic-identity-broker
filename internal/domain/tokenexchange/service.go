@@ -11,7 +11,6 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"

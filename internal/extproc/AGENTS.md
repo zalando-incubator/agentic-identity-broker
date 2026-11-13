@@ -149,9 +149,10 @@ Read `ARCHITECTURE.md` and `.specify/memory/constitution.md` before boundary cha
 - Keep approval precedence selection in `internal/extproc/approval/`.
 - Keep telemetry composition in `cmd/extproc-token-exchange/root.go`, including `mapTelemetryConfig`.
 
-### 2. Four port interfaces: Exchanger, Authorizer, ApprovalGate, and DelegationContextResolver
+`adrs/027-extproc-telemetry-shared-dependency.md` permits the command layer to import `internal/ports` and `internal/adapters/telemetry`.
+It does not permit these imports inside `internal/extproc/`.
 
-`Exchanger` in `server/server.go`, `authorization.Authorizer` in `authorization/authorizer.go`, `ApprovalGate` in `server/server.go`, and `DelegationContextResolver` in `server/delegation.go` are the service boundaries in this process.
+### Service boundaries
 
 `Exchanger` and `ApprovalGate` live in `internal/extproc/server/server.go`.
 `Authorizer` lives in `internal/extproc/authorization/authorizer.go`.
@@ -214,9 +215,16 @@ RequestHeaders → validate subject metadata → validate resource metadata
                → deny: 403 access_denied
 ```
 
-With `delegation_context.enabled` (ADR 045 supersedes ADR 028's ordering and input in this mode):
+`InputBuilder.Build` uses `ParseMCPMessage` for protocol `mcp`.
+It produces `mcp_tool_call` for `tools/call`, or `mcp_method` for other methods.
+Other protocols produce `type="unknown"` with the raw body in `input.attributes.request.http.body`.
+Local policy paths use `rego.PreparedEvalQuery`. OPA configuration files use the bundle-aware SDK.
 
-```
+### Delegation context
+
+With `delegation_context.enabled`, `adrs/048-authzen-delegation-pip.md` supersedes ADR 028's ordering and input.
+
+```text
 Body-bearing:  RequestHeaders → metadata/protocol/transport checks
                → Exchanger.Exchange ∥ PermitResolver.Resolve (wait for both)
                → denial 403 (error_uri) > resolution error 503 > exchange error > buffer body

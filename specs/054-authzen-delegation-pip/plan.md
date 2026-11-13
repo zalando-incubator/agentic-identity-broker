@@ -218,10 +218,10 @@ in the next section are implementation-time gates. They do not block the design.
 - The resolver depends on no session service, so FR-013 holds by construction.
 - ADR 028's enabled-mode input and ordering need a new superseding ADR. That ADR also extends
   ADR 033's token-only finalization seam to evaluation. The maintainer endorsed the decision
-  set in review. [ADR 047](../../adrs/047-authzen-delegation-pip.md) records it, and neither
+  set in review. [ADR 048](../../adrs/048-authzen-delegation-pip.md) records it, and neither
   existing ADR is amended in place.
 - The freshness rules (I1/U1/U2) are decided. The I2 perimeter extension is recorded in
-  ADR 047; `quickstart.md` §§7–8 records implementation evidence and remaining historical
+  ADR 048; `quickstart.md` §§7–8 records implementation evidence and remaining historical
   test-first gaps. Preserve that distinction rather than reopening the settled design.
 
 ## Stakeholder decisions before implementation
@@ -235,7 +235,7 @@ Maintainer direction from the 2026-10-28 review and clarification, applied in th
   1.0 HTTPS binding), the plain-UUID anchor, denial form (a) (R11), and the
   deprecation marker (R12). The review used a stale baseline; the corrected `1.1.0` → `1.2.0` delta has original API-3 approval recorded in quickstart §11.
 - **New ADR**: the R16 decision set is endorsed, including the I2 audit-perimeter extension,
-  and recorded in [ADR 047](../../adrs/047-authzen-delegation-pip.md).
+  and recorded in [ADR 048](../../adrs/048-authzen-delegation-pip.md).
 
 Original implementation approvals and D-6 closure are recorded in quickstart §§11–12 and ADR 048. The table below preserves that inventory as recorded history; this phase does not grant any approval or reopen original API-2/D-5/D-6.
 
@@ -494,8 +494,8 @@ The current continuation adds **2g Observability Design** (T108/T109): inventory
 
 - **2a Domain model and ADR**:
   - Record the maintainer's approval (from the approval comment) in the Status line of
-    the ADR 047 draft and move it to `adrs/` at the next unused number (done:
-    [adrs/047-authzen-delegation-pip.md](../../adrs/047-authzen-delegation-pip.md)). The draft already records the R16 decision set, the
+    the ADR 048 draft and move it to `adrs/` at the next unused number (done:
+    [adrs/048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md)). The draft already records the R16 decision set, the
     freshness decisions, and the clarified R15 shape: direct members, a typed mapping,
     currently retained permit-derived compatibility `granted_permission_sets*`, and no wrapper or flag.
   - After approval of ADR-2, apply [adr-048-revision-permit-bound-tokens.md](./adr-048-revision-permit-bound-tokens.md)

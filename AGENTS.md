@@ -237,6 +237,7 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **ExchangeResultBinding** | Permit principal, agent UUID, sorted, de-duplicated resource scope set and grant update instant that atomically first claimed an exchange-result handle. Exchange response identities must match the permit before claim; mismatch fails closed. Shared results cannot be rebound; new identities may carry identical provider bytes. This guarantees compatible reuse, not provider downscoping or exchange provenance, and is not IETF Token Binding proof of possession (ADR 048 §10). |
 | **PermitResolver** | ExtProc port and permit-cache implementation (`server.PermitResolver`, `delegation.PermitResolver`), distinct from the broker's invariant-enforcing `tokenexchange.DelegationResolver`. The permit's wire `subject.id` becomes the principal for OPA. Enabled mode checks it against the exchange-response approval identity under ADR 036; it does not replace that identity. |
 | **PDP identifier** | AuthZEN `policy_decision_point`: the end-user public URL without a trailing slash, compared exactly by consumers before sending credentials. |
+| **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
 
 ## Development Workflow
 

@@ -275,7 +275,7 @@ internal/adapters/storage/postgres/
 
 - **[api/enduser/openapi.yaml](api/enduser/openapi.yaml)** - End-user server (Port 8000)
   - Canonical OpenAPI documentation for all end-user facing APIs
-  - Endpoints: Health check, user info, consent management (agent delegations, service grants), and, whenever token exchange is configured, the AuthZEN delegation PDP (`GET /.well-known/authzen-configuration`, `POST /access/v1/evaluation`; [ADR 045](adrs/045-authzen-delegation-pip.md))
+  - Endpoints: Health check, user info, consent management (agent delegations, service grants), and, whenever token exchange is configured, the AuthZEN delegation PDP (`GET /.well-known/authzen-configuration`, `POST /access/v1/evaluation`; [ADR 048](adrs/048-authzen-delegation-pip.md))
   - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT) + session-based
   - Response envelope: Consistent `{"data": ...}` structure for resource endpoints
   - Error handling: Standardized error response format with code and message
@@ -516,7 +516,7 @@ This ordering is intentional. `TraceContextNormalizationMiddleware` collapses du
 - **Non-RFC 8693 grants** (`client_credentials`, `authorization_code`) finalize in `OAuth2TokenHandler` at the `/oauth2/token` seam, before the grant handler runs, so its context-aware `TokenIssued` audit logs already carry `Actor` and `TraceID`. These requests have no distinct calling peer.
 - **Delegated RFC 8693 token exchange** finalizes at the post-validation token-exchange seam (`tokenexchange.Exchange`), the only seam with a distinct authenticated peer. There the broker finalizes the immutable `SecurityContext` exactly once from the previously captured transport metadata, the validated subject-token principal as `Actor`, and `client_assertion.sub` as `CallingPeer`. Finalization precedes the privileged-client authorization decision, so a denied exchange whose tokens validated still carries `Actor`/`CallingPeer` on the failure audit path.
 
-- **AuthZEN Access Evaluation** (`POST /access/v1/evaluation`, [ADR 045](adrs/045-authzen-delegation-pip.md)) also receives a deferred capture holder. The shared `tokenexchange.DelegationResolver` finalizes the verified subject-token principal as `Actor` and the client-assertion subject as `CallingPeer` before the caller CEL decision, so permits and caller-policy denials carry both. Decode and missing-assertion failures finalize the request-principal or anonymous fallback through `FinalizeRequestSecurityContext` before the handler's audit event. Ordinary requests and `/oauth2/token` are unchanged.
+- **AuthZEN Access Evaluation** (`POST /access/v1/evaluation`, [ADR 048](adrs/048-authzen-delegation-pip.md)) also receives a deferred capture holder. The shared `tokenexchange.DelegationResolver` finalizes the verified subject-token principal as `Actor` and the client-assertion subject as `CallingPeer` before the caller CEL decision, so permits and caller-policy denials carry both. Decode and missing-assertion failures finalize the request-principal or anonymous fallback through `FinalizeRequestSecurityContext` before the handler's audit event. Ordinary requests and `/oauth2/token` are unchanged.
 
 A last-resort net in `LoggingMiddleware` finalizes any still-open holder after the handler returns, so perimeter access logs and early-error `/oauth2/token` responses still carry a finalized context. `CallingPeer` is omitted when unavailable or when it resolves to the same identity as `Actor`.
 
@@ -1021,7 +1021,7 @@ All four gates fail closed. A delegation denial returns 403 with the consent URL
 4. On success, replace `Authorization` with `Bearer <exchanged token>`.
 5. On a non-transient broker error with `error_uri`, return the 403 challenge from the request-headers phase. A client that supports MCP step-up can discover protected-resource metadata at `/.well-known/oauth-protected-resource/mcp` when the gateway serves that separate route.
 
-**Enabled delegation context** ([ADR 045](adrs/045-authzen-delegation-pip.md) supersedes ADR 028's ordering and input schema in this mode only):
+**Enabled delegation context** ([ADR 048](adrs/048-authzen-delegation-pip.md) supersedes ADR 028's ordering and input schema in this mode only):
 
 - Body-bearing requests run exchange and delegation resolution concurrently in the headers phase and wait for both. Precedence: delegation denial (403 `access_denied` with `error_uri`), resolution error (503 `service_unavailable`), exchange error (existing handling), then validate the result binding before Authorization mutation or body buffering.
 - Header-only requests resolve first, then evaluate OPA, then exchange and validate the result binding only on allow, using the exact permit evaluated.

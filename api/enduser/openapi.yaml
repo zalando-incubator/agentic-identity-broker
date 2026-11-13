@@ -119,7 +119,7 @@ tags:
     description: OAuth2 session management with third-party services
   - name: AuthZEN
     description: |
-      AuthZEN 1.0 Policy Decision Point for delegation (ADR 045). Available whenever token
+      AuthZEN 1.0 Policy Decision Point for delegation (ADR 048). Available whenever token
       exchange is configured. The path names and snake_case members are defined by the AuthZEN
       Authorization API 1.0 standard.
 paths:

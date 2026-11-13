@@ -121,7 +121,7 @@ Use it with `just dev-docker` or `just compose-up`. `docker-compose.yml` sets
 
 The standalone ExtProc service owns its `EXTPROC_` configuration (ADR 011); Compose mounts this
 file at `/app/config.yaml`. It contains a commented `delegation_context` block for the opt-in
-broker delegation context ([ADR 045](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/045-authzen-delegation-pip.md)). The broker adds no
+broker delegation context ([ADR 048](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-authzen-delegation-pip.md)). The broker adds no
 configuration keys for the AuthZEN endpoints, and `charts/agentic-identity-broker/` is unchanged
 because it does not deploy ExtProc. Enabling delegation context requires the broker's
 `server.enduser.public_url` to equal the identifier ExtProc expects and to be reachable from the

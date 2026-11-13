@@ -1,5 +1,5 @@
 // Package delegation resolves broker delegation context through the AuthZEN Access
-// Evaluation API (ADR 045). It imports no broker domain, port, or adapter package.
+// Evaluation API (ADR 048). It imports no broker domain, port, or adapter package.
 package delegation
 
 import (
