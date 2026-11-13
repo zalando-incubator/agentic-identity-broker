@@ -229,6 +229,43 @@ fmt:
     "$(go env GOROOT)/bin/gofmt" -s -w .
     @echo "Format complete"
 
+# Regenerate docs/reference/telemetry.md and telemetry/live-check.toml from telemetry/registry (coding-standards/OPENTELEMETRY.md section 9)
+telemetry-doc: (_telemetry-generate "docs/reference" "telemetry")
+
+# Validate telemetry/registry and fail when the files generated from it are out of date
+telemetry-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out="$(mktemp -d)"
+    trap 'rm -rf "$out"' EXIT
+    just _telemetry-generate "$out" "$out"
+    if ! diff -u docs/reference/telemetry.md "$out/telemetry.md" || ! diff -u telemetry/live-check.toml "$out/live-check.toml"; then
+        echo "The files generated from telemetry/registry are out of date. Run 'just telemetry-doc' and commit the result."
+        exit 1
+    fi
+
+# Check telemetry/registry, then write the reference page to page_dir and the live-check settings to settings_dir
+_telemetry-generate page_dir settings_dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    weaver="$(bash scripts/install-weaver.sh)"
+    # Weaver warns for each registry file that the definition format is not stable yet, so
+    # its output is shown only when it fails.
+    quiet() {
+        local output
+        if ! output="$("$@" 2>&1)"; then
+            printf '%s\n' "$output"
+            return 1
+        fi
+    }
+    quiet "$weaver" registry check -r telemetry/registry
+    quiet "$weaver" registry generate -r telemetry/registry -t telemetry/templates --v2 markdown "{{page_dir}}"
+    quiet "$weaver" registry generate -r telemetry/registry -t telemetry/templates --v2 live_check "{{settings_dir}}"
+
+# Compare the telemetry of a test run with telemetry/registry. In a second terminal, run a suite with TELEMETRY_LIVE_CHECK_ENDPOINT=http://127.0.0.1:14317. Stop with Ctrl-C.
+telemetry-live-check:
+    "$(bash scripts/install-weaver.sh)" registry live-check -r telemetry/registry --config telemetry/live-check.toml --otlp-grpc-port 14317 --admin-port 14320 --inactivity-timeout 0
+
 # Run go vet for static analysis
 vet:
     @echo "Running go vet..."
@@ -599,7 +636,7 @@ fmt-check:
         exit 1
     fi
 
-check: fmt-check vet lint
+check: fmt-check vet lint telemetry-check
     @echo "Static quality checks passed!"
 
 # Run focused security scans across all dependency manifests

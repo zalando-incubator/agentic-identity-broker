@@ -1,0 +1,4 @@
+file_format: definition_manifest/2.0
+name: agentic-identity-broker
+description: Spans, metrics and attributes that the broker and ExtProc create through the OpenTelemetry API.
+schema_url: https://github.com/zalando-incubator/agentic-identity-broker/telemetry/0.2.0

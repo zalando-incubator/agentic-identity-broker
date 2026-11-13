@@ -1,0 +1,20 @@
+# Telemetry of the instrumentation scope `telemetryhttp`.
+file_format: definition/2
+
+spans:
+  - type: http.request
+    name:
+      templates: ["http.request"]
+    kind: client
+    brief: "Outbound HTTP call."
+    note: "The span does not record URLs, headers, bodies or errors."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: telemetryhttp
+      error_status: true
+    attributes:
+      - ref: error.type
+        examples: ["network_error", "response_close_failed", "response_read_failed"]
+      - ref: http.request.method
+      - ref: http.response.status_code

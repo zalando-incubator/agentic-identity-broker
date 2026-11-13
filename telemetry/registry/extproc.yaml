@@ -1,0 +1,195 @@
+# Telemetry of the instrumentation scope `extproc`.
+file_format: definition/2
+
+attributes:
+  - key: approval.outcome
+    type:
+      members:
+        - {id: deny, value: "deny", stability: development}
+        - {id: elicit, value: "elicit", stability: development}
+        - {id: proceed, value: "proceed", stability: development}
+    brief: "Decision of the approval gate: the call proceeds, the user is asked to approve it (`elicit`), or it is denied."
+    stability: development
+  - key: authorization.action
+    type: string
+    brief: "Action of the policy decision, such as `allow`, `deny` or `approval_required`."
+    stability: development
+  - key: authorization.duration_ms
+    type: int
+    brief: "Duration of the policy evaluation in milliseconds."
+    stability: development
+  - key: authorization.method
+    type: string
+    brief: "MCP method of the request, such as `tools/call`. A method that is not on the allowlist is `unknown`."
+    stability: development
+  - key: authorization.protocol
+    type: string
+    brief: "Protocol of the request: `mcp`, or `unknown`."
+    stability: development
+  - key: authorization.result_code
+    type:
+      members:
+        - {id: error, value: "error", stability: development}
+        - {id: ok, value: "ok", stability: development}
+        - {id: timeout, value: "timeout", stability: development}
+        - {id: undefined, value: "undefined", stability: development}
+        - {id: undefined_action, value: "undefined_action", stability: development}
+        - {id: unsupported_action, value: "unsupported_action", stability: development}
+    brief: "How the policy evaluation ended: `ok` when the policy returned a supported action, otherwise the reason why it did not."
+    stability: development
+  - key: authorization.target_server_name
+    type: string
+    brief: "Name of the MCP server that the request targets."
+    stability: development
+  - key: authorization.tool_name
+    type: string
+    brief: "Name of the MCP tool that the request calls."
+    stability: development
+  - key: token_exchange.broker_status_code
+    type: int
+    brief: "HTTP status code of the broker's response. Set when the broker rejected the exchange."
+    stability: development
+  - key: token_exchange.dependency
+    type:
+      members:
+        - {id: broker, value: "broker", stability: development}
+        - {id: local, value: "local", stability: development}
+        - {id: oauth_provider, value: "oauth_provider", stability: development}
+    brief: "Dependency that the operation used: ExtProc itself (`local`), the broker, or the OAuth provider."
+    stability: development
+  - key: token_exchange.oauth_error_code
+    type: string
+    brief: "OAuth error code of the response that rejected the operation, such as `invalid_grant`. Empty when there is none."
+    stability: development
+  - key: token_exchange.operation
+    type:
+      members:
+        - {id: assertion_refresh, value: "assertion_refresh", stability: development}
+        - {id: configuration, value: "configuration", stability: development}
+        - {id: exchange, value: "exchange", stability: development}
+    brief: "ExtProc operation that failed."
+    stability: development
+
+attribute_groups:
+  - id: attributes.token_exchange.diagnostic.extproc
+    visibility: internal
+    attributes:
+      - ref: token_exchange.exchange_kind
+      - ref: token_exchange.failure_detail
+        examples: ["authorization_denied", "broker_response_invalid", "broker_unavailable", "caller_canceled", "circuit_open", "client_expired", "client_invalid", "configuration", "consent_required", "credential_rejected", "internal_unclassified", "none", "policy_configuration", "policy_denied", "policy_evaluation_failed", "provider_response_invalid", "provider_unavailable", "reauth_required", "request_malformed", "resource_missing", "response_write_failed", "session_reauth_required", "subject_invalid"]
+      - ref: token_exchange.failure_stage
+        examples: ["client_authorization", "exchange_routing", "none", "refresh", "request_validation", "response_write"]
+      - ref: token_exchange.outcome
+      - ref: token_exchange.recovery_action
+      - ref: token_exchange.recovery_target
+        examples: ["consent", "none", "provider_session"]
+
+spans:
+  - type: extproc.approval.gate
+    name:
+      templates: ["extproc.approval.gate"]
+    kind: internal
+    brief: "Approval gate evaluation in ExtProc."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+      error_status: false
+    attributes:
+      - ref: approval.outcome
+  - type: extproc.client_assertion.refresh
+    name:
+      templates: ["extproc.client_assertion.refresh"]
+    kind: internal
+    brief: "Obtains a new client assertion through the client credentials grant."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+      error_status: true
+    attributes:
+      - ref_group: attributes.token_exchange.diagnostic.extproc
+      - ref: error.type
+        examples: ["assertion_expired", "caller_canceled", "circuit_open", "configuration", "internal", "invalid_response", "none", "rejected", "unavailable"]
+      - ref: http.response.status_code
+      - ref: token_exchange.dependency
+      - ref: token_exchange.oauth_error_code
+      - ref: token_exchange.operation
+  - type: extproc.opa.evaluate
+    name:
+      templates: ["extproc.opa.evaluate"]
+    kind: internal
+    brief: "Evaluates the OPA policy for a request."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+      error_status: false
+    attributes:
+      - ref: authorization.action
+        examples: ["deny"]
+      - ref: authorization.duration_ms
+      - ref: authorization.method
+      - ref: authorization.protocol
+      - ref: authorization.result_code
+      - ref: authorization.target_server_name
+      - ref: authorization.tool_name
+  - type: extproc.token_exchange
+    name:
+      templates: ["extproc.token_exchange"]
+    kind: server
+    brief: "Token exchange in ExtProc."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+      error_status: true
+    attributes:
+      - ref_group: attributes.token_exchange.diagnostic.extproc
+      - ref: error.type
+        examples: ["assertion_expired", "caller_canceled", "circuit_open", "configuration", "internal", "invalid_response", "none", "rejected", "unavailable"]
+      - ref: token_exchange.broker_status_code
+      - ref: token_exchange.dependency
+      - ref: token_exchange.oauth_error_code
+      - ref: token_exchange.operation
+
+metrics:
+  - name: extproc.approval.gate.decisions
+    brief: "Approval gate decisions in ExtProc."
+    instrument: counter
+    unit: ""
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+    attributes:
+      - ref: outcome
+        examples: ["deny", "elicit", "proceed"]
+  - name: extproc.approval.sync_age
+    brief: "Seconds since the last successful approval sync."
+    instrument: gauge
+    unit: "s"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+  - name: extproc.token_exchange.duration
+    brief: "Duration of token exchange requests in seconds."
+    instrument: histogram
+    unit: "s"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+    attributes:
+      - ref_group: attributes.token_exchange.diagnostic.extproc
+  - name: extproc.token_exchange.requests
+    brief: "Total number of token exchange requests processed by ExtProc."
+    instrument: counter
+    unit: ""
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: extproc
+    attributes:
+      - ref_group: attributes.token_exchange.diagnostic.extproc

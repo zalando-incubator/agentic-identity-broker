@@ -1,0 +1,210 @@
+# Telemetry of the instrumentation scope `approval`.
+file_format: definition/2
+
+attributes:
+  - key: agent_id
+    type: string
+    brief: "ID of the agent that requested the approvals."
+    stability: development
+  - key: approval.agent_id
+    type: string
+    brief: "ID of the agent that asked to call the tool."
+    stability: development
+  - key: approval.count
+    type: int
+    brief: "Number of approvals in the list that the call returns."
+    stability: development
+  - key: approval.id
+    type: string
+    brief: "ID of the tool approval."
+    stability: development
+  - key: approval.is_new
+    type: boolean
+    brief: "Whether the call created the approval. It is `false` when the call returned an existing approval for the same request."
+    stability: development
+  - key: approval.pair_count
+    type: int
+    brief: "Number of principal and agent pairs in the sync state."
+    stability: development
+  - key: approval.persistence
+    type:
+      members:
+        - {id: once, value: "once", stability: development}
+        - {id: permanent, value: "permanent", stability: development}
+        - {id: session, value: "session", stability: development}
+    brief: "Persistence scope of the approval decision."
+    stability: development
+  - key: approval.principal
+    type: string
+    brief: "Principal that the approval belongs to."
+    stability: development
+  - key: approval.status
+    type:
+      members:
+        - {id: approved, value: "approved", stability: development}
+        - {id: denied, value: "denied", stability: development}
+        - {id: pending, value: "pending", stability: development}
+    brief: "Lifecycle state of the tool approval."
+    stability: development
+  - key: approval.sync_version
+    type: int
+    brief: "Version of the approval sync state. A change to an approval increments it."
+    stability: development
+  - key: approval.tool_name
+    type: string
+    brief: "Name of the tool that the agent asked to call."
+    stability: development
+  - key: approval.tool_pattern
+    type: string
+    brief: "Tool pattern that the approval covers."
+    stability: development
+
+spans:
+  - type: approval.approve
+    name:
+      templates: ["approval.approve"]
+    kind: internal
+    brief: "Transitions a pending approval to approved."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.id
+      - ref: approval.persistence
+      - ref: approval.principal
+      - ref: approval.tool_name
+      - ref: approval.tool_pattern
+  - type: approval.consume
+    name:
+      templates: ["approval.consume"]
+    kind: internal
+    brief: "Marks an approved approval with persistence `once` as consumed."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.agent_id
+      - ref: approval.id
+      - ref: approval.tool_name
+  - type: approval.created
+    name:
+      templates: ["approval.created"]
+    kind: internal
+    brief: "Creates a pending approval, or returns the existing one."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.agent_id
+      - ref: approval.id
+      - ref: approval.is_new
+      - ref: approval.principal
+      - ref: approval.tool_name
+  - type: approval.deny
+    name:
+      templates: ["approval.deny"]
+    kind: internal
+    brief: "Transitions a pending approval to denied."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.id
+      - ref: approval.principal
+      - ref: approval.tool_name
+  - type: approval.list_pending
+    name:
+      templates: ["approval.list_pending"]
+    kind: internal
+    brief: "Lists the pending approvals of a principal."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.count
+      - ref: approval.principal
+  - type: approval.list_permanent
+    name:
+      templates: ["approval.list_permanent"]
+    kind: internal
+    brief: "Lists the permanent approvals and denials of a principal."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.count
+      - ref: approval.principal
+  - type: approval.review
+    name:
+      templates: ["approval.review"]
+    kind: internal
+    brief: "Retrieves an approval by ID for the approval view."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.id
+      - ref: approval.principal
+      - ref: approval.status
+      - ref: approval.tool_name
+  - type: approval.revoke
+    name:
+      templates: ["approval.revoke"]
+    kind: internal
+    brief: "Transitions a permanent approval to denied."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.agent_id
+      - ref: approval.id
+      - ref: approval.tool_name
+  - type: approval.sync
+    name:
+      templates: ["approval.sync"]
+    kind: internal
+    brief: "Returns the sync version and the active approvals, grouped by principal and agent."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+      error_status: false
+    attributes:
+      - ref: approval.pair_count
+      - ref: approval.sync_version
+
+metrics:
+  - name: approvals_pending_total
+    brief: "Number of pending tool approvals."
+    instrument: updowncounter
+    unit: "{approval}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval
+    attributes:
+      - ref: agent_id
+  - name: long_poll_connections_active
+    brief: "Number of active long-poll connections."
+    instrument: updowncounter
+    unit: "{connection}"
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: approval

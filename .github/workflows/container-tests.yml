@@ -68,8 +68,34 @@ jobs:
           tool: just
       - name: Install development tools
         run: just install-tools
+      # The PostgreSQL repository tests send their telemetry to Weaver, which compares it with
+      # telemetry/registry (coding-standards/OPENTELEMETRY.md section 9).
+      - name: Install Weaver
+        run: bash scripts/install-weaver.sh
+      - name: Start telemetry live check
+        id: live-check
+        uses: open-telemetry/weaver/.github/actions/weaver-live-check-start@51a5bf95bdbb2e20fb6e16638e6bbe7dde911e93 # v0.28.0
+        with:
+          registry: telemetry/registry
+          config: telemetry/live-check.toml
+          # Not the default ports: the tests point the broker's own exporter at localhost:4317
+          # and expect no listener there.
+          otlp-grpc-port: "14317"
+          admin-port: "14320"
       - name: Infra integration suites with JUnit
+        env:
+          TELEMETRY_LIVE_CHECK_ENDPOINT: ${{ steps.live-check.outputs.otlp-grpc-endpoint }}
         run: just verify-integration-infra-junit
+      - name: Stop telemetry live check
+        id: live-check-report
+        if: always() && steps.live-check.outcome == 'success'
+        uses: open-telemetry/weaver/.github/actions/weaver-live-check-stop@51a5bf95bdbb2e20fb6e16638e6bbe7dde911e93 # v0.28.0
+        with:
+          report-artifact-name: telemetry-live-check-integration-infra
+      # A run that sends no telemetry has no findings, so the stop action passes it.
+      - name: Fail when the live check received no telemetry
+        if: steps.live-check-report.outputs.samples == '0'
+        run: exit 1
       - name: Upload infra integration test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

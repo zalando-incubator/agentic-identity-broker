@@ -1,0 +1,167 @@
+# Telemetry of the instrumentation scope `tokenexchange`.
+file_format: definition/2
+
+attributes:
+  - key: impersonation.target_agent_id
+    type: string
+    brief: "ID of the agent that the impersonation request names as its audience."
+    stability: development
+  - key: token_exchange.agent.id
+    type: string
+    brief: "ID of the agent that the exchange is for. Set after the broker resolves a registered agent."
+    stability: development
+  - key: token_exchange.grant.id
+    type: string
+    brief: "ID of the user grant for the agent. Set when the broker found the grant, also when it is expired."
+    stability: development
+  - key: token_exchange.grant.updated_at
+    type: string
+    brief: "Time of the last change to the grant, in UTC as RFC 3339."
+    stability: development
+  - key: token_exchange.grant.valid_until
+    type: string
+    brief: "Expiry time of the grant, in UTC as RFC 3339. Absent when the grant does not expire."
+    stability: development
+  - key: token_exchange.service.id
+    type: string
+    brief: "Registered ID of the service."
+    stability: development
+  - key: token_exchange.session.dependency
+    type:
+      members:
+        - {id: credential_source, value: "credential_source", stability: development}
+        - {id: encryption, value: "encryption", stability: development}
+        - {id: none, value: "none", stability: development}
+        - {id: provider, value: "provider", stability: development}
+        - {id: provider_repository, value: "provider_repository", stability: development}
+        - {id: session_repository, value: "session_repository", stability: development}
+        - {id: signing, value: "signing", stability: development}
+    brief: "Dependency of the failed session operation, such as the provider or the session repository."
+    stability: development
+  - key: token_exchange.session.detail
+    type:
+      members:
+        - {id: access_token_expired, value: "access_token_expired", stability: development}
+        - {id: caller_canceled, value: "caller_canceled", stability: development}
+        - {id: configuration, value: "configuration", stability: development}
+        - {id: credential_source_unavailable, value: "credential_source_unavailable", stability: development}
+        - {id: decryption_failed, value: "decryption_failed", stability: development}
+        - {id: encryption_failed, value: "encryption_failed", stability: development}
+        - {id: internal_unclassified, value: "internal_unclassified", stability: development}
+        - {id: persistence_failed, value: "persistence_failed", stability: development}
+        - {id: provider_client_rejected, value: "provider_client_rejected", stability: development}
+        - {id: provider_rejected, value: "provider_rejected", stability: development}
+        - {id: provider_response_invalid, value: "provider_response_invalid", stability: development}
+        - {id: provider_unavailable, value: "provider_unavailable", stability: development}
+        - {id: refresh_rejected, value: "refresh_rejected", stability: development}
+        - {id: refresh_unavailable, value: "refresh_unavailable", stability: development}
+        - {id: repository_unavailable, value: "repository_unavailable", stability: development}
+        - {id: session_missing, value: "session_missing", stability: development}
+    brief: "Detail code of the failed session operation."
+    stability: development
+  - key: token_exchange.session.kind
+    type:
+      members:
+        - {id: canceled, value: "canceled", stability: development}
+        - {id: configuration, value: "configuration", stability: development}
+        - {id: infrastructure, value: "infrastructure", stability: development}
+        - {id: internal, value: "internal", stability: development}
+        - {id: provider, value: "provider", stability: development}
+        - {id: session, value: "session", stability: development}
+    brief: "Class of the session failure, such as a provider or an infrastructure failure."
+    stability: development
+  - key: token_exchange.session.oauth_code
+    type: string
+    brief: "OAuth error code that the provider returned. Set only for codes on the allowlist."
+    stability: development
+  - key: token_exchange.session.operation
+    type:
+      members:
+        - {id: code_exchange, value: "code_exchange", stability: development}
+        - {id: refresh, value: "refresh", stability: development}
+        - {id: scope_validation, value: "scope_validation", stability: development}
+        - {id: session_lookup, value: "session_lookup", stability: development}
+        - {id: unknown, value: "unknown", stability: development}
+    brief: "Session operation that failed."
+    stability: development
+  - key: token_exchange.session.status_code
+    type: int
+    brief: "HTTP status code that the provider returned. Absent when the failure has none."
+    stability: development
+
+attribute_groups:
+  - id: attributes.token_exchange.diagnostic.broker
+    visibility: internal
+    attributes:
+      - ref: token_exchange.exchange_kind
+        examples: ["impersonation", "third_party"]
+      - ref: token_exchange.failure_detail
+        examples: ["access_token_expired", "agent_invalid", "agent_missing", "agent_repository_unavailable", "caller_canceled", "cel_configuration", "cel_evaluation_failed", "client_expired", "client_invalid", "client_policy_denied", "credential_identity_changed", "credential_source_unavailable", "grant_empty", "grant_expired", "grant_missing", "grant_permission_set_missing", "grant_permission_set_undeclared", "grant_repository_unavailable", "grant_scope_intersection_empty", "grant_service_definition_missing", "grant_service_omitted", "grant_service_requirement_excluded", "internal_unclassified", "jwks_unavailable", "jwt_configuration", "none", "provider_client_rejected", "provider_rejected", "provider_response_invalid", "provider_unavailable", "refresh_rejected", "refresh_unavailable", "request_malformed", "resource_ambiguous", "resource_missing", "resource_repository_unavailable", "resource_unregistered", "response_write_failed", "session_configuration", "session_decryption_failed", "session_encryption_failed", "session_missing", "session_persistence_failed", "session_repository_unavailable", "session_scope_insufficient", "subject_category_ineligible", "subject_category_unsupported", "subject_expired", "subject_invalid"]
+      - ref: token_exchange.failure_stage
+      - ref: token_exchange.outcome
+      - ref: token_exchange.recovery_action
+      - ref: token_exchange.recovery_target
+  - id: attributes.tokenexchange.exchange
+    visibility: internal
+    attributes:
+      - ref: impersonation.target_agent_id
+      - ref: token_exchange.agent.id
+      - ref: token_exchange.grant.id
+      - ref: token_exchange.grant.updated_at
+      - ref: token_exchange.grant.valid_until
+      - ref: token_exchange.service.id
+      - ref: token_exchange.session.dependency
+      - ref: token_exchange.session.detail
+      - ref: token_exchange.session.kind
+      - ref: token_exchange.session.oauth_code
+      - ref: token_exchange.session.operation
+      - ref: token_exchange.session.status_code
+
+spans:
+  - type: tokenexchange.exchange
+    name:
+      templates: ["tokenexchange.exchange"]
+    kind: internal
+    brief: "RFC 8693 token exchange request in the broker."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: tokenexchange
+      error_status: true
+    attributes:
+      - ref_group: attributes.token_exchange.diagnostic.broker
+      - ref_group: attributes.tokenexchange.exchange
+  - type: tokenexchange.get_valid_access_token
+    name:
+      templates: ["tokenexchange.get_valid_access_token"]
+    kind: internal
+    brief: "Gets a valid access token for the session, and refreshes it when a refresh token is available."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: tokenexchange
+      error_status: false
+  - type: tokenexchange.impersonation
+    name:
+      templates: ["tokenexchange.impersonation"]
+    kind: internal
+    brief: "RFC 8693 impersonation request in the broker."
+    note: "The `tokenexchange.exchange` span, renamed while it runs. It has the same attributes."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: tokenexchange
+      error_status: true
+    attributes:
+      - ref_group: attributes.token_exchange.diagnostic.broker
+      - ref_group: attributes.tokenexchange.exchange
+  - type: tokenexchange.verify_agent_access
+    name:
+      templates: ["tokenexchange.verify_agent_access"]
+    kind: internal
+    brief: "Checks that the principal has an active grant for the agent."
+    stability: development
+    requirement_level: recommended
+    annotations:
+      scope: tokenexchange
+      error_status: false

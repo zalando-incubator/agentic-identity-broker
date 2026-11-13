@@ -1,0 +1,174 @@
+# Attributes that more than one instrumentation scope sets.
+file_format: definition/2
+
+attributes:
+  - key: error.type
+    type:
+      members:
+        - {id: assertion_expired, value: "assertion_expired", stability: development}
+        - {id: caller_canceled, value: "caller_canceled", stability: development}
+        - {id: circuit_open, value: "circuit_open", stability: development}
+        - {id: configuration, value: "configuration", stability: development}
+        - {id: conflict, value: "conflict", brief: "Operation conflicts with existing data.", stability: development}
+        - {id: connection, value: "connection", brief: "Storage backend connection failed or disconnected.", stability: development}
+        - {id: internal, value: "internal", stability: development}
+        - {id: invalid_response, value: "invalid_response", stability: development}
+        - {id: jwks_unavailable, value: "jwks_unavailable", stability: development}
+        - {id: network_error, value: "network_error", stability: development}
+        - {id: none, value: "none", stability: development}
+        - {id: not_found, value: "not_found", brief: "Requested entity does not exist.", stability: development}
+        - {id: rejected, value: "rejected", stability: development}
+        - {id: response_close_failed, value: "response_close_failed", stability: development}
+        - {id: response_read_failed, value: "response_read_failed", stability: development}
+        - {id: timeout, value: "timeout", brief: "Operation exceeded its timeout deadline.", stability: development}
+        - {id: unavailable, value: "unavailable", stability: development}
+        - {id: unknown, value: "unknown", brief: "Error cause is unknown or unexpected.", stability: development}
+        - {id: validation, value: "validation", brief: "Input validation failed.", stability: development}
+    brief: "Class of the error. Set when the operation fails."
+    stability: development
+  - key: http.request.method
+    type: string
+    brief: "HTTP method: an allowlisted method, `_OTHER` otherwise."
+    stability: development
+  - key: http.response.status_code
+    type: int
+    brief: "HTTP status code."
+    stability: development
+  - key: outcome
+    type:
+      members:
+        - {id: aborted, value: "aborted", stability: development}
+        - {id: canceled, value: "canceled", stability: development}
+        - {id: completed, value: "completed", stability: development}
+        - {id: deny, value: "deny", stability: development}
+        - {id: elicit, value: "elicit", stability: development}
+        - {id: proceed, value: "proceed", stability: development}
+        - {id: rejected, value: "rejected", stability: development}
+    brief: "Result of the operation that the metric records. Each metric has its own values."
+    stability: development
+  - key: token_exchange.exchange_kind
+    type:
+      members:
+        - {id: impersonation, value: "impersonation", stability: development}
+        - {id: third_party, value: "third_party", stability: development}
+        - {id: unknown, value: "unknown", stability: development}
+    brief: "Kind of exchange: a third-party service token or user impersonation. ExtProc sets `unknown` when it cannot tell."
+    stability: development
+  - key: token_exchange.failure_detail
+    type:
+      members:
+        - {id: access_token_expired, value: "access_token_expired", stability: development}
+        - {id: agent_invalid, value: "agent_invalid", stability: development}
+        - {id: agent_missing, value: "agent_missing", stability: development}
+        - {id: agent_repository_unavailable, value: "agent_repository_unavailable", stability: development}
+        - {id: authorization_denied, value: "authorization_denied", stability: development}
+        - {id: broker_response_invalid, value: "broker_response_invalid", stability: development}
+        - {id: broker_unavailable, value: "broker_unavailable", stability: development}
+        - {id: caller_canceled, value: "caller_canceled", stability: development}
+        - {id: cel_configuration, value: "cel_configuration", stability: development}
+        - {id: cel_evaluation_failed, value: "cel_evaluation_failed", stability: development}
+        - {id: circuit_open, value: "circuit_open", stability: development}
+        - {id: client_expired, value: "client_expired", stability: development}
+        - {id: client_invalid, value: "client_invalid", stability: development}
+        - {id: client_policy_denied, value: "client_policy_denied", stability: development}
+        - {id: configuration, value: "configuration", stability: development}
+        - {id: consent_required, value: "consent_required", stability: development}
+        - {id: credential_identity_changed, value: "credential_identity_changed", stability: development}
+        - {id: credential_rejected, value: "credential_rejected", stability: development}
+        - {id: credential_source_unavailable, value: "credential_source_unavailable", stability: development}
+        - {id: grant_empty, value: "grant_empty", stability: development}
+        - {id: grant_expired, value: "grant_expired", stability: development}
+        - {id: grant_missing, value: "grant_missing", stability: development}
+        - {id: grant_permission_set_missing, value: "grant_permission_set_missing", stability: development}
+        - {id: grant_permission_set_undeclared, value: "grant_permission_set_undeclared", stability: development}
+        - {id: grant_repository_unavailable, value: "grant_repository_unavailable", stability: development}
+        - {id: grant_scope_intersection_empty, value: "grant_scope_intersection_empty", stability: development}
+        - {id: grant_service_definition_missing, value: "grant_service_definition_missing", stability: development}
+        - {id: grant_service_omitted, value: "grant_service_omitted", stability: development}
+        - {id: grant_service_requirement_excluded, value: "grant_service_requirement_excluded", stability: development}
+        - {id: internal_unclassified, value: "internal_unclassified", stability: development}
+        - {id: jwks_unavailable, value: "jwks_unavailable", stability: development}
+        - {id: jwt_configuration, value: "jwt_configuration", stability: development}
+        - {id: none, value: "none", stability: development}
+        - {id: policy_configuration, value: "policy_configuration", stability: development}
+        - {id: policy_denied, value: "policy_denied", stability: development}
+        - {id: policy_evaluation_failed, value: "policy_evaluation_failed", stability: development}
+        - {id: provider_client_rejected, value: "provider_client_rejected", stability: development}
+        - {id: provider_rejected, value: "provider_rejected", stability: development}
+        - {id: provider_response_invalid, value: "provider_response_invalid", stability: development}
+        - {id: provider_unavailable, value: "provider_unavailable", stability: development}
+        - {id: reauth_required, value: "reauth_required", stability: development}
+        - {id: refresh_rejected, value: "refresh_rejected", stability: development}
+        - {id: refresh_unavailable, value: "refresh_unavailable", stability: development}
+        - {id: request_malformed, value: "request_malformed", stability: development}
+        - {id: resource_ambiguous, value: "resource_ambiguous", stability: development}
+        - {id: resource_missing, value: "resource_missing", stability: development}
+        - {id: resource_repository_unavailable, value: "resource_repository_unavailable", stability: development}
+        - {id: resource_unregistered, value: "resource_unregistered", stability: development}
+        - {id: response_write_failed, value: "response_write_failed", stability: development}
+        - {id: session_configuration, value: "session_configuration", stability: development}
+        - {id: session_decryption_failed, value: "session_decryption_failed", stability: development}
+        - {id: session_encryption_failed, value: "session_encryption_failed", stability: development}
+        - {id: session_missing, value: "session_missing", stability: development}
+        - {id: session_persistence_failed, value: "session_persistence_failed", stability: development}
+        - {id: session_reauth_required, value: "session_reauth_required", stability: development}
+        - {id: session_repository_unavailable, value: "session_repository_unavailable", stability: development}
+        - {id: session_scope_insufficient, value: "session_scope_insufficient", stability: development}
+        - {id: subject_category_ineligible, value: "subject_category_ineligible", stability: development}
+        - {id: subject_category_unsupported, value: "subject_category_unsupported", stability: development}
+        - {id: subject_expired, value: "subject_expired", stability: development}
+        - {id: subject_invalid, value: "subject_invalid", stability: development}
+    brief: "Detail code of the failure. An unclassified failure has `internal_unclassified`, and a successful metric observation has `none`."
+    stability: development
+  - key: token_exchange.failure_stage
+    type:
+      members:
+        - {id: client_authorization, value: "client_authorization", stability: development}
+        - {id: client_validation, value: "client_validation", stability: development}
+        - {id: exchange_routing, value: "exchange_routing", stability: development}
+        - {id: grant_authorization, value: "grant_authorization", stability: development}
+        - {id: identity_resolution, value: "identity_resolution", stability: development}
+        - {id: none, value: "none", stability: development}
+        - {id: refresh, value: "refresh", stability: development}
+        - {id: request_validation, value: "request_validation", stability: development}
+        - {id: resource_resolution, value: "resource_resolution", stability: development}
+        - {id: response_write, value: "response_write", stability: development}
+        - {id: scope_validation, value: "scope_validation", stability: development}
+        - {id: session_lookup, value: "session_lookup", stability: development}
+        - {id: subject_validation, value: "subject_validation", stability: development}
+    brief: "Step of the exchange that failed. A successful metric observation has `none`."
+    stability: development
+  - key: token_exchange.outcome
+    type:
+      members:
+        - {id: authentication_failed, value: "authentication_failed", stability: development}
+        - {id: authorization_denied, value: "authorization_denied", stability: development}
+        - {id: canceled, value: "canceled", stability: development}
+        - {id: configuration_error, value: "configuration_error", stability: development}
+        - {id: infrastructure_error, value: "infrastructure_error", stability: development}
+        - {id: invalid_request, value: "invalid_request", stability: development}
+        - {id: reauth_required, value: "reauth_required", stability: development}
+        - {id: success, value: "success", stability: development}
+    brief: "Result class of the exchange, such as `success`, `authorization_denied` or `reauth_required`."
+    stability: development
+  - key: token_exchange.recovery_action
+    type:
+      members:
+        - {id: fix_configuration, value: "fix_configuration", stability: development}
+        - {id: none, value: "none", stability: development}
+        - {id: reauthenticate, value: "reauthenticate", stability: development}
+        - {id: reconsent, value: "reconsent", stability: development}
+        - {id: retry, value: "retry", stability: development}
+    brief: "Recommended way to repair the failure. It is a diagnostic hint, not an instruction to retry."
+    stability: development
+  - key: token_exchange.recovery_target
+    type:
+      members:
+        - {id: broker_configuration, value: "broker_configuration", stability: development}
+        - {id: calling_client, value: "calling_client", stability: development}
+        - {id: consent, value: "consent", stability: development}
+        - {id: none, value: "none", stability: development}
+        - {id: provider_session, value: "provider_session", stability: development}
+        - {id: subject_identity, value: "subject_identity", stability: development}
+    brief: "What the recovery action applies to, such as the consent or the provider session."
+    stability: development
