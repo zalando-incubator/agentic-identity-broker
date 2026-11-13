@@ -29,3 +29,9 @@ func (te *TokenExchanger) TripCircuitBreaker(n int) {
 		})
 	}
 }
+
+// SetClock replaces the server clock used for delegation deadline checks.
+func (s *Server) SetClock(now func() time.Time) { s.now = now }
+
+// ContextInputFromDelegation exposes the enabled-mode policy-context mapping.
+var ContextInputFromDelegation = contextInputFromDelegation

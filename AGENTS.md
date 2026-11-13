@@ -203,6 +203,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc delegation resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
 
 ## Domain Glossary
 
@@ -231,6 +232,11 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
+| **Delegation Decision** | AuthZEN evaluation outcome: permit with a Delegation Context and ≤60 s freshness, consent denial with a grant detail and consent URL, or a request failure that is never a decision. |
+| **Delegation Context** | Credential-free projection of an authorized delegation: principal, agent, resource and effective scopes, grant version and expiry, granted permission sets. Unset canonical IDs are omitted. |
+| **ExchangeResultBinding** | Permit principal, agent UUID, sorted, de-duplicated resource scope set and grant update instant that atomically first claimed an exchange-result handle. Exchange response identities must match the permit before claim; mismatch fails closed. Shared results cannot be rebound; new identities may carry identical provider bytes. This guarantees compatible reuse, not provider downscoping or exchange provenance, and is not IETF Token Binding proof of possession (ADR 048 §10). |
+| **PermitResolver** | ExtProc port and permit-cache implementation (`server.PermitResolver`, `delegation.PermitResolver`), distinct from the broker's invariant-enforcing `tokenexchange.DelegationResolver`. The permit's wire `subject.id` becomes the principal for OPA. Enabled mode checks it against the exchange-response approval identity under ADR 036; it does not replace that identity. |
+| **PDP identifier** | AuthZEN `policy_decision_point`: the end-user public URL without a trailing slash, compared exactly by consumers before sending credentials. |
 | **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
 
 ## Development Workflow

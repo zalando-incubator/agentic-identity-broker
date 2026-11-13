@@ -97,6 +97,13 @@ func (m *mockExchanger) Exchange(ctx context.Context, subjectToken, resourceURI 
 	return m.exchangeFunc(ctx, subjectToken, resourceURI)
 }
 
+func (m *mockExchanger) ExchangeBound(ctx context.Context, subject, resource string, observed *server.ExchangeResult, _ server.ExchangeResultBinding) (server.ExchangeResult, error) {
+	if observed != nil {
+		return *observed, nil
+	}
+	return m.Exchange(ctx, subject, resource)
+}
+
 func (m *mockExchanger) Shutdown() {
 	m.shutdownCalled = true
 }

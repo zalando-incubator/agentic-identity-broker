@@ -126,8 +126,10 @@ func actorFromContext(ctx context.Context) string {
 	return security.NormalizeActor(actor.String())
 }
 
+// shouldDeferSecurityContextFinalization selects the machine-facing routes whose verified
+// actor and calling peer are known only after credential validation (ADR 033, ADR 048).
 func shouldDeferSecurityContextFinalization(r *http.Request) bool {
-	return r.Method == http.MethodPost && r.URL.Path == "/oauth2/token"
+	return r.Method == http.MethodPost && (r.URL.Path == "/oauth2/token" || r.URL.Path == "/access/v1/evaluation")
 }
 
 // FinalizeRequestSecurityContext finalizes a still-open deferred capture holder

@@ -39,6 +39,7 @@ type TokenExchangeError struct {
 var (
 	ErrResourceUnregistered = errors.New("requested resource is not registered")
 	ErrResourceAmbiguous    = errors.New("registered resource configuration is ambiguous")
+	ErrAgentAnchorMismatch  = errors.New("context agent does not match the resolved agent")
 )
 
 func (e *TokenExchangeError) Diagnostic() Diagnostic {
