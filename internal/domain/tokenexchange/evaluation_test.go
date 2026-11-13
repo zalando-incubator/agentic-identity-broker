@@ -170,6 +170,21 @@ func (f *evaluationFixture) request(t *testing.T) AccessEvaluationRequest {
 	}
 }
 
+func TestAccessEvaluation_GrantBindingPreservesUpdateInstant(t *testing.T) {
+	f := newEvaluationFixture(t)
+	f.grant.UpdatedAt = time.Date(2026, 10, 26, 9, 59, 0, 123456789, time.UTC)
+	svc := f.newService(t)
+	first := svc.Evaluate(context.Background(), f.request(t), f.token(t, nil))
+	require.Equal(t, DecisionPermit, first.Kind)
+	firstInstant, err := time.Parse(time.RFC3339Nano, first.Context.Grant.UpdatedAt)
+	require.NoError(t, err)
+	assert.True(t, firstInstant.Equal(f.grant.UpdatedAt), "the RFC 3339 binding value must retain the actual grant instant")
+	f.grant.UpdatedAt = f.grant.UpdatedAt.Add(time.Nanosecond)
+	second := svc.Evaluate(context.Background(), f.request(t), f.token(t, nil))
+	require.Equal(t, DecisionPermit, second.Kind)
+	assert.NotEqual(t, first.Context.Grant.UpdatedAt, second.Context.Grant.UpdatedAt, "unchanged scopes with a new grant instant cannot reuse a binding")
+}
+
 func TestAccessEvaluation_PermitProjectsCredentialFreeContext(t *testing.T) {
 	t.Parallel()
 	f := newEvaluationFixture(t)
@@ -189,7 +204,7 @@ func TestAccessEvaluation_PermitProjectsCredentialFreeContext(t *testing.T) {
 		"agent": {"id": "` + f.agent.ID.String() + `", "canonical_id": "data-assistant"},
 		"resource": {"service_id": "` + f.service.ID.String() + `", "canonical_id": "repo-api",
 			"resource_uri": "https://api.example.com/repos", "scopes": ["read:repo"]},
-		"grant": {"id": "` + f.grant.ID.String() + `", "updated_at": "` + f.grant.UpdatedAt.UTC().Format(time.RFC3339) + `"},
+		"grant": {"id": "` + f.grant.ID.String() + `", "updated_at": "` + f.grant.UpdatedAt.UTC().Format(time.RFC3339Nano) + `"},
 		"permission_sets": [
 			{"id": "` + f.writerPSID.String() + `", "services": [
 				{"id": "` + f.otherSvcID.String() + `", "scopes": []},

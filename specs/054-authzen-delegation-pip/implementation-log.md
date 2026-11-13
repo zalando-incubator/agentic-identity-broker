@@ -994,3 +994,60 @@ with the remaining concurrency/terminal-conflict test authoring and US3.13, then
 runtime and green verification under the supplied approval. Container-backed US2.19,
 `just test-e2e-docker`, `just test-integration-infra` and Agentgateway suites are deferred to
 downstream tests on the pushed commit, never claimed validated locally or a sandbox blocker.
+
+## 20. Binding implementation continuation — run 42527822363/1
+
+The supplied approval is unchanged: mjungsbluth, 2026-11-06T15:30:38Z, https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728. ADR-2/API-7/ADR-3/D-7/D-8 are covered; T001/T103/T104 remain completed.
+
+### Test-first checkpoint (before runtime binding)
+
+Minimal compiling TokenBinding/result-handle/ExchangeBound signatures retain the old behavior only. New port tests cover atomic claiming, detached/matching/replaced identity, compatible and incompatible replacements, joined retry delivery (including zero-lifetime result), terminal conflict, exchange failure, and credential-safe log-only diagnostics. Server port stubs require binding after precedence and before buffering, and exact terminal API-7 mapping on both paths.
+
+- `go test ./internal/extproc/server -run 'TestBindingPort|TestTokenBinding_|TestDelegation.*Expir' -count=1`: semantic failures for missing claims/replacement exchanges; existing equality/disabled controls pass.
+- `go test ./internal/extproc/server -run 'TestBindingPort|TestDelegation_BindingPort' -count=1`: semantic failures for missing claim, missing retry-flight participation, missing mismatch diagnostic and absent binding-port invocation; tests compile.
+- `ginkgo --label-filter='delegation-context' --focus='shared retry|reauthorized reader token|without claiming provider' ./tests/e2e/`: all three scenarios compile and fail semantically. US3.11/US3.12 exchange counts remain 1 rather than 2; new US3.13 fails to reach the required binding-validation barrier because the server never calls ExchangeBound. The new journey uses independent production resolver instances against the real broker, differing live grant snapshots, a shared production exchanger and a response barrier around the real broker's retry. It checks winner forwarding, loser terminal 503 and same-token replacement survival.
+
+Runtime implementation and green verification follow this checkpoint; no historical D-6 evidence is substituted for this red run.
+
+### Implementation and corrections
+
+- `de74ea2a` isolates the behavior-preserving exchanger extraction: shared flights return the original broker outcome and each caller applies the existing stale fallback. On a clean checkout with only this refactor applied, `go test -race ./internal/extproc/server -skip 'TestTokenBinding_|TestDelegation_RejectsExpiryDuringBinding' -count=1` passed unchanged pre-existing regression assertions. The exclusions are the already-red binding continuation, not validation of those cases. Enabled retries can now forbid stale fallback per caller without changing the singleflight key or breaker accounting.
+- Every successful result now has an opaque shared handle, including zero-lifetime successes. `ExchangeBound` normalizes copied scope sets, atomically claims once, compares grant instants, deletes only its observed identity, preserves compatible replacements, and retries at most once without incompatible success-cache reuse or stale fallback. Retry conflict returns the exact API-7 503 with no rebind/deletion/forwarding. Body and header-only paths use the validated permit and retain the original deadline through final forwarding.
+- The real-broker journeys exposed truncation of grant update instants. `TestAccessEvaluation_GrantBindingPreservesUpdateInstant` failed semantically before the producer correction: fractional instants became the same whole-second string, losing same-scope version changes. RFC3339Nano preserves the approved grant-instant binding within the existing date-time contract; it introduces no field, token claim, key/default, schema or dependency. Whole-second instants serialize unchanged. The projection expectation was updated to retain, not round, that instant. The test and both narrowing/concurrency journeys now pass.
+- The timeout fixture now drains its request body before awaiting HTTP cancellation; otherwise httptest cleanup waits indefinitely because the server has not consumed the request. All timeout/error assertions remain intact. The pre-policy expiry test now asserts the stronger approved API-7 boundary: an already-expired permit gets 503 before Authorization mutation or buffering, rather than waiting for the body phase. Buffering/batch/approval expiry coverage remains enabled.
+- `TestTokenBindingFormattingDoesNotExposeGrantOrScopes` failed before adding redacted String/GoString/LogValue implementations. The Debug mismatch field is log-only; buffer/telemetry tests reject credential, scope, principal and resource markers, and assert binding adds no span or instrument.
+- Architecture, glossary, ExtProc guidance and operator references document ownership, same-token/new-generation reuse, bounded retry, unchanged cooldown/disabled behavior, and the explicitly approved provider/provenance limitations. No stronger downscoping or exchange-version guarantee is claimed.
+
+### Current scenario mapping and green evidence
+
+| Scenario / gate | Location / result |
+|---|---|
+| US3.11 | `tests/e2e/delegation_context_journey_test.go:330-365`: real consent narrowing and provider re-authorization; success and failed replacement on both paths; red then green. |
+| US3.12 | `tests/e2e/delegation_context_journey_test.go:366-390`: consent narrowing with unchanged broader provider session; new result identity and identical token bytes on both paths; red then green. |
+| US3.13 | `tests/e2e/delegation_context_journey_test.go:391-467`: independent production resolver/server instances share one production exchanger; controlled real-broker grant reads yield different live permits; both join one held retry; exactly one winner forwards, loser returns terminal 503, winner's identical-token replacement survives. Initial missing binding-port invocation was semantically red; complete journey now green on both paths. |
+| Port outcomes / diagnostics | `internal/extproc/server/token_binding_test.go`: claim/replacement/detached outcomes, shared retry compatibility/conflict/failure including actual zero-lifetime results, redacted formatting and log-only credential safety. |
+| Server integration | `internal/extproc/server/delegation_test.go`: binding-aware stubs pin precedence, evaluated permit, terminal API-7 and pre-buffer/final-forward expiry; prior cache/timeout/cancellation/claim tests remain active. |
+| `go test -race ./internal/extproc/server ./internal/domain/tokenexchange -count=1 -timeout=90s` | Pass. |
+| `just check` | Pass, zero lint issues; final formatting/vet/lint checks pass. |
+| `just test` | Pass, complete fast Go/package race suite. |
+| `just extproc-test` | Pass, complete ExtProc/command race suites. |
+| `just test-integration` | Pass, self-contained suite including producer/consumer contracts. |
+| `just web-test` | Pass. |
+| `just cdk-test` | Pass. |
+| `just mock-sample-agent-test` | Pass. |
+| `just mock-upstream-oauth2-test` | Pass. |
+| `bash "$SECURITY_SCAN_SCRIPT" .` | Pass with the workflow-prepared default-branch scanners and existing advisory exclusions unchanged. |
+| `just docs-build` | Pass. The newly added ADR reference uses a repository URL so the site does not resolve it as a nonexistent local documentation route; no broken-link suppression. |
+| `just test-e2e-backend` | Pass, 1002 non-container/non-performance scenarios including all 14 consumer journeys. |
+| `just test-e2e-frontend` | Pass, all 67 scenarios. |
+| `ginkgo -v --no-color --procs=2 --skip='Agentgateway' ./tests/e2e/extproc/` | Pass, 103 non-container scenarios; 17 container Agentgateway scenarios excluded/deferred, not validated. |
+| `ginkgo --no-color --label-filter='authzen-delegation && !docker' ./tests/e2e/` | Pass, 28 local broker feature scenarios. |
+| `ginkgo --no-color --label-filter='delegation-context' ./tests/e2e/` | Pass, 14 consumer scenarios. |
+| `ginkgo --no-color --label-filter='delegation-context-startup' ./tests/e2e/extproc/` | Pass, 4 startup scenarios. |
+| `ginkgo --no-color --label-filter='delegation-context' --focus='shared retry' --repeat=4 ./tests/e2e/` | Pass, five consecutive executions, both body/header-only paths in each. |
+
+### Completion and downstream boundary
+
+All 124 tasks are checked; all 16 specification-quality checklist markers remain reviewer-owned and already checked. The approved spec and plan are unchanged. Existing telemetry registration/canonical-guidance approvals remain implemented, and binding code now agrees with ADR 048 §10. No new approval item is introduced. The stale parallel marker on T110 is removed and the E2E-authoring lane is explicitly serialized.
+
+There are 47 scenario mappings: 28 broker + 14 consumer + 4 startup = 46 locally validated; US2.19 remains the real-PostgreSQL downstream scenario. `just test-e2e-docker`, `just test-integration-infra` and the 17 Agentgateway container cases are deferred to container tests on the pushed commit, never claimed locally validated. Their absence does not leave an independent local task unfinished. Original D-6 dispositions remain historical exceptions, not retrospective TDD evidence.

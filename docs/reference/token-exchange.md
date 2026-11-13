@@ -220,6 +220,12 @@ curl -X POST http://localhost:8000/oauth2/token \
 }
 ```
 
+## ExtProc delegation-bound result reuse
+
+Enabled delegation context binds each delivered exchange-result handle to the permit’s effective scope set and grant-update instant. First claim is atomic; shared cache/flight results cannot be rebound. Initial mismatches compare-and-delete only the observed identity, preserve compatible replacements (including identical token bytes under a new identity), and otherwise exchange at most once more without stale fallback. An incompatible retry returns 503 `service_unavailable` / `delegation token binding unavailable`, with no forwarding, further retry or competing-entry deletion. Body validation precedes buffering/mutation; header-only validation follows policy allow. The original permit deadline is checked again before forwarding.
+
+The binding records local first-use ownership, not the grant actually read by broker exchange or the scopes of the provider token. A new handle may carry identical broader credentials after a grant change; provider-session re-authorization is necessary for upstream narrowing. Concurrent unbound first use retains this provenance limitation. Disabled behavior, TTL bounds, assertions, per-key singleflight and the five-second re-consent cooldown are unchanged. A mismatch adds only the Debug log field `delegation_binding=mismatch`; no credentials, raw scopes, principal, grant contents or binding span/metric are emitted. See [AuthZEN consumer guidance](../api/authzen-evaluation.md#permit-bound-token-reuse) and [ADR 048 §10](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse).
+
 ## Third-party token exchange errors
 
 Third-party token-exchange errors use the OAuth2 `error`, `error_description`, and optional `error_uri` fields.

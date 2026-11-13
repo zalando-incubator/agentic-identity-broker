@@ -200,7 +200,10 @@ See Principle II in `.specify/memory/constitution.md`.
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
 | 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions` return URI |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
-| 045 | `adrs/045-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc delegation resolver with bounded permit freshness; `granted_permission_sets` deprecation |
+| 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
+| 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
+| 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc delegation resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
 
 ## Domain Glossary
 
@@ -231,6 +234,7 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 | **Delegation Decision** | AuthZEN evaluation outcome: permit with a Delegation Context and ≤60 s freshness, consent denial with a grant detail and consent URL, or a request failure that is never a decision. |
 | **Delegation Context** | Credential-free projection of an authorized delegation: principal, agent, resource and effective scopes, grant version and expiry, granted permission sets. Unset canonical IDs are omitted. |
+| **Token Binding** | Permit effective scope set and grant update instant that atomically first claimed an exchange-result handle. Shared results cannot be rebound; new identities may carry identical provider bytes. This guarantees compatible reuse, not provider downscoping or exchange provenance (ADR 048 §10). |
 | **PDP identifier** | AuthZEN `policy_decision_point`: the end-user public URL without a trailing slash, compared exactly by consumers before sending credentials. |
 
 ## Development Workflow

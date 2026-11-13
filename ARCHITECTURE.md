@@ -973,6 +973,10 @@ The broker serializes known subsecond lifetime as zero instead of omitting it.
 Transient outages can serve a cached token until its reported lifetime plus five seconds, capped at `cache.max_ttl`.
 This can exceed reported expiry. The fresh-cache margin does not guarantee validity in transit.
 
+**Token Binding** ([ADR 048 §10](adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse)): In enabled delegation mode, `Exchanger.ExchangeBound` validates the delivered result against the sorted, de-duplicated permit scope set and parsed grant-update instant. Every success, including a non-cacheable flight, has a fresh opaque identity and shared synchronized binding cell. First claim is atomic and cannot be overwritten. Compatible detached results remain usable; identical provider bytes do not make two installations the same result. Initial mismatch deletes only the observed identity, checks a preserved replacement once, then performs at most one extra exchange with stale fallback forbidden. An incompatible retry returns terminal 503 `service_unavailable` / `delegation token binding unavailable`, with no rebind, further retry, competing-result deletion or forwarding. Cache keys, lifetime bounds, disabled mode and the tokenless five-second cooldown are unchanged.
+
+This is a result-reuse guarantee, not provider downscoping or exchange grant-version provenance. Concurrent evaluation/exchange grant reads can differ before the unbound first claim. A new handle may bind identical broader provider bytes to a narrowed permit; only provider-session re-authorization narrows those bytes. Grant update timestamps retain their RFC 3339 instant, including fractional seconds.
+
 **TokenCacheKey**: Struct used as Go map key: `{subjectToken, resourceURI}`. Using struct keys prevents separator-injection attacks compared to string concatenation.
 
 **Approval Cache**: An ExtProc-local `sync.RWMutex` cache of broker approval summaries. It is keyed by the verified `(principal, agent_id)` pair. `internal/domain/approval/toolpattern` provides single-pattern matching. `internal/extproc/approval/precedence.go` ranks matching candidates under ADR 035. A cache match requires a successful sync within `tool_approvals.max_staleness`, which defaults to 60s. The cache stores no permission sets.
@@ -1019,8 +1023,8 @@ All four gates fail closed. A delegation denial returns 403 with the consent URL
 
 **Enabled delegation context** ([ADR 045](adrs/045-authzen-delegation-pip.md) supersedes ADR 028's ordering and input schema in this mode only):
 
-- Body-bearing requests run exchange and delegation resolution concurrently in the headers phase and wait for both. Precedence: delegation denial (403 `access_denied` with `error_uri`), resolution error (503 `service_unavailable`), exchange error (existing handling), then buffer the body.
-- Header-only requests resolve first, then evaluate OPA, then exchange only on allow.
+- Body-bearing requests run exchange and delegation resolution concurrently in the headers phase and wait for both. Precedence: delegation denial (403 `access_denied` with `error_uri`), resolution error (503 `service_unavailable`), exchange error (existing handling), then validate the result binding before Authorization mutation or body buffering.
+- Header-only requests resolve first, then evaluate OPA, then exchange and validate the result binding only on allow, using the exact permit evaluated.
 - Immediately before every OPA evaluation that receives delegation input (header-only, body, and each batch element), ExtProc requires `now < Deadline`; otherwise it returns 503 without policy evaluation, forwarding or re-resolution. It checks the same original deadline again before final forwarding: after header-only exchange and before body/batch or approval-authorized body forwarding. Expiry returns `503 service_unavailable` / `delegation context unavailable`, without a header-only Authorization mutation or body forwarding.
 - `input.context` gains `principal`, `agent`, `resource`, `grant` and `permission_sets` from the typed permit, and `granted_permission_sets` and `granted_permission_sets_available: true` are derived from the permit. Disabled-mode input is unchanged.
 
@@ -1674,6 +1678,8 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **agentgateway**: Envoy-based reverse proxy deployed alongside the identity broker and ExtProc service. Configures Envoy's ExtProc filter to delegate token exchange decisions to the extproc-token-exchange microservice. Routes requests from agents through the ExtProc filter before forwarding to upstream services.
 
 **Exchanged Token**: OAuth2 access token obtained via RFC 8693 token exchange, scoped to a specific downstream service (resource URI). Replaces the original Bearer token in request headers. Used by agents to access third-party services without exposing their original credentials.
+
+**Token Binding**: The sorted, de-duplicated permit resource scope set and grant update instant that atomically first claimed an exchange-result handle. Shared result copies have one immutable binding; new installations have new identities even for identical credentials. It proves compatible local reuse, not provider scopes or broker exchange provenance (ADR 048 §10).
 
 **Singleflight Refresh**: Deduplication pattern preventing concurrent duplicate token exchange requests for identical (subjectToken, resourceURI) pairs. Uses `golang.org/x/sync/singleflight` to ensure exactly one exchange request completes while others wait for the result. Improves performance and reduces load on identity broker.
 

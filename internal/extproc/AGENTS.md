@@ -121,7 +121,8 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 
 | Type/Symbol | Purpose |
 |---|---|
-| `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)` + `Shutdown()` |
+| `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)`, `ExchangeBound(ctx, subjectToken, resourceURI, observed *ExchangeResult, TokenBinding)` + `Shutdown()` |
+| `TokenBinding` | Sorted, de-duplicated permit resource scopes and parsed grant-update instant; never broker grant-version provenance |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
 | `DelegationContextResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 047) |
 | `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `delegationResolver`, `logger` |
@@ -230,6 +231,10 @@ Header-only:   → DelegationContextResolver.Resolve → denial 403 / error 503
 - Map the permit through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
 - Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility fields remain unchanged today; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
 - Leave `agent_session_id` unchanged. The approval gate still uses the exchange identity.
+- After body-path precedence and before buffering/mutation, call `ExchangeBound` with the observed exchange result. Header-only passes no observed result and uses the evaluated permit after allow.
+- Every successful result has an opaque handle and shared binding cell, including non-cacheable flights. Atomically claim once; compare scope sets and timestamp instants thereafter. Never rebind or compare credential bytes.
+- On mismatch, compare-and-delete only the observed identity. Preserve same-token replacements, read a replacement once and use only a compatible handle. Otherwise exchange at most once more, bypassing success-cache reuse and stale fallback while retaining cooldown handling. Revalidate delivery; conflict returns 503 `delegation token binding unavailable` without a third exchange or deletion of the competing result.
+- Disabled mode, cache key/TTL and five-second cooldown remain unchanged. Compatibility reuse does not attest broker grant reads or downscope provider credentials; concurrent unbound first use may join different grant reads.
 - Keep the permit cache independent of the token cache. Never cache denials or errors, and never fall back to a stale permit.
 - Retain the original permit in header-only request state. Check its deadline after exchange, before Authorization mutation.
 - Check that same deadline again before final body forwarding on body, batch, and approval-authorized body paths. Expiry returns the existing delegation-unavailable 503 without re-resolution.

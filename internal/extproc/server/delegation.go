@@ -22,6 +22,16 @@ type DelegationContextResolver interface {
 }
 
 const delegationUnavailableBody = `{"error":"service_unavailable","error_description":"delegation context unavailable"}`
+const delegationBindingUnavailableBody = `{"error":"service_unavailable","error_description":"delegation token binding unavailable"}`
+
+func (s *Server) exchangeWithDelegation(ctx context.Context, state *requestState, observed *ExchangeResult) (ExchangeResult, error) {
+	updatedAt, err := time.Parse(time.RFC3339Nano, state.delegation.Context.Grant.UpdatedAt)
+	if err != nil {
+		return ExchangeResult{}, &delegation.Error{Category: delegation.CategoryInvalidResponse}
+	}
+	binding := TokenBinding{Scopes: copyStrings(state.delegation.Context.Resource.Scopes), GrantUpdatedAt: updatedAt}
+	return s.exchanger.ExchangeBound(ctx, state.subjectToken, state.resourceURI, observed, binding)
+}
 
 // WithDelegationResolver enables delegation context. It requires an authorizer.
 func (s *Server) WithDelegationResolver(resolver DelegationContextResolver) *Server {
