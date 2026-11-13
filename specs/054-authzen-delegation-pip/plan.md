@@ -88,10 +88,13 @@ consumer. No React UI change.
 - 1 new proposed ADR
 - 44 acceptance scenarios (US1.1–US1.8, US2.1–US2.20, US3.1–US3.10, and US4.1–US4.6)
 
-**NEEDS CLARIFICATION**: None. [research.md](./research.md) resolves every technical unknown
-(R1–R18). The remaining items are **stakeholder design gates** for contract approval and ADR
-acceptance, which Principles II, IV, and X require before implementation. They are not product
-ambiguities. See [Stakeholder decisions before implementation](#stakeholder-decisions-before-implementation).
+**NEEDS CLARIFICATION — BLOCKED**: Analysis run 40520766996/1 found unresolved freshness
+behavior: missing/invalid/zero/excessive `max-age` (I1), end-to-end expiry/age accounting (U1),
+and expiry between headers and policy use (U2). [remediation.md](./remediation.md) records the
+required stakeholder decisions, affected artifacts and tests. Existing relative-TTL/current-
+request-use statements are not implementation authorization. The I2 audit-seam design is
+corrected below but remains subject to architectural approval. See also
+[Stakeholder decisions before implementation](#stakeholder-decisions-before-implementation).
 
 ## Constitution Check
 
@@ -137,17 +140,26 @@ ambiguities. See [Stakeholder decisions before implementation](#stakeholder-deci
 
 ### Post-design re-check
 
-The gate passes after Phase 1, subject to the stakeholder preconditions below.
+The post-design gate is **blocked**, not passed: the freshness findings in
+[remediation.md](./remediation.md) require stakeholder decisions and synchronized artifact
+updates, in addition to the preconditions below.
 
 - No new bounded context is invented. The resolver stays in `tokenexchange`, which owns every
   invariant (R1).
 - Port changes: one new ExtProc port. Broker ports are unchanged.
 - The resolver depends on no session service, so FR-013 holds by construction.
-- The only binding-ADR deviation is ADR 028's enabled-mode input and ordering. It is handled by
-  a new superseding ADR, as Principle II requires. ADR 028 is not amended in place.
-- No unresolved security, configuration, Helm, or traceability question remains.
+- ADR 028's enabled-mode input and ordering need a new superseding ADR. The same approval
+  gate must also cover extending ADR 033's described token-only finalization seam to
+  evaluation. Do not amend either existing ADR in this remediation.
+- Freshness findings I1/U1/U2 remain unresolved security questions; the I2 perimeter extension
+  has explicit design/test work but no claimed architectural approval or implementation.
 
 ## Stakeholder decisions before implementation
+
+**Additional blocking gate:** Confirm the three freshness decisions I1/U1/U2 in
+[remediation.md](./remediation.md), then reconcile the spec, research, model, contract and tasks
+before implementation. Include I2's evaluation audit-perimeter extension in item 3's proposed
+architectural decision and acceptance; existing approvals do not cover it implicitly.
 
 1. **Confirm the AuthZEN contract** in [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md).
    This includes the endpoint shapes, the error mapping (R6), strict member rejection (R10), and
@@ -197,7 +209,8 @@ internal/
 ├── adapters/http/
 │   ├── enduser/authzen_configuration.go                  # New: discovery handler
 │   ├── enduser/authzen_evaluation.go                     # New: evaluation handler (decode, bearer, serialize, X-Request-ID)
-│   └── routing/enduser.go                                # Register both routes; reserve /access
+│   ├── routing/enduser.go                                # Register both routes; reserve /access
+│   └── middleware/security_context.go                    # Evaluation deferred-finalization extension, pending approval
 ├── app/
 │   ├── handlers.go                                       # EnduserHandlers.AuthZENConfiguration / AuthZENEvaluation
 │   └── builder.go                                        # Construct resolver, evaluation service, handlers when tokenExchangeEnabled
@@ -274,6 +287,13 @@ The consent URL is `public_url + "/agents/" + agentUUID`, the same as exchange's
   - records a credential-free audit event and span attributes. It reuses the token-exchange
     diagnostic observation helpers and adds `operation = access_evaluation`.
 - Routes are registered only when the handlers are non-nil. `/access` is always reserved (R9).
+- After architectural approval, extend the shared perimeter deferred-finalization matcher to
+  `POST /access/v1/evaluation`; do not capture transport metadata again in routing. The shared
+  resolver finalizes verified subject Actor and distinct assertion CallingPeer before caller
+  CEL, so both permits and caller-policy denials carry those identities. On early failures,
+  use the existing idempotent request-principal/anonymous finalization helper before emitting
+  in-handler audit; retain the logging perimeter fallback. Preserve trace identity and
+  ordinary/token request behavior. T044/T047 provide test-first coverage (HIGH I2).
 
 ### 4. Builder wiring
 
@@ -296,8 +316,12 @@ feature is enabled:
 
 ### 6. ExtProc request path
 
-- Implement the R14 ordering and precedence in `processRequestHeadersOPA` and
-  `processHeadersOnlyOPA`. Store the permit in `requestState`.
+- **Blocked by I1/U1/U2:** do not implement R14 until the stakeholder freshness decisions in
+  [remediation.md](./remediation.md) are recorded and all affected artifacts agree. The
+  confirmed deadline must propagate through Client/Result/Resolver/requestState without
+  renewal, and be checked at each policy-use seam, including delayed body/batch decisions.
+  T049/T050/T052/T057/T058 must cover the approved freshness and recovery semantics before
+  implementing the ordering in `processRequestHeadersOPA` and `processHeadersOnlyOPA`.
 - Extend `ContextInput` and `BuildOPAInputHeadersOnly` with the delegation members and the
   derived legacy map (R15).
 - Disabled mode keeps the existing code path.

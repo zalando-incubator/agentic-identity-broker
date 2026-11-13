@@ -60,6 +60,12 @@ The evaluation body is `{subject:{type:jwt,id:<subject token>}, action:{name:tok
 The client uses the existing traced HTTP client (`internal/extproc/httpclient`) with the
 `oauth2.tls` trust settings. No new TLS settings are added.
 
+**Blocked freshness contract:** The missing/invalid `max-age` row below contradicts research
+R13; the relative lifetime also omits response-age/transit accounting and expiry at delayed
+policy use. HIGH I1/U1/U2 in [remediation.md](../remediation.md) require stakeholder decisions
+and synchronized contract/model/journey/test updates. Neither conflicting interpretation is
+selected here; do not implement these rows or stored-context policy use until reconciled.
+
 **Response handling**:
 
 | Broker response | Resolver result |
