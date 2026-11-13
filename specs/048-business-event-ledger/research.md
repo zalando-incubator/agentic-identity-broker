@@ -88,8 +88,9 @@ counts when token events are onboarded.
 **Decision**: UUIDv7, minted by the handler with `uuid.NewV7()` from `github.com/google/uuid`
 v1.6.0 (already a dependency), as a typed `id.BusinessEventID` (ADR 013).
 
-**Rationale**: UUIDv7 is time-ordered, so `(occurred_at, id)` cursors are stable and index inserts
-are local. The ID can later be the SSF `jti` and an idempotency key for an ingest path.
+**Rationale**: UUIDv7 is time-ordered, so index inserts are local. It does not define commit order
+and is not a delivery cursor (see [Consumer cursor visibility](./data-model.md#consumer-cursor-visibility)).
+The ID can later be the SSF `jti` and an idempotency key for an ingest path.
 `gen_ids.go` generates `New<Type>()` with `uuid.New()` (version 4); the handler does not use that
 constructor and converts the version 7 value instead.
 
@@ -158,8 +159,11 @@ ADR 038 rejects a per-replica ticker for the Session Sweep, which calls provider
 refresh tokens under a row lock. This retention job makes no provider calls and deletes only
 expired rows. Concurrent replicas can repeat scans and wait on row locks, but do not need a
 leader for correctness. After another replica deletes a batch, a delete can return fewer rows
-and end that run; later runs catch any remaining backlog. The healthy-operation age bound
-requires successful runs that finish before the next scheduled start (SC-005); it is not a
+and end that run while expired rows remain. If the competing run then fails, later scheduled
+runs resume cleanup. A successful run on one replica does not prove that recovery across the
+deployment is complete. Without concurrent retention deletes, a successful recovery run clears
+all rows older than its fixed cutoff. The healthy-operation age bound resumes after overdue
+rows are cleared and subsequent runs meet SC-005's healthy-operation conditions. It is not a
 load-independent guarantee. This follows the existing local `SessionCleanup`, which
 ARCHITECTURE.md distinguishes from provider-session maintenance. Replica count still multiplies
 database work; measure it before increasing event volume rather than adding coordination now.

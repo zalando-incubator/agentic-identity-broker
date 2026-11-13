@@ -91,7 +91,7 @@ retention run, and read the ledger.
 
 **Acceptance Scenarios**:
 
-1. **Given** the ledger holds one row older than the retention period and one newer row,
+1. **Given** one broker replica and a ledger with one row older than the retention period and one newer row,
    **When** a retention run completes, **Then** the ledger holds only the newer row and no log
    record reports the deletion.
 
@@ -118,7 +118,8 @@ retention run, and read the ledger.
   the ledger is enabled again or an operator deletes them. The operations documentation states
   this.
 - Several replicas run retention at the same time: each delete is idempotent, and no row newer
-  than the period is deleted.
+  than the period is deleted. A short batch can end one replica's run while expired rows remain.
+  If the competing run fails before it clears the backlog, later scheduled runs resume cleanup.
 - The ledger write times out: the result is unknown. The failure is counted, and the row can
   exist.
 - The process stops between the commit and the ledger write: the row is missing. This is the
@@ -425,8 +426,11 @@ Keys, defaults, and a YAML example are in [contracts/configuration.md](./contrac
   Healthy operation means every run succeeds, completes before the next scheduled start, and starts no more than one interval apart.
   Startup, re-enable, a shorter retention period, and failed runs can leave overdue rows.
   Startup and re-enable MUST trigger an immediate run. A failed run MUST be retried at the next scheduled interval.
-  The first successful recovery run MUST delete every row older than its start time minus the retention period.
-  The healthy-operation bound resumes after that run completes, provided subsequent runs meet the healthy-operation conditions.
+  Without concurrent retention deletes, the first successful recovery run MUST delete every row older than its start-time cutoff.
+  With concurrent replicas, a short batch can end one run while another run still has expired rows to delete.
+  If that competing run fails, later scheduled runs MUST resume cleanup of the remaining backlog.
+  A successful run on one replica does not prove that recovery across the deployment is complete.
+  The healthy-operation bound resumes after overdue rows are cleared, provided subsequent runs meet the healthy-operation conditions.
   No fixed maximum age applies during downtime, disabled operation, failed runs, or recovery.
 
 ## Assumptions

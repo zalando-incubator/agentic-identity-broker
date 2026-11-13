@@ -115,8 +115,12 @@ A failed run logs one `Error` record ([observability.md](./observability.md)) an
 The service does not log retention-driven deletion.
 
 SC-005 defines the healthy-operation age bound. Startup or re-enable can expose overdue rows.
-The first successful recovery run removes every row older than its fixed cutoff, including all required batches.
-Rows that expire after that cutoff are eligible for a later run.
+Without concurrent retention deletes, the first successful recovery run removes every row older than its fixed cutoff.
+With concurrent replicas, a short batch can end one run while expired rows remain for another run to delete.
+If the competing run fails before it clears the backlog, later scheduled runs resume cleanup.
+A successful run on one replica does not prove that recovery across the deployment is complete.
+The healthy-operation bound resumes after overdue rows are cleared and subsequent runs meet SC-005's healthy-operation conditions.
+Rows that expire after a run's cutoff are eligible for a later run.
 Failures, downtime, and recovery have no fixed maximum row age. The service continues to retry while enabled.
 
 The builder starts the service when `business_events.enabled` is true, for every storage

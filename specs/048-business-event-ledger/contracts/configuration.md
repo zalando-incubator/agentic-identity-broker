@@ -23,7 +23,11 @@ enabled again.
 
 SC-005 defines the healthy-operation age bound, not a deletion deadline during failures.
 Startup and re-enable trigger an immediate run. Failed runs retry at the next scheduled interval.
-The first successful recovery run deletes all rows older than its start time minus the retention period.
+Without concurrent retention deletes, the first successful recovery run deletes all rows older than its start-time cutoff.
+With concurrent replicas, a short batch can end one run while expired rows remain for another run to delete.
+If the competing run fails before it clears the backlog, later scheduled runs resume cleanup.
+A successful run on one replica does not prove that recovery across the deployment is complete.
+The healthy-operation bound resumes after overdue rows are cleared and subsequent runs meet SC-005's healthy-operation conditions.
 Downtime, disabled operation, and recovery can leave older rows without a fixed maximum age.
 
 ## Example (`examples/config/business-events.yaml`)
