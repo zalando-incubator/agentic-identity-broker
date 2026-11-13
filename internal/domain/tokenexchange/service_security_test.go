@@ -251,7 +251,7 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 		},
 	}
 
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, serviceID)
+	scopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 	assert.Equal(t, 1, psRepo.getByIDsCalls)
@@ -259,7 +259,7 @@ func TestResolveEffectiveScopes_RejectsRemovedDeclaration(t *testing.T) {
 
 	// Keep the definitions and cached service; only the agent declaration changes.
 	agent.PermissionSets = agent.PermissionSets[:1]
-	scopes, detail, err = svc.resolveEffectiveScopes(context.Background(), grant, agent, serviceID)
+	scopes, _, detail, err = svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, serviceID)
 	assert.Nil(t, scopes)
 	assert.Equal(t, DetailNone, detail, "structural reference failure must retain its detail on the error only")
 	assert.Equal(t, 1, psRepo.getByIDsCalls, "removed declaration must fail before querying even a cached definition")

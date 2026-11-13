@@ -985,7 +985,7 @@ func TestResolveEffectiveScopes_ScopeUnion(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 
@@ -1011,7 +1011,7 @@ func TestResolveEffectiveScopes_ScopeLessServiceIsCovered(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
@@ -1050,7 +1050,7 @@ func TestResolveEffectiveScopes_OmitsScopesOutsideSRCeiling(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
@@ -1109,7 +1109,7 @@ func TestResolveEffectiveScopes_SRCeiling(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 
@@ -1135,7 +1135,7 @@ func TestResolveEffectiveScopes_RequireAllScopes(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    psID,
 			IncludedServiceIDs: []id.ServiceID{svcA},
@@ -1196,7 +1196,7 @@ func TestResolveEffectiveScopes_PerServiceInclusion(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
+	scopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
 	assert.Equal(t, FailureDetail("grant_service_omitted"), detail)
 
@@ -1254,7 +1254,7 @@ func TestResolveEffectiveScopes_MultiPSCrossScopeCeiling(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 
@@ -1304,7 +1304,7 @@ func TestResolveEffectiveScopes_NonSRServiceExcluded(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
+	scopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
 	assert.Equal(t, FailureDetail("grant_service_requirement_excluded"), detail)
 
@@ -1350,7 +1350,7 @@ func TestResolveEffectiveScopes_EmptySRCeiling_UsesPS(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.DelegationResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 	assert.Equal(t, []string{"read"}, scopes[svcA],
@@ -1961,7 +1961,7 @@ func TestResolveEffectiveScopes_MissingReferenceAndRepositoryError(t *testing.T)
 			if unavailable {
 				fixture.psRepo.getByIDsErr = cause
 			}
-			scopes, detail, err := fixture.svc.resolveEffectiveScopes(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
+			scopes, _, detail, err := fixture.svc.DelegationResolver().resolveGrantCoverage(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
 			assert.Nil(t, scopes)
 			assert.Equal(t, DetailNone, detail, "error diagnostics must not compete with the separate coverage detail")
 			var tokenErr *TokenExchangeError
@@ -2012,7 +2012,7 @@ func TestResolveEffectiveScopes_CoverageDetailPreservesOtherServiceScopes(t *tes
 					{ServiceID: otherServiceID, RequiredScopes: []string{"read"}},
 				}
 			}
-			scopes, detail, err := fixture.svc.resolveEffectiveScopes(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
+			scopes, _, detail, err := fixture.svc.DelegationResolver().resolveGrantCoverage(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
 			require.NoError(t, err, "coverage gaps must use the separate detail, not the structural error channel")
 			assert.Equal(t, wantDetail, detail)
 			assert.Equal(t, map[id.ServiceID][]string{otherServiceID: {"read"}}, scopes)
