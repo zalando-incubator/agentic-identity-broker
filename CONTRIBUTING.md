@@ -155,8 +155,8 @@ On a Spec Kit draft PR, `/architecture-review` and the automatic review after
 The status comment links the latest review and proposal and names the next step. A new
 review replaces the proposal, so items left unticked stay open until the next review.
 
-The Spec Kit pipeline, the architecture review, and Repo Assist open their pull requests, push, comment,
-and react as the Agentic Workflows App, never as `github-actions[bot]` or a personal token. They need the App
+The agentic workflows (Spec Kit, architecture review, conflict resolution, Repo Assist, Repo Ask, and the
+grumpy reviewer) open their pull requests, push, comment, review, and react as the Agentic Workflows App, never as `github-actions[bot]` or a personal token. They need the App
 described under [Opt-in conflict resolution](#opt-in-conflict-resolution) with Actions read/write
 in addition to its other permissions, and they fail instead of falling back to `GITHUB_TOKEN`.
 

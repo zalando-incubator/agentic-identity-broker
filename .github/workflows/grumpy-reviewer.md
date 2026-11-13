@@ -5,6 +5,12 @@ on:
   slash_command:
     name: grumpy
     events: [pull_request_comment, pull_request_review_comment]
+  # The run status comments come from the same App as the review.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
 
 permissions:
   contents: read
@@ -17,6 +23,12 @@ tools:
     toolsets: [pull_requests, repos]
 
 safe-outputs:
+  # Reviews come from this App, so every agentic workflow comments under one identity.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
   create-pull-request-review-comment:
     max: 5
     side: "RIGHT"

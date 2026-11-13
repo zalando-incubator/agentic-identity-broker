@@ -6,6 +6,6 @@
 rules:
   dangerous-triggers:
     ignore:
-      - 'grumpy-reviewer.lock.yml:58:3'
-      - 'repo-ask.lock.yml:68:3'
+      - 'grumpy-reviewer.lock.yml:60:3'
+      - 'repo-ask.lock.yml:70:3'
       - 'repo-assist.lock.yml:79:3'

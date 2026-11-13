@@ -9,7 +9,18 @@ description: |
 on:
   slash_command:
     name: repo-ask
-  reaction: "eyes"
+  # The App holds no Discussions permission, so the reaction and status comment skip discussions.
+  reaction:
+    type: eyes
+    discussions: false
+  status-comment:
+    discussions: false
+  # The reaction and run status comments come from the same App as the safe outputs.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
 
 permissions:
   actions: read
@@ -23,6 +34,12 @@ permissions:
 network: defaults
 
 safe-outputs:
+  # Answers come from this App, so every agentic workflow comments under one identity.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
   add-comment:
 
 tools:
