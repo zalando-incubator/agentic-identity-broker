@@ -2,6 +2,7 @@
 package consent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,12 +77,12 @@ func (h *GrantsHandler) GetGrant(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, consent.ErrAgentNotFound) {
 			h.logger.WarnContext(r.Context(), "agent not found", "agent_id", agentID, "principal", principalValue)
-			h.writeError(w, http.StatusNotFound, "not found", "agent not found")
+			h.writeError(r.Context(), w, http.StatusNotFound, "not found", "agent not found")
 			return
 		}
 
 		h.logger.ErrorContext(r.Context(), "failed to get user grants", "agent_id", agentID, "principal", principalValue, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -92,7 +93,7 @@ func (h *GrantsHandler) GetGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.InfoContext(r.Context(), "user grant retrieved", "agent_id", agentID, "principal", principalValue, "has_grant", response != nil)
-	h.writeJSON(w, http.StatusOK, map[string]*GrantResponse{"data": response})
+	h.writeJSON(r.Context(), w, http.StatusOK, map[string]*GrantResponse{"data": response})
 }
 
 // CreateGrant handles POST /api/consent/agent/:agent-id/grants
@@ -119,7 +120,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			"error", err,
 			"principal", principalValue,
 			"agent_id", agentID)
-		h.writeError(w, http.StatusBadRequest, "invalid request", "request body must be valid JSON")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request", "request body must be valid JSON")
 		return
 	}
 
@@ -132,21 +133,21 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case errors.Is(err, ports.ErrSessionExpired):
 				h.logger.WarnContext(r.Context(), "authorization session token expired", "agent_id", agentID, "principal", principalValue)
-				h.writeError(w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
+				h.writeError(r.Context(), w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			case errors.Is(err, ports.ErrSessionAgentMismatch):
 				h.logger.WarnContext(r.Context(), "authorization session agent mismatch",
 					"expected_agent", parsedAgentID,
 					"principal", principalValue)
-				h.writeError(w, http.StatusBadRequest, "bad request", "authorization session does not match requested agent")
+				h.writeError(r.Context(), w, http.StatusBadRequest, "bad request", "authorization session does not match requested agent")
 			case errors.Is(err, ports.ErrSessionPrincipalMismatch):
 				h.logger.WarnContext(r.Context(), "authorization session principal mismatch", "principal", principalValue)
-				h.writeError(w, http.StatusForbidden, "forbidden", "authorization session does not belong to this user")
+				h.writeError(r.Context(), w, http.StatusForbidden, "forbidden", "authorization session does not belong to this user")
 			case errors.Is(err, ports.ErrSessionInvalidToken):
 				h.logger.WarnContext(r.Context(), "authorization session token invalid", "agent_id", agentID, "principal", principalValue)
-				h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
+				h.writeError(r.Context(), w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			default:
 				h.logger.ErrorContext(r.Context(), "unexpected error validating authorization session token", "agent_id", agentID, "principal", principalValue, "error", err)
-				h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+				h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 			}
 			return
 		}
@@ -154,7 +155,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		if sessionRedirectURI == "" {
 			h.logger.ErrorContext(r.Context(), "authorization session token contains empty original_url",
 				"agent_id", agentID, "principal", principalValue)
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 			return
 		}
 	}
@@ -165,7 +166,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			"valid_until", req.ValidUntil,
 			"principal", principalValue,
 			"agent_id", agentID)
-		h.writeError(w, http.StatusBadRequest, "invalid request", "valid_until must be in the future")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request", "valid_until must be in the future")
 		return
 	}
 
@@ -178,7 +179,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				"permission_set_id", psStr,
 				"principal", principalValue,
 				"agent_id", agentID)
-			h.writeError(w, http.StatusBadRequest, "invalid request", fmt.Sprintf("permission set ID %q must be a valid UUID", psStr))
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request", fmt.Sprintf("permission set ID %q must be a valid UUID", psStr))
 			return
 		}
 		svcIDs := make([]id.ServiceID, len(svcStrs))
@@ -189,7 +190,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 					"service_id", svcStr,
 					"principal", principalValue,
 					"agent_id", agentID)
-				h.writeError(w, http.StatusBadRequest, "invalid request", fmt.Sprintf("service ID %q must be a valid UUID", svcStr))
+				h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request", fmt.Sprintf("service ID %q must be a valid UUID", svcStr))
 				return
 			}
 			svcIDs[i] = svcID
@@ -217,7 +218,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(r.Context(), "agent not found",
 				"agent_id", agentID,
 				"principal", principalValue)
-			h.writeError(w, http.StatusNotFound, "agent not found", "")
+			h.writeError(r.Context(), w, http.StatusNotFound, "agent not found", "")
 			return
 		}
 
@@ -226,7 +227,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "invalid scopes", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid scopes", err.Error())
 			return
 		}
 
@@ -235,7 +236,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "service not found", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "service not found", err.Error())
 			return
 		}
 
@@ -244,7 +245,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "missing mandatory permission set", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "missing mandatory permission set", err.Error())
 			return
 		}
 
@@ -253,7 +254,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "invalid service inclusion", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid service inclusion", err.Error())
 			return
 		}
 
@@ -262,7 +263,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "unconnected services", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "unconnected services", err.Error())
 			return
 		}
 
@@ -271,7 +272,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "invalid request", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request", err.Error())
 			return
 		}
 
@@ -279,7 +280,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			"agent_id", agentID,
 			"principal", principalValue,
 			"error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 	}
 
 	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
@@ -291,7 +292,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 
 	if grant == nil {
 		h.logger.ErrorContext(r.Context(), "grant consent returned nil grant without error", "agent_id", agentID)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -299,7 +300,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	if sessionRedirectURI != "" {
 		resp["redirect_url"] = sessionRedirectURI
 	}
-	h.writeJSON(w, http.StatusCreated, resp)
+	h.writeJSON(r.Context(), w, http.StatusCreated, resp)
 }
 
 // RevokeGrant handles DELETE /api/consent/agent/{agent-id}/grants.
@@ -312,10 +313,10 @@ func (h *GrantsHandler) RevokeGrant(w http.ResponseWriter, r *http.Request) {
 	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
 	if err := h.consentService.RevokeConsentForPrincipal(r.Context(), principalValue, agentID); err != nil {
 		if errors.Is(err, consent.ErrGrantNotFound) {
-			h.writeError(w, http.StatusNotFound, "not found", "no active grant exists for this agent")
+			h.writeError(r.Context(), w, http.StatusNotFound, "not found", "no active grant exists for this agent")
 			return
 		}
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "an unexpected error occurred")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "an unexpected error occurred")
 		return
 	}
 
@@ -326,7 +327,7 @@ func (h *GrantsHandler) extractPrincipalAndAgent(w http.ResponseWriter, r *http.
 	principalValue, ok := principal.FromContext(r.Context())
 	if !ok || principalValue == "" {
 		h.logger.WarnContext(r.Context(), "principal not found in context")
-		h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		h.writeError(r.Context(), w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return "", id.AgentID{}, false
 	}
 
@@ -334,7 +335,7 @@ func (h *GrantsHandler) extractPrincipalAndAgent(w http.ResponseWriter, r *http.
 	agentID, err := id.ParseAgentID(rawAgentID)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "invalid agent ID format", "agent_id", rawAgentID)
-		h.writeError(w, http.StatusBadRequest, "bad request", "agent ID must be a valid UUID")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "bad request", "agent ID must be a valid UUID")
 		return "", id.AgentID{}, false
 	}
 
@@ -364,17 +365,17 @@ func (h *GrantsHandler) toGrantResponse(grant *storage.UserGrant) GrantResponse 
 }
 
 // writeJSON writes a JSON response.
-func (h *GrantsHandler) writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func (h *GrantsHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data interface{}) {
 	if err := writeBufferedJSON(w, statusCode, data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
 // writeError writes an error response.
-func (h *GrantsHandler) writeError(w http.ResponseWriter, statusCode int, error string, message string) {
+func (h *GrantsHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, error string, message string) {
 	resp := ErrorResponse{
 		Error:   error,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }

@@ -40,36 +40,36 @@ func NewCIMDMetadataHandler(metadata ports.CIMDClientMetadataProvider, logger *s
 func (h *CIMDMetadataHandler) Metadata(w http.ResponseWriter, r *http.Request) {
 	serviceID, ok := h.serviceID(r)
 	if !ok || h.metadata == nil {
-		h.writeUnavailable(w)
+		h.writeUnavailable(r.Context(), w)
 		return
 	}
 
 	metadata, err := h.metadata.Metadata(r.Context(), serviceID)
 	if err != nil || metadata == nil {
 		h.audit(r.Context(), serviceID, "metadata", "rejected")
-		h.writeUnavailable(w)
+		h.writeUnavailable(r.Context(), w)
 		return
 	}
 	h.audit(r.Context(), serviceID, "metadata", "success")
-	h.writeJSON(w, http.StatusOK, metadata)
+	h.writeJSON(r.Context(), w, http.StatusOK, metadata)
 }
 
 // JWKS serves the dedicated public CIMD client-authentication JWK set.
 func (h *CIMDMetadataHandler) JWKS(w http.ResponseWriter, r *http.Request) {
 	serviceID, ok := h.serviceID(r)
 	if !ok || h.metadata == nil {
-		h.writeUnavailable(w)
+		h.writeUnavailable(r.Context(), w)
 		return
 	}
 
 	keys, err := h.metadata.JWKSet(r.Context(), serviceID)
 	if err != nil || keys == nil {
 		h.audit(r.Context(), serviceID, "jwks", "rejected")
-		h.writeUnavailable(w)
+		h.writeUnavailable(r.Context(), w)
 		return
 	}
 	h.audit(r.Context(), serviceID, "jwks", "success")
-	h.writeJSON(w, http.StatusOK, keys)
+	h.writeJSON(r.Context(), w, http.StatusOK, keys)
 }
 
 func (h *CIMDMetadataHandler) serviceID(r *http.Request) (id.ServiceID, bool) {
@@ -85,17 +85,17 @@ func (h *CIMDMetadataHandler) audit(ctx context.Context, serviceID id.ServiceID,
 	h.logger.InfoContext(ctx, "CIMD metadata access", "service_id", serviceID, "operation", operation, "outcome", outcome)
 }
 
-func (h *CIMDMetadataHandler) writeUnavailable(w http.ResponseWriter) {
-	h.writeJSON(w, http.StatusNotFound, cimdMetadataErrorResponse{Error: "not found", Message: cimdMetadataUnavailable})
+func (h *CIMDMetadataHandler) writeUnavailable(ctx context.Context, w http.ResponseWriter) {
+	h.writeJSON(ctx, w, http.StatusNotFound, cimdMetadataErrorResponse{Error: "not found", Message: cimdMetadataUnavailable})
 }
 
-func (h *CIMDMetadataHandler) writeJSON(w http.ResponseWriter, status int, value any) {
+func (h *CIMDMetadataHandler) writeJSON(ctx context.Context, w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	if status == http.StatusOK {
 		w.Header().Set("Cache-Control", cimdMetadataCacheControl)
 	}
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		h.logger.Warn("failed to encode CIMD metadata response")
+		h.logger.WarnContext(ctx, "failed to encode CIMD metadata response")
 	}
 }

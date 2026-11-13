@@ -96,7 +96,7 @@ func TestHandleCallbackSecurity_DiscoveredIssuerChangeRejectsOldStateBeforeToken
 	principal := id.Principal("owner@example.com")
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, "https://auth.example.test", claims.IssuerURI)
 
@@ -130,7 +130,7 @@ func TestHandleCallbackSecurity_DiscoveredAudienceChangeRejectsOldStateBeforeTok
 	principal := id.Principal("owner@example.com")
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, "https://auth.example.test", claims.IssuerURI)
 	assert.Equal(t, audienceA, claims.Resource)
@@ -170,7 +170,7 @@ func TestHandleCallbackSecurity_RejectsLegacyDiscoveredStateWithoutAudience(t *t
 	principal := id.Principal("owner@example.com")
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.Equal(t, "https://auth.example.test", claims.IssuerURI)
 	claims.Resource = ""
@@ -244,7 +244,7 @@ func TestHandleCallbackSecurity_PublicClientUsesBodyClientIDWithoutCredentialsAc
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
 	require.NotNil(t, flow)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 
@@ -335,7 +335,7 @@ func TestHandleCallbackSecurity_CIMDPublicClientExchangesAndRefreshesWithoutAuth
 
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 	authorizationURL, err := url.Parse(flow.AuthorizationURL)
@@ -424,7 +424,7 @@ func TestHandleCallbackSecurity_CIMDPublicClientInvalidClientDoesNotRetryOrFallb
 			require.NoError(t, providerService.Create(ctx, provider))
 			flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 			require.NoError(t, err)
-			claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+			claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 			require.NoError(t, err)
 			connected, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
 				ServiceID: serviceID, Code: "rejected-code", State: flow.StateToken,
@@ -510,7 +510,7 @@ func TestHandleCallbackSecurity_CIMDClientReSignsEachRetryWithoutCredentialDowng
 
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 
 	result, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
@@ -797,7 +797,7 @@ func TestHandleCallbackSecurity_RedactsUpstreamCredentialMaterialFromErrorsAndLo
 	require.NoError(t, err)
 
 	require.NotNil(t, flow)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 
@@ -928,7 +928,7 @@ func TestForceRefreshSessionSecurity_PublicClientOmitsCredentialsAndRedactsFailu
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
 	require.NotNil(t, flow)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 
@@ -1025,7 +1025,7 @@ func TestForceRefreshSessionSecurity_PublicClientEmitsRedactedSuccessAudit(t *te
 
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 
 	_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
@@ -1774,7 +1774,7 @@ func TestValidateStateTokenSecurity_MalformedClaimsRetainInvalidStateSentinel(t 
 			}
 			state, err := jweService.Encrypt(claims)
 			require.NoError(t, err)
-			validated, err := service.ValidateStateToken(state, principal, serviceID)
+			validated, err := service.ValidateStateToken(t.Context(), state, principal, serviceID)
 			assert.Nil(t, validated)
 			require.ErrorIs(t, err, oauth2session.ErrInvalidStateToken)
 			if malformed == "upstream identity" {

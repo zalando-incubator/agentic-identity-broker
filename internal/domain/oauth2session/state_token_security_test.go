@@ -212,7 +212,7 @@ func TestStateTokenSecurityTampered_InvalidToken(t *testing.T) {
 	service, testServiceID := setupTestService(t)
 
 	// Try to validate completely invalid token
-	_, err := service.ValidateStateToken("invalid-token-xyz", id.Principal("user@example.com"), testServiceID)
+	_, err := service.ValidateStateToken(t.Context(), "invalid-token-xyz", id.Principal("user@example.com"), testServiceID)
 	assert.Error(t, err, "invalid token should fail validation")
 	assert.ErrorIs(t, err, oauth2session.ErrInvalidStateToken, "should return ErrInvalidStateToken")
 }
@@ -225,7 +225,7 @@ func TestStateTokenSecurityTampered_CorruptedJWE(t *testing.T) {
 	corrupted := "eyJhbGciOiJBMjU2R0NNS1ciLCJlbmMiOiJBMjU2R0NNIn0." + // Invalid segments
 		"invalid.corrupted.token"
 
-	_, err := service.ValidateStateToken(corrupted, id.Principal("user@example.com"), testServiceID)
+	_, err := service.ValidateStateToken(t.Context(), corrupted, id.Principal("user@example.com"), testServiceID)
 	assert.Error(t, err, "corrupted JWE should fail validation")
 }
 
@@ -233,7 +233,7 @@ func TestStateTokenSecurityTampered_CorruptedJWE(t *testing.T) {
 func TestStateTokenSecurityTampered_EmptyToken(t *testing.T) {
 	service, testServiceID := setupTestService(t)
 
-	_, err := service.ValidateStateToken("", id.Principal("user@example.com"), testServiceID)
+	_, err := service.ValidateStateToken(t.Context(), "", id.Principal("user@example.com"), testServiceID)
 	assert.Error(t, err, "empty token should fail validation")
 }
 
@@ -331,7 +331,7 @@ func TestStateTokenSecurityTampered_WrongKeyDecryption(t *testing.T) {
 	require.NotEmpty(t, token, "token should not be empty")
 
 	// Try to validate with service2's key (should fail)
-	_, err = service2.ValidateStateToken(token, id.Principal("user@example.com"), testServiceID)
+	_, err = service2.ValidateStateToken(t.Context(), token, id.Principal("user@example.com"), testServiceID)
 	assert.Error(t, err, "token encrypted with key1 should not decrypt with key2")
 }
 
@@ -356,7 +356,7 @@ func TestStateTokenSecurityTampered_ModifiedToken(t *testing.T) {
 	require.NotEmpty(t, token, "token should not be empty")
 
 	// Verify original token is valid first
-	_, err = service.ValidateStateToken(token, id.Principal("user@example.com"), testServiceID)
+	_, err = service.ValidateStateToken(t.Context(), token, id.Principal("user@example.com"), testServiceID)
 	require.NoError(t, err, "original token should validate successfully")
 
 	// Strategy: Modify a character in the middle of the token (ciphertext/payload part)
@@ -379,7 +379,7 @@ func TestStateTokenSecurityTampered_ModifiedToken(t *testing.T) {
 	require.NotEqual(t, originalByte, tokenBytes[middleIdx], "byte at middle index should be different")
 
 	// Try to validate modified token - must fail
-	_, err = service.ValidateStateToken(modifiedToken, id.Principal("user@example.com"), testServiceID)
+	_, err = service.ValidateStateToken(t.Context(), modifiedToken, id.Principal("user@example.com"), testServiceID)
 	assert.Error(t, err, "modified token should always fail validation - JWE authentication tag should reject any tampering")
 }
 
@@ -416,7 +416,7 @@ func TestStateTokenSecurityEncryption_UsesAuthenticatedEncryption(t *testing.T) 
 	assert.NotEmpty(t, token, "token should not be empty")
 
 	// Verify token can be decrypted successfully
-	decrypted, err := service.ValidateStateToken(token, id.Principal("user@example.com"), testServiceID)
+	decrypted, err := service.ValidateStateToken(t.Context(), token, id.Principal("user@example.com"), testServiceID)
 	require.NoError(t, err, "token should decrypt successfully with authenticated encryption")
 	assert.Equal(t, claims.Principal, decrypted.Principal)
 }
@@ -488,7 +488,7 @@ func TestStateTokenSecurityValidation_PrincipalMismatchError(t *testing.T) {
 	require.NoError(t, err, "CreateStateToken should succeed")
 
 	// Try to validate as user2 (CSRF attack)
-	_, err = service.ValidateStateToken(token, id.Principal("user2@example.com"), testServiceID)
+	_, err = service.ValidateStateToken(t.Context(), token, id.Principal("user2@example.com"), testServiceID)
 	assert.Error(t, err, "should reject token with mismatched principal")
 	assert.ErrorIs(t, err, oauth2session.ErrPrincipalMismatch,
 		"should return ErrPrincipalMismatch for CSRF attacks")
@@ -515,7 +515,7 @@ func TestStateTokenSecurityValidation_ServiceIDMismatchError(t *testing.T) {
 
 	// Try to validate for service2 (cross-service attack)
 	wrongServiceID := id.NewServiceID()
-	_, err = service.ValidateStateToken(token, id.Principal("user@example.com"), wrongServiceID)
+	_, err = service.ValidateStateToken(t.Context(), token, id.Principal("user@example.com"), wrongServiceID)
 	assert.Error(t, err, "should reject token with mismatched service ID")
 	assert.Contains(t, err.Error(), "service_id", "error should indicate service ID mismatch")
 }
@@ -526,13 +526,13 @@ func TestStateTokenSecurity_EstablishedClientIdentityIsAuthenticatedWithPrincipa
 	established := id.ClientID("sealed-client-A")
 	state := credentialState(t, service, principal, serviceID, &established)
 	established = "mutated-client-B"
-	claims, err := service.ValidateStateToken(state, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), state, principal, serviceID)
 	require.NoError(t, err)
 	require.NotNil(t, claims.UpstreamClientID)
 	assert.Equal(t, id.ClientID("sealed-client-A"), *claims.UpstreamClientID)
-	_, err = service.ValidateStateToken(state, "another-principal@example.com", serviceID)
+	_, err = service.ValidateStateToken(t.Context(), state, "another-principal@example.com", serviceID)
 	assert.ErrorIs(t, err, oauth2session.ErrPrincipalMismatch)
-	_, err = service.ValidateStateToken(state, principal, id.NewServiceID())
+	_, err = service.ValidateStateToken(t.Context(), state, principal, id.NewServiceID())
 	require.Error(t, err)
 	parts := strings.Split(state, ".")
 	require.Len(t, parts, 5)
@@ -541,6 +541,6 @@ func TestStateTokenSecurity_EstablishedClientIdentityIsAuthenticatedWithPrincipa
 	require.NotEmpty(t, ciphertext)
 	ciphertext[len(ciphertext)/2] ^= 1
 	parts[3] = base64.RawURLEncoding.EncodeToString(ciphertext)
-	_, err = service.ValidateStateToken(strings.Join(parts, "."), principal, serviceID)
+	_, err = service.ValidateStateToken(t.Context(), strings.Join(parts, "."), principal, serviceID)
 	require.Error(t, err, "the established upstream identity cannot be altered without invalidating state authentication")
 }

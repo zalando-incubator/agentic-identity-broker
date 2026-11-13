@@ -57,14 +57,14 @@ func (h *CIMDClientKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var request cimdKeyRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", "")
 		h.audit(r.Context(), operator, "", "generate", "rejected")
 		return
 	}
 	if len(request.Algorithm) > 0 {
 		var supplied string
 		if err := json.Unmarshal(request.Algorithm, &supplied); err != nil || supplied != "ES256" {
-			h.writeError(w, http.StatusBadRequest, "unsupported algorithm", "algorithm must be ES256")
+			h.writeError(r.Context(), w, http.StatusBadRequest, "unsupported algorithm", "algorithm must be ES256")
 			h.audit(r.Context(), operator, "", "generate", "rejected")
 			return
 		}
@@ -72,26 +72,26 @@ func (h *CIMDClientKeysHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	key, err := h.keys.GenerateKey(r.Context(), "ES256")
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		h.audit(r.Context(), operator, "", "generate", "rejected")
 		return
 	}
 	h.audit(r.Context(), operator, key.KID, "generate", "success")
-	h.writeJSON(w, http.StatusCreated, cimdKeyResponse(key))
+	h.writeJSON(r.Context(), w, http.StatusCreated, cimdKeyResponse(key))
 }
 
 // List returns active CIMD client-authentication key metadata.
 func (h *CIMDClientKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	keys, err := h.keys.ListKeys(r.Context())
 	if err != nil {
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 	items := make([]cimdKeyResponseBody, 0, len(keys))
 	for _, key := range keys {
 		items = append(items, cimdKeyResponse(key))
 	}
-	h.writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	h.writeJSON(r.Context(), w, http.StatusOK, map[string]any{"items": items})
 }
 
 // Promote makes an existing CIMD key immediately current.
@@ -102,22 +102,22 @@ func (h *CIMDClientKeysHandler) Promote(w http.ResponseWriter, r *http.Request) 
 	}
 	kid := id.NewKeyID(chi.URLParam(r, "kid"))
 	if kid.IsZero() {
-		h.writeError(w, http.StatusBadRequest, "kid is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "kid is required", "")
 		h.audit(r.Context(), operator, kid, "promote", "rejected")
 		return
 	}
 	key, err := h.keys.PromoteKey(r.Context(), kid)
 	if err != nil {
 		if ports.IsNotFoundErr(err) {
-			h.writeError(w, http.StatusNotFound, cimdKeyNotFoundError, "")
+			h.writeError(r.Context(), w, http.StatusNotFound, cimdKeyNotFoundError, "")
 		} else {
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		}
 		h.audit(r.Context(), operator, kid, "promote", "rejected")
 		return
 	}
 	h.audit(r.Context(), operator, key.KID, "promote", "success")
-	h.writeJSON(w, http.StatusOK, cimdKeyResponse(key))
+	h.writeJSON(r.Context(), w, http.StatusOK, cimdKeyResponse(key))
 }
 
 // Remove retires a non-signing CIMD client-authentication key.
@@ -128,20 +128,20 @@ func (h *CIMDClientKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	}
 	kid := id.NewKeyID(chi.URLParam(r, "kid"))
 	if kid.IsZero() {
-		h.writeError(w, http.StatusBadRequest, "kid is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "kid is required", "")
 		h.audit(r.Context(), operator, kid, "remove", "rejected")
 		return
 	}
 	if err := h.keys.DeleteKey(r.Context(), kid); err != nil {
 		switch {
 		case ports.IsNotFoundErr(err):
-			h.writeError(w, http.StatusNotFound, cimdKeyNotFoundError, "")
+			h.writeError(r.Context(), w, http.StatusNotFound, cimdKeyNotFoundError, "")
 		case errors.Is(err, ports.ErrLastActiveKey):
-			h.writeError(w, http.StatusConflict, cimdKeyLastError, "cannot remove the last CIMD client key")
+			h.writeError(r.Context(), w, http.StatusConflict, cimdKeyLastError, "cannot remove the last CIMD client key")
 		case errors.Is(err, ports.ErrCurrentKey), errors.Is(err, ports.ErrEffectiveCurrentKey):
-			h.writeError(w, http.StatusConflict, cimdKeyCurrentError, "promote another CIMD client key before removal")
+			h.writeError(r.Context(), w, http.StatusConflict, cimdKeyCurrentError, "promote another CIMD client key before removal")
 		default:
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		}
 		h.audit(r.Context(), operator, kid, "remove", "rejected")
 		return
@@ -153,7 +153,7 @@ func (h *CIMDClientKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.Request) (id.Principal, bool) {
 	operator, ok := operatorPrincipalFromContext(r.Context(), h.logger)
 	if !ok {
-		h.writeError(w, http.StatusInternalServerError, "server_misconfiguration", "operator principal required for mutating CIMD key operations")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "server_misconfiguration", "operator principal required for mutating CIMD key operations")
 		return "", false
 	}
 	return operator, true
@@ -163,16 +163,16 @@ func (h *CIMDClientKeysHandler) audit(ctx context.Context, operator id.Principal
 	h.logger.InfoContext(ctx, "CIMD client key lifecycle", "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
 }
 
-func (h *CIMDClientKeysHandler) writeJSON(w http.ResponseWriter, status int, value any) {
+func (h *CIMDClientKeysHandler) writeJSON(ctx context.Context, w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		h.logger.Warn("failed to encode CIMD client key response")
+		h.logger.WarnContext(ctx, "failed to encode CIMD client key response")
 	}
 }
 
-func (h *CIMDClientKeysHandler) writeError(w http.ResponseWriter, status int, code, message string) {
-	h.writeJSON(w, status, ErrorResponse{Error: code, Message: message})
+func (h *CIMDClientKeysHandler) writeError(ctx context.Context, w http.ResponseWriter, status int, code, message string) {
+	h.writeJSON(ctx, w, status, ErrorResponse{Error: code, Message: message})
 }
 
 func cimdKeyResponse(key *storage.SigningKey) cimdKeyResponseBody {

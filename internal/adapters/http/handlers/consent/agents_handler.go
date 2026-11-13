@@ -2,6 +2,7 @@
 package consent
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -47,7 +48,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		h.logger.WarnContext(ctx, "principal not found in context")
-		h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		h.writeError(r.Context(), w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 
@@ -57,7 +58,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 		h.logger.ErrorContext(ctx, "failed to get agent delegations",
 			"principal", principalValue,
 			"error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -70,21 +71,21 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 		Data: delegations,
 	}
 
-	h.writeJSON(w, http.StatusOK, response)
+	h.writeJSON(r.Context(), w, http.StatusOK, response)
 }
 
 // writeJSON writes a JSON response.
-func (h *AgentsHandler) writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func (h *AgentsHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data interface{}) {
 	if err := writeBufferedJSON(w, statusCode, data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
 // writeError writes an error response.
-func (h *AgentsHandler) writeError(w http.ResponseWriter, statusCode int, error string, message string) {
+func (h *AgentsHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, error string, message string) {
 	resp := ErrorResponse{
 		Error:   error,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }

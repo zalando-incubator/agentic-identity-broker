@@ -403,7 +403,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 		}, 10*time.Second, 100*time.Millisecond).ShouldNot(BeEmpty())
 		Expect(len(upstreamState)).To(BeNumerically("<", 6000))
 		stateClaims, err := alignedServer.App().OAuth2SessionService.ValidateStateToken(
-			upstreamState, id.Principal(fixtures.DefaultPrincipal().String()), selGoogleServiceID,
+			ctx, upstreamState, id.Principal(fixtures.DefaultPrincipal().String()), selGoogleServiceID,
 		)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stateClaims.RedirectURI).To(Equal(alignedServer.BaseURL() + "/agents/" + testAgentID))

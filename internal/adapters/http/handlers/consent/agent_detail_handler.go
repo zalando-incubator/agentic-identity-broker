@@ -150,21 +150,21 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 
 	if agentID == "" {
 		h.logger.WarnContext(ctx, "agent ID is missing in request")
-		h.writeError(w, http.StatusBadRequest, "bad request", "agent ID is required")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "bad request", "agent ID is required")
 		return
 	}
 
 	userID, ok := getPrincipalFromContext(ctx)
 	if !ok {
 		h.logger.WarnContext(ctx, "principal not found in context")
-		h.writeError(w, http.StatusUnauthorized, "unauthorized", "principal required")
+		h.writeError(r.Context(), w, http.StatusUnauthorized, "unauthorized", "principal required")
 		return
 	}
 
 	parsedAgentID, parseErr := id.ParseAgentID(agentID)
 	if parseErr != nil {
 		h.logger.WarnContext(ctx, "invalid agent ID format", "agent_id", agentID, "error", parseErr)
-		h.writeError(w, http.StatusBadRequest, "bad request", "invalid agent ID format")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "bad request", "invalid agent ID format")
 		return
 	}
 
@@ -174,16 +174,16 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if errors.Is(err, consent.ErrAgentNotFound) {
 			h.logger.WarnContext(ctx, "agent not found", "agent_id", agentID)
-			h.writeError(w, http.StatusNotFound, "not found", "agent not found")
+			h.writeError(r.Context(), w, http.StatusNotFound, "not found", "agent not found")
 			return
 		}
 		if errors.Is(err, consent.ErrMissingMandatoryPS) {
 			h.logger.WarnContext(ctx, "agent permission-set configuration is missing", "agent_id", agentID, "error", err)
-			h.writeError(w, http.StatusBadRequest, "missing mandatory permission set", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "missing mandatory permission set", err.Error())
 			return
 		}
 		h.logger.ErrorContext(ctx, "failed to get agent consent detail", "agent_id", agentID, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -194,21 +194,21 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if errors.Is(err, errSessionExpired) {
 			h.logger.WarnContext(ctx, "authorization session expired", "agent_id", agentID)
-			h.writeError(w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
+			h.writeError(r.Context(), w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			return
 		}
 		if errors.Is(err, errInvalidToken) {
 			h.logger.ErrorContext(ctx, "authorization session token invalid", "agent_id", agentID)
-			h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			return
 		}
 		if errors.Is(err, errInternalSession) {
 			h.logger.ErrorContext(ctx, "internal session validation error", "agent_id", agentID, "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 			return
 		}
 		h.logger.WarnContext(ctx, "authorization session error", "agent_id", agentID, "error", err)
-		h.writeError(w, http.StatusBadRequest, "bad request", "invalid authorization session")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "bad request", "invalid authorization session")
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 		"user_id", userID,
 		"services_count", len(services))
 
-	h.writeJSON(w, http.StatusOK, response)
+	h.writeJSON(r.Context(), w, http.StatusOK, response)
 }
 
 func (h *AgentDetailHandler) buildResponse(ctx context.Context, detail *consent.AgentConsentDetail, services []ServiceRequirementForUser, cimdMeta *CIMDMetadataResponse) AgentDetailData {
@@ -330,19 +330,19 @@ func toServiceRequirementForUser(reqs []consent.ServiceRequirementStatus) []Serv
 }
 
 // writeJSON writes a JSON response.
-func (h *AgentDetailHandler) writeJSON(w http.ResponseWriter, statusCode int, data any) {
+func (h *AgentDetailHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data any) {
 	if err := writeBufferedJSON(w, statusCode, data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
 // writeError writes an error response.
-func (h *AgentDetailHandler) writeError(w http.ResponseWriter, statusCode int, error string, message string) {
+func (h *AgentDetailHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, error string, message string) {
 	resp := ErrorResponse{
 		Error:   error,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }
 
 // getPrincipalFromContext extracts the principal from the request context.
