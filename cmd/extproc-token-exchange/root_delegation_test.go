@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 )
 
 type delegationBrokerStub struct {
@@ -109,7 +110,7 @@ func TestRun_DelegationContextRequiresAuthorization(t *testing.T) {
 	assert.Zero(t, broker.discoveries.Load())
 }
 
-func TestNewDelegationResolver_UsesAdvertisedEndpointAndShutsDown(t *testing.T) {
+func TestNewResolverFromConfig_UsesAdvertisedEndpointAndShutsDown(t *testing.T) {
 	broker := &delegationBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
 		return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"` + base + `/access/v1/evaluation"}`
 	}}
@@ -119,7 +120,7 @@ func TestNewDelegationResolver_UsesAdvertisedEndpointAndShutsDown(t *testing.T) 
 		DelegationContext: extprocconfig.DelegationContextConfig{Enabled: true, PolicyDecisionPoint: srv.URL, RequestTimeout: time.Second, MaxStaleness: time.Minute},
 	}
 
-	resolver, err := newDelegationResolver(context.Background(), cfg, staticAssertionProvider("assertion"))
+	resolver, err := delegation.NewResolverFromConfig(context.Background(), cfg, staticAssertionProvider("assertion"))
 	require.NoError(t, err)
 	_, _, resolveErr := resolver.Resolve(context.Background(), "subject", "https://api.example.com")
 	require.Error(t, resolveErr, "the stub endpoint rejects evaluation, which must fail closed")
