@@ -224,6 +224,10 @@ func (te *TokenExchanger) isAssertionExpired() bool {
 // ctx is used for trace propagation and deadline enforcement.
 // Results are cached; concurrent requests for the same key are deduplicated via singleflight.
 func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceURI string) (ExchangeResult, error) {
+	return te.exchange(ctx, subjectToken, resourceURI, true)
+}
+
+func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceURI string, allowStale bool) (ExchangeResult, error) {
 	key := tokenCacheKey{subjectToken: subjectToken, resourceURI: resourceURI}
 	logger := loggerFromContext(ctx, te.logger)
 
@@ -307,46 +311,18 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 			return result, nil
 		}
 
-		// serveStaleOrErr returns the cached token (even if expired) for transient errors
-		// (5xx, network errors, circuit open — anything isTransientBrokerError returns
-		// true for). Authoritative 4xx rejections are propagated unchanged.
-		// Stale tokens are never served after assertion expiry regardless of error type.
-		// staleUntil is set at token population time (expiresAt + reAuthCooldownTTL)
-		// and is never modified here, so the stale window is immutably bounded.
-		// Must be called with execErr != nil.
-		serveStaleOrErr := func(execErr error) (any, error) {
-			if isTransientBrokerError(execErr) && !te.isAssertionExpired() {
-				te.cacheMu.RLock()
-				entry, ok := te.cache[key]
-				if ok && entry.accessToken != "" && time.Now().Before(entry.staleUntil) {
-					staleResult := ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets), Principal: entry.principal, AgentID: entry.agentID}
-					te.cacheMu.RUnlock()
-					return staleResult, nil
-				}
-				te.cacheMu.RUnlock()
-			}
-			return ExchangeResult{}, execErr
-		}
-
-		// When the circuit breaker is disabled (cb == nil), call doExchangeAndCache
-		// directly, then apply the stale-token fallback for transient errors.
 		if te.cb == nil {
-			result, execErr := doExchangeAndCache()
-			if execErr != nil {
-				return serveStaleOrErr(execErr)
-			}
-			return result, nil
+			return doExchangeAndCache()
 		}
 
 		// Circuit breaker: wrap doExchangeAndCache so gobreaker tracks 5xx failures.
-		// After Execute returns, apply the stale-token fallback outside the breaker so
-		// transient probe failures are correctly counted as circuit-breaker failures.
+		// Callers apply stale fallback after shared delivery so failures reach the breaker.
 		result, execErr := te.cb.Execute(doExchangeAndCache)
 		if execErr != nil {
 			if errors.Is(execErr, gobreaker.ErrOpenState) || errors.Is(execErr, gobreaker.ErrTooManyRequests) {
 				execErr = NewOperationError(NewErrorMetadata(OperationExchange, KindCircuitOpen, DependencyBroker, 0, ""), errors.Join(ErrCircuitOpen, execErr))
 			}
-			return serveStaleOrErr(execErr)
+			return ExchangeResult{}, execErr
 		}
 		return result, nil
 	})
@@ -357,6 +333,15 @@ func (te *TokenExchanger) Exchange(ctx context.Context, subjectToken, resourceUR
 	res, err := awaitResult(ctx, resChan)
 	if err != nil {
 		return ExchangeResult{}, NewOperationError(NewErrorMetadata(OperationExchange, KindCallerCanceled, DependencyLocal, 0, ""), err)
+	}
+	if res.Err != nil && allowStale && isTransientBrokerError(res.Err) && !te.isAssertionExpired() {
+		te.cacheMu.RLock()
+		entry, ok := te.cache[key]
+		if ok && entry.accessToken != "" && time.Now().Before(entry.staleUntil) {
+			res.Val = ExchangeResult{Token: entry.accessToken, GrantedPermissionSets: cloneGrantedPermissionSets(entry.grantedPermissionSets), Principal: entry.principal, AgentID: entry.agentID}
+			res.Err = nil
+		}
+		te.cacheMu.RUnlock()
 	}
 	if res.Shared {
 		diagnostic := SuccessDiagnostic(ExchangeUnknown)
