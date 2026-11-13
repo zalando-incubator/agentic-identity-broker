@@ -1,6 +1,6 @@
 # Implementation Plan: AuthZEN Delegation Policy Information Point
 
-**Branch**: `speckit/issue-289` | **Date**: 2026-10-27 | **Spec**: [spec.md](./spec.md)
+**Branch**: `speckit/issue-289` | **Date**: 2026-10-27 (revised 2026-10-28) | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `specs/054-authzen-delegation-pip/spec.md`
 
@@ -26,7 +26,10 @@ discovers and verifies the PDP. It caches only permits, until a deadline of
 positive `max-age` fails closed. ExtProc supplies the delegation to OPA before every policy
 decision: concurrently with exchange on the body path, and before policy and exchange on the
 header-only path. Context that expires before policy use is rejected with 503. Every failure is
-closed. The shape of the OPA input is blocked on a spec revision (research R15).
+closed. ExtProc decodes the permit into its own typed struct and adds `principal`, `agent`,
+`resource`, `grant`, and `permission_sets` directly to `input.context`. On both enabled paths,
+it fills the permanently retained `granted_permission_sets` and
+`granted_permission_sets_available: true` from the permit (research R15).
 
 The `granted_permission_sets` field of the exchange response is marked deprecated. Its removal
 is a later, separately approved 2.0.0 contract change.
@@ -96,11 +99,11 @@ and U2 (expiry before policy use returns 503). It accepted the AuthZEN contract 
 decision set, which includes the I2 audit-seam extension. [remediation.md](./remediation.md)
 records the answers and where they apply.
 
-**BLOCKED, spec revision required**: The review also asked to extend the existing OPA context
-attributes instead of adding `input.context.delegation` and `delegation_available`. FR-017,
-FR-018, US3.1, US3.8, and Journey 4 require those members, so the change needs a
-`/speckit-clarify` spec revision before R15, data model §3.5, and ExtProc contract §4 can be
-finalized (research R15).
+**Spec clarification (2026-10-28)**: The review also asked to extend the existing OPA context
+attributes instead of adding `input.context.delegation` and `delegation_available`. The
+`/speckit-clarify` session (spec Clarifications, Session 2026-10-28) revised FR-017, FR-018,
+US3.1, US3.2, US3.6, US3.8, US4.1, Journey 4, and SC-005. This plan applies the revision in
+research R15, data model §§3.3.1 and 3.5, and ExtProc contract §4.
 
 ## Constitution Check
 
@@ -133,7 +136,7 @@ finalized (research R15).
 |---|---|---|
 | Security-first | Pass with rationale | Broker evaluation is on whenever exchange is on, and it is always authenticated and authorized. ExtProc's opt-in default follows ADR 028's Security-First reconciliation: an additive consumer whose absence leaves today's controls in force. The ADR records this (R16). Every enabled-mode failure is closed. |
 | Architecture docs | Pass | Update `ARCHITECTURE.md` §3.1.4 (routes), §3.2.1 (resolver port and permit cache), §3.2.3 (enabled-mode ordering), the policy-gates table, the glossary, and the ADR index. Update `internal/extproc/AGENTS.md`, `internal/AGENTS.md` (tokenexchange description), and the root `AGENTS.md` ADR table. |
-| ADRs | Pass with revision | The maintainer accepted the R16 decision set on 2026-10-28. The new ADR (planned 045) supersedes ADR 028's input schema and enabled-mode ordering, and extends ADR 033's seam. T008 drafts it as Accepted. Its input-schema section must follow the R15 spec revision (Principle II allows same-PR revision before merge). |
+| ADRs | Pass with revision | The maintainer accepted the R16 decision set on 2026-10-28. The new ADR (planned 045) supersedes ADR 028's input schema and enabled-mode ordering, and extends ADR 033's seam. T008 drafts it as Accepted. Its input-schema section records the clarified R15 shape (Principle II allows same-PR revision before merge). |
 | Library-first security | Pass | No new cryptography. JWTs are verified by the existing jwx-based `JWTValidator`. TLS uses the existing ExtProc HTTP client. |
 | Zalando guidelines | Pass with documented exception | The AuthZEN-mandated paths (`/access/v1/...` and `/.well-known/...`) and snake_case members are standard-defined. The ADR documents the exception (API-004). |
 | End-user docs | Pass | `docs/api/authzen-evaluation.md` with examples, plus a deprecation note in `docs/reference/token-exchange.md`. |
@@ -146,10 +149,14 @@ finalized (research R15).
 
 ### Post-design re-check
 
-The post-design gate is **blocked**, not passed. The OPA input shape needs a spec revision
-(research R15). The freshness findings are answered and applied, as recorded in
-[remediation.md](./remediation.md).
+The post-design gate **passes**. The 2026-10-28 spec clarification settled the OPA input shape,
+and research R15, data model §3.5, and ExtProc contract §4 now apply it. The freshness findings
+are answered and applied, as recorded in [remediation.md](./remediation.md). The open items
+in the next section are implementation-time gates. They do not block the design.
 
+- The OPA input change is additive. The five new members use `omitempty` and appear only in
+  enabled mode, and the disabled-mode input is pinned byte-for-byte. A malformed permit context
+  fails closed (SR-002), and no unknown broker member reaches policy (R15).
 - No new bounded context is invented. The resolver stays in `tokenexchange`, which owns every
   invariant (R1).
 - Port changes: one new ExtProc port. Broker ports are unchanged.
@@ -162,9 +169,10 @@ The post-design gate is **blocked**, not passed. The OPA input shape needs a spe
 
 ## Stakeholder decisions before implementation
 
-Decided in the 2026-10-28 review:
+Decided in the 2026-10-28 review and clarification:
 
 - **Freshness** (I1/U1/U2): see [remediation.md](./remediation.md).
+- **OPA input shape**: the spec clarification of 2026-10-28, applied in research R15.
 - **AuthZEN contract**: Accepted. This covers the endpoint shapes, the error mapping (R6),
   strict member rejection (R10), the plain-UUID anchor, denial form (a) (R11), and the `1.1.0`
   deprecation marker (R12).
@@ -172,9 +180,8 @@ Decided in the 2026-10-28 review:
 
 Still open:
 
-1. **Revise the spec for the OPA input shape** through `/speckit-clarify` (research R15). This
-   blocks finalizing R15, data model §3.5, ExtProc contract §4, the ADR's input-schema section,
-   and the regenerated `tasks.md`.
+1. **Regenerate `tasks.md`** with `/speckit-tasks`. Its T056 still describes the superseded
+   verbatim `delegation` members.
 2. **Run the API-003 Verify checks** against the final AuthZEN 1.0 text before the OpenAPI is
    frozen: the discovery member names, the path-insertion rule (R8), and the denial envelope
    (R11). Any conflict with the accepted contract goes back to the stakeholder. This session
@@ -199,7 +206,7 @@ specs/054-authzen-delegation-pip/
 │   └── extproc-delegation-context.md        # ExtProc config, broker calls, outcomes, OPA input
 ├── remediation.md                           # analysis findings and the 2026-10-28 decisions
 ├── checklists/requirements.md
-└── tasks.md                                 # /speckit-tasks; regenerate after the R15 spec revision
+└── tasks.md                                 # /speckit-tasks; regenerate for the clarified R15 shape
 ```
 
 ### Source code and documentation affected
@@ -227,10 +234,10 @@ internal/
     ├── config/{config.go,loader.go,validate.go}          # DelegationContextConfig, defaults, flags, validation
     ├── delegation/                                       # New package (no broker imports)
     │   ├── discovery.go                                  # Discover + PDP verification
-    │   ├── client.go                                     # AuthZEN POST, response parsing, max-age, deadline
+    │   ├── client.go                                     # AuthZEN POST, typed permit decode and validation, max-age, deadline
     │   └── resolver.go                                   # permit-only cache, singleflight, eviction
-    ├── authorization/input.go, input_builder.go          # ContextInput delegation members (shape pending R15); header-only input
-    └── server/server.go                                  # DelegationResolver port; body concurrency; header-only ordering; deadline check; responses
+    ├── authorization/input.go, input_builder.go          # ContextInput: principal, agent, resource, grant, permission_sets (R15); header-only input
+    └── server/server.go                                  # DelegationResolver port; contextInputFromDelegation; body concurrency; header-only ordering; deadline check; responses
 
 cmd/extproc-token-exchange/root.go                        # Discovery at startup; resolver wiring; shutdown
 
@@ -335,10 +342,19 @@ feature is enabled:
     batch decision), ExtProc checks `now < Deadline`. If the check fails, it returns 503
     `service_unavailable` with no policy call, no forwarding, and no re-resolution.
   - T049/T050/T052/T057/T058 cover these rules test-first.
-- Extend `ContextInput` and `BuildOPAInputHeadersOnly` with the delegation members (R15). The
-  member shape is **blocked** until the spec revision decides how the existing attributes are
-  extended and filled.
-- Disabled mode keeps the existing code path.
+- Policy input (R15, data model §3.5, and contract §4):
+  - The `delegation` client decodes the permit's `context` into its own wire struct, ignoring
+    unknown members. It validates the documented shape (data model §3.3.1) and returns a typed
+    `delegation.Context`. A violation is `invalid_response` and returns 503 (uncached).
+  - `authorization.ContextInput` gains `principal`, `agent`, `resource`, `grant`, and
+    `permission_sets` (`omitempty`). Only `scopes` arrays always serialize.
+  - The server's pure function `contextInputFromDelegation(result, agentSessionID)` builds
+    the input for the body path, each batch decision, and the header-only path. It deep-copies
+    the slices, derives `granted_permission_sets` from the permit, and sets
+    `granted_permission_sets_available: true`. Exchange extensions are not used in enabled mode.
+    `BuildOPAInputHeadersOnly` accepts the `ContextInput` for this path.
+  - No `delegation` wrapper, `subject` member, or `delegation_available` flag is emitted.
+- Disabled mode keeps the existing code path, and its OPA input is byte-for-byte unchanged.
 - The approval gate keeps using the exchange-derived `principal` and `agent_id`.
 
 ### 7. Contract, documentation, and deprecation
@@ -348,7 +364,9 @@ After stakeholder confirmation:
 1. Apply the OpenAPI delta, including the `granted_permission_sets` deprecation and `1.1.0`.
 2. Write `docs/api/authzen-evaluation.md` and rebuild the docs site.
 3. Update the token-exchange reference with the deprecation.
-4. Update `ARCHITECTURE.md` and the AGENTS guides.
+4. Update `ARCHITECTURE.md` and the AGENTS guides. In `internal/extproc/AGENTS.md`, document
+   the five new `ContextInput` members and their enabled-mode sources (R15). Note that the
+   permit, not the exchange cache window, sets `granted_permission_sets` in enabled mode.
 5. Add the ExtProc configuration docs and the example.
 
 ## Implementation Phase Overview
@@ -378,7 +396,9 @@ After stakeholder confirmation:
 
 - **2a Domain model and ADR**:
   - Draft the new ADR as Accepted, recording the 2026-10-28 acceptance of the R16 decision set
-    and the freshness decisions. Align its input-schema section with the revised R15.
+    and the freshness decisions. Its input-schema section records the clarified R15 shape:
+    direct members, a typed mapping, permanent permit-derived `granted_permission_sets*`, and
+    no wrapper or flag.
   - Add the glossary entries and the policy-gates row to `ARCHITECTURE.md`.
   - Update the ADR index and the root `AGENTS.md` ADR table.
 - **2b Configuration design**:
@@ -403,7 +423,8 @@ Add compile-only scaffolding so the tests fail semantically:
 - handlers that return `501`
 - `DelegationContextConfig` fields
 - the `delegation` package with constructors that return errors
-- the `ContextInput` members
+- the `ContextInput` members and the policy-input types (`AgentContext`, `ResourceContext`,
+  `GrantContext`, `PermissionSetContext`, `ServiceContext`), plus `delegation.Context`
 - the server option
 
 ### Phases 3–6: User stories (test-first)
@@ -423,8 +444,9 @@ Add compile-only scaffolding so the tests fail semantically:
   - ExtProc client, resolver, and cache
   - body-path concurrency and precedence
   - header-only ordering
-  - OPA input and the legacy projection
-  - the canonical-ID policy fixture
+  - the typed permit decoding and validation, the direct `input.context` members, and the
+    permanently retained permit-derived `granted_permission_sets*`
+  - the canonical-ID policy fixture on both paths
 - **US4**:
   - config defaults and validation
   - discovery and PDP verification
@@ -469,7 +491,7 @@ and a counting `MockAuthZENBroker`. Each test gets fresh storage, servers, and k
 | `delegation_context.max_staleness: 2s` and `Eventually` | US3.4 and US3.7 (no clock injection) |
 | Mock-broker request counters | US4.1 and US4.4 |
 | ExtProc gRPC `ImmediateResponse` status and body, and header mutations | US3 outcomes |
-| Canonical-ID Rego fixture with two fixture sets that use different UUIDs | US3.8 and SC-005 |
+| Canonical-ID Rego fixture with two fixture sets that use different UUIDs, on both paths. The fixture reads `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id`, and it denies with distinct reasons when a `delegation` wrapper, `delegation_available`, or `subject` appears, or when availability is not `true` (research R18). | US3.1, US3.2, US3.8, and SC-005 |
 
 **Scenario mapping**:
 
@@ -503,14 +525,14 @@ and a counting `MockAuthZENBroker`. Each test gets fresh storage, servers, and k
 | US2.18 | `tests/e2e/authzen_delegation_errors_test.go` | `It("returns 400 for a mismatched context.agent anchor")` |
 | US2.19 | `tests/e2e/authzen_delegation_errors_test.go` | `It("returns 500 during a grant-repository outage")` |
 | US2.20 | `tests/e2e/authzen_delegation_errors_test.go` | `It("returns 400 for an unregistered protected resource")` |
-| US3.1 | `tests/e2e/delegation_context_journey_test.go` | `It("resolves concurrently with exchange and gives body policy the verbatim context")` |
-| US3.2 | `tests/e2e/delegation_context_journey_test.go` | `It("resolves before header-only policy and exchanges only after allow")` |
+| US3.1 | `tests/e2e/delegation_context_journey_test.go` | `It("resolves concurrently with exchange and gives body policy the documented direct context members")` |
+| US3.2 | `tests/e2e/delegation_context_journey_test.go` | `It("resolves before header-only policy with the same direct members and exchanges only after allow")` |
 | US3.3 | `tests/e2e/delegation_context_journey_test.go` | `It("returns 403 access_denied with the consent URL before policy")` |
 | US3.4 | `tests/e2e/delegation_context_journey_test.go` | `It("re-resolves after permit freshness lapses and denies a revoked grant despite a cached token")` |
 | US3.5 | `tests/e2e/delegation_context_journey_test.go` | `It("does not cache denials and permits right after consent")` |
 | US3.6 | `tests/e2e/delegation_context_journey_test.go` | `It("fails closed when the broker is unavailable after permit expiry")` |
 | US3.7 | `tests/e2e/delegation_context_journey_test.go` | `It("isolates the cache per subject and resource and honors max_staleness")` |
-| US3.8 | `tests/e2e/delegation_context_journey_test.go` | `It("makes the same canonical-ID policy decision across different UUIDs and projects legacy inputs from context")` |
+| US3.8 | `tests/e2e/delegation_context_journey_test.go` | `It("makes the same canonical-ID policy decision across different UUIDs on both paths with permit-derived permission-set inputs")` |
 | US3.9 | `tests/e2e/delegation_context_journey_test.go` | `It("denies a header-only request by policy without calling exchange")` |
 | US3.10 | `tests/e2e/delegation_context_journey_test.go` | `It("blocks forwarding when exchange fails despite a permitted delegation")` |
 | US4.1 | `tests/e2e/extproc/delegation_context_startup_test.go` | `It("makes no discovery or evaluation requests when disabled by default")` |
@@ -545,9 +567,9 @@ because the stub handlers return 501 and the stub resolver returns an error. No 
 | `internal/adapters/http/routing` | Routes are absent when the handlers are nil. `/access` is reserved with a 404. The SPA does not shadow the routes. |
 | `internal/app` | Handlers are wired only when `tokenExchangeEnabled`. One resolver instance is shared by exchange and evaluation. |
 | `internal/extproc/config` | Defaults, env and flag precedence, each validation rule and message, the origin derivation, and that disabled mode skips validation. |
-| `internal/extproc/delegation` | Discovery: exact PDP match, path-preserving mismatch, invalid endpoint, http without `allow_http`, and no credentials sent. Client: request body, bearer assertion, decision parsing, deny parsing and code allowlist, non-200 and timeout errors. `max-age` handling: missing, `0`, malformed, duplicate, and non-integer values are errors and not usable; positive values; values above 60 and above `max_staleness`; `Deadline = requestStart + min(max-age, max_staleness)` taken from the clock read before the send, so a delayed response does not extend it. Resolver: cache until `Deadline`, hits and singleflight followers get the original deadline, no hit at or after the deadline, no denial or error caching, no stale use, key isolation, eviction, and shutdown. Run with `-race`. |
-| `internal/extproc/authorization` | `ContextInput` members omitted when disabled. The legacy projection is derived from the context. The header-only input carries the delegation when enabled. |
-| `internal/extproc/server` | Body path: both calls complete before the response. The precedence matrix covers deny, error, exchange error, and success in both completion orders. Header-only path: resolve, then policy, then exchange; no exchange on policy deny. Deadline check: the deadline passes while ExtProc waits for exchange, while it buffers the body, and between batch decisions, and the header-only path is covered too. Each case returns 503 with no policy call and no forwarding. The tests use synchronization barriers and an unexported clock that `export_test.go` sets, as in R5. Disabled mode makes no resolver calls. The response bodies are covered. |
+| `internal/extproc/delegation` | Discovery: exact PDP match, path-preserving mismatch, invalid endpoint, http without `allow_http`, and no credentials sent. Client: request body, bearer assertion, decision parsing, deny parsing and code allowlist, non-200 and timeout errors. Typed context: unknown members at every level are dropped. Every data model §3.3.1 violation (missing member, wrong type, empty `permission_sets`, bad timestamp, and `null` or `""` optional members) is `invalid_response` and is not cached. Absent optional members stay absent. `max-age` handling: missing, `0`, malformed, duplicate, and non-integer values are errors and not usable; positive values; values above 60 and above `max_staleness`; `Deadline = requestStart + min(max-age, max_staleness)` taken from the clock read before the send, so a delayed response does not extend it. Resolver: cache until `Deadline`, hits and singleflight followers get the original deadline, no hit at or after the deadline, no denial or error caching, no stale use, key isolation, eviction, and shutdown. Run with `-race`. |
+| `internal/extproc/authorization` | Golden JSON for the disabled-mode body and header-only inputs, unchanged from today. In enabled mode, the five members are serialized with the documented names. `canonical_id` and `valid_until` are omitted, never `null`. `scopes` serializes `[]`. No `delegation`, `delegation_available`, or `subject` key appears. The header-only builder carries the supplied `ContextInput`. |
+| `internal/extproc/server` | Body path: both calls complete before the response. The precedence matrix covers deny, error, exchange error, and success in both completion orders. Header-only path: resolve, then policy, then exchange; no exchange on policy deny. Deadline check: the deadline passes while ExtProc waits for exchange, while it buffers the body, and between batch decisions, and the header-only path is covered too. Each case returns 503 with no policy call and no forwarding. The tests use synchronization barriers and an unexported clock that `export_test.go` sets, as in R5. Disabled mode makes no resolver calls. The response bodies are covered. `contextInputFromDelegation`: `principal` comes from `subject.id`, `granted_permission_sets` comes from the permit and not from the exchange result, availability is `true`, the slices are deep-copied (mutating one input leaves the cached `Result` intact), and `agent_session_id` is preserved. The body, batch, and header-only paths receive the same members. |
 
 ### Integration tests
 

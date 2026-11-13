@@ -3,8 +3,8 @@
 **Owner**: standalone `extproc-token-exchange` (ADR 011). It uses the `EXTPROC_` configuration
 namespace and is **not** part of the broker Helm chart. The maintainer accepted the new ADR
 decision set (research R16) on 2026-10-28. This contract changes ADR 028's input schema and
-request ordering when the feature is enabled. The input schema in §4 is blocked on a spec
-revision (research R15).
+request ordering when the feature is enabled. The input schema in §4 follows the 2026-10-28
+spec clarification (FR-017, FR-018, and research R15).
 
 ## 1. Configuration
 
@@ -71,8 +71,9 @@ transit accounting. The maintainer accepted the remaining skew.
 
 | Broker response | Resolver result |
 |---|---|
-| 200, `decision: true`, object `context`, exactly one positive integer `max-age` | Permit with `Deadline`, cached until that deadline |
+| 200, `decision: true`, a `context` that passes the typed validation (data model §3.3.1), exactly one positive integer `max-age` | Permit with the typed `Context` and `Deadline`, cached until that deadline. Unknown context members are dropped. |
 | 200, `decision: true`, `max-age` missing, `0`, malformed, duplicated, or not an integer | Error (`invalid_response`), so the request gets 503. The permit is **not used** and **not cached**. |
+| 200, `decision: true`, a `context` that is missing a required member, has a wrong type, an empty `permission_sets`, an invalid timestamp, or an optional member that is `null` or `""` | Error (`invalid_response`), so the request gets 503. **Not used** and **not cached**. |
 | 200, `decision: false` | `DeniedError{Code, ConsentURL}`. The code is allowlisted. The URL must be absolute http(s). Never cached. |
 | Any other status, malformed JSON, non-boolean `decision`, or timeout | Error. Never cached. No stale fallback. |
 
@@ -104,32 +105,69 @@ approval gate, and policy fail-closed behavior are unchanged and still apply.
 
 ## 4. OPA input (`input.context`)
 
-**Blocked: spec revision required.** The maintainer asked to extend the existing context
-attributes instead of adding the `delegation` and `delegation_available` members, which expose
-how ExtProc obtains the context. FR-017 currently requires those members. This section shows
-the pre-review shape and changes after `/speckit-clarify` revises the spec. See research R15.
+ExtProc maps its typed permit `Context` (data model §3.3.1) into the existing `input.context`
+object. It never copies the permit verbatim. Policies see broker vocabulary, not AuthZEN
+wire-format details. There is no `delegation` wrapper, no `subject` member, and no
+`delegation_available` flag. Unknown permit members never appear.
 
-**Enabled mode**:
+**Enabled mode** (body-bearing, every batch decision, and header-only), for spec Journey 4
+step 3:
 
 ```json
 {
   "granted_permission_sets_available": true,
-  "granted_permission_sets": {"770e8400-e29b-41d4-a716-446655440001": ["880e8400-e29b-41d4-a716-446655440010"]},
+  "granted_permission_sets": {
+    "770e8400-e29b-41d4-a716-446655440001": ["880e8400-e29b-41d4-a716-446655440010"]
+  },
   "agent_session_id": "…",
-  "delegation_available": true,
-  "delegation": { "subject": {"id": "alice@example.com"}, "agent": {"id": "550e8400-…", "canonical_id": "data-assistant"}, "resource": {"…": "…"}, "grant": {"…": "…"}, "permission_sets": ["…"] }
+  "principal": "alice@example.com",
+  "agent": {"id": "550e8400-e29b-41d4-a716-446655440000", "canonical_id": "data-assistant"},
+  "resource": {
+    "id": "880e8400-e29b-41d4-a716-446655440010",
+    "canonical_id": "repo-api",
+    "resource_uri": "https://api.example.com/repos",
+    "scopes": ["read:repo"]
+  },
+  "grant": {
+    "id": "990e8400-e29b-41d4-a716-446655440020",
+    "updated_at": "2026-10-26T09:59:00Z",
+    "valid_until": "2026-10-26T10:30:00Z"
+  },
+  "permission_sets": [{
+    "id": "770e8400-e29b-41d4-a716-446655440001",
+    "canonical_id": "repo-reader",
+    "services": [{
+      "id": "880e8400-e29b-41d4-a716-446655440010",
+      "canonical_id": "repo-api",
+      "scopes": ["read:repo"]
+    }]
+  }]
 }
 ```
 
-- `delegation` is the broker permit's `context` object, verbatim, with numbers kept as
-  `json.Number`.
-- `granted_permission_sets` is derived from `delegation.permission_sets[].{id, services[].id}`.
-  It is never taken from exchange extensions when the feature is enabled.
-- `delegation_available` is never `false` in enabled mode. A failure rejects the request
-  before policy runs.
+| Member | Rule |
+|---|---|
+| `principal` | The permit's `subject.id` |
+| `agent`, `resource`, `grant`, `permission_sets` | The documented fields of the corresponding permit members, with the received values. Timestamps are the received RFC 3339 strings. |
+| `canonical_id` (all levels), `grant.valid_until` | **Omitted** when the permit omits them, never `null` |
+| `scopes` (all levels) | Always an array; `[]` when empty |
+| `granted_permission_sets` | `{permission_sets[].id: [permission_sets[].services[].id]}`, derived from the permit. Never taken from exchange extensions in enabled mode. Retained permanently. |
+| `granted_permission_sets_available` | Always `true` in enabled mode. This is the only availability signal, and it guarantees that the five members above are present. Retained permanently. |
+| `agent_session_id` | Unchanged existing behavior (omitted when absent) |
 
-**Disabled mode**: `delegation` and `delegation_available` are **omitted**. All other members
-are produced exactly as today.
+A denial (403), a resolution error (503), or an expired deadline (503) returns before policy
+runs. Enabled mode therefore never produces `granted_permission_sets_available: false`.
+
+**Disabled mode**: `principal`, `agent`, `resource`, `grant`, and `permission_sets` are
+**omitted**. `granted_permission_sets_available`, `granted_permission_sets`, and
+`agent_session_id` are produced exactly as today: from the exchange response on the body
+path, and `false` without permission sets on the header-only path. The serialized input is
+byte-for-byte unchanged.
+
+**Compatibility**: The OPA members `granted_permission_sets` and
+`granted_permission_sets_available` are permanent. FR-019 deprecates only the
+`granted_permission_sets` field of the `/oauth2/token` *response*. ExtProc continues to read
+that field in disabled mode until its separately approved removal.
 
 **Example canonical-ID policy** (`tests/e2e/fixtures/policies/delegation_canonical.rego`, illustrative):
 
@@ -137,10 +175,11 @@ are produced exactly as today.
 package aib.extproc.authz
 default result := {"action": "deny", "reasons": ["delegation does not cover repo-api"]}
 result := {"action": "allow"} if {
-  d := input.context.delegation
-  d.agent.canonical_id == "data-assistant"
-  d.resource.canonical_id == "repo-api"
-  some ps in d.permission_sets
+  c := input.context
+  c.granted_permission_sets_available == true
+  c.agent.canonical_id == "data-assistant"
+  c.resource.canonical_id == "repo-api"
+  some ps in c.permission_sets
   ps.canonical_id == "repo-reader"
 }
 ```

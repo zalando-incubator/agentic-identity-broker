@@ -441,51 +441,107 @@ The administrative code is a bounded enum from the broker. The resolver allowlis
 
 ## R15. OPA input changes
 
-**Blocked: spec revision required (maintainer review, 2026-10-28)**: The maintainer commented
-on this section: "This means that the technical choice of how the context is obtained now bleeds
-into the OPA policies. Let's sensibly extend the context object and repopulate existing
-attributes where possible." The decision below follows FR-017, which requires
-`input.context.delegation` verbatim and `input.context.delegation_available: true`. The
-maintainer's direction changes that requirement. It also affects FR-018 (canonical-ID fixture),
-US3.1, US3.8, Journey 4 steps 3 and 5, and SC-005. The planning phase cannot change
-requirements, so `/speckit-clarify` must revise the spec first. The text below is superseded
-when that revision lands. It must not be implemented in its current form.
+**Spec clarification (2026-10-28)**: The maintainer review on the pre-review design said that
+the `delegation` wrapper and the `delegation_available` flag let the way ExtProc obtains the
+context bleed into OPA policies. The spec clarification (spec Clarifications, Session
+2026-10-28) settles the shape. FR-017, FR-018, US3.1, US3.2, US3.6, US3.8, US4.1, Journey 4,
+and SC-005 now require it. This entry replaces the pre-review decision.
 
-**Proposed direction for the clarify review (not a decision)**:
+**Decision**: Extend the existing `authorization.ContextInput` with five members. Add them
+directly beside `granted_permission_sets_available`, `granted_permission_sets`, and
+`agent_session_id`. There is no wrapper and no new flag.
 
-- Add the delegation members directly to `ContextInput`, next to the existing members. Use no
-  `delegation` wrapper and no `delegation_available` flag. For example: `principal`, `agent`
-  (`id`, `canonical_id`), `resource` (`id`, `canonical_id`, `resource_uri`, `scopes`), `grant`
-  (`id`, `updated_at`, `valid_until`), and `permission_sets[]`.
-- Fill the existing `granted_permission_sets` and `granted_permission_sets_available: true`
-  from the permit on both paths. The header-only path then reports `true` when the feature is
-  enabled.
-- When the feature is disabled, the new members are omitted. The existing members stay
-  exactly as they are today.
+| Member (`input.context.…`) | Go field and type | JSON tag | Source in the typed permit |
+|---|---|---|---|
+| `principal` | `Principal string` | `principal,omitempty` | `context.subject.id` |
+| `agent` | `Agent *AgentContext` (`ID string`; `CanonicalID string`, `canonical_id,omitempty`) | `agent,omitempty` | `context.agent` |
+| `resource` | `Resource *ResourceContext` (`ID`, `CanonicalID` with `omitempty`, `ResourceURI`, `Scopes []string`) | `resource,omitempty` | `context.resource` |
+| `grant` | `Grant *GrantContext` (`ID`, `UpdatedAt string`, `ValidUntil string` with `omitempty`) | `grant,omitempty` | `context.grant` |
+| `permission_sets` | `PermissionSets []PermissionSetContext` (`ID`, `CanonicalID` with `omitempty`, `Services []ServiceContext{ID, CanonicalID omitempty, Scopes}`) | `permission_sets,omitempty` | `context.permission_sets` |
 
-Open questions for the spec revision:
+The policy-input types live in `internal/extproc/authorization`, which owns the OPA input
+document. Their `scopes` fields have no `omitempty`, so an empty scope list is `[]`, never
+`null` and never absent.
 
-1. What are the member names and nesting, and must the members equal the broker context
-   verbatim?
-2. Do the OPA-side `granted_permission_sets*` attributes stay permanently, or only for the
-   deprecation window that FR-017 describes? The exchange-response deprecation (FR-019) is a
-   separate question.
-3. Is `granted_permission_sets_available` enough as the availability signal?
+**Typed decoding (no verbatim copy)**: `internal/extproc/delegation` decodes the permit's
+`context` into its own unexported wire struct with `encoding/json`. Unknown members at any
+level are ignored. They are never copied, so they cannot reach Rego. The client then validates
+the documented shape. Any violation is an `invalid_response` resolution error: ExtProc returns
+503 and does not cache or use the permit. The client checks these rules:
 
-**Decision (pre-review, superseded on spec revision)**: Extend `authorization.ContextInput` with two members:
+- `subject.id`, `agent.id`, `resource.id`, `resource.resource_uri`, `grant.id`, and every
+  `permission_sets[].id` and `services[].id` are non-empty strings.
+- `resource.scopes`, every `permission_sets[].services`, and every `services[].scopes` are
+  arrays (empty arrays are allowed).
+- `permission_sets` is a non-empty array. The broker never permits an empty grant
+  (`grant_empty`).
+- `grant.updated_at` is an RFC 3339 timestamp. `grant.valid_until`, when present, is an RFC
+  3339 timestamp.
+- An optional `canonical_id` or `valid_until` is either absent or a non-empty string. An
+  explicit `null` or empty string violates the accepted contract ("omitted, never null"), so
+  the client rejects it. It never forwards a null value.
 
-- `delegation_available *bool` (`json:",omitempty"`)
-- `delegation map[string]any` (`json:",omitempty"`), decoded with `UseNumber` from the permit's
-  `context` object exactly as received (verbatim, FR-017)
+Timestamps are validated but kept as the received strings, so the policy sees the same values
+as the permit. No numbers appear in the context, so `UseNumber` is not needed.
 
-When the feature is enabled, both paths set `delegation_available: true` and `delegation`, and
-derive `granted_permission_sets` from `delegation.permission_sets` with
-`granted_permission_sets_available: true`. The header-only path gains these inputs; today it
-reports `false`. When the feature is disabled, the members are omitted and the existing
-behavior is byte-for-byte unchanged.
+The client exports the validated value as `delegation.Context`, a Go struct whose fields mirror
+the five members with `Principal` taken from `subject.id`. `delegation.Result` carries it with
+the `Deadline` (R13). The server maps `delegation.Context` to `authorization.ContextInput` in
+one pure function, `contextInputFromDelegation(result, agentSessionID)`. This follows the
+existing pattern in which the server builds `ContextInput` from the exchange result. The
+function copies every slice, so a cached `Result` that singleflight followers share is never
+aliased into a policy input.
 
-This changes ADR 028's input schema, which is merged and Accepted. It therefore needs the new
-superseding ADR (R16).
+**Retained permission-set inputs (permanent)**: In enabled mode, on both the body and the
+header-only paths, the same mapping sets:
+
+- `granted_permission_sets = {ps.id: [ps.services[].id …]}` in permit order. A permission set
+  whose `services` is empty maps to `[]`. Exchange extensions are never used.
+- `granted_permission_sets_available = true`.
+
+These OPA members stay permanently. FR-019's deprecation applies only to the exchange
+*response* field, which ExtProc keeps parsing for disabled mode.
+
+**Availability signal**: `granted_permission_sets_available` is the only signal. In enabled
+mode, a policy evaluation happens only after a successful, validated, unexpired permit
+(R13/R14), so `true` guarantees all five new members. Only the nested optional members can be
+absent. A resolution error, a denial, or an expired deadline returns before policy runs, so
+enabled mode never produces `false`. On the header-only path, enabled mode therefore reports
+`true` where it reports `false` today.
+
+**Disabled mode**: `contextInputFromDelegation` is never called. The five members are zero
+values and `omitempty` drops them. The existing body path (`state.grantedPermissionSets` from
+exchange) and header-only path (`false`, no permission sets) keep their current code. Their
+serialized input is byte-for-byte unchanged. `ast.InterfaceToValue` honors the JSON tags.
+`authorization` unit tests pin the disabled-mode JSON with golden values for both paths.
+
+**Unchanged members**: `agent_session_id` keeps its current source and behavior. The approval
+gate keeps using the exchange-derived `principal` and `agent_id` (ADR 028 and ExtProc approval
+flow). `input.context.principal` is policy input only.
+
+**Rationale**:
+
+- Policies see broker vocabulary (`principal`, `agent`, `resource`, `grant`, and
+  `permission_sets`) and do not need to know whether the data came from AuthZEN, from
+  exchange, or from a cache.
+- A typed mapping fixes the policy schema in ExtProc. A broker-side addition cannot silently
+  become a policy input, and the AuthZEN `subject` wire name does not leak into Rego.
+- Validating the documented shape keeps the guarantee that `true` means all five members are
+  present. A malformed permit fails closed, as every other malformed response does.
+
+**Alternatives**:
+
+- *A `delegation` wrapper with the verbatim permit and a `delegation_available` flag* (the
+  pre-review design). Rejected by the 2026-10-28 clarification.
+- *`map[string]any` with a field allowlist*. Rejected because a typed struct makes the schema
+  explicit and testable, and the clarification asks for one.
+- *Decoding with `DisallowUnknownFields`*. Rejected because the clarification ignores unknown
+  permit fields. Rejecting them would make every additive broker change a breaking change.
+- *Treating a `null` optional member as absent*. Rejected for fail-closed handling of a
+  response that contradicts the accepted contract.
+
+This changes ADR 028's input schema, which is merged and Accepted. The new superseding ADR
+records it (R16).
 
 ## R16. Architecture decision record
 
@@ -502,9 +558,10 @@ rechecked when the ADR is drafted. The ADR records these decisions:
   single deadline based on request start with accepted skew (U1), and a 503 rejection when the
   context expires before policy use (U2);
 - the ExtProc `DelegationResolver` as a fourth port, with concurrent body-path ordering (R14);
-- the superseded parts of ADR 028: the input schema (R15, final shape pending the spec
-  revision) and the header-only and body-bearing ordering when enabled. The rest of ADR 028
-  stays in force;
+- the superseded parts of ADR 028: the input schema (R15: the five direct `input.context`
+  members, the typed permit mapping, the permanent permit-derived `granted_permission_sets*`
+  inputs, and `true` availability on both enabled paths) and the header-only and body-bearing
+  ordering when enabled. The rest of ADR 028 stays in force;
 - the relation to ADR 012: a separate permit cache, with the exchange cache's stale fallback
   never applied to delegation;
 - the ADR 036 metadata-only input boundary, unchanged;
@@ -517,8 +574,9 @@ rechecked when the ADR is drafted. The ADR records these decisions:
 
 **Stakeholder**: Maintainer `mjungsbluth` accepted this ADR decision set in the 2026-10-28
 review ("ADR accepted"). T008 drafts the ADR file at the next unused number with status
-**Accepted** and records this approval. The OPA input schema bullet must follow the revised
-R15 after the spec revision. Under Principle II, the ADR may be revised in this PR before it
+**Accepted** and records this approval. Its OPA input-schema bullet follows R15 as revised
+after the 2026-10-28 spec clarification. That clarification fixes the shape, but it does not
+by itself approve the ADR text. Under Principle II, the ADR may be revised in this PR before it
 merges, and the final ADR and the code must agree. The planning session itself accepts
 nothing.
 
@@ -565,14 +623,23 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
 - **Startup-only scenarios** (US4.1–US4.4) go in the ExtProc suite `tests/e2e/extproc/`. A new
   `MockAuthZENBroker` in `tests/e2e/extproc/bootstrap/` counts discovery and evaluation requests,
   and can serve a mismatched identifier or fail discovery.
-- **Canonical-ID policy fixture** (the input paths below follow the pre-review R15 shape and
-  change with the spec revision): add `tests/e2e/fixtures/policies/delegation_canonical.rego`.
-  It allows when the input satisfies all of these conditions:
-  - `input.context.delegation.agent.canonical_id == "data-assistant"`
-  - some permission set has `canonical_id == "repo-reader"`
-  - `input.context.delegation.resource.canonical_id == "repo-api"`
+- **Canonical-ID policy fixture** (R15 shape, FR-018): add
+  `tests/e2e/fixtures/policies/delegation_canonical.rego`. It allows when the input satisfies
+  all of these conditions:
+  - `input.context.agent.canonical_id == "data-assistant"`
+  - some `input.context.permission_sets[_]` has `canonical_id == "repo-reader"`
+  - `input.context.resource.canonical_id == "repo-api"`
 
-  The policy contains no UUIDs (FR-018 and SC-005).
+  The policy contains no UUIDs (FR-018 and SC-005). US3.8 runs it on both the body and the
+  header-only paths against two fixture sets that use different UUIDs.
+- **Context-shape assertions** (US3.1, US3.2, US3.8, US4.1): The policy decision cannot show
+  the full OPA input, so ExtProc unit tests in `authorization` and `server` assert the exact
+  input JSON. The E2E journeys assert it through policy outcomes. The canonical fixture also
+  denies, with a distinct fixed reason for each case, when `input.context.delegation` or `input.context.delegation_available` is
+  defined, when `input.context.subject` is defined, or when `granted_permission_sets_available`
+  is not `true`. The consumer journeys use the real broker, which emits no unknown members, so
+  `delegation` client and `server` unit tests cover unknown-member exclusion. Their permit
+  fixtures carry an unknown member at every object level.
 
 ## Deferred findings (not tasks of this feature)
 
