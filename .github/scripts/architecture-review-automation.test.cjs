@@ -139,7 +139,7 @@ function draft(overrides = {}) {
     "### Hexagonal Compliance", "✅ No violations", "", "### Pattern Consistency", "none", "",
     "### Coupling & Cohesion", "none", "", "### OTel Parity", "✅ OTel parity maintained", "",
     "### E2E Test Assessment", "| Flow | True E2E? | Assessment |", "|---|---|---|", "",
-    "### Maintainability Forecast", "Low cost.", "", "### Recommendation", "**DISCUSS** — one overlap.", "",
+    "### Maintainability Forecast", "Low cost.", "", "### Behavioral Probe", "✅ No behavioral gaps found", "", "### Recommendation", "**DISCUSS** — one overlap.", "",
   ].join("\n");
   return {
     recommendation: "DISCUSS", summary: "One naming overlap to discuss",
@@ -296,6 +296,10 @@ test("results need every dimension, consistent severities, remediation buckets, 
   reject({ findings: [finding(), finding()] }, /Invalid review item id/);
   reject({ findings: [finding({ severity: "ORANGE" })] }, /Invalid review item F1/);
   reject({ findings: [finding({ dimension: "unknown" })] }, /Invalid review item F1/);
+  assert.equal(validateResult(draft({ findings: [finding({ dimension: "behavioral-probe" })] }), context).items[0].dimension,
+    "behavioral-probe");
+  const { "behavioral-probe": _, ...withoutProbe } = draft().dimensions;
+  reject({ dimensions: withoutProbe }, /Every analysis dimension/);
   reject({ findings: [finding({ bucket: "maybe" })] }, /Invalid review item F1/);
   reject({ findings: [finding({ bucket: "note" })] }, /needs a remediation bucket/);
   reject({ findings: [finding({ bucket: "auto", change: undefined })] }, /needs a one-line recommended change/);
@@ -312,6 +316,7 @@ test("results need every dimension, consistent severities, remediation buckets, 
     body: draft().body.replace("**DISCUSS**", "**APPROVE**") }, /cannot approve/);
   reject({ body: "Hello" }, /must start with the review heading/);
   reject({ body: draft().body.replace("\n### OTel Parity", "\n### Telemetry") }, /missing the "### OTel Parity"/);
+  reject({ body: draft().body.replace("\n### Behavioral Probe", "\n### Probes") }, /missing the "### Behavioral Probe"/);
   reject({ body: draft().body.replace("**DISCUSS**", "DISCUSS") }, /must state the recommendation/);
   reject({ body: `${draft().body}\n<!-- architecture-review: {} -->` }, /reserved markers/);
   reject({ body: `${draft().body}\n<!-- gh-aw-workflow-call-id: x -->` }, /reserved markers/);

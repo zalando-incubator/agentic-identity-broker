@@ -32,7 +32,7 @@ const running = {
   review: "Reviewing the architecture", apply: "Applying the approved remediation",
 };
 const reviewDimensions = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority",
-  "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability"];
+  "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability", "behavioral-probe"];
 const reviewSeverities = { RED: "🔴", YELLOW: "🟡", GREEN: "🟢" };
 const reviewRecommendations = { APPROVE: "✅", DISCUSS: "🟡", "REQUEST CHANGES": "🔴" };
 const reviewBuckets = ["auto", "proposed", "question", "note"];
