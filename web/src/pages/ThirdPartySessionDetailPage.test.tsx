@@ -82,8 +82,10 @@ describe('ThirdPartySessionDetailPage', () => {
     vi.mocked(sessionsApi.getServiceSessionDetail).mockResolvedValue(detail({ ...activeSession, requires_reauthentication: true }));
     renderPage();
 
-    expect(await screen.findByTestId('service-session-status')).toHaveTextContent('Expired');
+    expect(await screen.findByTestId('service-session-status')).toHaveTextContent('Login required');
     expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Terminate' })).toBeInTheDocument();
   });
 
   it('shows an active session, refreshes it and terminates it after confirmation', async () => {
@@ -112,6 +114,30 @@ describe('ThirdPartySessionDetailPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Terminate session with GitHub Production' }));
     await waitFor(() => expect(screen.getByTestId('service-session-status')).toHaveTextContent('No active session'));
     expect(sessionsApi.terminateSession).toHaveBeenCalledWith(serviceID);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Login' })).toHaveFocus());
+  });
+
+  it('keeps keyboard focus in confirmation and restores the trigger on cancel', async () => {
+    const user = userEvent.setup();
+    vi.mocked(sessionsApi.getServiceSessionDetail).mockResolvedValue(detail(activeSession));
+    renderPage();
+    const terminate = await screen.findByRole('button', { name: 'Terminate' });
+    terminate.focus();
+    await user.keyboard('{Enter}');
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel session termination' }));
+    await waitFor(() => expect(terminate).toHaveFocus());
+    expect(sessionsApi.terminateSession).not.toHaveBeenCalled();
+  });
+
+  it('shows loading without presenting a missing or unknown session', () => {
+    vi.mocked(sessionsApi.getServiceSessionDetail).mockReturnValue(new Promise(() => {}));
+    const { container } = renderPage();
+    expect(container.querySelector('.animate-pulse')).toBeInTheDocument();
+    expect(screen.queryByText('Service not found')).not.toBeInTheDocument();
+    expect(screen.queryByText('No active session')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Login' })).not.toBeInTheDocument();
   });
 
   it('starts provider sign-in that returns to the same service page', async () => {

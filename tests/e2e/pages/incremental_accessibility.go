@@ -8,7 +8,11 @@ import (
 	"github.com/mxschmitt/playwright-go"
 )
 
-const incrementalContrastAudit = `(selectors) => {
+const incrementalContrastAudit = `async (selectors) => {
+  await document.fonts.ready;
+  await Promise.all(document.getAnimations()
+    .filter(animation => animation.effect?.getTiming().iterations !== Infinity)
+    .map(animation => animation.finished.catch(() => {})));
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 1;
   const ctx = canvas.getContext('2d', {willReadFrequently: true});
@@ -32,22 +36,26 @@ const incrementalContrastAudit = `(selectors) => {
   const failures = [];
   let measured = 0;
   let minimum = Infinity;
+  let measuredUI = 0;
+  let minimumUI = Infinity;
   for (const element of document.querySelectorAll(selectors)) {
     if (!element.getClientRects().length || element.closest('[disabled], [aria-disabled="true"]')) continue;
-    const hasText = Array.from(element.childNodes).some(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
-    if (!hasText) continue;
     const style = getComputedStyle(element);
     const bg = background(element);
+    if (element.matches('button')) {
+      const boundary = ratio(bg, background(element.parentElement));
+      measuredUI++;
+      minimumUI = Math.min(minimumUI, boundary);
+      if (boundary < 3) failures.push((element.getAttribute('aria-label') || element.textContent.trim()) + ' button boundary: ' + boundary.toFixed(2));
+    }
+    const hasText = Array.from(element.childNodes).some(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim());
+    if (!hasText) continue;
     const value = ratio(blend(rgba(style.color), bg), bg);
     measured++;
     minimum = Math.min(minimum, value);
     if (value < 4.5) failures.push(element.textContent.trim() + ': ' + value.toFixed(2));
-    if (element.matches('button')) {
-      const boundary = ratio(bg, background(element.parentElement));
-      if (boundary < 3) failures.push(element.textContent.trim() + ' button boundary: ' + boundary.toFixed(2));
-    }
   }
-  return {measured, minimum, failures};
+  return {measured, minimum, measuredUI, minimumUI, failures};
 }`
 
 func (p *Page) auditIncrementalContrast(ctx context.Context, selectors string) (string, error) {
@@ -63,28 +71,30 @@ func (p *Page) auditIncrementalContrast(ctx context.Context, selectors string) (
 		return "", err
 	}
 	var values struct {
-		Measured int
-		Minimum  float64
-		Failures []string
+		Measured   int
+		Minimum    float64
+		MeasuredUI int
+		MinimumUI  float64
+		Failures   []string
 	}
 	if err := json.Unmarshal(encoded, &values); err != nil {
 		return "", err
 	}
-	if values.Measured == 0 {
-		return "", fmt.Errorf("no visible feature text was measured: %v", result)
+	if values.Measured == 0 || values.MeasuredUI == 0 {
+		return "", fmt.Errorf("visible feature text and controls must both be measured: %v", result)
 	}
 	if len(values.Failures) > 0 {
-		return "", fmt.Errorf("feature text contrast below 4.5:1: %v", result)
+		return "", fmt.Errorf("feature contrast below 4.5:1 text or 3:1 UI: %v", result)
 	}
-	return fmt.Sprintf("%d text nodes, minimum contrast %.2f:1", values.Measured, values.Minimum), nil
+	return fmt.Sprintf("%d text nodes, minimum %.2f:1; %d UI controls, minimum %.2f:1", values.Measured, values.Minimum, values.MeasuredUI, values.MinimumUI), nil
 }
 
 func (cp *ConsentPage) AuditRequestedServiceContrast(ctx context.Context) (string, error) {
-	return cp.auditIncrementalContrast(ctx, "[data-testid=requested-service-banner] *, [data-testid=requested-candidate-badge], #consent-save-reason")
+	return cp.auditIncrementalContrast(ctx, "[data-testid=requested-service-banner] *, [data-testid=requested-candidate-badge], #consent-save-reason, main button[title], [data-testid=permission-set-optional] button[role=switch]")
 }
 
 func (sp *SessionsPage) AuditServiceDetailContrast(ctx context.Context) (string, error) {
-	return sp.auditIncrementalContrast(ctx, "main h2, main h2 + p, [data-testid=service-session-status] *, main button")
+	return sp.auditIncrementalContrast(ctx, "main h2, main h2 + p, [data-testid=service-session-status] *, main section, main section *, main button:not([aria-label='Dismiss alert'])")
 }
 
 func (p *Page) SetColorScheme(ctx context.Context, dark bool) error {
@@ -130,6 +140,102 @@ func (cp *ConsentPage) KeyboardLoginRequestedService(ctx context.Context, name s
 
 func (sp *SessionsPage) KeyboardRefreshService(ctx context.Context) error {
 	return sp.keyboardActivate(ctx, "Refresh")
+}
+
+func (p *Page) verifyKeyboardOrder(ctx context.Context, controls ...playwright.Locator) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := controls[0].Focus(); err != nil {
+		return err
+	}
+	if err := p.page.Keyboard().Press("Shift+Tab"); err != nil {
+		return err
+	}
+	for index, control := range controls {
+		found := false
+		for range 40 {
+			if err := p.page.Keyboard().Press("Tab"); err != nil {
+				return err
+			}
+			focused, err := control.Evaluate(`element => document.activeElement === element`, nil)
+			if err != nil {
+				return err
+			}
+			if focused == true {
+				found = true
+				break
+			}
+			wrapped, err := controls[0].Evaluate(`element => document.activeElement === element`, nil)
+			if err != nil || wrapped == true {
+				return fmt.Errorf("keyboard order wrapped before control %d: %v", index, err)
+			}
+		}
+		if !found {
+			return fmt.Errorf("keyboard could not reach control %d in order", index)
+		}
+		visible, err := control.Evaluate(`element => {
+		  const style = getComputedStyle(element);
+		  const ring = style.getPropertyValue('--tw-ring-shadow').trim();
+		  return element.matches(':focus-visible') && style.boxShadow !== 'none' && ring !== '' && ring !== '0 0 #0000';
+		}`, nil)
+		if err != nil || visible != true {
+			return fmt.Errorf("control %d needs visible keyboard focus: %v (%v)", index, visible, err)
+		}
+	}
+	return nil
+}
+
+func (cp *ConsentPage) VerifyRequestedServiceKeyboardOrder(ctx context.Context, ready bool) error {
+	controls := []playwright.Locator{}
+	if !ready {
+		controls = append(controls, cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Log in to GitHub Production", Exact: playwright.Bool(true)}))
+	}
+	for _, name := range []string{"GitHub Read Access", "GitHub Issue Triage"} {
+		controls = append(controls, cp.permissionSetCard(name).GetByRole("switch", playwright.LocatorGetByRoleOptions{Name: "Toggle " + name, Exact: playwright.Bool(true)}))
+	}
+	if ready {
+		controls = append(controls, cp.getConsentActionButton("Save"))
+	}
+	return cp.verifyKeyboardOrder(ctx, controls...)
+}
+
+func (sp *SessionsPage) VerifyServiceKeyboardOrder(ctx context.Context, active bool) error {
+	if active {
+		return sp.verifyKeyboardOrder(ctx, sp.refreshButtonLocator(), sp.terminateButtonLocator())
+	}
+	return sp.verifyKeyboardOrder(ctx, sp.loginButtonLocator())
+}
+
+func (sp *SessionsPage) VerifyTerminationCancellation(ctx context.Context) error {
+	if err := sp.keyboardActivate(ctx, "Terminate"); err != nil {
+		return err
+	}
+	if _, err := sp.page().WaitForFunction(`() => document.querySelector('[role="dialog"]')?.contains(document.activeElement)`, nil); err != nil {
+		return fmt.Errorf("confirmation must receive keyboard focus: %w", err)
+	}
+	cancel := sp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Cancel session termination", Exact: playwright.Bool(true)})
+	confirm := sp.page().GetByRole("dialog").GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Terminate session with GitHub Production", Exact: playwright.Bool(true)})
+	if err := sp.verifyKeyboardOrder(ctx, cancel, confirm); err != nil {
+		return err
+	}
+	if err := confirm.Press("Tab"); err != nil {
+		return err
+	}
+	inside, err := sp.page().GetByRole("dialog").Evaluate(`element => element.contains(document.activeElement)`, nil)
+	if err != nil || inside != true {
+		return fmt.Errorf("keyboard focus escaped confirmation: %v (%v)", inside, err)
+	}
+	if err := sp.page().Keyboard().Press("Escape"); err != nil {
+		return err
+	}
+	_, err = sp.page().WaitForFunction(`() => document.activeElement?.textContent.trim() === 'Terminate' && !document.querySelector('[role="dialog"]')`, nil)
+	return err
+}
+
+func (sp *SessionsPage) VerifyLoginFocus(_ context.Context) error {
+	_, err := sp.page().WaitForFunction(`() => document.activeElement?.textContent.trim() === 'Login'`, nil)
+	return err
 }
 
 func (cp *ConsentPage) VerifySaveDescription(ctx context.Context) error {

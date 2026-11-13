@@ -7,7 +7,7 @@
  * agent permission.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '@components/layout/AppLayout';
 import { PageTransition } from '@components/ui/PageTransition';
@@ -46,6 +46,13 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
   const [confirmingTermination, setConfirmingTermination] = useState(false);
   const [terminating, setTerminating] = useState(false);
   const [terminationError, setTerminationError] = useState<string | null>(null);
+  const loginButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (state.kind === 'loaded' && !state.detail.session && alert?.message === 'Session terminated successfully.') {
+      loginButton.current?.focus();
+    }
+  }, [state, alert]);
 
   const load = useCallback(async () => {
     try {
@@ -166,7 +173,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
                 )}
                 {session && session.requires_reauthentication && (
                   <>
-                    <Badge variant="error">Expired</Badge>
+                    <Badge variant="error">Login required</Badge>
                     <p className="text-text-primary">This session can no longer be renewed. Log in to reconnect.</p>
                   </>
                 )}
@@ -205,18 +212,18 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
 
               <div className="mt-4 flex flex-wrap gap-3">
                 {needsLogin ? (
-                  <Button variant="primary" onClick={() => handleLogin(service.id)}>
+                  <Button ref={loginButton} variant="primary" onClick={() => handleLogin(service.id)}>
                     Login
                   </Button>
                 ) : (
-                  <>
-                    <Button variant="secondary" className="bg-success-hover hover:bg-success-dark" isLoading={refreshing} onClick={() => void handleRefresh(service.id)}>
-                      Refresh
-                    </Button>
-                    <Button variant="danger" onClick={() => setConfirmingTermination(true)}>
-                      Terminate
-                    </Button>
-                  </>
+                  <Button variant="secondary" className="bg-success-hover hover:bg-success-dark" isLoading={refreshing} onClick={() => void handleRefresh(service.id)}>
+                    Refresh
+                  </Button>
+                )}
+                {session && (
+                  <Button variant="danger" onClick={() => setConfirmingTermination(true)}>
+                    Terminate
+                  </Button>
                 )}
               </div>
             </Card>

@@ -101,11 +101,15 @@ describe('AgentGrantDetailPage — requested services', () => {
     expect(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' })).toHaveAttribute('aria-checked', 'false');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(saveReason()).toContain('GitHub Production');
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
 
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' }));
     expect(saveReason()).toContain('user:email');
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
+    expect(saveReason()).toContain('Log in');
     expect(within(screen.getByTestId('requested-service-banner')).getByRole('button', { name: 'Log in to GitHub Production' })).toBeInTheDocument();
   });
 

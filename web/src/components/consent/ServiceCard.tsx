@@ -132,7 +132,7 @@ export function ServiceCard({
             onClick={() => onDelegate?.(service.serviceId)}
             disabled={isLoading}
             title="Connect to this service"
-            className="bg-success-primary hover:bg-success-hover text-white"
+            className="bg-success-hover hover:bg-success-dark text-white"
             data-testid="service-login-button"
           >
             Login

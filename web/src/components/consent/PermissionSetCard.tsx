@@ -250,7 +250,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full',
               'transition-colors duration-200 ease-in-out',
               'focus:outline-none focus:ring-2 focus:ring-trust-deep focus:ring-offset-2',
-              isSelected ? 'bg-trust-deep' : 'bg-neutral-300',
+              isSelected ? 'bg-trust-deep' : 'bg-text-secondary',
             ].join(' ')}
           >
             <span

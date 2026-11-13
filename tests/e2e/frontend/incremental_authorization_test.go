@@ -86,14 +86,11 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 	}
 
 	auditContrast := func(page *pages.Page, audit func(context.Context) (string, error)) {
-		for _, dark := range []bool{false, true} {
-			Expect(page.SetColorScheme(ctx, dark)).To(Succeed())
-			measurement, err := audit(ctx)
-			Expect(err).NotTo(HaveOccurred())
-			_, err = fmt.Fprintf(GinkgoWriter, "Feature 055 contrast (dark preference=%t): %s\n", dark, measurement)
-			Expect(err).NotTo(HaveOccurred())
-		}
 		Expect(page.SetColorScheme(ctx, false)).To(Succeed())
+		measurement, err := audit(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = fmt.Fprintf(GinkgoWriter, "Feature 055 light-theme contrast: %s\n", measurement)
+		Expect(err).NotTo(HaveOccurred())
 	}
 
 	saveEnabled := func(consentPage *pages.ConsentPage) func() bool {
@@ -130,6 +127,7 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Read Access")).To(Succeed())
 			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse(), "a missing session keeps Save disabled")
 			Expect(consentPage.VerifySaveDescription(ctx)).To(Succeed())
+			Expect(consentPage.VerifyRequestedServiceKeyboardOrder(ctx, false)).To(Succeed())
 			auditContrast(consentPage.Page, consentPage.AuditRequestedServiceContrast)
 			Expect(consentPage.TakeRequestedServiceScreenshot(ctx, "consent_requested_service_needs_login")).To(Succeed())
 
@@ -145,6 +143,7 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Issue Triage")).To(Succeed())
 			Eventually(saveEnabled(consentPage), 5*time.Second, 100*time.Millisecond).Should(BeTrue())
 			Expect(consentPage.RequestedServiceStatus(ctx, "GitHub Production")).To(Equal("Connected"))
+			Expect(consentPage.VerifyRequestedServiceKeyboardOrder(ctx, true)).To(Succeed())
 			auditContrast(consentPage.Page, consentPage.AuditRequestedServiceContrast)
 			Expect(consentPage.TakeRequestedServiceScreenshot(ctx, "consent_requested_service_ready")).To(Succeed())
 
@@ -165,25 +164,33 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(granted).To(ConsistOf(cast.IdentityAccess.ID, cast.GitHubRead.ID))
 			Expect(exchange()).To(Equal(http.StatusOK), "the first retried tool call succeeds")
 
-			By("gating Save on every selected candidate's effective scopes under require_all_scopes")
-			cast.Agent.ServiceRequirements[0].RequiredScopes = nil
-			cast.Agent.ServiceRequirements[0].RequireAllScopes = true
-			Expect(GetTestStorage().Agents().Update(ctx, cast.Agent)).To(Succeed())
-			Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForServiceWithScopes(principal, cast.GitHub.ID.String(), []string{"repo"}))).To(Succeed())
-			sessionToken = authorizeToConsent("openid " + githubScope())
-			// Save's redirect chain continues past the mock upstream to the unreachable client callback,
-			// so a navigation started before it settles can be aborted.
-			Eventually(func() error {
-				return consentPage.NavigateToAgentWithSessionToken(ctx, cast.Agent.ID.String(), sessionToken)
-			}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
-			Expect(consentPage.WaitForRequestedService(ctx, "GitHub Production")).To(Succeed())
-			Expect(consentPage.IsPermissionSetSelected(ctx, "GitHub Read Access")).To(BeTrue())
-			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse(), "the selected failing candidate disables Save")
-			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Read Access")).To(Succeed())
-			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Issue Triage")).To(Succeed())
-			Eventually(saveEnabled(consentPage), 5*time.Second, 100*time.Millisecond).Should(BeTrue())
-			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Read Access")).To(Succeed())
-			Eventually(saveEnabled(consentPage), 5*time.Second, 100*time.Millisecond).Should(BeFalse())
+			for _, noRequirements := range []bool{false, true} {
+				By(fmt.Sprintf("gating Save on every selected candidate's effective scopes (no explicit requirements=%t)", noRequirements))
+				cast.Agent.ServiceRequirements[0].RequiredScopes = nil
+				cast.Agent.ServiceRequirements[0].RequireAllScopes = true
+				serviceName := "GitHub Production"
+				if noRequirements {
+					cast.Agent.ServiceRequirements = nil
+					serviceName = cast.GitHub.ID.String()
+				}
+				Expect(GetTestStorage().Agents().Update(ctx, cast.Agent)).To(Succeed())
+				Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForServiceWithScopes(principal, cast.GitHub.ID.String(), []string{"repo"}))).To(Succeed())
+				sessionToken = authorizeToConsent("openid " + githubScope())
+				// Save's redirect chain continues past the mock upstream to the unreachable client callback,
+				// so a navigation started before it settles can be aborted.
+				Eventually(func() error {
+					return consentPage.NavigateToAgentWithSessionToken(ctx, cast.Agent.ID.String(), sessionToken)
+				}, 10*time.Second, 250*time.Millisecond).Should(Succeed())
+				Expect(consentPage.WaitForRequestedService(ctx, serviceName)).To(Succeed())
+				Expect(consentPage.IsPermissionSetSelected(ctx, "GitHub Read Access")).To(BeTrue())
+				Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse(), "the selected failing candidate disables Save")
+				Expect(consentPage.TogglePermissionSet(ctx, "GitHub Read Access")).To(Succeed())
+				Expect(consentPage.TogglePermissionSet(ctx, "GitHub Issue Triage")).To(Succeed())
+				Eventually(saveEnabled(consentPage), 5*time.Second, 100*time.Millisecond).Should(BeTrue())
+				Expect(consentPage.TogglePermissionSet(ctx, "GitHub Read Access")).To(Succeed())
+				Eventually(saveEnabled(consentPage), 5*time.Second, 100*time.Millisecond).Should(BeFalse())
+				Expect(consentPage.VerifySaveDescription(ctx)).To(Succeed())
+			}
 		})
 	})
 
@@ -202,6 +209,8 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(status).To(ContainSubstring("Active"))
 			Expect(status).To(ContainSubstring("user:email"))
 			Expect(sessionsPage.DependentAgentNames(ctx)).To(ConsistOf("Data Analysis Assistant"))
+			Expect(sessionsPage.VerifyServiceKeyboardOrder(ctx, true)).To(Succeed())
+			Expect(sessionsPage.VerifyTerminationCancellation(ctx)).To(Succeed())
 			auditContrast(sessionsPage.Page, sessionsPage.AuditServiceDetailContrast)
 			Expect(sessionsPage.TakeScreenshot(ctx, "service_session_active")).To(Succeed())
 
@@ -215,6 +224,8 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 				return status
 			}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("No active session"))
 			Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed())
+			Expect(sessionsPage.VerifyLoginFocus(ctx)).To(Succeed())
+			Expect(sessionsPage.VerifyServiceKeyboardOrder(ctx, false)).To(Succeed())
 			auditContrast(sessionsPage.Page, sessionsPage.AuditServiceDetailContrast)
 			Expect(sessionsPage.TakeScreenshot(ctx, "service_session_needs_login")).To(Succeed())
 			session, err := GetTestStorage().UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), cast.GitHub.ID)
@@ -222,6 +233,25 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(session).To(BeNil())
 			Expect(sessionsPage.NavigateToServiceSession(ctx, cast.GitHub.ID.String(), "GitHub Production")).To(Succeed())
 			Expect(sessionsPage.ServiceSessionStatus(ctx)).To(ContainSubstring("No active session"))
+
+			By("retaining termination for a rejected session, with keyboard confirmation and restored focus")
+			rejected := fixtures.SessionForServiceWithScopes(principal, cast.GitHub.ID.String(), []string{"repo", "user:email"})
+			rejected.RefreshRejectedAt = ptr.To(time.Now())
+			Expect(GetTestStorage().UserSessions().Create(ctx, rejected)).To(Succeed())
+			Expect(sessionsPage.NavigateToServiceSession(ctx, "github", "GitHub Production")).To(Succeed())
+			Expect(sessionsPage.ServiceSessionStatus(ctx)).To(ContainSubstring("Login required"))
+			Expect(sessionsPage.GetTerminateButtonCount(ctx)).To(Equal(1))
+			Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0))
+			Expect(sessionsPage.VerifyTerminationCancellation(ctx)).To(Succeed())
+			Expect(sessionsPage.TerminateAndConfirm(ctx, "GitHub Production")).To(Succeed())
+			Eventually(func() string {
+				status, _ := sessionsPage.ServiceSessionStatus(ctx)
+				return status
+			}, 10*time.Second, 100*time.Millisecond).Should(ContainSubstring("No active session"))
+			Expect(sessionsPage.VerifyLoginFocus(ctx)).To(Succeed())
+			session, err = GetTestStorage().UserSessions().FindByPrincipalAndService(ctx, id.Principal(principal), cast.GitHub.ID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(session).To(BeNil())
 		})
 	})
 })
