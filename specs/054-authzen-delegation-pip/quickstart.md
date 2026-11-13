@@ -2,11 +2,7 @@
 
 **Feature**: `specs/054-authzen-delegation-pip` | **Plan**: [plan.md](./plan.md)
 
-**Latest outcome**: Implementation and all 102 task dispositions are complete. Section 12
-records current local validation and downstream results satisfying approved D-6. Earlier
-pending or blocked statements in §§7–11 describe those sessions, not the current outcome.
-The original test-first sequence was not performed; its approved exception does not rewrite
-that history. The approved `spec.md` and `plan.md` remain unchanged.
+**Latest outcome**: The current design adds Proposed ADR-2 and US3.11; the regenerated 120-task list retains 104 historically checked tasks and 16 unchecked tasks. T001 requires explicit ADR-2 approval; T108–T120 cover its design, genuine TDD and fresh validation. F2/F3 remain open as T103/T104. Section 12 records completion of the original 102-task inventory and approved D-6 alternative validation only; §13 records F4–F6 and partial review remediation. Historical validation is not evidence for new binding behavior. The original test-first sequence was not performed; its approved exception does not rewrite that history.
 
 This guide proves the feature end to end after implementation. It is a validation guide, not an
 implementation description. The contracts are in [contracts/](./contracts/). The value objects
@@ -20,8 +16,8 @@ Before any implementation, these preconditions must hold:
    [Approval Items](./plan.md#approval-items) with a 👍 on the pipeline's approval comment.
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
    [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
-   ADR draft [adr-045-authzen-delegation-pip.md](../../adrs/045-authzen-delegation-pip.md).
-2. T001 has recorded only the supplied approval in each covered ADR's Status line and moved the approved draft to `adrs/`. Review direction alone is not sign-off.
+   ADR draft [adr-048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md).
+2. T001 records only supplied approval for current covered items, explicitly ADR-2 for `adr-048-revision-permit-bound-tokens.md`. ADR 048 already resides in `adrs/`; incorporate its covered revision with approval in Status/Revision history and remove the incorporated draft, without duplicating its historical move. Move only other covered ADR drafts. Historical direction or thirteen-item approval does not cover ADR-2.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
    is frozen.
 4. The spec revision for the OPA input shape (research R15) has landed. This was done on
@@ -115,7 +111,7 @@ Proposed ADR-2; until then 11 specs exist. Confirm these outcomes:
   one per path; policy sees the narrowed `resource.scopes`. A re-exchange failure forwards
   nothing (contract §3.1).
 
-**Complementary unit gates** (T049–T053, run by `just extproc-test`): synthetic broker replies
+**Complementary unit gates** (historical T049–T053 plus new T111–T113/T119, run by `just extproc-test`): synthetic broker replies
 exercise missing, zero, malformed and duplicate `max-age`, invalid typed context, and unknown
 members. Controlled-clock and synchronization tests cover a response received after its original
 deadline and expiry during exchange, body buffering or batch processing. Assert 503 before the
@@ -717,15 +713,13 @@ these results. No task or checklist item remains unchecked.
 
 ### Frozen-plan wording (reanalysis LOW I1)
 
-`plan.md:652-654` still contains the obsolete blanket statement that no constitutional
-violation needs justification. The authoritative D-6 document, supplied approval and this
+At this historical checkpoint, the frozen plan still contained the obsolete blanket statement that no constitutional violation needed justification. The authoritative D-6 document, supplied approval and this
 closure record explicitly preserve the historical VIII/XIII deviation and its completed
 alternative validation. ADR 047's partial supersession of ADR 028 separately follows
 Principle II. This implementation leaves the frozen plan unchanged as required; it does not
 claim the source wording was repaired. The remaining LOW wording inconsistency is disclosed,
 not used to gate independently completed implementation or to conceal the original deviation.
-A later authorized design-phase edit can reconcile that summary without changing any
-approved requirement, runtime behavior or validation obligation.
+The current tasks-phase design edit reconciles that summary in `plan.md`'s Complexity Tracking without changing any approved requirement, runtime behavior, historical exception or validation obligation.
 
 ## 13. Approved review remediation (run 42177932182/1)
 
