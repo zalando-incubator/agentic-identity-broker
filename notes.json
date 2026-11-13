@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 473
+    "investigation_after": 475
   },
   "issues": [
     {
@@ -172,6 +172,18 @@
       "state": "commented",
       "updated_at": "2026-11-13",
       "note": "Posted shared ResolveHumanSubject approval boundary and equal-scope cache insufficiency. Bind account identity/version/policy; recheck grant/ceiling. CanRefresh requires provider refresh token, so machine re-mint needs dispatch. Current race packages pass; no machine implementation."
+    },
+    {
+      "number": 474,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-13",
+      "note": "Mapped purpose-aware callback/result, account-ceiling scope policy, admin return origin and atomic version commit. Asked omitted-scope rule and failed re-bootstrap readiness; preserve gap-free rotation. No implementation/security reproduction."
+    },
+    {
+      "number": 475,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-13",
+      "note": "Mapped structural Google validator vs signing validation, grant/client assertion separation and ADR037 key ownership. Asked legacy credential-to-account transition and generic scope placement/profile; no machine implementation."
     }
   ],
   "fixes": [
@@ -265,39 +277,39 @@
     },
     {
       "area": "release",
-      "checked_at": "2026-11-12",
-      "result": "Latest release v0.1.145. Verified #460 merged to release/v0.2 (not main). No new release PR in maintenance-only mode; avoid duplicating staged release work.",
+      "checked_at": "2026-11-13",
+      "result": "Latest release remains v0.1.145; existing release/v0.2 preparation recorded. Investigation-only maintenance run does not warrant a duplicate release PR.",
       "follow_up": null
     },
     {
       "area": "repo_assist_prs",
       "checked_at": "2026-11-13",
-      "result": "Eight open PRs; maintenance-only. Published heads unchanged; #403/#432 still dirty with known oversized publication blockers. No pushes/retries/new PRs; seven drafts, #424 maintainer non-draft.",
+      "result": "Eight open PRs; published heads unchanged. #403/#432 remain dirty and size-blocked; no repeat pushes. Seven drafts; #424 remains maintainer non-draft.",
       "follow_up": "Maintainer semantic integration/publication recovery; do not repeat oversized pushes."
     },
     {
       "area": "ci",
       "checked_at": "2026-11-13",
-      "result": "Read both check runs and statuses for all eight heads: DCO and pipeline/unit/integration/all E2E pass. Classification failures remain #403/#420/#448; approvals pending. Published CI does not validate rejected integrations.",
+      "result": "Read check runs and commit statuses for all eight published heads: DCO and pipeline/unit/integration/all E2E pass. Classification failures #403/#420/#448 and approvals remain; rejected integrations have no fresh CI.",
       "follow_up": "Required classification labels outside allowed write list remain maintainer work; no duplicate limitation report."
     },
     {
       "area": "hygiene",
       "checked_at": "2026-11-13",
-      "result": "All open issues labelled; inspected lint PR diff and labelled unlabelled #468 enhancement. Verified monthly pending-comment threads: no new human acknowledgements/checkoffs.",
+      "result": "All open issues and PRs labelled; Task 1 fell back to Task 2. Reread outstanding monthly comment threads: no new human acknowledgements. No redundant labels or follow-up comments.",
       "follow_up": null
     },
     {
       "area": "tests",
       "checked_at": "2026-11-13",
-      "result": "Maintained just test override passed race-enabled tokenexchange, domain/storage and oauth2session packages. No source edits; not tests of proposed machine issuance or migration isolation.",
+      "result": "Maintained just test package override passed race-enabled model, oauth2session and cimdclient packages. No code changes; not validation of proposed bootstrap or machine-token flows.",
       "follow_up": null
     },
     {
       "area": "code",
       "checked_at": "2026-11-13",
-      "result": "Investigated #462 approved follow-up gate and phase-1 #471/#472/#473 with parent #478. Posted identity partition, shared approval rejection and cache/re-mint integration findings on #472/#473; static only, no security reproduction.",
-      "follow_up": "Continue oldest-first from #474; retain phase-1 ADR/API gates, existing holds and fix candidates until capacity."
+      "result": "Investigated #474/#475 against parent #478, callback/state/routing, Spec018 validator and CIMD signer. Posted concrete integration seams and four contract questions; static assessment only, no security reproduction.",
+      "follow_up": "Resume #476/#477; retain phase-1 #472/#473 decisions and new phase-2 clarification holds."
     }
   ],
   "completed_actions": [
@@ -318,8 +330,8 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #473",
-      "note": "Phase-1 #472 needs storage identity choice; #473 needs account-version cache binding and separate approval guard. #474-#478 remain staged design follow-ups; retain prior holds and no-new-PR cap."
+      "item": "Resume oldest-first after #475",
+      "note": "Investigate #476/#477 then parent #478; #474 needs omitted-scope/rotation policy, #475 credential-transition/wire-profile decisions. Preserve phase-1 identity, cache and ADR gates; no new PR at capacity."
     },
     {
       "task": 3,
