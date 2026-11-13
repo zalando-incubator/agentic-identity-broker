@@ -57,21 +57,6 @@ var _ = Describe("Incremental Service Authorization Proxy Mode", func() {
 	// US3 S3 from specs/055-incremental-service-authorization/spec.md.
 	It("strips virtual scopes from proxy refresh, forwards the rotated upstream token, and the next exchange still challenges", func() {
 		journey.rejectedGitHub()
-		for _, scope := range []string{
-			journey.githubScope() + "/",
-			journey.scopeURL("unknown"),
-			journey.scopeURL(journey.cast.Jira.ID.String()),
-		} {
-			before := len(journey.upstream.GetTokenRequests())
-			status, body := journey.postToken(url.Values{
-				"grant_type": {"refresh_token"}, "refresh_token": {"synthetic-upstream-refresh"}, "scope": {"openid " + scope},
-			})
-			Expect(status).To(Equal(http.StatusBadRequest), "invalid scope %s", scope)
-			Expect(body["error"]).To(Equal("invalid_scope"))
-			Expect(body["error_description"]).To(Equal("requested service scope is not permitted"))
-			Expect(journey.upstream.GetTokenRequests()).To(HaveLen(before), "refusal leaves the upstream credential unconsumed")
-			Expect(journey.provider.GetTokenRequests()).To(BeEmpty())
-		}
 		forward := func(scope string) (int, map[string]any, url.Values) {
 			form := url.Values{
 				"grant_type": {"refresh_token"}, "refresh_token": {"synthetic-upstream-refresh"},
@@ -86,6 +71,33 @@ var _ = Describe("Incremental Service Authorization Proxy Mode", func() {
 			received, err := url.ParseQuery(requests[len(requests)-1].Body)
 			Expect(err).NotTo(HaveOccurred())
 			return status, body, received
+		}
+
+		for _, scope := range []string{
+			journey.githubScope() + "/",
+			journey.scopeURL("unknown"),
+			journey.scopeURL(journey.cast.Jira.ID.String()),
+		} {
+			By("rejecting " + scope + " before forwarding")
+			before := len(journey.upstream.GetTokenRequests())
+			status, body := journey.postToken(url.Values{
+				"grant_type": {"refresh_token"}, "refresh_token": {"synthetic-upstream-refresh"}, "scope": {"openid " + scope},
+			})
+			Expect(status).To(Equal(http.StatusBadRequest), "invalid scope %s", scope)
+			Expect(body["error"]).To(Equal("invalid_scope"))
+			Expect(body["error_description"]).To(Equal("requested service scope is not permitted"))
+			Expect(journey.upstream.GetTokenRequests()).To(HaveLen(before), "refusal leaves the upstream credential unconsumed")
+			Expect(journey.provider.GetTokenRequests()).To(BeEmpty())
+
+			By("retrying a valid scope with the same upstream refresh token")
+			status, body, received := forward("openid " + journey.githubScope())
+			Expect(status).To(Equal(http.StatusOK))
+			Expect(body["access_token"]).To(Equal("mock-access-token"))
+			Expect(body["refresh_token"]).To(Equal("synthetic-upstream-rotated-refresh"))
+			Expect(received.Get("refresh_token")).To(Equal("synthetic-upstream-refresh"))
+			Expect(received.Get("scope")).To(Equal("openid"))
+			Expect(journey.upstream.GetTokenRequests()).To(HaveLen(before + 1))
+			Expect(journey.provider.GetTokenRequests()).To(BeEmpty())
 		}
 
 		status, body, received := forward("openid profile " + journey.githubScope())
