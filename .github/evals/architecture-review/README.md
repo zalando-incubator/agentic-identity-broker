@@ -58,7 +58,7 @@ second parent of the latest merge on the commit's first-parent line:
    body is left out.
 
    ```bash
-   docs/evals/architecture-review/harness/make-brief.sh wt/<c> 293 "feat: support agent subjects in impersonation"
+   .github/evals/architecture-review/harness/make-brief.sh wt/<c> 293 "feat: support agent subjects in impersonation"
    ```
 
 4. **Render the task.** This extracts the dimension section from
@@ -66,7 +66,7 @@ second parent of the latest merge on the commit's first-parent line:
    sub-agent message:
 
    ```bash
-   docs/evals/architecture-review/harness/render-task.sh behavioral-probe wt/<c> out/<c>-r1.md
+   .github/evals/architecture-review/harness/render-task.sh behavioral-probe wt/<c> out/<c>-r1.md
    ```
 
 5. **Run it blind.** Start a fresh sub-agent with no shared context (Claude Code
