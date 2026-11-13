@@ -38,7 +38,11 @@ func (s *AuthorizationCodeStore) Create(ctx context.Context, code *storage.Autho
 			fmt.Sprintf("authorization code with hash %s already exists", code.CodeHash))
 	}
 
+	if err := code.ServiceScopeBindings.Validate(code.Scope, true); err != nil {
+		return err
+	}
 	c := *code
+	c.ServiceScopeBindings = code.ServiceScopeBindings.Clone()
 	s.byID[c.ID] = &c
 	s.byCodeHash[c.CodeHash] = &c
 	return nil
@@ -54,6 +58,7 @@ func (s *AuthorizationCodeStore) FindByCodeHash(ctx context.Context, codeHash st
 			fmt.Sprintf("authorization code with hash %s not found", codeHash))
 	}
 	result := *code
+	result.ServiceScopeBindings = code.ServiceScopeBindings.Clone()
 	return &result, nil
 }
 

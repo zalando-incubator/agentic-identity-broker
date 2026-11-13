@@ -57,6 +57,10 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 	response, failure, err := s.outcomes.Proxy(ctx, formData, r.Header.Get("Content-Type"), resolution)
 	if err != nil {
 		switch failure {
+		case ports.TokenProxyScopeNotPermitted:
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_scope", "requested service scope is not permitted")
+		case ports.TokenProxyScopeLookupFailed:
+			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "service scope lookup failed")
 		case ports.TokenProxyClientMissing:
 			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent has no upstream client_id configured")
 		case ports.TokenProxyRequestCreationFailed:

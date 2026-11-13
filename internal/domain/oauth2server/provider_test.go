@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 
 // newTestProvider creates a Provider with in-memory storage and test encryption
 // for unit testing purposes.
-func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *SigningKeyService) {
+func newTestProvider(t *testing.T, loggers ...*slog.Logger) (*Provider, *memory.AgentRepository, *SigningKeyService) {
 	t.Helper()
 	codeRepo := memory.NewAuthorizationCodeStore()
 	credRepo := memory.NewClientCredentialStore()
@@ -30,6 +31,9 @@ func newTestProvider(t *testing.T) (*Provider, *memory.AgentRepository, *Signing
 	signingKeyRepo := memory.NewSigningKeyStore()
 	enc := &testEncryptor{}
 	logger := testSlogger()
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
 
 	signingKeySvc := NewSigningKeyService(signingKeyRepo, signingKeyRepo, enc, newNoopBranchKeyManager(), logger)
 

@@ -61,7 +61,7 @@ func TestMigration043RefreshTokenClientAuthMethod(t *testing.T) {
 	method, err := f.QuerySQL(t, `SELECT client_auth_method FROM refresh_token_sessions WHERE signature = 'legacy-session'`)
 	require.NoError(t, err)
 	assert.Empty(t, method, "legacy refresh sessions must remain NULL")
-	after, err := f.QuerySQL(t, `SELECT (to_jsonb(r) - 'client_auth_method')::text FROM refresh_token_sessions r WHERE signature = 'legacy-session'`)
+	after, err := f.QuerySQL(t, `SELECT (to_jsonb(r) - 'client_auth_method' - 'service_scope_bindings')::text FROM refresh_token_sessions r WHERE signature = 'legacy-session'`)
 	require.NoError(t, err)
 	assert.Equal(t, before, after, "the migration must not change existing columns")
 

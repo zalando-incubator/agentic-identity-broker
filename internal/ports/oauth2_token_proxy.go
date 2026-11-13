@@ -17,6 +17,8 @@ const (
 	TokenProxyTransportFailed
 	TokenProxyResponseReadFailed
 	TokenProxyVerificationFailed
+	TokenProxyScopeNotPermitted
+	TokenProxyScopeLookupFailed
 )
 
 // OAuth2TokenProxy performs transport only; the caller owns the response body.

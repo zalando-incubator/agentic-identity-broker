@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
@@ -37,6 +38,10 @@ func (m *mockAgentDetailService) GetAgentConsentDetail(ctx context.Context, agen
 		return m.getAgentConsentDetailFunc(ctx, agentID, p)
 	}
 	return &consent.AgentConsentDetail{Agent: &storage.Agent{}}, nil
+}
+
+func (m *mockAgentDetailService) RequestedServiceCoverage(context.Context, id.Principal, id.AgentID, []id.ServiceID) ([]servicescope.Outcome, error) {
+	return []servicescope.Outcome{}, nil
 }
 
 func (m *mockAgentDetailService) GrantConsent(ctx context.Context, req *consent.GrantRequest) (*storage.UserGrant, error) {

@@ -31,15 +31,20 @@ func (r *AuthorizationCodeRepo) Create(ctx context.Context, code *storage.Author
 		return storage.NewStorageError("AuthorizationCodeRepo.Create", storage.ErrorKindConnection, nil, "database not initialized")
 	}
 
+	if err := code.ServiceScopeBindings.Validate(code.Scope, true); err != nil {
+		return err
+	}
+
 	execCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
 	defer cancel()
 
 	_, err := r.adapter.storageExecutor(execCtx).ExecContext(execCtx,
-		`INSERT INTO authorization_codes (id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+		`INSERT INTO authorization_codes (id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name, service_scope_bindings)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 		code.ID, code.CodeHash, code.AgentID, code.ClientID, code.Principal,
 		code.RedirectURI, code.CodeChallenge, code.Scope,
 		code.ExpiresAt, code.UsedAt, code.CreatedAt, code.Email, code.DisplayName,
+		serviceScopeBindingsColumn(code.ServiceScopeBindings),
 	)
 	if err != nil {
 		return storage.NewStorageError("AuthorizationCodeRepo.Create", storage.ErrorKindUnknown, err, "failed to create authorization code")
@@ -55,9 +60,9 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 	queryCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	var code storage.AuthorizationCode
-	err := r.adapter.db.GetContext(queryCtx, &code,
-		`SELECT id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name
+	var row authorizationCodeRow
+	err := r.adapter.db.GetContext(queryCtx, &row,
+		`SELECT id, code_hash, agent_id, client_id, principal, redirect_uri, code_challenge, scope, expires_at, used_at, created_at, email, display_name, service_scope_bindings
 		 FROM authorization_codes WHERE code_hash = $1 AND expires_at > NOW()`, codeHash)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
@@ -68,6 +73,8 @@ func (r *AuthorizationCodeRepo) FindByCodeHash(ctx context.Context, codeHash str
 		}
 		return nil, storage.NewStorageError("AuthorizationCodeRepo.FindByCodeHash", storage.ErrorKindConnection, err, "failed to query authorization code")
 	}
+	code := row.AuthorizationCode
+	code.ServiceScopeBindings = storage.ServiceScopeBindings(row.Bindings)
 	return &code, nil
 }
 

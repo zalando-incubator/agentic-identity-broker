@@ -47,8 +47,8 @@ func NewLocalProceedStrategy(issuer ports.AuthorizationCodeIssuer, logger *slog.
 	return &localProceedStrategy{issuer: issuer, logger: logger}
 }
 
-func (s *localProceedStrategy) HandleProceed(w http.ResponseWriter, r *http.Request, _ *ports.AuthorizationDecision, req *ports.AuthorizationRequest, principal id.Principal) {
-	code, err := s.issuer.IssueAuthorizationCode(r.Context(), req, principal)
+func (s *localProceedStrategy) HandleProceed(w http.ResponseWriter, r *http.Request, decision *ports.AuthorizationDecision, req *ports.AuthorizationRequest, principal id.Principal) {
+	code, err := s.issuer.IssueAuthorizationCode(r.Context(), req, principal, decision.ServiceScopeBindings)
 	if err != nil {
 		// Per RFC 6749 §4.1.2.1: never redirect when the client or redirect_uri is invalid/unverified.
 		// Treat server-side failures the same way because redirect_uri validation may not have happened yet.

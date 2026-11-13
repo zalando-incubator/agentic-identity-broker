@@ -157,8 +157,8 @@ func assertionErrorMetadata(err error) ErrorMetadata {
 	return NewErrorMetadata(OperationAssertionRefresh, kind, DependencyOAuthProvider, statusCode, code)
 }
 
-func logOperationError(ctx context.Context, logger *slog.Logger, level slog.Level, message string, metadata ErrorMetadata, diagnostic Diagnostic) {
-	logger.LogAttrs(ctx, level, message,
+func logOperationError(ctx context.Context, logger *slog.Logger, level slog.Level, message string, metadata ErrorMetadata, diagnostic Diagnostic, extra ...slog.Attr) {
+	attrs := []slog.Attr{
 		slog.String("operation", string(metadata.Operation())),
 		slog.String("error_kind", string(metadata.Kind())),
 		slog.String("dependency", string(metadata.Dependency())),
@@ -169,5 +169,7 @@ func logOperationError(ctx context.Context, logger *slog.Logger, level slog.Leve
 		slog.String("token_exchange.failure_detail", string(diagnostic.Detail())),
 		slog.String("token_exchange.recovery_action", string(diagnostic.RecoveryAction())),
 		slog.String("token_exchange.recovery_target", string(diagnostic.RecoveryTarget())),
-		slog.String("token_exchange.exchange_kind", string(diagnostic.ExchangeKind())))
+		slog.String("token_exchange.exchange_kind", string(diagnostic.ExchangeKind())),
+	}
+	logger.LogAttrs(ctx, level, message, append(attrs, extra...)...)
 }
