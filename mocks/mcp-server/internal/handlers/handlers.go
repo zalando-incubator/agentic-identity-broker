@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -27,6 +28,9 @@ import (
 type contextKey string
 
 const authHeaderKey contextKey = "authHeader"
+
+// issueCounter numbers demo issues sequentially for the life of the process.
+var issueCounter atomic.Int64
 
 // Health returns 200 OK for container liveness probes.
 func Health(w http.ResponseWriter, r *http.Request) {
@@ -107,8 +111,12 @@ func handleWhoami(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResu
 }
 
 // handleCreateIssue simulates the approved action in the Compose demonstration.
-func handleCreateIssue(_ context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return mcp.NewToolResultText("Created demo issue #1"), nil
+func handleCreateIssue(_ context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	repo, _ := args["repository"].(string)
+	title, _ := args["title"].(string)
+	number := issueCounter.Add(1)
+	return mcp.NewToolResultText(fmt.Sprintf("Created demo issue #%d in %s: %s", number, repo, title)), nil
 }
 
 // extractScheme returns just the scheme word from an Authorization header value (e.g., "Bearer").

@@ -257,6 +257,9 @@ func TestHomePageWithValidSession(t *testing.T) {
 	if !strings.Contains(body, "Call MCP Tool: create_issue (approval required)") {
 		t.Error("expected approval-required MCP button label")
 	}
+	if !strings.Contains(body, `data-approval-url="`) || !strings.Contains(body, `onclick="openApproval(this)"`) || !strings.Contains(body, "Retry after approval") {
+		t.Error("expected approval review button with retry action")
+	}
 }
 
 func TestApprovalElicitationURL(t *testing.T) {

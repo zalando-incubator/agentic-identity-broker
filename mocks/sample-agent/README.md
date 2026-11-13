@@ -125,10 +125,11 @@ You need three servers running:
 With `just compose-up` running, sign in as the Proxy Client and complete the delegation flow. The
 authenticated page includes **Call MCP Tool: create_issue (approval required)**. The bundled OPA
 policy returns `approval_required` for that tool with stable `repository` and `title` arguments.
-Use the resulting review link, select **For this session**, and expand **Approval scope**. Change
-each parameter from **This value** (exact) to **Any value** or **Custom match**. The broker
-validates custom globs such as `acme/*` before you approve. The Sample Agent retains one MCP
-client for its web session, so the next button click uses the same MCP session and forwards.
+Click **Review and approve tool call** to open the approval page in a new tab. Select **For this
+session**, expand **Approval scope**, and change each parameter from **This value** (exact) to **Any
+value** or **Custom match**. The broker validates custom globs such as `acme/*` before you approve.
+Return to the sample tab and click **Retry after approval**. The Sample Agent retains one MCP client
+for its web session, so the retry uses the same MCP session and forwards.
 
 ## API Endpoints
 
