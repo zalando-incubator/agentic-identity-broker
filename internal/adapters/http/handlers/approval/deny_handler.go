@@ -1,10 +1,9 @@
 package approval
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -52,13 +51,15 @@ func (h *DenyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req denyRequest
-	if r.Body != nil {
-		body, _ := io.ReadAll(r.Body)
-		if len(body) > 0 {
-			if err := json.Unmarshal(body, &req); err != nil {
-				writeError(w, http.StatusBadRequest, "bad_request", "request body must be valid JSON")
-				return
-			}
+	body, err := requestbody.Read(w, r, 4<<10)
+	if err != nil {
+		writeError(w, requestbody.Status(err), "bad_request", "request body must be valid JSON")
+		return
+	}
+	if len(body) > 0 {
+		if err := requestbody.Unmarshal(body, &req); err != nil {
+			writeError(w, requestbody.Status(err), "bad_request", "request body must be valid JSON")
+			return
 		}
 	}
 
