@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -802,6 +803,21 @@ func testDCRPersistenceEntity(name, issuer string, method model.TokenEndpointAut
 	entity.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
 	entity.Endpoints = model.OAuth2Endpoints{AuthorizeEndpoint: issuer + "/authorize", TokenEndpoint: issuer + "/token"}
 	return entity
+}
+
+// RFC 6749 section 2.2 leaves the client identifier size undefined. A stateless
+// DCR server can encode the whole registration in the client ID it issues.
+func TestDCRClientIDLongerThan255CharactersPersists(t *testing.T) {
+	ctx, repo, _, cleanup := setupThirdpartyProviderTestHarness(t)
+	defer cleanup()
+
+	entity := testDCRPersistenceEntity("dcr-long-client-id", "https://long.example.com", model.TokenEndpointAuthMethodNone, model.NewAbsentSecret())
+	entity.ClientID = id.ClientID("dcr-" + strings.Repeat("a", 400))
+	require.NoError(t, repo.Create(ctx, entity))
+
+	stored, err := repo.Get(ctx, entity.ID)
+	require.NoError(t, err)
+	assert.Equal(t, entity.ClientID, stored.ClientID)
 }
 
 func TestDCRIssuerScopedCredentialsSurviveNewPostgresAdapter(t *testing.T) {
