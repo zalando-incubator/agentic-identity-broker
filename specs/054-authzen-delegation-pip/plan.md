@@ -374,7 +374,9 @@ feature is enabled:
     unknown members. It validates the documented shape (data model §3.3.1) and returns a typed
     `delegation.Context`. A violation is `invalid_response` and returns 503 (uncached).
   - `authorization.ContextInput` gains `principal`, `agent`, `resource`, `grant`, and
-    `permission_sets` (`omitempty`). Only `scopes` arrays always serialize.
+    `permission_sets` (`omitempty` on these five additions). Enabled-mode `permission_sets`
+    is non-empty; nested `services` and all `scopes` arrays always serialize as arrays,
+    including `[]` when empty. Nested optional `canonical_id` and `valid_until` stay omitted.
   - The server's pure function `contextInputFromDelegation(result, agentSessionID)` builds
     the input for the body path, each batch decision, and the header-only path. It deep-copies
     the slices, derives `granted_permission_sets` from the permit, and sets
@@ -414,8 +416,11 @@ After stakeholder confirmation:
 | Phase N | Constitution compliance verification | **Mandatory** |
 
 - [x] **Phase 0 (refactoring)**: **include**. Extracting steps 2–9a is a structural change that
-  reviewers should approve separately, with the existing exchange tests unchanged as proof of
-  no behavior change (FR-006).
+  reviewers should approve in a separate PR, as required by the constitution's Task List
+  Requirements, with the existing exchange tests unchanged as proof of no behavior change
+  (FR-006). T002–T005 require a maintainer-arranged handoff and its reviewed, integrated
+  revision before dependent feature code. This workflow does not create that separate PR;
+  independent approved documentation and test authoring can continue while it is unavailable.
 - [x] **Phase 2.7 (entity boilerplate)**: **skip**. There is no new entity, repository, or CRUD
   handler.
 

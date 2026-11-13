@@ -20,6 +20,10 @@ Before any implementation, these preconditions must hold:
    is frozen.
 4. The spec revision for the OPA input shape (research R15) has landed. This was done on
    2026-10-28.
+5. The Phase 0 extraction has its own maintainer-arranged PR and is reviewed and integrated
+   before dependent feature code starts (T002–T005). This feature's worker does not create
+   that separate PR. Record its URL and integrated revision here; an unavailable handoff
+   blocks dependent work, not independent approved documentation or test authoring.
 
 Tooling: `just install-tools` (Go 1.27.3, Ginkgo, golangci-lint). The focused broker run needs Docker or Podman for the real PostgreSQL outage scenario US2.19; the full gate also includes existing container-backed ExtProc/agentgateway and integration suites. Docker-in-Docker is unavailable in this sandbox. Run infrastructure gates on a capable runner; report any unfinished gate as a blocker, never as passed or waived.
 
@@ -83,11 +87,18 @@ composition against the real broker test server. Confirm these outcomes:
 - After revocation, a repeat request past `max_staleness` is denied with 403 and `error_uri`
   set to the consent URL.
 - A broker outage with a still-cached exchanged token returns 503, not a stale permit.
-- A permit with a missing or zero `max-age`, or one that expires before policy use, returns 503.
 - The canonical-ID policy allows on both paths. The policy reads `input.context.agent`,
   `input.context.resource`, and `input.context.permission_sets`, and
   `granted_permission_sets_available` is `true`. Neither `input.context.delegation` nor
   `delegation_available` is present (contract §4).
+
+**Complementary unit gates** (T049–T053, run by `just extproc-test`): synthetic broker replies
+exercise missing, zero, malformed and duplicate `max-age`, invalid typed context, and unknown
+members. Controlled-clock and synchronization tests cover a response received after its original
+deadline and expiry during exchange, body buffering or batch processing. Assert 503 before the
+expired decision reaches policy, with no forwarding or re-resolution. These checks complement
+the 11 real-broker journeys above; they are not extra acceptance scenarios or evidence that the
+real broker emits malformed responses.
 
 ## 4. ExtProc startup journeys (US4.1–US4.4)
 
