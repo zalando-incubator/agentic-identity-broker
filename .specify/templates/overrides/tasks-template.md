@@ -177,8 +177,8 @@ XIV (Specification by Example & Reviewable Journeys)
 - [ ] T010e Add comment references to spec scenarios in E2E test files
 - [ ] T010f Verify E2E tests FAIL semantically (red phase): detailed expectations present and failing,
       NOT placeholder always-fail assertions (e.g., `Expect(true).To(BeFalse())` is NOT acceptable);
-      no `XIt`/`PIt`/`Skip()` pending markers; no "red phase" comments in test files; record red evidence
-      per suite: container-backed suites (`just test-integration-infra`, `just test-e2e-docker`) MAY
+      no `XIt`/`PIt`/`Skip()` pending markers; no "red phase" comments in test files; report red evidence
+      per suite in the implementation phase result, not in feature files: container-backed suites (`just test-integration-infra`, `just test-e2e-docker`) MAY
       take it from CI on the pushed commit, and tasks for suites that run locally MUST NOT wait for it
 - [ ] T010g [IF FRONTEND] Add/amend Playwright E2E tests in `tests/e2e/frontend/` for all UI scenarios
 - [ ] T010h [IF FRONTEND] Use existing page objects in `tests/e2e/pages/` and Playwright harness

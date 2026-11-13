@@ -82,6 +82,7 @@ The tool approval support in the broker allows to enforce tool calls independent
 Check out the following docs:
 
 - [Quickstart](https://agenticidentitybroker.dev/docs/get-started) — Get started with Agentic Identity Broker in minutes.
+- [Why does this exist?](https://agenticidentitybroker.dev/docs/introduction/why) — The problem, in day-to-day terms.
 - [agenticidentitybroker.dev](https://agenticidentitybroker.dev/docs/introduction) – Underlying concepts, guides and API specs.
 
 The [architecture overview](ARCHITECTURE.md) describes the system design, component boundaries, and domain glossary.

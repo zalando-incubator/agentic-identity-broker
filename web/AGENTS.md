@@ -1,10 +1,28 @@
 # Consent Frontend — React SPA (`web/`)
 
-**Use retrieval-led reasoning. Before you make assumptions about components, hooks, API types, or design tokens, read source files.**
+Read the relevant source before you change components, hooks, API types, or design tokens.
+All file paths are repository-root-relative. Indented tree entries extend their parent path. Browser routes are URL paths.
 
 ## Overview
 
-Use this React consent SPA for agent permissions and tool approvals. The Go backend serves it at root `/` (ADR 035). Use the Refined Trust Architecture and WCAG 2.1 AA.
+This React SPA manages agent permissions and tool approvals. The Go backend serves `web/dist` at `/`.
+The browser redirects `/` to `/delegations` with history replacement.
+
+## Governing References
+
+| Source | Use |
+| ------ | --- |
+| `.specify/memory/constitution.md`, Principles XI and XIII | Design-system requirements and frontend acceptance tests |
+| `ARCHITECTURE.md`, section 3.1.2 | Frontend architecture and backend boundary |
+| `adrs/005-spa-serving-pattern.md` | Same-origin SPA deployment decision |
+| `adrs/035-root-mounted-spa.md` | Current routes, filesystem serving, and superseded portions of ADR 005 |
+| `adrs/006-frontend-stack.md` | Stack decisions. Use `web/package.json` for current dependency versions |
+| `adrs/016-authorization-session-anti-spoofing.md` | Trusted consent metadata and opaque authorization redirects |
+| `api/enduser/openapi.yaml` | HTTP request and response contracts |
+| `specs/024-approval-api-ui/spec.md`, `specs/024-approval-api-ui/plan.md`, `specs/024-approval-api-ui/tasks.md` | Approval UI requirements, design, and implementation tasks |
+| `specs/024-approval-api-ui/glob-approval-matching.md` | Approval parameter scopes and previews |
+
+For feature work, read the governing feature's specification, plan, and tasks before changing behavior.
 
 ## Tech Stack
 
@@ -25,20 +43,20 @@ Use this React consent SPA for agent permissions and tool approvals. The Go back
 ## Source Structure
 
 ```
-src/
+web/src/
   App.tsx              Router setup for consent, sessions, approvals, and tool authorizations
   main.tsx             Entry point — React.StrictMode mount
 
   components/
-    consent/           Consent-specific components (DelegationCard, ServiceCard, ScopeList,
-                       GrantValidityControl, ServiceRequirementCard, GrantStatusBadge, etc.)
+    consent/           DelegationCard, ServiceCard, ScopeList, GrantValidityControl,
+                       ServiceRequirementCard, GrantStatusBadge
     approvals/         Tool-approval review components
     layout/            AppLayout, Header — page chrome
     sessions/          SessionCard, TerminationDialog — OAuth2 session management
     ui/                Reusable UI primitives (Button, Toast, ErrorBoundary, Skeleton,
                        EmptyState, Switch, InlineError, PageTransition, DatePicker)
 
-  design-system/       ★ AUTHORITATIVE design reference — read before styling anything
+  design-system/       Shared components and tokens — governed by Constitution XI
     components/        Design system component library (8 categories):
       primitives/        Button, Badge, Avatar, Spinner, Divider
       inputs/            TextInput, TextArea, Select, Checkbox, Radio, Switch, DatePicker
@@ -50,7 +68,7 @@ src/
       advanced/          Accordion, Progress
     tokens/            Colors, typography, spacing, shadows, radius, animation, z-index, and breakpoints
     utils/             cn() (clsx + tailwind-merge), a11y helpers, focus utilities
-    docs/              ★ Read before any UI work:
+    docs/              Detailed design guides:
       INDEX.md                Complete documentation index
       DESIGN_PRINCIPLES.md    Visual philosophy — "Refined Trust Architecture"
       COLOR_GUIDE.md          Full color palette with hex values + WCAG ratios
@@ -84,56 +102,83 @@ src/
       client.ts        Axios instance — baseURL: /api, 30s timeout, error interceptors
       consent.ts       Consent data and grant requests
       sessions.ts      Session list, detail, termination, and refresh requests
-      approvals.ts     Tool-approval get, approve, deny, list, and revoke requests
+      approvals.ts     Tool-approval review, scope preview, decisions, lists, and revocation
       cache.ts         In-memory cache for GET responses
       index.ts         Barrel export
 
   styles/
     index.css          Global styles + Tailwind directives
-    fonts.css          Font imports (Crimson Pro, Manrope, JetBrains Mono)
+    fonts.css          Self-hosted Crimson Pro, Manrope, and JetBrains Mono declarations
 
   types/
-    consent.ts         All API response/request TypeScript types (UserInfo, AgentDelegation,
-                       AgentDetail, service, grant, scope, and permission-set types
+    consent.ts         Consent API types: user, agent, service, grant, scope, and permission set
     approval.ts         Tool-approval request and response types
 
   utils/
-    validation.ts      Input validation (URL safety, etc.)
+    validation.ts      Input validation and redirect URL safety
     scrollToError.ts   Scroll-to-first-error UX helper
 ```
 
 ## Path Aliases
 
-Vite and Vitest define these aliases. In Storybook, define only the aliases that it uses.
+`web/vite.config.ts`, `web/vitest.config.ts`, and `web/tsconfig.app.json` define application aliases.
+`web/.storybook/main.ts` defines the subset that Storybook uses.
 
 | Alias            | Path                  |
 | ---------------- | --------------------- |
-| `@design-system` | `./src/design-system` |
-| `@components`    | `./src/components`    |
-| `@hooks`         | `./src/hooks`         |
-| `@services`      | `./src/services`      |
-| `@types`         | `./src/types`         |
-| `@utils`         | `./src/utils`         |
-| `@assets`        | `./src/assets`        |
-| `@styles`        | `./src/styles`        |
+| `@design-system` | `web/src/design-system` |
+| `@components`    | `web/src/components`    |
+| `@hooks`         | `web/src/hooks`         |
+| `@services`      | `web/src/services`      |
+| `@types`         | `web/src/types`         |
+| `@utils`         | `web/src/utils`         |
+| `@assets`        | `web/src/assets`        |
+| `@styles`        | `web/src/styles`        |
 
 Use these aliases in imports. Do not use relative imports across alias boundaries.
+The configured `@assets` target does not exist. Current font assets are in `web/public/fonts/`.
 
 ## Design System Rules
 
-Use `src/design-system/` as the **single source of truth** for visual decisions.
-Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKES.md`.
+Before component work, read these guides:
 
-### Critical Rules
+- `web/src/design-system/docs/INDEX.md` for the documentation map
+- `web/src/design-system/docs/DECISION_TREES.md` for component variants
+- `web/src/design-system/docs/COMPONENT_PAIRING_GUIDE.md` for composition
+- `web/src/design-system/docs/COMMON_MISTAKES.md` for known mistakes.
 
-1. **Semantic colors only** — Use semantic tokens. Do not use raw gray tokens.
-2. **Typography** — Use `font-display`, `font-sans`, and `font-mono` for headings, body text, and code.
-3. **Elevation** — Use shadows for cards. Use borders only for containment.
-4. **Animation** — Use 150ms for hover. Use 200ms for state changes. Use 300ms for modals. Use 500ms for pages. Respect reduced motion.
-5. **WCAG 2.1 AA** — Give interactive elements visible focus. Text and UI colors must meet AA contrast.
-6. **Component composition** — Use design-system components before ad-hoc components. Read `src/design-system/docs/DECISION_TREES.md`.
+### Required Process
+
+1. Build application components from `web/src/design-system/` primitives.
+2. Add generally reusable components to `web/src/design-system/components/`.
+3. Define color, type, spacing, radius, motion, and theme decisions as semantic tokens in `web/src/design-system/tokens/`.
+4. Do not reference raw palette utilities from components.
+5. Use Tailwind CSS v4 `@theme` tokens and CVA for component variants.
+6. Support light and dark themes. Add stories and visual regression tests for new design-system components.
+7. Make every story pass the accessibility addon in both themes.
+8. Meet WCAG 2.1 AA. Use semantic HTML, correct ARIA attributes, visible focus, keyboard support, and reduced-motion behavior.
+9. Self-host brand assets. Do not load fonts, scripts, or images from third-party origins.
+
+Constitution XI governs these requirements. Existing code or guide examples do not prove compliance.
+For conflicting examples, apply the constitution and report the source conflict.
+
+### Current Visual Direction
+
+`web/src/design-system/docs/DESIGN_PRINCIPLES.md` defines Refined Trust Architecture. A change to that direction requires an ADR.
+The constitution does not prescribe that aesthetic.
+
+| Detail | Current design guide |
+| ------ | -------------------- |
+| Typography | `font-display` for headings, `font-sans` for body text, `font-mono` for code |
+| Elevation | Card shadows, with borders for containment |
+| Motion | 150ms hover, 200ms state changes, 300ms modals, 500ms pages, with reduced-motion support |
+
+Read `web/src/design-system/docs/TOKEN_GUIDE.md` and `web/src/design-system/docs/MOTION_GUIDE.md` before changing these details.
 
 ### Semantic Color Palette
+
+These values describe `web/src/design-system/tokens/colors.css`, not permanent visual requirements.
+Use semantic roles instead of copying hex values or raw palette scales into components.
 
 | Token Family | Hex (primary)                            | Use                                 |
 | ------------ | ---------------------------------------- | ----------------------------------- |
@@ -142,16 +187,21 @@ Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKE
 | `success-*`  | #059669                                  | Granted permissions, success states |
 | `error-*`    | #DC2626                                  | Error states, destructive actions   |
 | `warning-*`  | #D97706                                  | Warnings, attention signals         |
-| `neutral-*`  | #faf9f7 → #1a1a1a (50–900 scale)         | Backgrounds, body text, borders     |
+| `neutral-*`  | #faf9f7 → #1a1511 (50–900 scale)         | Palette behind semantic background, text, and border roles |
 
 ## API Client Pattern
 
-- `services/api/client.ts` exports the configured Axios instance (`apiClient`).
-- The base URL is `/api`. In development, Vite forwards requests to Go. In production, use the upstream proxy.
-- **Authentication is external** — The Vite proxy adds `X-Remote-User` in development. An upstream proxy handles production authentication.
+- `web/src/services/api/client.ts` exports `apiClient`, with base URL `/api` and a 30-second timeout.
+- The browser uses same-origin endpoints. Vite forwards backend namespaces in development. The Go backend serves production APIs.
+- The Vite proxy adds `X-Remote-User` in development. An upstream proxy handles production authentication.
 - `ConsentApiService`, `SessionsApiService`, and `approvalApi` provide typed `apiClient` methods.
-- GET responses use the in-memory `apiCache`. Invalidate relevant cache entries after mutations.
+- Consent GETs use a five-minute cache. Session GETs use a two-minute cache. Approval GETs do not use `apiCache`.
+- Consent detail requests with `session_token` do not populate the cache.
 - The response interceptor normalizes errors to `ApiError`.
+
+After mutations, invalidate relevant cache entries.
+For authorization resumption, treat the server's `redirect_url` as opaque.
+Preserve redirect URL validation and full-page navigation, as required by ADR 016 and the OpenAPI contract.
 
 ### Key API Endpoints
 
@@ -171,10 +221,13 @@ Before you write a styled component, read `src/design-system/docs/COMMON_MISTAKE
 | GET    | `/api/approvals/permanent`             | `approvalApi.listPermanentApprovals()`        |
 | GET    | `/api/approvals/:id`                   | `approvalApi.getApproval(id)`                 |
 | POST   | `/api/approvals/:id/approve`           | `approvalApi.approveApproval(id, request)`    |
+| POST   | `/api/approvals/:id/scope-preview`     | `approvalApi.previewApprovalScope(id, request)` |
 | POST   | `/api/approvals/:id/deny`              | `approvalApi.denyApproval(id, request)`       |
 | POST   | `/api/approvals/:id/revoke`            | `approvalApi.revokePermanentApproval(id)`     |
 
 ## Development Setup
+
+Run these commands from the repository root. `web/package.json` requires Node.js 24 or later.
 
 ```bash
 just web-install          # Install npm dependencies
@@ -184,7 +237,9 @@ just web-test             # Run frontend tests
 just web-test-coverage    # Run frontend tests with coverage
 ```
 
-Vite uses port 3000. Vite forwards non-frontend requests to the Go server. Vite adds `X-Remote-User` in development. Set `VITE_USE_POLLING=true` for Docker.
+Vite defaults to port 3000. It proxies `/api`, `/oauth2`, `/.well-known`, and `/health` to Go.
+`VITE_API_URL` overrides the default backend target, `http://localhost:8000`.
+Set `VITE_USE_POLLING=true` for Docker.
 
 ### Storybook
 
@@ -192,21 +247,26 @@ Vite uses port 3000. Vite forwards non-frontend requests to the Go server. Vite 
 cd web && npm run storybook     # Port 6006
 ```
 
-Storybook renders `src/design-system/` stories and MDX. Do not add application components.
+Storybook loads stories and MDX from `web/src/design-system/`. Keep application-specific components outside that catalog.
+`web/.storybook/main.ts` and `web/.storybook/preview.ts` control the catalog and accessibility configuration.
 
 ## Testing Conventions
 
 - **Framework**: Vitest, React Testing Library, and jsdom.
-- **Setup**: In `vitest.setup.ts`, add jest-dom matchers. Call `cleanup()` after each test.
+- **Setup**: `web/vitest.setup.ts` installs jest-dom matchers and calls `cleanup()` after each test.
 - **File names**: `*.test.ts`, `*.test.tsx`, `*.interactive.test.tsx`, and `*.integration.test.tsx`.
 - **Testing approach**: Test user-visible behavior. Use role, text, or label queries. If no semantic query exists, use `getByTestId`.
 - **Mocking**: Mock API services at the module level. Do not mock React hooks. Mock their data sources.
 - **Accessibility**: The linter enforces `jsx-a11y`. Components must support keyboard use and correct ARIA attributes.
+- **Browser acceptance tests**: For UI changes, add or amend Playwright tests in `tests/e2e/frontend/`.
+- **Screenshots**: Capture each meaningful UI state in `tests/e2e/screenshots/`, as required by Constitution XIII.
+- **Harness guidance**: Read `tests/e2e/AGENTS.md` and `tests/e2e/README.md` before browser test work.
 
 ## Architecture Boundary
 
-The frontend uses only HTTP endpoints in `../api/enduser/openapi.yaml`.
-It has no Go imports or shared backend types. Keep TypeScript API types in sync with the contract.
+The frontend uses only HTTP endpoints in `api/enduser/openapi.yaml`.
+It has no Go imports or shared backend types.
+Keep `web/src/types/consent.ts`, `web/src/types/approval.ts`, and session types in `web/src/services/api/sessions.ts` aligned with the contract.
 
 ## Code Splitting
 

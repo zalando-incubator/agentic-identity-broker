@@ -58,6 +58,7 @@ safe-outputs:
       - "mocks/**"
       - "examples/**"
       - "docs/**"
+      - "coding-standards/**"
       - "adrs/**"
       - "specs/**"
       - "tools/**"
@@ -73,6 +74,12 @@ safe-outputs:
       - ".dockerignore"
     protected-files: request-review
     fallback-as-pull-request: false
+  # Recommended remediations can defer a removal to a tracked follow-up.
+  create-issue:
+    title-prefix: "[PR follow-up] "
+    labels: [automation, follow-up]
+    deduplicate-by-title: true
+    max: 3
   add-comment:
     target: ${{ inputs.pr }}
     discussions: false

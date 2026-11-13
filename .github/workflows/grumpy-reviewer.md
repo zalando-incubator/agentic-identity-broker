@@ -5,6 +5,12 @@ on:
   slash_command:
     name: grumpy
     events: [pull_request_comment, pull_request_review_comment]
+  # The run status comments come from the same App as the review.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
 
 permissions:
   contents: read
@@ -17,6 +23,12 @@ tools:
     toolsets: [pull_requests, repos]
 
 safe-outputs:
+  # Reviews come from this App, so every agentic workflow comments under one identity.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: zalando-incubator
+    repositories: [agentic-identity-broker]
   create-pull-request-review-comment:
     max: 5
     side: "RIGHT"
@@ -114,6 +126,9 @@ Submit a review using `submit_pull_request_review` with your overall verdict. Se
 - Use `APPROVE` when there are no issues that need fixing.
 - Use `REQUEST_CHANGES` when there are issues that must be fixed before merging.
 - (Optionally) use `COMMENT` when you only have non-blocking observations.
+
+If the pull request's author is `zalando-incubator-agent-workflows[bot]`, always use `COMMENT`: this workflow reviews as that App, and GitHub rejects approving or requesting changes on its own pull request. Start the review body with `**Verdict: approve**` or `**Verdict: changes requested**` so a maintainer still sees your conclusion.
+
 Keep the overall review comment brief and grumpy.
 
 ### Step 6: Update Memory

@@ -12,11 +12,11 @@ validation guide, not an implementation guide.
 
 | Requirement | Notes |
 |---|---|
-| Go 1.26.8 | `go version` |
-| `just` | `just --list` for all recipes |
-| `ginkgo` | `go install github.com/onsi/ginkgo/v2/ginkgo@latest` — required by every E2E recipe |
-| Broker changes from this feature | FR-017 (`principal`/`agent_id`) and FR-018 (`approved_at`) — see [contracts/broker-api-changes.yaml](contracts/broker-api-changes.yaml). They are built as part of this feature and land first (plan Phase 2.5). Until they do, ExtProc fails closed on every `approval_required` and rejects every candidate as missing `approved_at` |
-| Broker migrations ≥ 030 | `030_add_approval_patterns` supplies `tool_pattern` / `params_pattern` on the sync summary |
+| Go | Use the toolchain declared in [go.mod](../../go.mod). |
+| `just` | `just --list` lists the recipes in [justfile](../../justfile). |
+| Ginkgo | `just install-tools` installs the repository's test tools. |
+| Broker response fields | The [API contract](../../api/enduser/openapi.yaml) includes `principal`, `agent_id`, and `approved_at`. |
+| Broker migrations | Apply the [production migrations](../../migrations/), including [032_add_approval_patterns.up.sql](../../migrations/032_add_approval_patterns.up.sql). |
 | Docker or Podman | Only for the agentgateway scenario (§6); every other scenario runs in-process |
 
 ---
@@ -24,7 +24,7 @@ validation guide, not an implementation guide.
 ## 1. Fast feedback loop
 
 ```bash
-just check                # fmt → vet → lint
+just check                # Non-mutating format, vet, and lint checks
 just extproc-test         # ExtProc unit tests with -race
 just test-e2e-extproc     # ExtProc Ginkgo E2E suite
 ```
@@ -36,39 +36,20 @@ race detector is the primary guard.
 Full gate before handing over:
 
 ```bash
-just verify               # check + unit + web + cdk + mocks + integration + all E2E
+just verify               # Static checks, security, package tests, both integration layers, and E2E
 ```
 
 ---
 
-## 2. Red-phase verification (TDD gate)
+## 2. Historical red-phase verification
 
-Before any implementation exists, the new tests must compile and fail **semantically**.
+The original implementation required semantically failing tests before production changes.
+That requirement comes from [Constitution VIII and XIII](../../.specify/memory/constitution.md).
+It is not an instruction to expect the completed feature's tests to fail.
 
-```bash
-just test-e2e-extproc     # expect failures in tests/e2e/extproc/approval_sync_test.go
-just extproc-test         # expect failures in internal/extproc/approval/*_test.go
-```
-
-Confirm the failures are semantic, not structural:
-
-- Every failure names a concrete expectation (an HTTP status, a JSON-RPC error code, a broker call
-  count), never a compile error and never `Expect(true).To(BeFalse())`.
-- No `XIt`, `PIt`, `XDescribe`, `PDescribe`, `XContext`, `PContext`, or `Skip()` appears anywhere:
-
-  ```bash
-  grep -rnE '\b(XIt|PIt|XDescribe|PDescribe|XContext|PContext|Skip)\(' tests/e2e/extproc/
-  ```
-
-  This must print nothing.
-
-Two **existing** unit tests assert behavior this feature supersedes and are expected to fail until
-they are rewritten (see [contracts/opa-input-approval.md](contracts/opa-input-approval.md) §3):
-
-- `internal/extproc/authorization/decision_test.go` — `TestParseDecision_ApprovalRequired_MappedToDeny`
-- `internal/extproc/authorization/authorizer_test.go` — `TestOPAAuthorizer_ApprovalRequired_LogsRawActionAndReturnsDeny`
-
-The `ciba_required` half of each must keep passing unchanged.
+The current [approval E2E scenarios](../../tests/e2e/extproc/approval_sync_test.go) and [unit tests](../../internal/extproc/approval/) provide the regression checks.
+For a new behavior change, first add a test that fails for the intended reason.
+Do not use compilation errors, skipped scenarios, or unconditional failures as red-phase evidence.
 
 ---
 
@@ -145,7 +126,7 @@ Each row is one spec acceptance scenario and the observable outcome that proves 
 | # | Setup | Observable outcome |
 |---|---|---|
 | 1 | Broker pre-seeded with a permanent approval; then ExtProc starts | First matching call forwards with zero approval creation |
-| 2 | Broker unreachable at startup | Process starts; a startup warning is logged; the next `approval_required` first attempts the targeted read, and only after that fails does it attempt create |
+| 2 | Broker unreachable at startup | Process starts with a warning. The next `approval_required` attempts an authoritative read. If that read fails, ExtProc denies the call without creation, as required by [036-extproc-approval-cache-and-gate.md](../../adrs/036-extproc-approval-cache-and-gate.md#broker-authority-and-cache-freshness). |
 | 3 | Bootstrap returned an ETag | The first long-poll carries `If-None-Match` with that exact ETag |
 | 4 | Unknown `(principal, agent)` pair arrives | A targeted `GET /api/approvals?principal=…` precedes any create |
 
@@ -153,14 +134,18 @@ Each row is one spec acceptance scenario and the observable outcome that proves 
 
 | # | Setup | Observable outcome |
 |---|---|---|
-| 1 | No changes within the timeout | Broker returns `304`; ExtProc re-polls immediately with the same ETag |
-| 2 | User approves during the poll | Broker returns `200` + new ETag within 2s; the affected pair is updated (SC-002) |
+| 1 | No changes within the timeout | Broker returns `304`. ExtProc retains records and the ETag, refreshes confirmation time, and re-polls. |
+| 2 | User approves during the poll | Broker returns a full snapshot and ETag. ExtProc replaces all pairs, including removals. SC-002 sets the two-second propagation target. |
 | 3 | Connection drops | Reconnect within 5s replaying the last ETag (SC-007) |
 | 4 | ETag unknown to the broker | Broker returns full current state; ExtProc **replaces** rather than merges — a revoked approval must not survive |
 
-Rows 3 and 4 are observably identical by design: the broker has no delta protocol and no stale-ETag
-retention window (research R-005). Assert the replace semantics explicitly — seed an approval, sync
-it, revoke it broker-side, force a resync, and confirm the record is gone from the cache.
+Every `200` uses full-snapshot replacement, not only responses to unknown ETags.
+A reconnect can instead receive `304` when its version still matches. There is no delta protocol or retention window.
+See [accepted ADR 036](../../adrs/036-extproc-approval-cache-and-gate.md), [the broker handler](../../internal/adapters/http/handlers/approval/sync_handler.go), and [the syncer](../../internal/extproc/approval/syncer.go).
+Seed an approval, synchronize it, revoke it, and request another snapshot.
+Verify that replacement removes the record. Verify that an empty snapshot clears its scope.
+For a targeted read, verify that other principals and the background ETag remain unchanged.
+These checks exercise [the cache replacement methods](../../internal/extproc/approval/cache.go).
 
 ### Edge cases
 

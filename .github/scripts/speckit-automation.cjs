@@ -151,17 +151,13 @@ function approvalLocation(location) {
   return { path: match[1], start, end };
 }
 
-function actionsBot(user) {
-  return user?.login === "github-actions[bot]" && user?.type === "Bot";
-}
+// The pipeline opens its PRs and posts its comments as the Agentic Workflows App's bot. Only an App's own bot has
+// a [bot] login, so any other App stays untrusted. The login identifies it because the single-comment endpoint
+// omits performed_via_github_app. github-actions[bot] authored PRs and comments created before the switch.
+const pipelineApp = "zalando-incubator-agent-workflows[bot]";
 
-// Workers that push publish through the Agentic Workflows App so the push starts CI, which makes that App's
-// bot the author of their comments. Only an App's own bot has a [bot] login, so any other App stays untrusted.
-// The login identifies it because the single-comment endpoint omits performed_via_github_app.
-const workerApp = "zalando-incubator-agent-workflows[bot]";
-
-function workerBot(comment) {
-  return actionsBot(comment.user) || comment.user?.login === workerApp && comment.user?.type === "Bot";
+function pipelineBot(user) {
+  return [pipelineApp, "github-actions[bot]"].includes(user?.login) && user?.type === "Bot";
 }
 
 function parseCommand(body) {
@@ -177,7 +173,7 @@ function parseResult(comment) {
   const body = comment.body || "";
   const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/\d+$/);
   const sections = body.split(marker);
-  if (!workerBot(comment) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
+  if (!pipelineBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
       sections.length > 2) return null;
   const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/(speckit-(?:phase|plan|analyze|implement|remediate-review|apply-review)) -->$/m);
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
@@ -274,7 +270,7 @@ function managedPR(pr, repo, state = "open") {
   const related = (pr.body || "").split(/\r?\n/).find((line) => line.startsWith(relatedPrefix));
   const issue = pr.body?.match(/<!-- speckit-issue: (\d+) -->/) ||
     related?.slice(relatedPrefix.length).match(/^(\d+)$/);
-  return pr.state === state && pr.draft && issue && actionsBot(pr.user) &&
+  return pr.state === state && pr.draft && issue && pipelineBot(pr.user) &&
     pr.head.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.base.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.head.ref === `speckit/issue-${issue[1]}` ? Number(issue[1]) : 0;
@@ -481,7 +477,7 @@ async function route({ github, context }) {
     eventName === "issue_comment" && payload.action === "created" ? payload.comment : null;
   const command = source?.user?.type === "User" && source.user.login === context.actor && parseCommand(source.body);
   // A maintainer ticking boxes in the remediation proposal edits the bot's comment; the sender is the maintainer.
-  const isEdit = eventName === "issue_comment" && payload.action === "edited" && actionsBot(payload.comment?.user) &&
+  const isEdit = eventName === "issue_comment" && payload.action === "edited" && pipelineBot(payload.comment?.user) &&
     payload.sender?.type === "User" && payload.sender.login === context.actor &&
     proposalMarker.test(payload.comment.body || "");
   if ((!isIssue && !isLabel && !command && !isEdit) ||
@@ -654,7 +650,7 @@ function quoted(text) {
 // trusted jobs below post without it, so an agent can never author an approval or status comment.
 async function botComments(github, repo, number, matches) {
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
-  return comments.filter((entry) => actionsBot(entry.user) && matches(entry.body || "") &&
+  return comments.filter((entry) => pipelineBot(entry.user) && matches(entry.body || "") &&
     !(entry.body || "").includes("<!-- gh-aw-agentic-workflow:"));
 }
 
@@ -802,7 +798,7 @@ function validateReviewState(state) {
 function parseReview(comment) {
   const body = comment.body || "";
   const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/(\d+)$/);
-  if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2) return null;
+  if (!pipelineBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2) return null;
   const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/architecture-review -->$/m);
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
   const sections = body.split(reviewMarker);
@@ -824,7 +820,7 @@ function latestReview(comments, head) {
 
 function parseProposal(comment) {
   const body = comment.body || "";
-  if (!actionsBot(comment.user) || body.includes("<!-- gh-aw-agentic-workflow:") ||
+  if (!pipelineBot(comment.user) || body.includes("<!-- gh-aw-agentic-workflow:") ||
       body.match(new RegExp(proposalMarker.source, "gm"))?.length !== 1) return null;
   let state;
   try {
@@ -1012,7 +1008,7 @@ function progress(stages, { active, approve, review }) {
 function agentComments(comments, repo, run) {
   const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const footer = new RegExp(`^> Generated by \\[[^\\]\\n]+\\]\\(${escape(runURL(repo, run))}\\)`, "m");
-  return comments.filter((entry) => workerBot(entry) && footer.test(entry.body || "") &&
+  return comments.filter((entry) => pipelineBot(entry.user) && footer.test(entry.body || "") &&
     !(entry.body || "").includes(statusMarker) && !approvalMarker.test(entry.body || "") &&
     !(entry.body || "").includes(reviewMarker));
 }
@@ -1358,7 +1354,7 @@ function selectFeature() {
 module.exports = {
   artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, announce, report,
   continuesToPlan, managedPR, validateReviewState, parseReview, latestReview, parseProposal, publishProposals,
-  remediable, reviewDimensions, testTarget, dispatchTests, retryReads,
+  remediable, reviewDimensions, testTarget, dispatchTests, retryReads, pipelineBot,
 };
 
 if (require.main === module) {

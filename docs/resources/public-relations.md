@@ -9,6 +9,14 @@ the Agentic Identity Broker.
 
 ## Articles
 
+### 2026-10-09 agentgateway Token Exchange for AI Agents
+
+By Mike Moore, Web of Mike.
+
+[Read the article](https://webofmike.com/agentgateway-token-exchange/)
+for an overview of token exchange in agentgateway, including a case study of
+the Agentic Identity Broker and its gateway integration.
+
 ### 2026-09-27 Agentic Security & Identity: Who Are You, Who's Your Agent, And What Should They Be Allowed To Do? (Part 1)
 
 By Alejandro Saucedo, ethical.institute.
@@ -17,9 +25,18 @@ By Alejandro Saucedo, ethical.institute.
 for an introduction to agent identity, delegation standards, and adopting the
 Agentic Identity Broker in the Kubernetes Agent Orchestration System (KAOS).
 
+### 2026-09-25 Agentic Platform: Open-Sourcing the Agentic Identity Broker
+
+By Jan Brennenstuhl and Magnus Jungsbluth, Zalando Engineering.
+
+[Read the article](https://engineering.zalando.com/posts/2026/09/agentic-platform-open-sourcing-agentic-identity-broker.html)
+for an introduction to Zalando's agentic platform and how the Agentic Identity
+Broker handles delegation, consent, and token exchange alongside kagent and
+agentgateway.
+
 ### 2026-09-24 What I Learned Building an Identity Broker With Coding Agents
 
-By Jan Brennenstuhl.
+By Jan Brennenstuhl, Brennenstuhl on Security.
 
 [Read the article](https://www.janbrennenstuhl.eu/agentic-identity-broker/)
 for lessons from building the Agentic Identity Broker with coding agents,

@@ -23,6 +23,7 @@ const {
   remediable,
   testTarget,
   dispatchTests,
+  managedPR,
 } = require("./speckit-automation.cjs");
 
 const repo = { owner: "example", repo: "broker" };
@@ -1972,5 +1973,35 @@ test("worker comments from the Agentic Workflows App's bot count, but not from a
   for (const user of [{ login: "coderabbitai[bot]", type: "Bot" }, { ...worker, type: "User" }]) {
     assert.equal(parseResult(comment(result("implement"), { user })), null);
     assert.deepEqual(await route(repairFixture({ comments: by(user) })), { action: "noop" });
+  }
+});
+
+test("PRs, reviews, proposals, and status comments from the Agentic Workflows App's bot count, but not from any other App", async () => {
+  const app = { login: "zalando-incubator-agent-workflows[bot]", type: "Bot" };
+  const pr = (user) => ({ number: 42, state: "open", draft: true, user, body: "<!-- speckit-issue: 7 -->",
+    head: { ref: "speckit/issue-7", repo: { full_name: "example/broker" } }, base: { repo: { full_name: "example/broker" } } });
+  assert.equal(managedPR(pr(app), repo), 7);
+  assert.equal(managedPR(pr(bot), repo), 7);
+  assert.notEqual(parseReview({ ...architectureReview([item("F1")]), user: app }), null);
+  assert.notEqual(parseProposal(proposalComment({}, { user: app })), null);
+
+  const before = proposalComment({ selected: ["P1"] }, { user: app });
+  const after = proposalComment({ selected: ["P1"], apply: true }, { user: app });
+  assert.equal((await route(fixture("issue_comment", editEvent(before, after), { comments: [after], pr: { user: app } }))).action, "apply");
+
+  const status = (id, user) => ({ id, body: "## Spec Kit · Old\n\n<!-- speckit-status -->\n", user, issue_url: issueURL });
+  const f = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments: [status(60, app), status(61, bot)] });
+  await announce({ ...f, needs: { route: { result: "success", outputs: { action: "plan", pr: "42" } } } });
+  assert.deepEqual(f.deleted, [60, 61]);
+
+  for (const other of [{ login: "coderabbitai[bot]", type: "Bot" }, { ...app, type: "User" }]) {
+    assert.equal(managedPR(pr(other), repo), 0);
+    assert.equal(parseReview({ ...architectureReview([item("F1")]), user: other }), null);
+    assert.equal(parseProposal(proposalComment({}, { user: other })), null);
+    const edited = proposalComment({ selected: ["P1"], apply: true }, { user: other });
+    assert.deepEqual(await route(fixture("issue_comment", editEvent(before, edited), { comments: [edited] })), { action: "noop" });
+    const kept = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments: [status(62, other)] });
+    await announce({ ...kept, needs: { route: { result: "success", outputs: { action: "plan", pr: "42" } } } });
+    assert.deepEqual(kept.deleted, []);
   }
 });

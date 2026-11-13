@@ -41,7 +41,7 @@ func TestResolveAgentIDByClientID_AmbiguousClientID(t *testing.T) {
 	require.NoError(t, repo.Create(ctx, agent1))
 	require.NoError(t, repo.Create(ctx, agent2))
 
-	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false)
+	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false, nil)
 
 	_, err := svc.ResolveUniqueByClientID(ctx, shared)
 	require.Error(t, err)
@@ -64,7 +64,7 @@ func TestResolveAgentIDByClientID_UnambiguousClientID(t *testing.T) {
 	agent.PermissionSets = permissionSets
 	require.NoError(t, repo.Create(ctx, agent))
 
-	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false)
+	svc := agents.NewService(repo, &noopServiceReqValidator{}, slog.Default(), false, nil)
 
 	resolved, err := svc.ResolveUniqueByClientID(ctx, "unique-client")
 	require.NoError(t, err)

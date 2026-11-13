@@ -19,15 +19,17 @@ import (
 type AgentRepository struct {
 	mu            sync.RWMutex
 	agents        map[id.AgentID]*storage.Agent // ID -> Agent
-	byCanonicalID map[string]id.AgentID         // canonical ID -> AgentID
-	byClientID    map[id.ClientID][]id.AgentID  // ClientID -> []ID (1:many for multi-agent support)
-	byClientURI   map[string]id.AgentID         // clientURI -> AgentID (global uniqueness)
+	byExternalID  map[id.ExternalID]id.AgentID
+	byCanonicalID map[string]id.AgentID        // canonical ID -> AgentID
+	byClientID    map[id.ClientID][]id.AgentID // ClientID -> []ID (1:many for multi-agent support)
+	byClientURI   map[string]id.AgentID        // clientURI -> AgentID (global uniqueness)
 }
 
 // NewAgentRepository creates a new in-memory agent repository.
 func NewAgentRepository() *AgentRepository {
 	return &AgentRepository{
 		agents:        make(map[id.AgentID]*storage.Agent),
+		byExternalID:  make(map[id.ExternalID]id.AgentID),
 		byCanonicalID: make(map[string]id.AgentID),
 		byClientID:    make(map[id.ClientID][]id.AgentID),
 		byClientURI:   make(map[string]id.AgentID),
@@ -67,6 +69,10 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 		)
 	}
 
+	if err := r.checkExternalID(agent); err != nil {
+		return err
+	}
+
 	if agent.CanonicalID != nil {
 		if _, exists := r.byCanonicalID[*agent.CanonicalID]; exists {
 			return storage.NewStorageError("CreateAgent", storage.ErrorKindConflict, nil, "agent canonical_id already exists")
@@ -87,6 +93,9 @@ func (r *AgentRepository) Create(ctx context.Context, agent *storage.Agent) erro
 
 	// Store deep copy to prevent external mutation
 	r.agents[agent.ID] = agent.Copy()
+	if agent.ExternalID != nil {
+		r.byExternalID[*agent.ExternalID] = agent.ID
+	}
 	if agent.CanonicalID != nil {
 		r.byCanonicalID[*agent.CanonicalID] = agent.ID
 	}
@@ -161,6 +170,10 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 		)
 	}
 
+	if err := r.checkExternalID(agent); err != nil {
+		return err
+	}
+
 	// Enforce global uniqueness of client URIs before touching any indexes
 	for _, uri := range agent.ClientURIs {
 		if existingID, exists := r.byClientURI[uri]; exists && existingID != agent.ID {
@@ -190,6 +203,12 @@ func (r *AgentRepository) Update(ctx context.Context, agent *storage.Agent) erro
 	}
 
 	// All checks passed — update indexes and stored entity atomically
+	if existing.ExternalID != nil {
+		delete(r.byExternalID, *existing.ExternalID)
+	}
+	if agent.ExternalID != nil {
+		r.byExternalID[*agent.ExternalID] = agent.ID
+	}
 	oldClientID := existing.ClientID
 	newClientID := agent.ClientID
 	if !clientIDPtrEqual(oldClientID, newClientID) {
@@ -229,6 +248,9 @@ func (r *AgentRepository) Delete(ctx context.Context, agentID id.AgentID) (bool,
 
 	// Get agent to clean up indexes
 	if agent, exists := r.agents[agentID]; exists {
+		if agent.ExternalID != nil {
+			delete(r.byExternalID, *agent.ExternalID)
+		}
 		if agent.ClientID != nil {
 			r.removeFromClientIDIndex(*agent.ClientID, agentID)
 		}
@@ -259,17 +281,14 @@ func (r *AgentRepository) List(ctx context.Context) ([]*storage.Agent, error) {
 	return result, nil
 }
 
-func (r *AgentRepository) ListByExternalID(_ context.Context, externalID id.ExternalID) ([]*storage.Agent, error) {
+func (r *AgentRepository) GetByExternalID(_ context.Context, externalID id.ExternalID) (*storage.Agent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	agents := make([]*storage.Agent, 0)
-	for _, agent := range r.agents {
-		if agent.ExternalID != nil && *agent.ExternalID == externalID {
-			agents = append(agents, agent.Copy())
-		}
+	if agentID, ok := r.byExternalID[externalID]; ok {
+		return r.agents[agentID].Copy(), nil
 	}
-	return agents, nil
+	return nil, storage.NewStorageError("GetAgentByExternalID", storage.ErrorKindNotFound, ports.ErrNotFound, "agent not found")
 }
 
 // GetByClientID retrieves an agent entity by client_id.
@@ -365,6 +384,15 @@ func (r *AgentRepository) removeFromClientIDIndex(clientID id.ClientID, agentID 
 	} else {
 		r.byClientID[clientID] = ids
 	}
+}
+
+func (r *AgentRepository) checkExternalID(agent *storage.Agent) error {
+	if agent.ExternalID != nil {
+		if holder, ok := r.byExternalID[*agent.ExternalID]; ok && holder != agent.ID {
+			return storage.NewStorageError("WriteAgent", storage.ErrorKindConflict, ports.ErrExternalIDConflict, "external_id is already held by another agent")
+		}
+	}
+	return nil
 }
 
 func clientIDPtrEqual(a, b *id.ClientID) bool {
