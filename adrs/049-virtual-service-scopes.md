@@ -1,6 +1,6 @@
 # ADR 049: Virtual Service Scopes for Incremental Authorization
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-08: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6708996503)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6857846872)
 **Date**: 2026-10-29
 **Scope**: Broker OAuth2 authorization server (local, proxy, hybrid), consent, RFC 8693 errors, ExtProc challenge
 **Feature**: [055-incremental-service-authorization](../specs/055-incremental-service-authorization/spec.md)

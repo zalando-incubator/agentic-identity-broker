@@ -1,6 +1,6 @@
 # ADR 049 Revision 1 — Proxy-Refresh Validation and Dot-Segment Canonical IDs
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-08: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6708996503)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6857846872)
 **Date**: 2026-11-07
 **Revises**: [ADR 049](049-virtual-service-scopes.md), introduced and accepted in
 this pull request. Under Principle II, the same pull request may revise it before merge.

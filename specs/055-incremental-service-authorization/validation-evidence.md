@@ -1,6 +1,6 @@
 # Historical Browser Test Evidence — Proposed Scoped Exception
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-08: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6708996503), approval item DEC-006. Alternative validation remains required before compliance closure.
+**Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6857846872), approval item DEC-006. Alternative validation remains required before compliance closure.
 **Scope**: Missing contemporaneous compiling semantic-red execution evidence for the original
 Feature 055 browser acceptance tests US1 S4 and US2 S2 only (Principles VIII and XIII).
 
