@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 475
+    "investigation_after": 478
   },
   "issues": [
     {
@@ -184,6 +184,18 @@
       "state": "awaiting_clarification",
       "updated_at": "2026-11-13",
       "note": "Mapped structural Google validator vs signing validation, grant/client assertion separation and ADR037 key ownership. Asked legacy credential-to-account transition and generic scope placement/profile; no machine implementation."
+    },
+    {
+      "number": 476,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-14",
+      "note": "Posted literal-scope intersection versus GitHub level implication and stale observed-ceiling/cache policy questions. Preserve account-level repository restriction from #478; add tightening/refresh-failure mock journeys. No provider requests."
+    },
+    {
+      "number": 477,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-14",
+      "note": "Posted RFC8414 vs OIDC discovery gap and fixed-purpose assertion/audience prerequisites; asked UUID subject and provider-binding ownership. Existing signer has no default aud or explicit audience validation; static only, no security reproduction."
     }
   ],
   "fixes": [
@@ -276,40 +288,40 @@
       "follow_up": null
     },
     {
-      "area": "release",
-      "checked_at": "2026-11-13",
-      "result": "Latest release remains v0.1.145; existing release/v0.2 preparation recorded. Investigation-only maintenance run does not warrant a duplicate release PR.",
-      "follow_up": null
-    },
-    {
       "area": "repo_assist_prs",
-      "checked_at": "2026-11-13",
-      "result": "Eight open PRs; published heads unchanged. #403/#432 remain dirty and size-blocked; no repeat pushes. Seven drafts; #424 remains maintainer non-draft.",
-      "follow_up": "Maintainer semantic integration/publication recovery; do not repeat oversized pushes."
+      "checked_at": "2026-11-14",
+      "result": "Eight open PRs, unchanged published heads. #403/#432 dirty and size-blocked; no repeat pushes. Seven drafts and maintainer non-draft #424. Read comments/review threads; no actionable new revision request.",
+      "follow_up": "Maintainer semantic integration and classification recovery remain; no new PR at capacity."
     },
     {
       "area": "ci",
-      "checked_at": "2026-11-13",
-      "result": "Read check runs and commit statuses for all eight published heads: DCO and pipeline/unit/integration/all E2E pass. Classification failures #403/#420/#448 and approvals remain; rejected integrations have no fresh CI.",
-      "follow_up": "Required classification labels outside allowed write list remain maintainer work; no duplicate limitation report."
+      "checked_at": "2026-11-14",
+      "result": "Read both checks and commit statuses for all eight published heads: DCO and pipeline/unit/integration/all E2E pass. Classification failures #403/#420/#448 and approvals remain; rejected integrations have no fresh CI.",
+      "follow_up": "Required classification labels outside allowed writes need maintainers; do not duplicate limitation reports."
     },
     {
       "area": "hygiene",
-      "checked_at": "2026-11-13",
-      "result": "All open issues and PRs labelled; Task 1 fell back to Task 2. Reread outstanding monthly comment threads: no new human acknowledgements. No redundant labels or follow-up comments.",
+      "checked_at": "2026-11-14",
+      "result": "All open issues and PRs already labelled; Task 1 fell back to Task 2. Outstanding monthly threads have no new substantive human acknowledgements; monthly checklist has no checked actions.",
       "follow_up": null
     },
     {
       "area": "tests",
-      "checked_at": "2026-11-13",
-      "result": "Maintained just test package override passed race-enabled model, oauth2session and cimdclient packages. No code changes; not validation of proposed bootstrap or machine-token flows.",
+      "checked_at": "2026-11-14",
+      "result": "Maintained just test package override passed race-enabled tokenexchange, oauth2server and oauth2 packages. Existing behavior only; no GitHub App/federation, E2E, full-gate or build validation claimed.",
       "follow_up": null
     },
     {
       "area": "code",
-      "checked_at": "2026-11-13",
-      "result": "Investigated #474/#475 against parent #478, callback/state/routing, Spec018 validator and CIMD signer. Posted concrete integration seams and four contract questions; static assessment only, no security reproduction.",
-      "follow_up": "Resume #476/#477; retain phase-1 #472/#473 decisions and new phase-2 clarification holds."
+      "checked_at": "2026-11-14",
+      "result": "Investigated #476/#477 and parent #478: literal scope algebra, account repository restrictions, observed ceiling freshness, RFC8414 discovery and signer audience boundary. Posted two focused clarification comments; no source changes or security reproduction.",
+      "follow_up": "Await permission/freshness and assertion/binding decisions; retain earlier phase-1 and bootstrap gates."
+    },
+    {
+      "area": "release",
+      "checked_at": "2026-11-14",
+      "result": "Latest release remains v0.1.145. Investigation-only maintenance run does not warrant a release PR; Go baseline update already proposed in #486.",
+      "follow_up": null
     }
   ],
   "completed_actions": [
@@ -330,18 +342,13 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first after #475",
-      "note": "Investigate #476/#477 then parent #478; #474 needs omitted-scope/rotation policy, #475 credential-transition/wire-profile decisions. Preserve phase-1 identity, cache and ADR gates; no new PR at capacity."
+      "item": "Resume investigation after #478, then reset oldest-first",
+      "note": "#476 needs GitHub level/freshness decisions; #477 needs purpose-bound assertion/provider-binding contract. Parent reviewed; preserve #472 identity partition, #473 cache/ADR and #474/#475 holds. Do not duplicate clarification."
     },
     {
       "task": 3,
       "item": "Implement #314 with authentication provenance",
       "note": "Coordinate #431/#381; preserve public/CIMD/RFC8693 behavior and all-mode tests. No incomplete form-normalization patch."
-    },
-    {
-      "task": 4,
-      "item": "Assess Go 1.27.4 baseline update against #143",
-      "note": "just verify reports baseline GO-2026-6859 in Go 1.27.3; scanner lists Go 1.27.4 as fixed. No exception, bypass or reproduction. Check current security work before proposing a duplicate."
     }
   ]
 }
