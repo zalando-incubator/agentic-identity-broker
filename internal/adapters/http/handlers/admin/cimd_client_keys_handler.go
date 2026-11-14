@@ -160,7 +160,24 @@ func (h *CIMDClientKeysHandler) requireOperator(w http.ResponseWriter, r *http.R
 }
 
 func (h *CIMDClientKeysHandler) audit(ctx context.Context, operator id.Principal, kid id.KeyID, operation, outcome string) {
-	h.logger.InfoContext(ctx, "cimd client key lifecycle", "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
+	h.logger.InfoContext(ctx, "cimd client key lifecycle", "event", adminClientKeyAuditEvent(operation, outcome), "operator_principal", operator, "key_id", kid, "operation", operation, "outcome", outcome)
+}
+
+func adminClientKeyAuditEvent(operation, outcome string) string {
+	switch {
+	case operation == "generate" && outcome == "success":
+		return "cimd.admin_client_key.generated"
+	case operation == "generate":
+		return "cimd.admin_client_key.generate_rejected"
+	case operation == "promote" && outcome == "success":
+		return "cimd.admin_client_key.promoted"
+	case operation == "promote":
+		return "cimd.admin_client_key.promote_rejected"
+	case operation == "remove" && outcome == "success":
+		return "cimd.admin_client_key.removed"
+	default:
+		return "cimd.admin_client_key.remove_rejected"
+	}
 }
 
 func (h *CIMDClientKeysHandler) writeJSON(w http.ResponseWriter, status int, value any) {

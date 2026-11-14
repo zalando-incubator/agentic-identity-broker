@@ -337,7 +337,20 @@ func (s *OAuth2SessionService) WithCredentialFileReader(reader ports.CredentialF
 }
 
 func (s *OAuth2SessionService) auditCIMDTokenAcquisition(ctx context.Context, serviceID id.ServiceID, operation, outcome string) {
-	s.logger.InfoContext(ctx, "cimd client token acquisition", "service_id", serviceID, "operation", operation, "outcome", outcome)
+	s.logger.InfoContext(ctx, "cimd client token acquisition", "event", cimdTokenAcquisitionAuditEvent(operation, outcome), "service_id", serviceID, "operation", operation, "outcome", outcome)
+}
+
+func cimdTokenAcquisitionAuditEvent(operation, outcome string) string {
+	switch {
+	case operation == "code_exchange" && outcome == "success":
+		return "session.oauth2.cimd_code_exchanged"
+	case operation == "code_exchange":
+		return "session.oauth2.cimd_code_exchange_rejected"
+	case outcome == "success":
+		return "session.oauth2.cimd_token_refreshed"
+	default:
+		return "session.oauth2.cimd_refresh_rejected"
+	}
 }
 
 // GetCallbackBaseURL returns the configured callback base URL.

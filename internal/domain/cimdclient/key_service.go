@@ -344,7 +344,26 @@ func cimdPublicJWKFromPEM(privatePEM []byte, kid id.KeyID) (jwk.Key, error) {
 }
 
 func (s *KeyService) audit(ctx context.Context, kid id.KeyID, operation, outcome string) {
-	s.logger.InfoContext(ctx, "cimd client-authentication key lifecycle", "key_id", kid, "operation", operation, "outcome", outcome)
+	s.logger.InfoContext(ctx, "cimd client-authentication key lifecycle", "event", keyLifecycleAuditEvent(operation, outcome), "key_id", kid, "operation", operation, "outcome", outcome)
+}
+
+func keyLifecycleAuditEvent(operation, outcome string) string {
+	switch {
+	case operation == "generate" && outcome == "success":
+		return "cimd.client_key.generated"
+	case operation == "generate":
+		return "cimd.client_key.generate_rejected"
+	case operation == "promote" && outcome == "success":
+		return "cimd.client_key.promoted"
+	case operation == "promote":
+		return "cimd.client_key.promote_rejected"
+	case operation == "remove" && outcome == "success":
+		return "cimd.client_key.removed"
+	case operation == "remove":
+		return "cimd.client_key.remove_rejected"
+	default:
+		return "cimd.client_key.bootstrap_rejected"
+	}
 }
 
 var _ ports.CIMDClientKeyService = (*KeyService)(nil)
