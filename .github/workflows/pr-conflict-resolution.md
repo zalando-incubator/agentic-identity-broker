@@ -60,7 +60,7 @@ steps:
       go-version-file: go.mod
   - name: Install just
     if: steps.prepare.outputs.eligible == 'true'
-    uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+    uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
     with:
       tool: just
   - name: Install gh-aw for workflow conflicts
@@ -75,8 +75,8 @@ safe-outputs:
   github-app:
     client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-    owner: zalando-incubator
-    repositories: [agentic-identity-broker]
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
   threat-detection:
     continue-on-error: false
   push-to-pull-request-branch:

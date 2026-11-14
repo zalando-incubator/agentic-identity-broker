@@ -34,8 +34,8 @@ on:
   github-app:
     client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-    owner: zalando-incubator
-    repositories: [agentic-identity-broker]
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
 
 concurrency:
   job-discriminator: ${{ github.event_name == 'schedule' && 'scheduled' || github.run_id }}
@@ -175,8 +175,8 @@ safe-outputs:
   github-app:
     client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-    owner: zalando-incubator
-    repositories: [agentic-identity-broker]
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
   threat-detection:
     # Keep detection on its small default model; without this it inherits the pinned agent model.
     model: ${{ vars.GH_AW_MODEL_DETECTION_COPILOT || vars.GH_AW_DEFAULT_MODEL_COPILOT || 'detection' }}

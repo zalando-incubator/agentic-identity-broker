@@ -45,8 +45,8 @@ safe-outputs:
   github-app:
     client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-    owner: zalando-incubator
-    repositories: [agentic-identity-broker]
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
   report-failure-as-issue:
     - "!report_incomplete"
   threat-detection:
@@ -372,7 +372,7 @@ with `Remediation: automatic`, `Remediation: proposal`, or
 
 - **Do NOT review individual lines of code.** No typos, nil checks, or style issues. The exception is a violation of a binding coding standard in `coding-standards/` (Constitution Principle XV), which dimension 6 reports grouped by rule.
 - **Do NOT suggest refactoring that isn't architecturally motivated.**
-- **DO provide links** to changed files using `https://github.com/zalando-incubator/agentic-identity-broker/blob/{headRefOid}/{path}` format, where `{headRefOid}` is the value of the `headRefOid` field from `pr-details.json`.
+- **DO provide links** to changed files using `https://github.com/${{ github.repository }}/blob/{headRefOid}/{path}` format, where `{headRefOid}` is the value of the `headRefOid` field from `pr-details.json`.
 - **DO reference specific pre-existing ADRs** by number when flagging contradictions.
 - **DO compare against `ARCHITECTURE.md` glossary** explicitly.
 - **BE CONCISE** — each finding is 1-3 sentences + a file link. Entire review scannable in 2 minutes.
@@ -417,7 +417,7 @@ pull request description alone. Do not use `rg`; use `git grep` or `grep`.
 Do not review individual lines, typos, or style. Default stance is skeptical:
 a possible overlap is a 🟡 finding with a question for the author, not a
 silent pass. Be concise: each finding is 1-3 sentences plus one file link in
-the form `https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+the form `https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
@@ -508,7 +508,7 @@ graph TB
 Do not review individual lines, typos, or style. A port bypass or domain
 logic leakage is a 🔴 finding; an anemic service is a 🟡 finding. Be concise:
 each finding is 1-3 sentences plus one file link in the form
-`https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+`https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
@@ -588,7 +588,7 @@ new ADRs in the same pull request are not self-justifying. A contradiction of
 a pre-existing ADR is a 🔴 finding; a second mechanism or a questionable
 package split is a 🟡 finding. Be concise: each finding is 1-3 sentences plus
 one file link in the form
-`https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+`https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
@@ -652,7 +652,7 @@ An unresolved contradiction between two sources of the same fact is a 🔴
 finding when it affects authorization or security state and a 🟡 finding
 otherwise. Be concise: each finding is 1-3 sentences plus one file link in
 the form
-`https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+`https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
@@ -723,7 +723,7 @@ that is not architecturally motivated. Default stance is skeptical: parallel
 security mechanisms are a 🔴 finding; scattered validation,
 over-specialization, and API concern leakage are 🟡 findings. Be concise:
 each finding is 1-3 sentences plus one file link in the form
-`https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+`https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
@@ -929,7 +929,7 @@ the first. Do not report typos or style that no standard rule covers.
 - `GREEN` (🟢): an observation for awareness, used sparingly.
 
 Be concise: each finding is 1-3 sentences plus one file link in the form
-`https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+`https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
@@ -1013,7 +1013,7 @@ path (authentication, authorization, token issuance, consent, approval) is 🔴.
 Do not review individual lines, typos, or style. Read the test files; do not
 infer coverage from their names. Be concise: each finding is 1-3 sentences
 plus one file link in the form
-`https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+`https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
@@ -1073,7 +1073,7 @@ Do not review individual lines, typos, or style. Do not suggest refactoring
 that is not architecturally motivated. A second way to do the same thing
 without documented guidance is a 🟡 finding. Be concise: each finding is 1-3
 sentences plus one file link in the form
-`https://github.com/zalando-incubator/agentic-identity-broker/blob/<headRefOid>/<path>`,
+`https://github.com/${{ github.repository }}/blob/<headRefOid>/<path>`,
 using the `headRefOid` from the brief.
 
 ### Output
