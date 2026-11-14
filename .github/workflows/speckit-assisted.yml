@@ -17,6 +17,10 @@ on:
 
 permissions: {}
 
+# The automation trusts comments and PRs only from this App's bot.
+env:
+  AGENTIC_WORKFLOWS_APP_SLUG: ${{ vars.AGENTIC_WORKFLOWS_APP_SLUG }}
+
 concurrency:
   group: speckit-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
   cancel-in-progress: false
@@ -31,7 +35,7 @@ jobs:
       (github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.comment.user.type == 'User' &&
         (startsWith(github.event.comment.body, '/speckit-') || startsWith(github.event.comment.body, '/architecture-review'))) ||
       (github.event_name == 'issue_comment' && github.event.action == 'edited' && github.event.sender.type == 'User' &&
-        (github.event.comment.user.login == 'zalando-incubator-agent-workflows[bot]' || github.event.comment.user.login == 'github-actions[bot]') &&
+        (github.event.comment.user.login == format('{0}[bot]', vars.AGENTIC_WORKFLOWS_APP_SLUG) || github.event.comment.user.login == 'github-actions[bot]') &&
         contains(github.event.comment.body, '<!-- speckit-proposal:')) ||
       (github.event_name == 'pull_request_review' && github.event.review.user.type == 'User' &&
         startsWith(github.event.review.body, '/speckit-')) ||
@@ -95,8 +99,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-issues: write
           permission-pull-requests: write
       - name: React to the maintainer command
@@ -136,8 +140,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
@@ -423,8 +427,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
@@ -643,8 +647,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
@@ -714,8 +718,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-actions: write
       - name: Dispatch the container tests on the PR branch
         id: dispatch
@@ -755,8 +759,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-actions: read
           permission-contents: read
           permission-issues: write

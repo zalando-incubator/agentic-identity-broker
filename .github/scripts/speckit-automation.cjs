@@ -154,10 +154,17 @@ function approvalLocation(location) {
 // The pipeline opens its PRs and posts its comments as the Agentic Workflows App's bot. Only an App's own bot has
 // a [bot] login, so any other App stays untrusted. The login identifies it because the single-comment endpoint
 // omits performed_via_github_app. github-actions[bot] authored PRs and comments created before the switch.
-const pipelineApp = "zalando-incubator-agent-workflows[bot]";
+// The repository names its own App, so a fork trusts the fork's App and not this repository's.
+function pipelineApp() {
+  const slug = process.env.AGENTIC_WORKFLOWS_APP_SLUG;
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug || "")) {
+    throw new Error("Set the AGENTIC_WORKFLOWS_APP_SLUG Actions variable to the Agentic Workflows App's slug");
+  }
+  return `${slug}[bot]`;
+}
 
 function pipelineBot(user) {
-  return [pipelineApp, "github-actions[bot]"].includes(user?.login) && user?.type === "Bot";
+  return [pipelineApp(), "github-actions[bot]"].includes(user?.login) && user?.type === "Bot";
 }
 
 function parseCommand(body) {

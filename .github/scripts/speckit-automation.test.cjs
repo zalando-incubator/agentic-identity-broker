@@ -24,8 +24,10 @@ const {
   testTarget,
   dispatchTests,
   managedPR,
+  pipelineBot,
 } = require("./speckit-automation.cjs");
 
+process.env.AGENTIC_WORKFLOWS_APP_SLUG = "example-agent-workflows";
 const repo = { owner: "example", repo: "broker" };
 const spec = "specs/042-example";
 const files = {
@@ -1965,7 +1967,7 @@ test("container tests start only on the commit that a completed code phase pushe
 
 test("worker comments from the Agentic Workflows App's bot count, but not from any other App", async (t) => {
   preparationIO(t);
-  const worker = { login: "zalando-incubator-agent-workflows[bot]", type: "Bot" };
+  const worker = { login: "example-agent-workflows[bot]", type: "Bot" };
   const f = fixture("pull_request_target", {}, { comments: [comment(result("remediate"), { user: worker })] });
   assert.equal((await verify({ ...f, comment: 11, phase: "remediate" })).phase, "remediate");
   const by = (user) => implemented(60).map((entry) => ({ ...entry, user }));
@@ -1977,7 +1979,7 @@ test("worker comments from the Agentic Workflows App's bot count, but not from a
 });
 
 test("PRs, reviews, proposals, and status comments from the Agentic Workflows App's bot count, but not from any other App", async () => {
-  const app = { login: "zalando-incubator-agent-workflows[bot]", type: "Bot" };
+  const app = { login: "example-agent-workflows[bot]", type: "Bot" };
   const pr = (user) => ({ number: 42, state: "open", draft: true, user, body: "<!-- speckit-issue: 7 -->",
     head: { ref: "speckit/issue-7", repo: { full_name: "example/broker" } }, base: { repo: { full_name: "example/broker" } } });
   assert.equal(managedPR(pr(app), repo), 7);
@@ -2003,5 +2005,19 @@ test("PRs, reviews, proposals, and status comments from the Agentic Workflows Ap
     const kept = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments: [status(62, other)] });
     await announce({ ...kept, needs: { route: { result: "success", outputs: { action: "plan", pr: "42" } } } });
     assert.deepEqual(kept.deleted, []);
+  }
+});
+
+test("only the App named by AGENTIC_WORKFLOWS_APP_SLUG is trusted, and a missing or malformed slug fails closed", (t) => {
+  t.after(() => { process.env.AGENTIC_WORKFLOWS_APP_SLUG = "example-agent-workflows"; });
+  process.env.AGENTIC_WORKFLOWS_APP_SLUG = "fork-agent-workflows";
+  assert.equal(pipelineBot({ login: "fork-agent-workflows[bot]", type: "Bot" }), true);
+  assert.equal(pipelineBot({ login: "github-actions[bot]", type: "Bot" }), true);
+  assert.equal(pipelineBot({ login: "example-agent-workflows[bot]", type: "Bot" }), false);
+  assert.equal(pipelineBot({ login: "zalando-incubator-agent-workflows[bot]", type: "Bot" }), false);
+  for (const slug of [undefined, "", "Fork-Agent-Workflows", "fork-agent-workflows[bot]", "fork agent", "-fork"]) {
+    if (slug === undefined) delete process.env.AGENTIC_WORKFLOWS_APP_SLUG;
+    else process.env.AGENTIC_WORKFLOWS_APP_SLUG = slug;
+    assert.throws(() => pipelineBot({ login: "github-actions[bot]", type: "Bot" }), /AGENTIC_WORKFLOWS_APP_SLUG/);
   }
 });

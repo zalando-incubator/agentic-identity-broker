@@ -19,7 +19,7 @@ on:
         default: 0
   # A repair run is started by the Container tests run that the App dispatched, so the App's bot is its actor.
   # speckit-assisted.yml routes a repair only for a base implementation that a maintainer started.
-  bots: ["zalando-incubator-agent-workflows[bot]"]
+  bots: ["${{ vars.AGENTIC_WORKFLOWS_APP_SLUG }}[bot]"]
 imports:
   - shared/speckit-common.md
   - shared/speckit-phase-instructions.md
@@ -51,8 +51,8 @@ safe-outputs:
   github-app:
     client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-    owner: zalando-incubator
-    repositories: [agentic-identity-broker]
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
   report-failure-as-issue:
     - "!report_incomplete"
   threat-detection:

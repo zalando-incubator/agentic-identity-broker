@@ -6,6 +6,10 @@ on:
 
 permissions: {}
 
+# The automation trusts comments and PRs only from this App's bot.
+env:
+  AGENTIC_WORKFLOWS_APP_SLUG: ${{ vars.AGENTIC_WORKFLOWS_APP_SLUG }}
+
 concurrency:
   group: architecture-review-${{ github.repository }}-${{ github.event.issue.number }}
   cancel-in-progress: false
@@ -65,8 +69,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-issues: write
           permission-pull-requests: write
       - name: React to the maintainer command
@@ -157,8 +161,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write

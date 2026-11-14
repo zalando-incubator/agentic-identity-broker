@@ -16,6 +16,7 @@ const {
   dimensions,
 } = require("./architecture-review-automation.cjs");
 
+process.env.AGENTIC_WORKFLOWS_APP_SLUG = "example-agent-workflows";
 const repo = { owner: "example", repo: "broker" };
 const head = "a".repeat(40);
 const base = "b".repeat(40);
@@ -434,7 +435,7 @@ test("architecture review entry points retry transient reads once per shared cli
 test("status comments from the Agentic Workflows App's bot are replaced, but not those of any other App", async () => {
   const status = (id, login) => ({ id, body: "## 🏗️ Architecture review · ⛔\n\n<!-- architecture-review-status -->\n",
     user: { login, type: "Bot" } });
-  const comments = [status(60, "zalando-incubator-agent-workflows[bot]"), status(61, "github-actions[bot]"), status(62, "coderabbitai[bot]")];
+  const comments = [status(60, "example-agent-workflows[bot]"), status(61, "github-actions[bot]"), status(62, "coderabbitai[bot]")];
   const f = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments });
   await report({ ...f, needs: { route: { result: "failure", outputs: { error: "Stopped" } } } });
   assert.deepEqual(f.deleted, [60, 61]);
