@@ -115,7 +115,7 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
    - **Domain logic leakage**: Put conditional logic beyond input parsing in domain services, not handlers.
    - **Domain packaging**: Make each new `domain/X/` a genuinely independent bounded context.
 7. **Configuration-Driven** — Use `internal/ports/config.go` for broker configuration. ExtProc has its own schema under accepted ADR 011. Update configuration documentation and examples with each parameter change. Update Helm values and templates only for workloads that the chart deploys.
-8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation. Do not record red-run evidence.
+8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation. Red-run evidence is not required.
 9. **Persistence Consistency** — Define ISP repos in `internal/ports/storage.go`. Use sqlx for PostgreSQL. Provide both in-memory and postgres adapters.
 10. **API-First** — Design APIs before implementation. Get stakeholder agreement before changes.
 11. **Design System Compliance** — Use shared semantic tokens and WCAG 2.1 AA in the single light theme; a dark theme is not required. Keep brand assets in the repository. Read the current visual direction in `web/src/design-system/docs/DESIGN_PRINCIPLES.md`. A change to that direction requires an ADR.
@@ -144,7 +144,7 @@ Read `internal/adapters/AGENTS.md` for existing factory and shared-helper compos
 Read relevant ADRs before implementation. Only accepted decisions are binding.
 Check each file's status and superseding decisions. A proposal does not become binding because its code exists.
 Name new ADRs `YYYYMMDD-HHMMSS-<slug>.md` (UTC creation time). Existing `NNN-<slug>.md` ADRs keep their names.
-Refer to an ADR by its full file stem: prefix and slug, never the prefix or number alone. ADR numbers are not unique.
+In new or changed text, refer to an ADR by its full file stem: prefix and slug, never the prefix or number alone. ADR numbers are not unique.
 You can mark an ADR introduced on this branch as Accepted in the same PR.
 Before the branch merges into `main`, you can revise that ADR in the same PR, even after acceptance.
 The final ADR and code MUST agree before merge.

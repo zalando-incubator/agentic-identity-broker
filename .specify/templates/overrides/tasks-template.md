@@ -178,8 +178,9 @@ XIV (Specification by Example & Reviewable Journeys)
 - [ ] T010f Verify E2E tests FAIL semantically (red phase): detailed expectations present and failing,
       NOT placeholder always-fail assertions (e.g., `Expect(true).To(BeFalse())` is NOT acceptable);
       no `XIt`/`PIt`/`Skip()` pending markers; no "red phase" comments in test files; red-run evidence
-      is not recorded: container-backed suites (`just test-integration-infra`, `just test-e2e-docker`) MAY
-      run first in CI on the pushed commit
+      is not required: when no container runtime is available locally, container-backed suites
+      (`just test-integration-infra`, `just test-e2e-docker`) skip the local red run and first run in
+      CI on the pushed commit, which may already include the implementation
 - [ ] T010g [IF FRONTEND] Add/amend Playwright E2E tests in `tests/e2e/frontend/` for all UI scenarios
 - [ ] T010h [IF FRONTEND] Use existing page objects in `tests/e2e/pages/` and Playwright harness
 - [ ] T010i [IF FRONTEND] Verify frontend Playwright tests capture screenshots to `tests/e2e/screenshots/`

@@ -36,8 +36,9 @@ Architecture and major decisions MUST be documented, and Architecture Decision R
 - New ADR files MUST follow the format `YYYYMMDD-HHMMSS-decision-title.md`, using the UTC creation
   time (e.g., `20261116-143022-hexagonal-architecture.md`). Existing ADRs keep their `NNN-` file
   names and MUST NOT be renamed
-- References to an ADR MUST use its full file stem, prefix and slug together (e.g.,
-  `20261116-143022-hexagonal-architecture`), never the prefix or number alone
+- New or changed references to an ADR MUST use its full file stem, prefix and slug together (e.g.,
+  `20261116-143022-hexagonal-architecture` or `004-storage-layer-architecture`), never the prefix
+  or number alone. Existing number-only references MAY remain until their text is next edited
 - ADRs MUST include: Context, Decision, Consequences, Status (Proposed/Accepted/Deprecated/Superseded)
 - An ADR introduced on the current branch MAY have status "Accepted" and be approved in
   that same PR; a separate PR or prior merge is not required
@@ -174,7 +175,8 @@ Code quality and correctness MUST be ensured through Test-Driven Development (TD
     as implementation progresses, and MUST NOT require cleanup of red-phase annotations later
 - Red-green cycles are a working discipline, not a reporting obligation: red or green run output,
   logs, or CI links MUST NOT be required as evidence in task lists, PRs, or reviews. A suite that needs
-  infrastructure the development environment lacks, such as containers, MAY run first in CI
+  infrastructure the development environment lacks, such as containers, MAY skip the local red run;
+  its first run MAY be in CI on the pushed commit, even when that commit includes the implementation
 - **Skipping tests or checking for "not implemented" errors is NOT TDD**: tests must verify actual functionality, not error handling
 - Tests MUST drive design: implementation decisions emerge from test requirements, not vice versa
 - Tests MUST change as little as possible during implementation: major test changes indicate poorly derived tests
