@@ -201,6 +201,8 @@ safe-outputs:
         - README.md
     max: 4
   push-to-pull-request-branch:
+    # A merge from the base branch as a format-patch carries every base change since the fork and exceeds the patch size limit.
+    patch-format: bundle
     github-token-for-extra-empty-commit: none
     # Reading branch protection needs Administration, which the App does not hold; GitHub still enforces protection on the push.
     check-branch-protection: false
@@ -694,6 +696,7 @@ Maintain a single open issue titled `[repo-assist] Monthly Activity {YYYY}-{MM}`
 - **Read AGENTS.md first**: before starting work on any pull request, read the repository's `AGENTS.md` file (if present) to understand project-specific conventions, coding standards, and contribution requirements.
 - **Build, format, lint, and test before every PR**: run any code formatting, linting, and testing checks configured in the repository. Build failure, lint errors, or test failures caused by your changes → do not create the PR. Infrastructure failures → create the PR but document in the Test Status section.
 - **Drafts stay drafts**: never mark a PR ready for review or describe a draft as ready. Only a maintainer does that.
+- **Outputs apply after you finish**: pushes, PRs, and comments are published after your run ends, and a publication can still be rejected. In a comment written alongside a push, say the update was submitted for publication, never that the PR was updated or the conflicts were resolved. Confirm a past push against the live PR head SHA before you describe it as applied.
 - **Read all PR checks**: before reporting a PR's validation state, read both `get_check_runs` and `get_status` from `pull_request_read`. Some pipelines report only commit statuses, so check runs alone can miss passing or failing checks.
 - **Respect existing style**  -  match code formatting and naming conventions.
 - **AI transparency**: every comment, PR, and issue must include a Repo Assist disclosure with 🤖.
