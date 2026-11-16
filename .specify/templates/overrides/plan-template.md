@@ -56,7 +56,7 @@ Before proceeding, verify compliance with [.specify/memory/constitution.md](.spe
 
 - [ ] **Security-First**: Are security features enabled by default? No bypasses or optional security?
 - [ ] **Architecture Docs**: Will `ARCHITECTURE.md` be updated if this touches architecture?
-- [ ] **ADRs**: Does this require an ADR in adrs/ for major decisions?
+- [ ] **ADRs**: Does this require an ADR in adrs/ for major decisions? New ADRs are named `YYYYMMDD-HHMMSS-<slug>.md` and referenced by that full stem.
 - [ ] **Library-First Security**: Are we using vetted libraries for crypto/security (no custom implementations)?
 - [ ] **Zalando Guidelines**: Will APIs follow Zalando RESTful API and Event Guidelines?
 - [ ] **End-User Docs**: Will API documentation be rendered in `docs/api/` with examples?

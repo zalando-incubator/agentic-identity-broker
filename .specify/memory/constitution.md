@@ -33,7 +33,11 @@ Architecture and major decisions MUST be documented, and Architecture Decision R
 - When features change or touch architecture, [ARCHITECTURE.md](../../ARCHITECTURE.md) MUST be updated in the same PR
 - Non-functional requirements (performance, security, scalability) MUST be documented in [ARCHITECTURE.md](../../ARCHITECTURE.md)
 - Major architectural decisions MUST be recorded in [adrs/](adrs/) directory as Architecture Decision Records
-- ADR files MUST follow the format `NNN-decision-title.md` (e.g., `001-hexagonal-architecture.md`)
+- New ADR files MUST follow the format `YYYYMMDD-HHMMSS-decision-title.md`, using the UTC creation
+  time (e.g., `20261116-143022-hexagonal-architecture.md`). Existing ADRs keep their `NNN-` file
+  names and MUST NOT be renamed
+- References to an ADR MUST use its full file stem, prefix and slug together (e.g.,
+  `20261116-143022-hexagonal-architecture`), never the prefix or number alone
 - ADRs MUST include: Context, Decision, Consequences, Status (Proposed/Accepted/Deprecated/Superseded)
 - An ADR introduced on the current branch MAY have status "Accepted" and be approved in
   that same PR; a separate PR or prior merge is not required
@@ -610,7 +614,7 @@ unrelated findings without silently enlarging the feature.
 - [ ] Unrelated findings are excluded from implementation; approved GitHub issues are linked as future work only
 - [ ] Security controls are enabled by default and fail closed
 - [ ] [ARCHITECTURE.md](../../ARCHITECTURE.md) reflects architectural changes (if any)
-- [ ] Major decisions recorded in [adrs/](adrs/) with correct numbering
+- [ ] Major decisions recorded in [adrs/](adrs/) with `YYYYMMDD-HHMMSS-` timestamp file names
 - [ ] Code follows accepted ADRs already merged into main and final accepted ADRs introduced
       in this PR (especially ADR 004 for persistence)
 - [ ] APIs implemented exactly as documented in OpenAPI specification
@@ -830,4 +834,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
   links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.6.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-16
+**Version**: 4.7.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-16

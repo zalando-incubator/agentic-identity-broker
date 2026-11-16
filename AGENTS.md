@@ -143,7 +143,8 @@ Read `internal/adapters/AGENTS.md` for existing factory and shared-helper compos
 
 Read relevant ADRs before implementation. Only accepted decisions are binding.
 Check each file's status and superseding decisions. A proposal does not become binding because its code exists.
-ADR numbers are not unique in this repository. Use the full filename.
+Name new ADRs `YYYYMMDD-HHMMSS-<slug>.md` (UTC creation time). Existing `NNN-<slug>.md` ADRs keep their names.
+Refer to an ADR by its full file stem: prefix and slug, never the prefix or number alone. ADR numbers are not unique.
 You can mark an ADR introduced on this branch as Accepted in the same PR.
 Before the branch merges into `main`, you can revise that ADR in the same PR, even after acceptance.
 The final ADR and code MUST agree before merge.

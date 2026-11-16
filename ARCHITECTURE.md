@@ -1288,6 +1288,8 @@ These items require review or evidence, not approval by documentation cleanup:
 ## 10. Architecture Decision Records (ADRs)
 
 Full filenames identify decisions because ADR numbers are not unique.
+New ADRs use a `YYYYMMDD-HHMMSS-<slug>.md` file name; existing `NNN-<slug>.md` ADRs keep their names.
+References use the full file stem, prefix and slug together.
 The status column reflects each linked file's decision status, not its implementation progress.
 Only accepted decisions are binding under [Constitution II](.specify/memory/constitution.md#ii-architecture-documentation--decision-records).
 Partial supersessions and amendments apply only to the subjects named in those decisions.
