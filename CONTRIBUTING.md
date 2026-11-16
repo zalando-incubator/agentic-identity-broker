@@ -160,6 +160,16 @@ grumpy reviewer) open their pull requests, push, comment, review, and react as t
 described under [Opt-in conflict resolution](#opt-in-conflict-resolution) with Actions read/write
 in addition to its other permissions, and they fail instead of falling back to `GITHUB_TOKEN`.
 
+The workflows name no repository or App. They scope each App token to the repository they run in.
+They trust the bot of the App that the Actions variable `AGENTIC_WORKFLOWS_APP_SLUG` names, and
+`github-actions[bot]`, which authored the pipeline's PRs and comments before the App did.
+A fork can run them with its own App: install that App on the fork only, then set
+`AGENTIC_WORKFLOWS_APP_CLIENT_ID`, `AGENTIC_WORKFLOWS_APP_SLUG`, and `AGENTIC_WORKFLOWS_APP_PRIVATE_KEY`
+there. Issue, comment, label, schedule, and workflow-run events run workflows from the default branch,
+so a fork that iterates on them can make a separate branch its default and keep `main` an unchanged
+mirror of upstream. A `/speckit-` command in a pull request review is the exception: it runs the
+workflow file from the pull request's merge ref.
+
 ### Backend
 
 Use the boundaries defined by [Constitution VI](.specify/memory/constitution.md#vi-hexagonal-architecture--clean-boundaries):
@@ -257,7 +267,10 @@ Remove the label to stop later runs. A blocked resolution leaves the remote bran
 Before enabling the label, make sure the App with the private key in the existing Actions secret
 `AGENTIC_WORKFLOWS_APP_PRIVATE_KEY` is installed on this repository only.
 Grant it Checks read plus Contents, Workflows, Pull requests, and Issues read/write permissions.
-The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App.
+The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App,
+and the Actions variable `AGENTIC_WORKFLOWS_APP_SLUG` must hold its slug, such as `zalando-incubator-agent-workflows`.
+Without a valid slug, the Spec Kit and architecture review automation fails instead of trusting any bot.
+Ticking items on a remediation proposal is the exception: without the slug, the edit starts no run and reports no error.
 The App push starts ordinary PR CI, including for stacked PRs. Without these credentials, the router fails instead of pushing with `GITHUB_TOKEN`.
 
 ## Commit Guidelines
