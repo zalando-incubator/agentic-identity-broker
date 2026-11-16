@@ -162,7 +162,7 @@ func cimdConfidentialServiceAuditEvent(operation, outcome string) string {
 // auditDiscovery uses validated metadata or persisted state for issuer and method.
 // It never records URL queries, remote bodies, or credentials.
 func (s *ThirdpartyOAuth2ProviderService) auditDiscovery(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, operation string, result error, known *model.ThirdpartyOAuth2ProviderEntity) {
-	fields := []any{"service_id", entity.ID, "operation", operation}
+	fields := []any{"event", discoveredServiceAuditEvent(operation, result == nil), "service_id", entity.ID, "operation", operation}
 	if known != nil {
 		fields = append(fields, "issuer", known.IssuerURI, "client_method", known.Discovery.ClientMethod)
 	}
@@ -193,6 +193,19 @@ func (s *ThirdpartyOAuth2ProviderService) auditDiscovery(ctx context.Context, en
 		}
 	}
 	s.logger.InfoContext(ctx, "protected-resource discovery", fields...)
+}
+
+func discoveredServiceAuditEvent(operation string, succeeded bool) string {
+	switch {
+	case operation == "create" && succeeded:
+		return "service.thirdparty.discovered_service_created"
+	case operation == "create":
+		return "service.thirdparty.discovered_service_create_rejected"
+	case succeeded:
+		return "service.thirdparty.discovered_service_updated"
+	default:
+		return "service.thirdparty.discovered_service_update_rejected"
+	}
 }
 
 // DiscoveryAttemptTimeout bounds resource discovery and registration together.
