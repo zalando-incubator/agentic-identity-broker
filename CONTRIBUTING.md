@@ -116,9 +116,9 @@ Root contains only files that a tool requires there or that GitHub/Zalando OSS r
 For new features, use the [Spec Kit templates](.specify/templates/) and the [constitution](.specify/memory/constitution.md).
 These paths are naming patterns, not literal directories to copy:
 
-1. Create `specs/NNN-feature-name/spec.md` with requirements.
-2. Create `specs/NNN-feature-name/plan.md` with the design.
-3. Create `specs/NNN-feature-name/tasks.md` with ordered tasks.
+1. Create `specs/YYYYMMDD-HHMMSS-feature-name/spec.md` with requirements.
+2. Create `specs/YYYYMMDD-HHMMSS-feature-name/plan.md` with the design.
+3. Create `specs/YYYYMMDD-HHMMSS-feature-name/tasks.md` with ordered tasks.
 4. Obtain the required API and architecture approvals before implementation.
 5. Implement the plan with red-green-refactor tests and acceptance-scenario traceability.
 6. Update [ARCHITECTURE.md](ARCHITECTURE.md) when the design changes.

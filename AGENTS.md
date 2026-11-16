@@ -55,13 +55,14 @@ Read the source that governs the change. The summaries here do not replace the c
 
 ### Specs (Feature Requirements)
 
-`specs/NNN-<name>/spec.md` | Feature requirements + acceptance scenarios
-`specs/NNN-<name>/plan.md` | Implementation approach
-`specs/NNN-<name>/tasks.md` | Trackable task list
+`specs/<prefix>-<name>/spec.md` | Feature requirements + acceptance scenarios
+`specs/<prefix>-<name>/plan.md` | Implementation approach
+`specs/<prefix>-<name>/tasks.md` | Trackable task list
 `.specify/templates/overrides/spec-template.md` | Spec template: required sections, including concrete example journeys (Principle XIV)
 `.specify/examples/specification-by-example.md` | Worked example journey and Wireloom render command (Principle XIV)
 `.specify/templates/overrides/tasks-template.md` | Tasks template: mandatory Phase 2 design and Phase N compliance tasks
 
+New feature directories use a `YYYYMMDD-HHMMSS` timestamp prefix; older ones use a three-digit `NNN` prefix.
 For feature work, read its `spec.md`, `plan.md`, and `tasks.md` before implementation.
 Spec Kit selects `SPECIFY_FEATURE_DIRECTORY` first, then `.specify/feature.json`.
 Check that this selection matches the task. Do not infer the feature from the branch name alone.
