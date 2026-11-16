@@ -460,7 +460,7 @@ yet — ready for incremental user story implementation
 - [ ] TXXX Verify domain logic uses ports (interfaces) and adapters
 
 **Testing** (Principle VIII - Unit & Integration Tests):
-- [ ] TXXX Verify unit tests written FIRST and failed before implementation (red-green TDD)
+- [ ] TXXX Verify unit tests written FIRST in red-green cycles; red-run evidence is not required
 - [ ] TXXX Verify tests drive design (implementation emerges from test requirements)
 - [ ] TXXX Verify tests changed minimally during implementation
 - [ ] TXXX Verify automated tests included (unit, integration, or both)
@@ -469,7 +469,8 @@ yet — ready for incremental user story implementation
 **E2E Acceptance Testing** (Principle XIII):
 - [ ] TXXX Verify E2E tests exist in `tests/e2e/` for all acceptance scenarios from spec.md
 - [ ] TXXX Verify each `It()` block in E2E tests maps to exactly ONE acceptance scenario from spec.md
-- [ ] TXXX Verify E2E tests written BEFORE implementation and failed initially (red phase)
+- [ ] TXXX Verify E2E tests written BEFORE implementation in red-green cycles; red-run evidence is not
+      required, and container-backed suites without a local runtime may first run in CI
 - [ ] TXXX Verify E2E tests changed minimally during implementation (fixture adjustments only)
 - [ ] TXXX Verify E2E tests turned GREEN as implementation satisfied acceptance criteria
 - [ ] TXXX Verify E2E tests use Ginkgo/Gomega framework following `tests/e2e/README.md` patterns
@@ -500,8 +501,8 @@ yet — ready for incremental user story implementation
   - **CRITICAL**: Configuration requirements must be designed with YAML examples
   - **CRITICAL**: APIs must be designed and confirmed by user/stakeholder BEFORE implementation
   - **CRITICAL**: Database schema must be designed and migrations planned (or confirmed no DB changes)
-  - **CRITICAL**: E2E acceptance tests must be written with detailed expectations and verified to FAIL
-    semantically (red phase); frontend Playwright tests added/amended if UI changes involved
+  - **CRITICAL**: E2E acceptance tests must be written with detailed expectations before
+    implementation and, where they run locally, seen failing semantically (red phase); frontend Playwright tests added/amended if UI changes involved
   - **CRITICAL**: Helm deployment contract must be updated when configuration changes affect a chart-managed workload; otherwise the accepted standalone deployment boundary must be documented
   - Phase 2a, 2b, 2c, 2d, 2e, 2f, 2g can proceed in parallel, but all must complete before Phase 2.7 begins
 - **Entity Boilerplate (Phase 2.7)**: OPTIONAL (only if new entities) — depends on completion of all Phase 2 design tasks (2a–2g);
@@ -563,7 +564,7 @@ Task: "Create [Entity2] model in src/models/[entity2].py"
    - 2c: API design + user/stakeholder confirmation
    - 2d: Database schema design
    - 2e: Frontend/design system review (if applicable)
-   - 2f: E2E acceptance test design (tests written and verified to FAIL)
+   - 2f: E2E acceptance test design (tests written first; seen failing where they run locally)
    - 2g: Observability design against the binding coding standards (if telemetry changes)
 4. **(If new entities) Complete Phase 2.7**: Entity boilerplate — separate PR, project compiles
 5. Complete Phase 2.5: Foundational Infrastructure (CRITICAL - blocks all stories)
