@@ -114,10 +114,10 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
    - **Domain logic leakage**: Put conditional logic beyond input parsing in domain services, not handlers.
    - **Domain packaging**: Make each new `domain/X/` a genuinely independent bounded context.
 7. **Configuration-Driven** — Use `internal/ports/config.go` for broker configuration. ExtProc has its own schema under accepted ADR 011. Update configuration documentation and examples with each parameter change. Update Helm values and templates only for workloads that the chart deploys.
-8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation.
+8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation. Do not record red-run evidence.
 9. **Persistence Consistency** — Define ISP repos in `internal/ports/storage.go`. Use sqlx for PostgreSQL. Provide both in-memory and postgres adapters.
 10. **API-First** — Design APIs before implementation. Get stakeholder agreement before changes.
-11. **Design System Compliance** — Use shared semantic tokens and WCAG 2.1 AA. Check light and dark themes. Keep brand assets in the repository. Read the current visual direction in `web/src/design-system/docs/DESIGN_PRINCIPLES.md`. A change to that direction requires an ADR.
+11. **Design System Compliance** — Use shared semantic tokens and WCAG 2.1 AA in the single light theme; a dark theme is not required. Keep brand assets in the repository. Read the current visual direction in `web/src/design-system/docs/DESIGN_PRINCIPLES.md`. A change to that direction requires an ADR.
 12. **DI via Builder** — Put broker dependency wiring in `internal/app/builder.go`. Do not instantiate services in routing.
 13. **E2E Acceptance Tests** — Use a 1:1 specification-to-test mapping in `tests/e2e/`. Test a complete user journey. Do not test one endpoint segment.
 14. **Specification by Example** — In each spec, add concrete user journeys and link them to the Given/When/Then scenarios. Where applicable, show configuration, RFC-style HTTP exchanges, Wireloom wireframes, and decoded JWT claims.

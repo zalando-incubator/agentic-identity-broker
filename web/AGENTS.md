@@ -154,8 +154,8 @@ Before component work, read these guides:
 3. Define color, type, spacing, radius, motion, and theme decisions as semantic tokens in `web/src/design-system/tokens/`.
 4. Do not reference raw palette utilities from components.
 5. Use Tailwind CSS v4 `@theme` tokens and CVA for component variants.
-6. Support light and dark themes. Add stories and visual regression tests for new design-system components.
-7. Make every story pass the accessibility addon in both themes.
+6. Use the single light theme; do not add dark-theme variants. Add stories and visual regression tests for new design-system components.
+7. Make every story pass the accessibility addon.
 8. Meet WCAG 2.1 AA. Use semantic HTML, correct ARIA attributes, visible focus, keyboard support, and reduced-motion behavior.
 9. Self-host brand assets. Do not load fonts, scripts, or images from third-party origins.
 

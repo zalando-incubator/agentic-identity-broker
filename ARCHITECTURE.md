@@ -129,7 +129,7 @@ The [end-user routing](internal/adapters/http/routing/enduser.go) applies `http.
 These protections do not use the previously documented CSRF cookie and request-token scheme.
 Authentication belongs to the configured server middleware, not the React client.
 
-The [constitution, Principle XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency) requires semantic tokens and WCAG 2.1 AA checks in both themes.
+The [constitution, Principle XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency) requires semantic tokens and WCAG 2.1 AA checks in the single light theme.
 Component-library selection alone does not prove accessibility compliance.
 The [design-system index](web/src/design-system/docs/INDEX.md) routes contributors to component and accessibility guidance.
 
@@ -1282,7 +1282,7 @@ These items require review or evidence, not approval by documentation cleanup:
 
 - **JWT pre-authentication policy:** The [unsigned-subject exception](adrs/031-unverified-subject-unsigned-jwt.md) does not authorize unsigned end-user pre-authentication. [Constitution I](.specify/memory/constitution.md#i-security-first-development) governs signature verification.
 - **Workload identity:** Deployment evidence must prove the [CDK-to-pod identity contract](docs/deployment/kubernetes-irsa.md), not only infrastructure configuration.
-- **Frontend verification:** The [frontend suite instructions](tests/e2e/frontend/AGENTS.md) document development-test constraints. [Constitution XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency) requires evidence for both themes.
+- **Frontend verification:** The [frontend suite instructions](tests/e2e/frontend/AGENTS.md) document development-test constraints. [Constitution XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency) requires accessibility checks in the single light theme.
 - **Pending decisions:** The proposed ADRs in the index remain proposals, even where implementation exists. Maintainers must resolve their status through review under [Constitution II](.specify/memory/constitution.md#ii-architecture-documentation--decision-records).
 
 ## 10. Architecture Decision Records (ADRs)

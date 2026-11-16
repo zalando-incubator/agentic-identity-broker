@@ -177,7 +177,7 @@ Follow the coding standards in [`coding-standards/`](coding-standards/), includi
 Use the [design system](web/src/design-system/docs/INDEX.md), as required by [Constitution XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency).
 Read its component guidance before choosing an import or variant.
 The [Vite aliases](web/vite.config.ts) and [existing pages](web/src/pages/) show current import paths.
-The constitution requires semantic tokens, self-hosted brand assets, and accessibility evidence in light and dark themes.
+The constitution requires semantic tokens, self-hosted brand assets, and accessibility checks in the single light theme. A dark theme is not required.
 
 ### Tests
 
