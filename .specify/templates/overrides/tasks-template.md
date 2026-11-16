@@ -191,8 +191,9 @@ XIV (Specification by Example & Reviewable Journeys)
       OpenAPI contracts (Principle XIV)
 
 **Checkpoint**: Concrete spec journeys reviewed against scenarios and applicable configuration,
-HTTP, Wireloom UI, and JWT examples; E2E tests written and verified to fail semantically before
-implementation; frontend Playwright tests added/amended and screenshots configured (if applicable)
+HTTP, Wireloom UI, and JWT examples; E2E tests written before implementation and, where they run
+locally, seen failing semantically (container-backed suites without a local runtime first run in CI);
+frontend Playwright tests added/amended and screenshots configured (if applicable)
 
 ### Phase 2g: Observability Design [MANDATORY IF TELEMETRY]
 
@@ -406,9 +407,9 @@ yet — ready for incremental user story implementation
       flow, with applicable configuration, HTTP exchanges, Wireloom source and rendered SVGs,
       and visible decoded JWT claims matching requirements and contracts (Principle XIV)
 - [ ] TXXX Verify E2E acceptance tests written in `tests/e2e/` for all spec scenarios (Principle XIII)
-- [ ] TXXX Verify E2E tests verified to FAIL before implementation (red phase): detailed expectations
-      written and failing; no placeholder always-fail assertions; no `XIt`/`PIt`/`Skip()` markers;
-      no "red phase" comments in test files (Principle XIII)
+- [ ] TXXX Verify E2E tests were written before implementation with detailed realistic expectations;
+      no placeholder always-fail assertions; no `XIt`/`PIt`/`Skip()` markers; no "red phase" comments
+      in test files. Red-run evidence is not required (Principle XIII)
 - [ ] TXXX [IF FRONTEND] Verify Playwright E2E tests added/amended in `tests/e2e/frontend/` (Principle XIII)
 - [ ] TXXX [IF FRONTEND] Verify screenshots captured to `tests/e2e/screenshots/` (Principle XIII)
 - [ ] TXXX [IF TELEMETRY] Verify new log events, spans, and metric instruments are identified, and

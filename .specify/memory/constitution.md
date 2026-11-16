@@ -375,9 +375,10 @@ maps 1:1 to a test scenario in `tests/e2e/`. E2E tests MUST be written BEFORE im
 change minimally during implementation, and follow red-green development.
 
 **Rules**:
-- **Every acceptance scenario in `specs/[NNN-feature-name]/spec.md` MUST have a corresponding E2E test in `tests/e2e/`**
+- **Every acceptance scenario in `specs/[prefix-feature-name]/spec.md` MUST have a corresponding E2E test in `tests/e2e/`**
 - E2E tests MUST be written BEFORE implementation begins (acceptance-test-driven development)
-- **E2E tests MUST compile AND fail semantically initially (red phase)**:
+- **E2E tests MUST compile AND fail semantically initially (red phase)**. A container-backed suite
+  without a local runtime MAY skip the local red run and first run in CI, as in Principle VIII:
   - E2E tests MUST compile successfully with no compilation errors
   - All test expectations and assertions MUST compile and work correctly
   - **"Failing semantically" requires detailed, realistic expectations—not placeholder assertions**:
@@ -393,7 +394,7 @@ change minimally during implementation, and follow red-green development.
       acceptance criterion described by that test scenario
   - **Skipping or marking tests as pending is FORBIDDEN**: `XIt`, `PIt`, `XDescribe`, `PDescribe`,
     `XContext`, `PContext`, and `Skip()` calls MUST NOT appear in E2E test files — all tests MUST
-    run and fail semantically
+    run
   - **Tests MUST NOT contain comments marking them as "in the red phase"**: do not add annotations
     like `// TODO: implement`, `// red phase`, or `// will pass after implementation`. Tests are
     written once and turn green naturally without being touched again — red-phase comments create
@@ -412,7 +413,7 @@ change minimally during implementation, and follow red-green development.
 - Test data MUST use fixtures from `tests/e2e/fixtures/` (agents, grants, principals, config) NOT hardcoded values
 - E2E tests MUST follow Given/When/Then structure mapping to BeforeEach (setup) / action / assertions
 - Test file naming convention: `tests/e2e/[feature]_test.go` (e.g., `oauth2_authorize_test.go`)
-- Each test file MUST include comment references to spec scenarios: `// Scenario X.Y from specs/[NNN-feature]/spec.md`
+- Each test file MUST include comment references to spec scenarios: `// Scenario X.Y from specs/[prefix-feature]/spec.md`
 - E2E tests MUST be independent and isolated: fresh server and storage for each test via BeforeEach/AfterEach
 - Common E2E test utilities (matchers, helpers, mock servers) MUST be in `tests/e2e/matchers/` and `tests/e2e/helpers/`
 - E2E tests MUST NOT depend on test execution order or shared state between tests
