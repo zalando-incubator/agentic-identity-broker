@@ -168,9 +168,9 @@ Code quality and correctness MUST be ensured through Test-Driven Development (TD
   - **Tests MUST NOT contain comments marking them as "in the red phase"** (e.g., `// TODO: implement`,
     `// red phase`, `// will pass after implementation`). Tests are written once, turn green naturally
     as implementation progresses, and MUST NOT require cleanup of red-phase annotations later
-- Red and green evidence is recorded per test suite. A suite that needs infrastructure the development
-  environment lacks, such as containers, MAY take its evidence from CI on the pushed commit; work whose
-  tests run locally MUST NOT wait for that evidence
+- Red-green cycles are a working discipline, not a reporting obligation: red or green run output,
+  logs, or CI links MUST NOT be required as evidence in task lists, PRs, or reviews. A suite that needs
+  infrastructure the development environment lacks, such as containers, MAY run first in CI
 - **Skipping tests or checking for "not implemented" errors is NOT TDD**: tests must verify actual functionality, not error handling
 - Tests MUST drive design: implementation decisions emerge from test requirements, not vice versa
 - Tests MUST change as little as possible during implementation: major test changes indicate poorly derived tests
@@ -302,8 +302,8 @@ to ensure consistency and accessibility without prescribing a specific aesthetic
 - All visual decisions (color, type, spacing, radius, motion, theme) MUST be expressed as semantic
   design tokens defined in one place under `web/src/design-system/tokens/`; components MUST NOT
   reference raw palette utilities
-- The design system MUST support light and dark themes; every component story MUST render and pass
-  the accessibility addon in both
+- The design system has a single light theme; a dark theme MUST NOT be required. Every component
+  story MUST render and pass the accessibility addon in the light theme
 - Brand assets (wordmark, mark, favicon, brand typeface) MUST be self-hosted from the repository;
   the frontend MUST NOT load fonts, scripts or images from third-party origins
 - The current visual direction is documented in
@@ -319,7 +319,7 @@ to ensure consistency and accessibility without prescribing a specific aesthetic
 
 **Rationale**: Shared semantic tokens and reusable components keep the frontend consistent without
 mandating a particular aesthetic. WCAG 2.1 AA checks and accessible Storybook stories protect
-usability in both themes. Self-hosted brand assets avoid third-party dependencies for visual
+usability in the single supported theme. Self-hosted brand assets avoid third-party dependencies for visual
 identity. ADR review makes changes to the documented visual direction explicit, while design-system
 reuse prevents fragmented component behavior.
 
@@ -600,8 +600,8 @@ unrelated findings without silently enlarging the feature.
       applicable configuration, HTTP exchanges, Wireloom UI sequences, and visible JWT claims
       (Principle XIV)
 - [ ] **E2E acceptance tests written in `tests/e2e/` for all spec scenarios (Principle XIII)**
-- [ ] **E2E tests compile successfully and fail semantically before implementation (red phase — detailed
-      expectations written and failing, not placeholder assertions — Principle XIII)**
+- [ ] **E2E tests written before implementation in red-green cycles, with detailed realistic
+      expectations, not placeholder assertions; red-run evidence is not required (Principle XIII)**
 - [ ] **[IF FRONTEND] Playwright E2E tests added/amended in `tests/e2e/frontend/` for all UI changes (Principle XIII)**
 - [ ] **[IF FRONTEND] Screenshots captured to `tests/e2e/screenshots/` for each UI state under test (Principle XIII)**
 
@@ -627,7 +627,7 @@ unrelated findings without silently enlarging the feature.
       present (Principle XV)
 - [ ] No automated standard check is disabled or suppressed. Each deviation is covered by a scoped
       rule or exception in an amendment to the standard, with rationale (Principle XV)
-- [ ] **Unit tests written FIRST, compile successfully, and fail semantically before implementation (red phase - Principle VIII)**
+- [ ] **Unit tests written FIRST in red-green cycles; red-run evidence is not required (Principle VIII)**
 - [ ] **Unit tests drive design: implementation emerges from test requirements (Principle VIII)**
 - [ ] **Unit tests change minimally during implementation (Principle VIII)**
 - [ ] Automated tests included (unit, integration, or both) with meaningful coverage
@@ -768,8 +768,8 @@ If Principle XV (Binding Coding Standards) cannot be satisfied:
 - Reviewers MUST verify frontend components use design system and universal patterns are contributed (Principle XI)
 - Reviewers MUST verify WCAG 2.1 AA accessibility compliance for frontend components (Principle XI)
 - Reviewers MUST verify dependency injection uses Builder pattern and routing functions are thin (Principle XII)
-- Reviewers MUST verify TDD was followed: tests written first, compiled successfully, and failed semantically
-  before implementation — with detailed expectations, not placeholder assertions (Principle VIII)
+- Reviewers MUST verify tests contain detailed expectations, not placeholder assertions, skips, or
+  pending markers; reviewers MUST NOT require recorded red-run evidence (Principle VIII)
 - Reviewers MUST follow the spec's example journeys and verify that applicable configuration,
   HTTP exchanges, Wireloom UI states, and output JWT claims match requirements and contracts
   without exposing real secrets (Principle XIV)
@@ -778,8 +778,8 @@ If Principle XV (Binding Coding Standards) cannot be satisfied:
   tests the standard requires exist and that each deviation is covered by a scoped rule or
   exception in an amendment to the standard, with rationale (Principle XV)
 - Reviewers MUST verify E2E tests exist for all spec scenarios and changed minimally during implementation (Principle XIII)
-- Reviewers MUST verify E2E tests failed semantically in red phase: detailed expectations present and
-  failing, not trivial always-fail placeholders (Principle XIII)
+- Reviewers MUST verify E2E tests contain detailed expectations, not trivial always-fail
+  placeholders; reviewers MUST NOT require recorded red-run evidence (Principle XIII)
 - Reviewers MUST verify Helm updates for chart-managed workload configuration, or the accepted ADR and documented standalone deployment boundary for separately deployed binaries (Principle VII)
 - Reviewers MUST verify frontend UI changes have Playwright E2E tests in `tests/e2e/frontend/` and
   screenshots in `tests/e2e/screenshots/` (Principle XIII)
@@ -830,4 +830,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
   links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.5.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-05
+**Version**: 4.6.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-16
