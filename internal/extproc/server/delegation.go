@@ -114,6 +114,15 @@ func contextInputFromDelegation(result *delegation.Result, agentSessionID string
 	}
 }
 
+func (s *Server) forwardRequestBody(ctx context.Context, logger *slog.Logger, state *requestState, body *extprocv3.HttpBody) *extprocv3.ProcessingResponse {
+	if state.delegation != nil {
+		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
+			return response
+		}
+	}
+	return echoRequestBody(body)
+}
+
 func copyStrings(values []string) []string {
 	return append(make([]string, 0, len(values)), values...)
 }

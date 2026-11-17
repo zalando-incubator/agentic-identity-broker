@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -75,7 +76,7 @@ type delegationHarness struct {
 	policyFn   func(input authorization.OPAInput) (*authorization.OPADecision, error)
 }
 
-func newDelegationHarness(t *testing.T, resolve func() (delegation.Result, error)) *delegationHarness {
+func newDelegationHarness(t *testing.T, resolve func() (delegation.Result, error), loggers ...*slog.Logger) *delegationHarness {
 	t.Helper()
 	h := &delegationHarness{
 		clock:    &testClock{now: time.Unix(1_000, 0)},
@@ -103,7 +104,11 @@ func newDelegationHarness(t *testing.T, resolve func() (delegation.Result, error
 	cfg.Authorization.Enabled = true
 	cfg.Authorization.MaxBodySize = 1 << 20
 	cfg.Sessions.Extraction.HTTPHeader = "Mcp-Session-Id"
-	srv := server.NewServerWithAuthorizer(cfg, exchanger, authorizer, testLogger()).WithDelegationResolver(h.resolver)
+	logger := testLogger()
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
+	srv := server.NewServerWithAuthorizer(cfg, exchanger, authorizer, logger).WithDelegationResolver(h.resolver)
 	srv.SetClock(h.clock.Now)
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -355,6 +360,63 @@ func TestDelegation_HeaderOnlyOrdering(t *testing.T) {
 			assert.Zero(t, h.exchanges.Load())
 			assert.Equal(t, int32(1), h.resolver.calls.Load())
 			assert.NotContains(t, body["error_description"], testSubjectToken)
+		})
+	}
+}
+
+func TestDelegation_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
+	for _, path := range []string{"body", "batch", "header-only"} {
+		t.Run(path, func(t *testing.T) {
+			logger, logs := newJSONTestLogger()
+			var h *delegationHarness
+			h = newDelegationHarness(t, func() (delegation.Result, error) { return h.permitFor(time.Second)() }, logger)
+			if path == "header-only" {
+				h.exchangeFn = func() (server.ExchangeResult, error) {
+					h.clock.Advance(time.Second)
+					return server.ExchangeResult{Token: "expired-permit-provider-token"}, nil
+				}
+			} else {
+				h.policyFn = func(authorization.OPAInput) (*authorization.OPADecision, error) {
+					h.clock.Advance(time.Second)
+					return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
+				}
+			}
+			var response *extprocv3.ProcessingResponse
+			if path == "header-only" {
+				var err error
+				response, err = sendRequestHeadersWithMetadata(t, h.client, map[string]string{":method": "GET"}, validTokenExchangeMetadata("mcp"), true)
+				require.NoError(t, err)
+			} else {
+				body := mcpCall
+				if path == "batch" {
+					body = append(append([]byte("["), mcpCall...), ']')
+				}
+				_, response = sendHeadersThenBodyWithMetadata(t, h.client, map[string]string{":method": "POST"}, validTokenExchangeMetadata("mcp"), body)
+			}
+			require.NotNil(t, response)
+			status, body := immediate(t, response)
+			assert.Equal(t, 503, status)
+			assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "delegation context unavailable"}, body)
+			assert.Equal(t, int32(1), h.policies.Load())
+			assert.Equal(t, int32(1), h.exchanges.Load())
+			assert.Equal(t, int32(1), h.resolver.calls.Load(), "the expired permit is never re-resolved")
+			assert.NotContains(t, response.String(), "expired-permit-provider-token")
+			assert.NotContains(t, response.String(), testSubjectToken)
+			records := logs.records(t)
+			raw, err := json.Marshal(records)
+			require.NoError(t, err)
+			assert.NotContains(t, string(raw), testSubjectToken)
+			assert.NotContains(t, string(raw), "expired-permit-provider-token")
+			assert.NotContains(t, string(raw), "2026-10-26T09:59:00Z")
+			assert.NotContains(t, string(raw), "read:repo")
+			found := false
+			for _, record := range records {
+				if record["event"] == "extproc.delegation_context.permit_expired" {
+					found = true
+					assert.Equal(t, "delegation_resolution", record["operation"])
+				}
+			}
+			assert.True(t, found, "the expiry is reported through the existing credential-safe event")
 		})
 	}
 }

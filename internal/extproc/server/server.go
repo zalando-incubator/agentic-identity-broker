@@ -631,7 +631,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
-			return echoRequestBody(body)
+			return s.forwardRequestBody(ctx, logger, state, body)
 		}
 		if outcome.URL != "" {
 			return urlElicitationResponse(outcome.URL, "approval required", rawID)
@@ -645,8 +645,8 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(decision.Reasons)
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
-	return echoRequestBody(body)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	return s.forwardRequestBody(ctx, logger, state, body)
 }
 
 // processHeadersOnlyOPA handles header-only requests in OPA mode (end_of_stream=true in
@@ -674,6 +674,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
 			return response
 		}
+		state.delegation = result
 		contextInput = contextInputFromDelegation(result, state.agentSessionID)
 	}
 	opaInput, buildErr := authorization.BuildOPAInputHeadersOnlyWithContext(state.protocol, state.headers, state.targetServerName, contextInput)
@@ -704,7 +705,13 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		diagnostic = failure
 		return response
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed header-only request, token exchanged successfully", diagnostic)
+	if state.delegation != nil {
+		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+			return response
+		}
+	}
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed header-only request, token exchanged successfully", diagnostic)
 	return replaceAuthorizationHeader("Bearer " + exchangeResult.Token)
 }
 
@@ -779,8 +786,8 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 		return accessDeniedResponse(denyReasons)
 	}
 
-	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
-	return echoRequestBody(body)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	return s.forwardRequestBody(ctx, logger, state, body)
 }
 
 func decodeJSONBody(body []byte, isMCP bool) any {

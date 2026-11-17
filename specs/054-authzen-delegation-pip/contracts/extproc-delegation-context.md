@@ -123,7 +123,7 @@ bounding delegation freshness independently. Alternative: bypass the exchange co
 enabled mode, which changes ADR 012 semantics. Sign-off is D-5 in the plan; prior contract
 approval does not automatically cover this consequence.
 
-### 3.1 Permit-bound exchanged tokens (Proposed, [ADR 048 revision draft](../adr-048-revision-permit-bound-tokens.md))
+### 3.1 Permit-bound exchanged tokens (Proposed, [ADR 048 §10](../../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse))
 
 The permit governs local policy and token-result reuse. It does not prove provider-token scopes or the grant version read by exchange. A binding is the permit resource scope set and grant update instant that first claimed a result handle.
 
