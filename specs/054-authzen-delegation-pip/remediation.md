@@ -1,99 +1,69 @@
 # Remediation handoff: analysis run 40520766996/1
 
-**Status: Blocked — stakeholder freshness decisions required.** This document records partial
-remediation, not new product behavior, API approval, ADR acceptance, or implementation evidence.
-The authorized input contains no maintainer answer to the findings. Existing clarification
-answers in `spec.md` do not decide these freshness questions.
+**Status: Freshness and audit-seam decisions recorded; OPA input shape blocked on a spec
+revision.** On 2026-10-28 maintainer `mjungsbluth` answered the open findings in a review submitted
+with `/speckit-plan` (command 5688019903). This file records those answers and where the plan
+artifacts apply them. It records no implementation evidence.
 
-## HIGH I1 — Missing or invalid freshness (unresolved)
+| Finding | Maintainer answer | Applied in |
+|---|---|---|
+| I1 | "Missing or zero shall mean fail closed." | research R13; ExtProc contract §2; data model §§3.3–3.4 |
+| U1 | "Let's not overcomplicate this. We can live with the skew which is potentially a few minutes longer than required." | research R13; ExtProc contract §2; data model §3.4 |
+| U2 | "Reject with 503" | research R14; ExtProc contract §3; data model §3.4; plan §6 |
+| I2 | ADR accepted on research R16, which includes the ADR 033 seam extension | research R9 and R16; plan |
 
-Research R13 treats missing/invalid permit `max-age` as an error (503); ExtProc contract §2,
-data-model §3.4 and T049 allow current-request use without caching. Neither interpretation is
-selected by this remediation. Do not implement either interpretation until the stakeholder
-confirms one rule and all four artifacts agree.
+## HIGH I1 — Missing, malformed, or zero freshness (decided)
 
-**Decision required:** Should a permit with missing or malformed `max-age` fail closed with
-503, or be usable only for the current request without caching? Recommended for review: reject
-missing/malformed freshness because there is no trustworthy lifetime. Separately confirm
-whether valid zero means current-request-only use or an already-expired permit, and whether an
-excessive value is rejected or clamped to the fixed 60-second broker cap and local cap. These
-are proposals, not accepted answers. Current-request-only use must also be reconciled with U2.
+A permit is usable only if its `Cache-Control` header has exactly one `max-age` directive with a
+positive integer value. A missing, zero, malformed, or duplicate directive, or a value that does
+not parse as an integer, is a resolution error. ExtProc returns 503 `service_unavailable` with
+`"delegation context unavailable"`. It does not use the permit for the current request, and it
+does not cache the permit. The maintainer named the missing and zero cases. The plan treats
+malformed values in the same way, because they also give no usable freshness (FR-015).
+Large values need no separate rule. The usable lifetime is `min(max-age, max_staleness)`, so
+`max_staleness` bounds them.
 
-After confirmation, T049/T050 must distinguish missing, malformed, zero, positive, excessive,
-duplicate/conflicting and overflowing values; assert the immediate request outcome and cache
-reuse (or its absence), not just entry insertion. Update research R13, ExtProc contract §2,
-data-model §§3.3–3.4, FR-015 and the linked Journey 4 together.
+## HIGH U1 — End-to-end freshness deadline (decided: simple relative deadline)
 
-## HIGH U1 — End-to-end freshness deadline (unresolved)
+ExtProc reads the clock once, just before it sends the evaluation request. It sets
+`deadline = requestStart + min(max-age, max_staleness)` and computes this value once in the
+client. The `Result`, the cache entry, the singleflight followers, and `requestState` all carry
+the same deadline. A cache insertion, a cache hit, or a singleflight delivery never extends it.
+ExtProc reads no `Age` header, does no transit accounting, and applies no separate
+`grant.valid_until` cap. The broker already bounds `max-age` by the grant expiry (FR-009). The
+broker computes `max-age` after ExtProc sends the request, so a deadline based on request start
+never runs past the broker's window. The maintainer accepted the remaining skew.
 
-The current relative `min(max-age, max_staleness)` is incomplete: starting it at receipt or
-insertion can extend a permit beyond its original lifetime or `grant.valid_until`.
+## HIGH U2 — Expiry before policy use (decided: reject with 503)
 
-**Decision required:** Confirm a conservative time origin, HTTP response-age treatment and
-absolute expiry calculation, including request/response transit, the fixed broker cap, local
-`max_staleness`, and `grant.valid_until`. Recommended for review: anchor the usable duration
-conservatively to request start, subtract any applicable response age without ignoring transit,
-and cap the resulting absolute deadline at grant expiry. Review clock-skew assumptions and
-missing/invalid age handling explicitly. This is not a selected formula or approved contract.
+ExtProc checks the stored deadline immediately before every OPA evaluation that receives
+delegation input. This includes the header-only policy call, the body policy call, and each
+decision in a batch. If `now >= deadline`, the request is rejected with the same 503
+`service_unavailable` / `"delegation context unavailable"` response, and nothing is forwarded.
+ExtProc does not re-resolve and does not retry. Expired context never reaches policy.
 
-After confirmation, carry the single calculated deadline through Client `Result`, Resolver
-entries and request state; cache hits, insertion and singleflight delivery must not restart it.
-T049/T050 must test delayed responses, already-aged responses, near-grant-expiry responses,
-exact expiry, local and fixed caps, and singleflight delivery after expiry. Each case must
-assert both policy-use eligibility and reuse. Update FR-009/FR-015, SC-002/SC-003, Journey 4,
-research R5/R13, the model and ExtProc contract together. A permit already expired on arrival
-must not become fresh merely by insertion.
+## HIGH I2 — Evaluation audit identity seam (ADR decision accepted)
 
-## HIGH U2 — Expiry before policy use (unresolved)
+The maintainer accepted the ADR decision set in research R16. That set includes the extension
+of ADR 033's token-only deferred-finalization seam to `POST /access/v1/evaluation`. The ADR
+file is still drafted in T008, at the next unused number, and records this acceptance. The
+§3.1.4.2 reconciliation and the T044/T047 test-first work are still to be done. No runtime
+proof is claimed.
 
-Resolving at headers does not establish freshness at body-policy time. Context can expire
-while waiting for concurrent exchange, while buffering the body, or between batch decisions.
-The existing no-stale requirement remains binding; the missing recovery rule is not permission
-to feed expired context to policy.
+## Open: OPA input shape (blocked on spec revision)
 
-**Decision required:** On expiry before policy use, reject the request with a fail-closed
-unavailability response, or re-resolve under a bounded timeout and use only a fresh permit?
-Recommended for review: reject with 503 rather than introduce additional calls/retry semantics;
-this recommendation is not authorization. If re-resolution is chosen, confirm its bound,
-precedence with exchange errors, denial/outage mapping, and behavior across batch decisions.
-
-After confirmation, T052 must use synchronization barriers to expire the deadline while
-awaiting exchange and while buffering a body, including revocation and outage variants; assert
-no expired context reaches any policy invocation or downstream forwarding. Cover header-only
-and each batch-policy use as well. T057/T058 must carry/check the unchanged deadline at the
-approved use seams and implement only the confirmed recovery rule. Extend US3.1/US3.4/US3.6
-and Journey 4 within their existing one-scenario/one-`It()` mapping, and reconcile research R14,
-plan §6, model §3 and ExtProc contract §3. Testing only a later request after cache expiry is
-insufficient.
-
-## HIGH I2 — Evaluation audit identity seam (design correction recorded; approval pending)
-
-The source `internal/adapters/http/middleware/security_context.go` defers only
-`POST /oauth2/token`. R9's claim that the evaluation route already receives a capture holder
-was incorrect. The design now explicitly requires a shared-perimeter deferred-finalization
-seam for `POST /access/v1/evaluation`, rather than a second route-local capture mechanism.
-
-T008 must include this extension of ADR 033's route/finalization description in the proposed
-architectural decision and obtain stakeholder acceptance through the existing gate. ADR 033
-is currently marked Proposed in this checkout, while `ARCHITECTURE.md` §3.1.4.2 describes the
-existing token-only seam. Do not silently amend that ADR or imply that the extension is already
-approved. T009 must reconcile §3.1.4.2 after approval.
-
-T044 adds test-first middleware/handler/composed-perimeter coverage. T047 implements the
-shared matcher extension and early-error fallback only after those tests fail semantically.
-On permit and caller-policy denial after both credentials validate, assert the subject principal
-as Actor, distinct assertion subject as CallingPeer, one finalization, and the same trace ID
-in security context, audit/access records and `traceresponse`. Check equal-identity omission,
-malformed/missing/invalid credential fallback without invented verified identities, and
-unchanged ordinary HTTP, ordinary token-grant and delegated-exchange behavior. A post-handler
-access-log fallback alone cannot stamp earlier in-handler audit events.
+The maintainer commented on research R15 that the `delegation` / `delegation_available`
+members expose how ExtProc obtains the context. The maintainer asked to extend the context
+object sensibly and to fill the existing attributes from the delegation where possible. This
+conflicts with FR-017, which requires `input.context.delegation` verbatim and
+`delegation_available: true`. It also affects FR-018, US3.1, US3.8, Journey 4, and the
+canonical-ID fixture. The planning phase must not change requirements, so a `/speckit-clarify`
+review of the spec is needed. See research R15 for the proposed direction and the open
+questions.
 
 ## Gate and scope
 
-I1, U1 and U2 remain HIGH and unresolved. I2 has explicit design/test tasks, but neither an
-accepted decision nor runtime proof is claimed. No task is marked complete. Implementation
-must stop until the decisions above and the existing contract/ADR gates are satisfied.
-
-The MEDIUM C1 Docker-label finding is preserved in the previous analysis; it is not part of
-this session's HIGH/CRITICAL edit authorization and is not claimed resolved. No application,
-workflow, skill, hook, constitution, binding ADR or approved API file is changed.
+I1, U1, U2, and the I2 architectural decision are answered. The OPA input shape is blocked on
+the spec revision. `tasks.md` predates these decisions. It must be regenerated after the spec
+revision, and T049/T050/T052/T057/T058 must test the decided freshness semantics. The MEDIUM C1
+Docker-label finding from the previous analysis is not resolved here.

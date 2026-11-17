@@ -1,9 +1,10 @@
 # Contract: ExtProc Delegation Context (configuration, broker calls, request outcomes, and policy input)
 
 **Owner**: standalone `extproc-token-exchange` (ADR 011). It uses the `EXTPROC_` configuration
-namespace and is **not** part of the broker Helm chart. The proposed ADR (research R16) must be
-Accepted before implementation, because this contract changes ADR 028's input schema and
-request ordering when the feature is enabled.
+namespace and is **not** part of the broker Helm chart. The maintainer accepted the new ADR
+decision set (research R16) on 2026-10-28. This contract changes ADR 028's input schema and
+request ordering when the feature is enabled. The input schema in §4 is blocked on a spec
+revision (research R15).
 
 ## 1. Configuration
 
@@ -60,18 +61,18 @@ The evaluation body is `{subject:{type:jwt,id:<subject token>}, action:{name:tok
 The client uses the existing traced HTTP client (`internal/extproc/httpclient`) with the
 `oauth2.tls` trust settings. No new TLS settings are added.
 
-**Blocked freshness contract:** The missing/invalid `max-age` row below contradicts research
-R13; the relative lifetime also omits response-age/transit accounting and expiry at delayed
-policy use. HIGH I1/U1/U2 in [remediation.md](../remediation.md) require stakeholder decisions
-and synchronized contract/model/journey/test updates. Neither conflicting interpretation is
-selected here; do not implement these rows or stored-context policy use until reconciled.
+**Freshness** (maintainer decisions of 2026-10-28, HIGH I1/U1 in [remediation.md](../remediation.md)):
+The client reads `requestStart` just before it sends the POST. A permit's deadline is
+`requestStart + min(max-age, max_staleness)`, computed once. The cache, the singleflight
+followers, and the request state carry this deadline unchanged. ExtProc does no `Age` or
+transit accounting. The maintainer accepted the remaining skew.
 
 **Response handling**:
 
 | Broker response | Resolver result |
 |---|---|
-| 200, `decision: true`, object `context`, `Cache-Control` with valid `max-age` | Permit, cached for `min(max-age, max_staleness)` (not cached when `max-age=0`) |
-| 200, `decision: true`, missing or invalid `max-age` | Permit, used for this request only and **not cached** |
+| 200, `decision: true`, object `context`, exactly one positive integer `max-age` | Permit with `Deadline`, cached until that deadline |
+| 200, `decision: true`, `max-age` missing, `0`, malformed, duplicated, or not an integer | Error (`invalid_response`), so the request gets 503. The permit is **not used** and **not cached**. |
 | 200, `decision: false` | `DeniedError{Code, ConsentURL}`. The code is allowlisted. The URL must be absolute http(s). Never cached. |
 | Any other status, malformed JSON, non-boolean `decision`, or timeout | Error. Never cached. No stale fallback. |
 
@@ -81,6 +82,7 @@ selected here; do not implement these rows or stored-context policy use until re
 |---|---|
 | Delegation denied (either path) | `403`, `{"error":"access_denied","error_description":"delegation denied: <code>","error_uri":"<consent_url>"}`. Policy is not evaluated and nothing is forwarded. |
 | Resolution error (either path) | `503`, `{"error":"service_unavailable","error_description":"delegation context unavailable"}` |
+| Permit deadline passed before a policy evaluation (header-only policy, body policy, or any batch decision) | The same `503`. Policy is not evaluated, nothing is forwarded, and ExtProc does not re-resolve (HIGH U2). |
 | Body path: permit and exchange error | Existing exchange-error handling (`exchangeErrorResponse`) |
 | Body path: permit and exchange success | Buffer the body. Policy sees the context, then the existing allow, deny, or approval flow runs. |
 | Header-only: permit and policy deny | Existing 403 policy denial. **No exchange call.** |
@@ -93,10 +95,19 @@ selected here; do not implement these rows or stored-context policy use until re
 3. Exchange error
 4. Proceed
 
+Immediately before every OPA evaluation that receives delegation input, ExtProc checks
+`now < Deadline`. A permit that expires while ExtProc waits for the concurrent exchange,
+buffers the body, or works through a batch therefore never reaches policy.
+
 Metadata validation (ADR 036), protocol checks, transport checks, the body-size limit, the
 approval gate, and policy fail-closed behavior are unchanged and still apply.
 
 ## 4. OPA input (`input.context`)
+
+**Blocked: spec revision required.** The maintainer asked to extend the existing context
+attributes instead of adding the `delegation` and `delegation_available` members, which expose
+how ExtProc obtains the context. FR-017 currently requires those members. This section shows
+the pre-review shape and changes after `/speckit-clarify` revises the spec. See research R15.
 
 **Enabled mode**:
 
