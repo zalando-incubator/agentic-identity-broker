@@ -312,8 +312,8 @@ The continuation record below supersedes this table where tasks have since been 
 
 | Task | Reason | Needed to close |
 |---|---|---|
-| T027, T036, T053, T065, T080, T094, T097 | Semantic-red evidence was recorded for the 28 in-memory broker scenarios only; unit tests and the consumer/startup E2E tests were written alongside the implementation | Maintainer accepts the recorded evidence, or a reviewer reruns those tests against the pre-feature commit (they need the new packages to compile, so this requires compile-only scaffolding) |
-| T029–T031 | No separate compile-only scaffolding step was done; the code was implemented directly | Superseded by the implementation; close as not applicable if the maintainer agrees |
+| T027, T036, T053, T065, T080, T094, T097 | Semantic-red evidence was recorded for the 28 in-memory broker scenarios only; unit tests and the consumer/startup E2E tests were written alongside the implementation | Historical proposal, superseded by §10: a retrospective rerun cannot establish test-first order. D-6 requires explicit exception sign-off plus alternative validation, not acceptance of evidence alone. |
+| T029–T031 | No separate compile-only scaffolding step was done; the code was implemented directly | Historical proposal, superseded by §10: not automatically inapplicable or performed; retain noncompliance and use the explicit D-6 disposition conditions. |
 | T044 | The deferred-holder matcher test and credential-free audit assertions exist; the full trace-ID equality across context, audit, access log and `traceresponse` for evaluation is not asserted end to end | Add the composed HTTP-harness assertion |
 | T059 | ExtProc logs carry `operation=delegation_resolution`, `delegation.cache` hit/miss and bounded categories, but no test captures server log output | Add captured-log tests |
 | T064 | US4.6 asserts the deprecation marker in E2E; no separate `authzen_compat_test.go` unit test | Add the unit test or accept the E2E coverage |
@@ -406,8 +406,8 @@ records, not results from this continuation.
 
 | Tasks | Why they remain |
 |---|---|
-| T027, T036, T053, T065, T080, T094, T097 | The prior session explicitly says unit and consumer/startup tests were written alongside implementation. New red/green evidence above does not establish historical test-first compliance for that work. Recover authentic evidence or obtain an explicitly authorized constitutional resolution; do not manufacture a red phase or check these retrospectively. |
-| T029–T031 | The prior session implemented behavior directly instead of the planned compile-only scaffolding. Removing working behavior now would not establish the missing historical sequence. |
+| T027, T036, T053, T065, T080, T094, T097 | The prior session explicitly says unit and consumer/startup tests were written alongside implementation. New red/green evidence above does not establish historical test-first compliance for that work. Proposed D-6 (§10) supplies a concrete exception/alternative-validation proposal; these remain unchecked until its sign-off and applicable conditions are met. |
+| T029–T031 | The prior session implemented behavior directly instead of the planned compile-only scaffolding. Removing working behavior now would not establish the missing historical sequence. Retain that noncompliance; Proposed D-6 (§10) governs disposition, not retrospective performance of these tasks. |
 | T071 | Startup/discovery/compatibility, ExtProc unit and non-container E2E, and docs checks pass, but its `just check` prerequisite still fails outside this feature. Container portions are deferred downstream. |
 | T100 | Full validation remains incomplete because of the baseline lint failure and scanner compilation failure; container-only recipes remain downstream. |
 
@@ -429,3 +429,29 @@ valid. Revised API-2 and D-5 are Proposed for sign-off; implementation must use 
 `context.approval` and preserve ADR 047's existing provenance. All applicable non-container
 work continues independently of downstream container evidence. This section supersedes only
 obsolete directions in earlier entries, not their reported observations or failures.
+
+## 10. Proposed historical sequencing disposition (D-6)
+
+Analysis run `42039632078/1` identified the unresolved historical VIII/XIII deviation.
+[historical-validation-exception.md](./historical-validation-exception.md) now records the
+specific admitted sequencing failure, its scope, rationale, residual risk, main alternative
+and conditional validation proposal under “When Constraints Cannot Be Met”. Plan approval
+item D-6 requests a one-time exception for that history only; no approval is recorded here.
+
+The recommended alternative validation is independent review of existing tests against the
+requirements, a verified 44-scenario mapping, the unchanged required local gates and
+commit-specific downstream container results, with genuine test-first coverage for every
+new correction. Original sequencing remains recorded as not performed even if approved.
+A later passing suite, replay against a pre-feature commit, or replacement with stubs cannot
+make that history compliant. Declining D-6 leaves those obligations unresolved and prevents
+a claim of feature completion.
+
+T027, T029–T031, T036, T053, T065, T080, T094 and T097 remain unchecked. Only an implementation
+session with supplied approval explicitly covering D-6 may record its provenance and the
+applicable alternative-validation evidence before disposing of those tasks as an approved
+exception, not as performed test-first development. D-6 waives no failing check or remaining
+validation and does not apply to future corrections. Earlier section §7 suggestions to accept
+existing evidence alone or mark scaffolding not applicable are superseded by these conditions.
+The plan's constitutional gate now distinguishes design coverage from unresolved historical
+execution. API-003's TLS-download failure is explicitly historical; §7 retains the completed
+final-standard check and ignore-unknown-fields outcome.

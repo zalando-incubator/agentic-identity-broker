@@ -101,3 +101,16 @@ LOW I1 is resolved: `ARCHITECTURE.md:1164-1176` already documents metadata-only
 Research now marks the earlier architecture note obsolete, and the plan and tasks consistently
 retain only the two number-collision findings as deferred. No architecture edit, new issue,
 requirement change, approval, or implementation is needed for this correction.
+
+## Analysis run 42039632078/1 — historical test-first disposition
+
+| Finding | Document remediation | Traceability |
+|---|---|---|
+| CRITICAL C1 — admitted original test-first deviation without a settled disposition | Propose the narrow D-6 VIII/XIII exception through “When Constraints Cannot Be Met”, with evidence boundaries, independent test review, 44-scenario mapping, unchanged local/downstream validation and residual risk. Main alternative: decline the exception and retain unresolved obligations. No authentic historical sequence is invented; no exception is granted. | `historical-validation-exception.md`; plan Approval Items D-6; spec Clarifications; tasks historical disposition prerequisite; quickstart §10 |
+| MEDIUM I1 — gate table falsely claims tests preceded behavior and scaffolding | Replace historical Pass assertions with design coverage and explicitly unresolved historical sequence, referencing the admitted record and Proposed D-6. Preserve open task boxes and distinguish the post-design coverage gate from execution compliance. | plan Constitution Check; tasks Phase 2f checkpoint |
+| LOW I2 — obsolete current TLS failure in API-003 | Identify the initial download failure as historical and retain the verification requirement with a link to the completed check and ignore-unknown-fields outcome. | spec API-003; quickstart §7 |
+
+All three requested document remediations are applied. The underlying historical violation
+remains disclosed, not erased: D-6 is Proposed for explicit maintainer sign-off and requires
+alternative validation before implementation may record a disposition. Existing approval of
+API/ADR items does not approve D-6, and no validation or implementation completion is claimed.

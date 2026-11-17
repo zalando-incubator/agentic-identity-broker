@@ -116,7 +116,7 @@ research R15, data model §§3.3.1 and 3.5, and ExtProc contract §4.
 The Pass entries below describe design coverage, not new runtime validation or historical
 test-first compliance. Implementation history and remaining evidence gaps are retained in
 `quickstart.md`; task regeneration does not close them. Current sign-off still gates revised
-API-2 and D-5. Local work must not wait for container-only evidence.
+API-2, D-5 and the Proposed D-6 historical-sequencing exception. Local work must not wait for container-only evidence.
 
 | Check | Status | Plan |
 |---|---|---|
@@ -130,9 +130,9 @@ API-2 and D-5. Local work must not wait for container-only evidence.
 | API documentation | Pass | `api/enduser/openapi.yaml` (end-user; `1.1.0` → `1.2.0` (Proposed)) and `docs/api/authzen-evaluation.md`. No admin change. |
 | API changes confirmed | Pass with precondition | The maintainer endorsed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) in the 2026-10-28 review: the endpoints, denial form (a), and the deprecation marker (R12). The API-003 check against the final AuthZEN text found that the standard requires receivers to ignore unknown request fields; the maintainer confirmed that revision (2026-10-31) and directed on 2026-11-05 that R10, data model §2.5, the contract and the spec ignore unknown members, AuthZEN `properties` and `context` members other than `agent`, matching ADR 047 §1 and the OpenAPI. Sign-off is approval items API-1–API-3, with API-2 revised accordingly. |
 | Database design | Not applicable | No schema change and no migration. |
-| E2E acceptance tests | Pass | 44 `It()` blocks, written in Phase 2f before implementation (table below). |
-| E2E test mapping | Pass | 1:1 mapping per scenario. The denial-matrix rows are separate `It()` blocks. |
-| E2E red phase | Pass | Each `It()` asserts concrete status codes, headers, JSON members, ExtProc gRPC outcomes, or request counts, and compiles against Phase 2.5 scaffolding. |
+| E2E acceptance tests | Design covered; historical sequence unresolved | 44 scenarios are mapped below. `quickstart.md` §7 records consumer/startup tests authored alongside implementation, not before it. Proposed D-6 documents the VIII/XIII exception and alternative validation; no exception is granted here. |
+| E2E test mapping | Pass (design coverage) | 1:1 mapping per scenario. The denial-matrix rows are separate `It()` blocks; current mapping and passing runs do not establish original test-first order. |
+| E2E red phase | Historical compliance unresolved | The design requires concrete status/header/JSON/gRPC/count assertions. `quickstart.md` §§7–8 distinguish the historical 28-scenario broker red run and later correction evidence from missing original unit/consumer/startup red evidence. T029–T031 compile-only scaffolding was not performed. See [D-6](./historical-validation-exception.md); T027/T029–T031/T080/T097 remain unchecked. |
 | Frontend Playwright E2E | Not applicable | No React change. Consent and revocation reuse the existing UI and APIs. |
 | Frontend screenshots | Not applicable | No UI state. |
 | Concrete example journeys (XIV) | Pass | The spec has four linked journeys with configuration, HTTP exchanges, and decoded JWT claims. No wireframes, because there is no UI. |
@@ -156,7 +156,9 @@ API-2 and D-5. Local work must not wait for container-only evidence.
 
 ### Post-design re-check
 
-The post-design gate **passes**. The 2026-10-28 spec clarification settled the OPA input shape,
+The post-design **coverage** gate passes, but historical VIII/XIII execution compliance remains
+unresolved pending D-6 sign-off and its alternative validation. No full constitutional pass
+is claimed. The 2026-10-28 spec clarification settled the OPA input shape,
 and research R15, data model §3.5, and ExtProc contract §4 now apply it. The freshness findings
 are answered and applied, as recorded in [remediation.md](./remediation.md). The open items
 in the next section are implementation-time gates. They do not block the design.
@@ -201,7 +203,9 @@ maintainer's 👍 on the pipeline's approval comment covers.
 Still open:
 
 1. **Sign off the current [Approval Items](#approval-items)**, including revised API-2 and
-   D-5. Historical approval provenance for the original decision set is retained in
+   D-5 and D-6. D-6 proposes a narrow historical VIII/XIII sequencing exception with alternative
+   validation in [historical-validation-exception.md](./historical-validation-exception.md).
+   Historical approval provenance for the original decision set is retained in
    `quickstart.md` §7 and ADR 047; it does not authorize later revisions automatically.
    T001 is reopened and records only the approval supplied to implementation. ADR 047 has
    already moved to `adrs/047-authzen-delegation-pip.md`; preserve that history rather than
@@ -230,8 +234,9 @@ Still open:
 | D-1 | Decision | Proposed: evaluation reuses the unchanged token-exchange caller CEL policy with `request.grant_type` set to the token-exchange URN, so a policy cannot distinguish evaluation from exchange. Alternative: an evaluation-specific grant type or discriminator. | `specs/054-authzen-delegation-pip/research.md:118-135` |
 | D-2 | Decision | Proposed: ExtProc fails closed on delegation — an unusable `max-age` (missing, zero, malformed, duplicate) or a permit deadline that passes before policy use returns 503; no stale-on-error, even with a cached exchanged token; one deadline `requestStart + min(max-age, max_staleness)` with accepted skew. Alternative: serve stale context during broker outages. | `adrs/047-authzen-delegation-pip.md:60-74` |
 | D-3 | Decision | Proposed: ExtProc delegation context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `adrs/047-authzen-delegation-pip.md:108-114` |
-| D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:633-638` |
+| D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:639-644` |
 | D-5 | Decision | Proposed: on the body-bearing path, consent given after a delegation denial takes effect once the existing ADR 012 exchange re-consent cooldown (5 s) lapses, because the concurrent exchange during the denied request records that cooldown; the exchange cache is unchanged, the header-only path permits immediately, and delegation denials are never cached. Alternative: bypass the re-consent cooldown in enabled mode (changes ADR 012 exchange-cache semantics). | `adrs/047-authzen-delegation-pip.md:152-156` |
+| D-6 | Decision | Proposed: a one-time Constitution VIII/XIII exception for the original test-first/compile-only sequencing not performed for existing feature code, conditional on independent test review, all 44 scenario mappings and required local/downstream validation; retain the deviation permanently and require genuine test-first corrections. Alternative: decline the exception and retain the obligations as unresolved, without declaring completion. No existing validation failure or security guarantee is waived. | `specs/054-authzen-delegation-pip/historical-validation-exception.md:1-78` |
 
 ## Project Structure
 
