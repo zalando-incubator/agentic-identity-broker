@@ -235,7 +235,7 @@ func (f *authzenFixture) ExpectEvaluationIdentity(resp *helpers.AuthZENResponse,
 		Expect(err).NotTo(HaveOccurred())
 		matching = nil
 		for _, record := range records {
-			if record["trace_id"] == traceID && (record["token_exchange.operation"] == "access_evaluation" || record["msg"] == "HTTP request") {
+			if record["trace_id"] == traceID && (record["token_exchange.operation"] == "access_evaluation" || record["msg"] == "http request") {
 				matching = append(matching, record)
 			}
 		}

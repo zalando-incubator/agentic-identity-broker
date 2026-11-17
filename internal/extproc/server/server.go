@@ -574,7 +574,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
 	state.principal = exchangeResult.Principal
 	state.agentID = exchangeResult.AgentID
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA: token exchanged in headers phase, buffering body for OPA evaluation", diagnostic)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa: token exchanged in headers phase, buffering body for opa evaluation", diagnostic)
 	return requestBodyBufferingResponseWithAuth("Bearer " + exchangeResult.Token), state
 }
 
@@ -660,7 +660,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(decision.Reasons)
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
 	return s.forwardRequestBody(ctx, logger, state, body)
 }
 
@@ -732,7 +732,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 			return response
 		}
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed header-only request, token exchanged successfully", diagnostic)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed header-only request, token exchanged successfully", diagnostic)
 	return replaceAuthorizationHeader("Bearer " + exchangeResult.Token)
 }
 
@@ -807,7 +807,7 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 		return accessDeniedResponse(denyReasons)
 	}
 
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
 	return s.forwardRequestBody(ctx, logger, state, body)
 }
 
