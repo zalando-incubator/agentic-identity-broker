@@ -4,9 +4,18 @@
 
 **Created**: 2026-10-26
 
-**Status**: Draft — needs clarification before contract approval and planning
+**Status**: Draft — clarification complete; contract review and architectural approval remain required
 
 **Input**: The title and body supplied for [issue #289](https://github.com/zalando-incubator/agentic-identity-broker/issues/289): “Broker AuthZEN Access Evaluation endpoint as Delegation Policy Information Point”. No issue comments were used.
+
+## Clarifications
+
+### Session 2026-10-26
+
+- Q: Must every evaluation request include `context.agent`, or may callers omit it and use the agent resolved from the verified subject token? → A: Option A — `context.agent` is an optional consistency anchor; omission uses the agent resolved from the verified subject token, and a supplied mismatch returns HTTP 400.
+- Q: When an agent, service, or permission set lacks a configured canonical ID, should evaluation omit `canonical_id`, return null, or fail as a configuration error? → A: Option A — omit unset `canonical_id` fields, retaining real UUIDs and otherwise valid evaluation behavior without a canonical-ID rollout prerequisite.
+
+Both answers were supplied by maintainer `mjungsbluth` as “Q1: A; Q2: A” in clarification answer [6418822603](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6418822603). They resolve these two product questions only; they do not approve an OpenAPI amendment or accept an ADR.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -25,13 +34,13 @@ As a gateway operator, I want to discover the broker's evaluation endpoint and o
 **Acceptance Scenarios**:
 
 1. **US1.1 — Discovery**: **Given** token exchange is configured and the public broker URL is `https://broker.example.com`, **When** a gateway reads `/.well-known/authzen-configuration` on the end-user server, **Then** it receives `policy_decision_point: https://broker.example.com` and `access_evaluation_endpoint: https://broker.example.com/access/v1/evaluation`, derived from the same public base used for consent links and RFC 8414 issuer metadata.
-2. **US1.2 — Permit**: **Given** Alice's valid subject token identifies a registered agent, the gateway is authenticated and authorized, and Alice's active grant covers the resource, **When** the gateway evaluates it with `X-Request-ID: delegation-001`, **Then** it receives HTTP 200 with `decision: true`, the credential-free Delegation Context described in FR-007, the same request ID, and a private cache lifetime of at most 60 seconds.
+2. **US1.2 — Permit**: **Given** Alice's valid subject token identifies a registered agent, the gateway is authenticated and authorized, and Alice's active grant covers the resource, **When** the gateway evaluates it with `X-Request-ID: delegation-001`, first with a matching `context.agent` and then without `context.agent` (including omission of the whole request `context` object), **Then** both evaluations receive HTTP 200 with `decision: true`, the same token-derived agent and credential-free Delegation Context described in FR-007, the same request ID, and a private cache lifetime of at most 60 seconds.
 3. **US1.3 — Delegation is not credential availability**: **Given** the same covered delegation but no usable third-party provider session, **When** the gateway evaluates it and separately attempts token exchange, **Then** evaluation still permits without accessing or refreshing a provider credential, while exchange retains its existing session error behavior.
 4. **US1.4 — Effective scope ceiling**: **Given** the granted permission sets provide `read:repo` and `write:repo` but the agent's service requirement permits only `read:repo`, **When** the gateway evaluates the resource, **Then** `resource.scopes` contains only `read:repo`, and exchanging for that resource continues to apply the same scope ceiling.
 5. **US1.5 — Resource normalization**: **Given** a registered resource URI and a valid covering grant, **When** the gateway evaluates an equivalent URI under existing token-exchange normalization rules, **Then** it obtains the same service identity and delegation decision as token exchange, not a new resource-resolution rule.
 6. **US1.6 — Grant expiry bounds caching**: **Given** a covering grant expires in 15 whole seconds, **When** the gateway evaluates it, **Then** the permit advertises at most 15 seconds of freshness, and evaluation at expiry returns the expired-grant denial rather than a permit.
 7. **US1.7 — No new broker switch**: **Given** a broker deployment without configured token exchange, **When** a gateway attempts discovery and evaluation, **Then** neither route provides a usable AuthZEN service; configuring token exchange makes both available on the end-user server without an additional AuthZEN configuration flag.
-8. **US1.8 — Optional canonical metadata**: **Given** an otherwise valid delegation whose agent, service, or permission set has no canonical ID, **When** it is evaluated, **Then** the response follows the stakeholder-selected missing-canonical-ID contract in FR-008; this scenario cannot be finalized until Q2 is answered.
+8. **US1.8 — Optional canonical metadata**: **Given** an otherwise valid delegation whose agent, service, or permission set has no canonical ID, **When** it is evaluated, **Then** evaluation still permits with the real UUIDs, omits every unset `canonical_id` field (including nested permission-set service entries), preserves configured canonical IDs, and neither returns null or fabricated aliases nor fails because a canonical ID is absent.
 
 ### User Story 2 - A gateway distinguishes delegation denial from request failure (Priority: P1)
 
@@ -112,8 +121,8 @@ As an operator, I want startup to reject discovery mix-ups and invalid opt-in se
 ### Edge Cases
 
 - A grant with no `valid_until` is still bounded by the 60-second permit cap; a grant with less than one second remaining must not be rounded up into a reusable permit. At expiry it denies.
-- Canonical IDs are optional, case-sensitive metadata today, not replacements for UUID identity. No synthetic canonical alias or UUID-as-canonical-ID fallback is authorized by this draft (Q2).
-- `context.agent` cannot override a verified subject-token claim. Omission behavior remains Q1; mismatches always fail.
+- Canonical IDs are optional, case-sensitive metadata, not replacements for UUID identity. An unset `canonical_id` is omitted wherever that entity appears, including nested service entries; it is not null, a synthetic alias, or a UUID-as-canonical-ID fallback. Its absence alone never changes a delegation decision or makes evaluation unavailable.
+- `context.agent` is optional and cannot override a verified subject-token claim. Omission, including omission of request `context`, uses the verified token's resolved agent; supplied mismatches always return 400.
 - Resource normalization, multiple permission-set scope union, included-service filtering, `require_all_scopes`, service-requirement exclusion, and empty-intersection rules remain identical to exchange. Declared zero-scope services must retain their existing distinction from scopes capped to zero.
 - Unknown or invalid agent identity and ambiguous resource registration are configuration failures, not evidence of user non-consent. Dependency/configuration errors must not be disguised as the grant-denial matrix.
 - Missing, unsupported, or invalid subject/resource/action values are request failures; arbitrary asserted `identity` subjects are explicitly unsupported.
@@ -141,7 +150,7 @@ All identifiers, timestamps, token markers, and claims below are synthetic. Prop
 | Subject token marker | `SYNTHETIC_SUBJECT_JWT` |
 | Assertion marker | `SYNTHETIC_CLIENT_ASSERTION_JWT` |
 
-### Journey 1 — Discover and permit a delegation (User Story 1, US1.1–US1.6)
+### Journey 1 — Discover and permit a delegation (User Story 1, US1.1–US1.6, US1.8)
 
 **Step 1 — Before 10:00:00: operator enables the existing broker exchange capability**
 
@@ -249,7 +258,55 @@ Cache-Control: private, max-age=60
 }
 ```
 
-`resource.id` identifies the resolved service, not the protected-resource child record. The example uses a string Agent UUID anchor and a minimal principal subject object as proposed contract representations; these require explicit contract review. The response subject is the verified principal, never the original JWT. All examples include an anchor and configured canonical IDs, so they do not preempt Q1 or Q2.
+`resource.id` identifies the resolved service, not the protected-resource child record. The example uses a string Agent UUID anchor and a minimal principal subject object as proposed contract representations; these require explicit contract review. The response subject is the verified principal, never the original JWT. The optional anchor checks consistency only; it never supplies the agent identity in place of verified token extraction. The following variant illustrates the maintainer's omission decisions.
+
+**Step 3a — Optional metadata variant: 10:00:01 (US1.2, US1.8)**
+
+In an otherwise identical fixture, the agent, service, and permission set have no configured canonical IDs. The gateway omits the request `context` object, so the agent is resolved solely from the verified subject token. Omitting just `context.agent` has the same effect. Configured canonical IDs, when present as in step 3, remain in the response.
+
+```http
+POST /access/v1/evaluation HTTP/1.1
+Host: broker.example.com
+Authorization: Bearer SYNTHETIC_CLIENT_ASSERTION_JWT
+Content-Type: application/json
+X-Request-ID: delegation-optional-001
+
+{
+  "subject": {"type": "urn:ietf:params:oauth:token-type:jwt", "id": "SYNTHETIC_SUBJECT_JWT"},
+  "action": {"name": "urn:ietf:params:oauth:grant-type:token-exchange"},
+  "resource": {"type": "protected_resource", "id": "https://api.example.com/repos"}
+}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+X-Request-ID: delegation-optional-001
+Cache-Control: private, max-age=60
+
+{
+  "decision": true,
+  "context": {
+    "subject": {"id": "alice@example.com"},
+    "agent": {"id": "550e8400-e29b-41d4-a716-446655440000"},
+    "resource": {
+      "id": "880e8400-e29b-41d4-a716-446655440010",
+      "resource_uri": "https://api.example.com/repos",
+      "scopes": ["read:repo"]
+    },
+    "grant": {
+      "id": "990e8400-e29b-41d4-a716-446655440020",
+      "updated_at": "2026-10-26T09:59:00Z",
+      "valid_until": "2026-10-26T10:30:00Z"
+    },
+    "permission_sets": [{
+      "id": "770e8400-e29b-41d4-a716-446655440001",
+      "services": [{
+        "id": "880e8400-e29b-41d4-a716-446655440010",
+        "scopes": ["read:repo"]
+      }]
+    }]
+  }
+}
+```
 
 **Step 4 — Expiry variant: 10:29:45**
 
@@ -376,10 +433,10 @@ Canonical-ID policy works for the same named entities even if another deployment
 - **FR-002**: Discovery MUST publish `policy_decision_point` from the broker public base used for consent URLs and RFC 8414 issuer metadata, and the absolute `access_evaluation_endpoint` for this deployment. A consumer MUST verify the advertised identifier against the expected identifier before sending subject credentials.
 - **FR-003**: Evaluation MUST accept exactly one subject token and one protected-resource URI per request. Subject type MUST be `urn:ietf:params:oauth:token-type:jwt`; asserted `identity` and all other subject types MUST return 400. The action name MUST be `urn:ietf:params:oauth:grant-type:token-exchange`; the resource type MUST be `protected_resource`.
 - **FR-004**: Evaluation MUST resolve principal and agent using the same subject-token validation and `token_exchange.claim_extraction` CEL semantics as third-party token exchange. Evaluation MUST authenticate the PEP through a bearer client assertion and apply the existing privileged-client CEL policy with `request.grant_type = "authzen_evaluation"`; an ordinary authenticated browser principal is not a substitute.
-- **FR-005**: The broker MUST compare any supplied `context.agent` anchor against the agent resolved from the verified token; mismatch returns 400. [NEEDS CLARIFICATION: Q1 — Is the agent anchor optional, as proposed, or mandatory in every evaluation request? Confirm omission behavior before OpenAPI is frozen.]
+- **FR-005**: `context.agent` MUST be optional. If it is absent, including when the request `context` object is omitted, evaluation MUST use the agent resolved from the verified subject token. The broker MUST compare any supplied anchor against that resolved agent; mismatch returns 400. An anchor MUST NOT replace or override verified token-derived agent resolution.
 - **FR-006**: Evaluation and exchange MUST share one authoritative delegation resolution, preserving subject/assertion validation, claim extraction, caller authorization, resource normalization/resolution, registered-agent resolution, active-grant verification, declared permission-set checks, service coverage, scope union, and agent scope ceilings. The issue calls this `ResolveDelegation` (exchange steps 2–9a); it MUST not duplicate or weaken those invariants. Existing token-exchange session retrieval, refresh, decryption, session-scope checks, diagnostics, and response behavior remain downstream of this shared resolution and unchanged except for the explicitly staged deprecation.
 - **FR-007**: A permit MUST return `decision: true` and a credential-free Delegation Context: the verified principal in `subject`; `agent {id, canonical_id}`; resolved service in `resource {id, canonical_id, resource_uri, scopes}` with effective scopes; `grant {id, updated_at, valid_until}`; and granted `permission_sets[] {id, canonical_id, services[] {id, canonical_id, scopes}}`. Only grant-included service entries may appear. Permission-set scopes describe the included permission-set contributions; `resource.scopes` is the final union after agent ceilings. Permission-set entries MUST NOT be interpreted as an override of that effective resource scope ceiling.
-- **FR-008**: Context identities MUST retain real UUIDs and use configured canonical IDs for stable readable policy keys. [NEEDS CLARIFICATION: Q2 — Existing canonical IDs are optional. Should absent canonical IDs be omitted, be null, or make evaluation unavailable until configured? Confirm the response and rollout contract for agents, services, and permission sets lacking them; do not invent IDs.]
+- **FR-008**: Context identities MUST retain real UUIDs and include configured canonical IDs for stable readable policy keys. When an agent, service, or permission set has no configured canonical ID, its `canonical_id` field MUST be omitted wherever that entity appears, including `permission_sets[].services[]`. It MUST NOT be null or fabricated, and absence alone MUST NOT fail evaluation or change its delegation decision. Configuring canonical IDs is not an evaluation rollout prerequisite.
 - **FR-009**: Permit freshness MUST be `Cache-Control: private, max-age=min(60, whole seconds remaining until grant.valid_until)`, bounded below by zero. With no grant expiry it MUST be at most 60 seconds. Expired grants MUST deny. The 60-second broker cap is fixed for this increment; no configurable broker cap is introduced without a later explicit decision.
 - **FR-010**: Each grant-denial condition in US2.1–US2.10 MUST return HTTP 200 with `decision: false`, the matching existing `FailureDetail` in the administrative reason and the resolved agent's consent URL in the user reason, and `Cache-Control: no-store`. It MUST not include a permit's delegation data or any credential. Denials MUST not be cached.
 - **FR-011**: Malformed/unsupported requests, invalid/expired subjects, and agent-anchor mismatches MUST return 400. Missing/invalid gateway credentials MUST return 401; authenticated but unauthorized gateways MUST return 403; internal dependency/configuration failures MUST return 500. These request failures MUST not be represented as successful decisions. Unregistered resources are 400; resource ambiguity is a configuration failure. Request errors MUST not be cached as permits.
@@ -431,7 +488,7 @@ sequenceDiagram
 **Value Objects**:
 
 - **Delegation Decision**: Point-in-time permit or denial of a verified principal's delegation to a resolved agent for one protected resource; includes bounded denial/recovery information when denied. It is not a tool-call policy decision or proof of usable provider credentials.
-- **Delegation Context**: Credential-free snapshot accompanying a permit, relating principal, agent, service/resource, grant identity/version/expiry, and granted permission-set/service scope data. Its freshness is independent of a provider token's lifetime.
+- **Delegation Context**: Credential-free snapshot accompanying a permit, relating principal, agent, service/resource, grant identity/version/expiry, and granted permission-set/service scope data. Entity UUIDs remain present; configured canonical IDs are included and unset ones omitted, including in nested service entries. Its freshness is independent of a provider token's lifetime.
 - **Effective scopes**: Existing per-service grant scope union after included-service filtering and the agent's service-requirement ceiling. Reuse existing semantics rather than introducing a new scope calculus.
 
 No new domain event is required because evaluation is read-only; existing grant updates/revocation affect later resolutions. The eventual architectural change must add “Delegation Decision” and “Delegation Context” to `ARCHITECTURE.md`'s glossary and add the delegation gate to its policy-gates table, without conflating it with broker caller CEL, ExtProc policy, or the approval gate.
@@ -454,7 +511,7 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 ### API Requirements *(design before database)*
 
 - **API-001**: The future end-user OpenAPI additions MUST cover `GET /.well-known/authzen-configuration` and `POST /access/v1/evaluation`, all entities, bearer assertion authentication, supported typed subjects/actions/resources, optionality decisions, headers, status codes, error bodies, and examples. No admin API change is proposed.
-- **API-002**: These contracts MUST be reviewed and explicitly confirmed before implementation. This draft is not authorization to change `api/enduser/openapi.yaml`. Q1 and Q2 remain open; Journey 1's anchor, subject projection, nullable grant expiry, and denial reason examples must be reconciled with the reviewed schema. Existing exchange/consent APIs remain binding.
+- **API-002**: These contracts MUST be reviewed and explicitly confirmed before implementation. This draft is not authorization to change `api/enduser/openapi.yaml`. The answered Q1/Q2 decisions (optional request agent anchor and omission of unset canonical IDs) MUST be reflected in the reviewed schema. Journey 1's anchor representation, subject projection, nullable grant expiry, and denial reason examples must also be reconciled with that schema. Existing exchange/consent APIs remain binding.
 - **API-003**: Verify the exact AuthZEN 1.0 metadata, request, response, `reason_admin`/`reason_user` envelope, and request-ID rules against the final standard before freezing OpenAPI. The issue's required administrative diagnostic and user consent URL must be expressible without private RFC 8693 response extensions. This session could not download the reference because TLS verification failed; no unverified standard text is treated as authoritative.
 - **API-004**: Protocol choices and exceptions to general REST conventions MUST be documented in an architectural decision and reflected in end-user API documentation under `docs/api/`. Do not copy this draft's illustrative error-body or anchor assumptions into a frozen contract without review.
 - **API-005**: A new uniquely numbered proposed ADR MUST describe the AuthZEN information boundary, its opt-in consumer, independent freshness, the changed ADR 028 policy input, and exchange-field deprecation. The issue's suggested “ADR 043” cannot be used: `adrs/043-inbound-cimd-private-key-jwt.md` already exists and is Accepted. Preserve it. Follow constitution Principle II for a new superseding decision covering changes to merged Accepted ADRs; do not amend ADR 028 in place or declare acceptance in this phase. ADR 036's metadata-only trust boundary and retained principal/agent fields remain binding.
@@ -493,7 +550,7 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 
 - Scope is one feature with three delivery increments: additive broker evaluation/discovery and shared delegation semantics; opt-in ExtProc consumer and canonical-ID policy fixtures; documented exchange-field deprecation with removal one release after the resolver ships. These are product increments, not permission to run planning or implementation in this session.
 - The four issue-recorded stakeholder decisions dated 2026-10-24 are preserved without re-asking: Access Evaluation (not Resource Search), JWT subject in the AuthZEN body with assertion in Authorization, asserted `identity` returns 400, and only exchange `granted_permission_sets` is deprecated/removed while `principal` and `agent_id` stay. Other proposed details remain subject to normal contract review; this draft invents no acceptance of an ADR.
-- The proposed optional agent anchor remains unresolved because the issue itself requests confirmation before OpenAPI freeze. Absent canonical IDs also need a stakeholder compatibility decision because today's domain permits them.
+- The maintainer confirmed the optional agent consistency anchor and omission of unset canonical IDs on 2026-10-26. These decisions preserve token-derived identity and UUID-based compatibility; policies that rely on canonical IDs still need those IDs configured for their own matching rules.
 - The fixed broker freshness cap is 60 seconds for this increment, consistent with “no new configuration”. A configurable broker cap is follow-up scope, not a blocker to this draft. Batch `/access/v1/evaluations`, Resource Search, actor-token support, `context.actor`, new `act`-chain response data, new UI, and new persistence/schema migrations are excluded.
 - Permission-set service scopes describe included permission-set contributions; the requested resource's effective scopes remain authoritative after agent ceilings. The final API review must keep that distinction visible to policy authors.
 - No new storage schema is expected: decisions project existing registered entities and grants. Evaluation intentionally does not guarantee provider-session health or credential availability.
@@ -502,11 +559,4 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 
 ### Clarification handoff
 
-The separate clarification session will ask stakeholders to resolve the outstanding questions. This draft records two product decisions for that handoff:
-
-| Question | Context | Options and implications |
-| --- | --- | --- |
-| Q1 — Agent anchor requiredness | FR-005; US1.2 and US2.18 | A: optional consistency anchor (proposal), allowing omission when token extraction is sufficient. B: required anchor, with 400 on omission. Custom: stakeholder-defined alternative retaining token-derived identity and mismatch rejection. |
-| Q2 — Missing canonical IDs | FR-008; US1.8 and US3.8 | A: omit unset canonical IDs, preserving UUID-based evaluation compatibility. B: return explicit nulls, requiring nullable consumer contracts. C: require configured canonical IDs, introducing an explicit rollout prerequisite and a defined failure contract. Custom: another explicit representation without fabricating IDs. |
-
-The requirements checklist intentionally leaves affected completeness/readiness items unchecked. Draft publication is the specify handoff, not contract approval or readiness to implement.
+Both material clarification questions are answered in the Clarifications section and integrated into FR-005/FR-008, US1.2/US1.8, the edge cases, the Delegation Context definition, and Journey 1. No further product clarification questions remain. Proceed to the separate planning phase; exact AuthZEN schema verification, reviewed OpenAPI design, release/versioning reconciliation, and the required architectural decision remain design gates, not approvals implied by clarification completion. Specification quality checklist completion does not claim implementation, passing runtime tests, contract approval, or ADR acceptance.
