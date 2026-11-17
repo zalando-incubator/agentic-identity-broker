@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"go.opentelemetry.io/otel"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtclaims"
@@ -34,7 +36,7 @@ type DelegationRequest struct {
 // Delegation is the outcome of a successful resolution: every invariant of exchange
 // steps 2–9a holds. It never contains a credential.
 type Delegation struct {
-	Principal       string
+	Principal       id.Principal
 	Agent           *storage.Agent
 	Service         *model.ThirdpartyOAuth2ProviderEntity
 	ResourceURI     string
@@ -134,24 +136,21 @@ func (r *DelegationResolver) Resolve(ctx context.Context, req DelegationRequest)
 		return nil, err
 	}
 
-	// Step 4: Extract principal from subject_token via CEL
+	// Steps 4–5: resolve the human principal and agent_id; agent-subject tokens are denied
+	// before agent extraction and any grant or session lookup (ADR 045 decision 6).
 	stage = StageIdentityResolution
 	subjectTokenClaims := jwtclaims.FromToken(subjectTokenJWT)
-	principal, err := r.celEvaluator.ExtractPrincipal(subjectTokenClaims)
-	if err != nil {
-		return nil, err
-	}
+	principal, agentID, err := r.celEvaluator.ResolveHumanSubject(subjectTokenClaims)
 
 	// ADR 033 §3: finalize the request security context at the post-validation
 	// token-exchange seam. The subject-token principal (Actor) and the validated
 	// client_assertion subject (CallingPeer) are both known here. Finalizing before
 	// the authorization decision guarantees a denied exchange still carries
 	// actor/calling_peer on the security-sensitive failure audit path.
-	callingPeer, _ := clientAssertionJWT.Subject()
-	_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
-
-	// Step 5: Extract agent_id from subject_token via CEL
-	agentID, err := r.celEvaluator.ExtractAgentID(subjectTokenClaims)
+	if principal != "" {
+		callingPeer, _ := clientAssertionJWT.Subject()
+		_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +214,9 @@ func (r *DelegationResolver) Resolve(ctx context.Context, req DelegationRequest)
 	}
 	// T061-T065: Delegate grant verification to ConsentService using internal agent UUID
 	stage = StageGrantAuthorization
-	grant, err = r.consentService.VerifyAgentAccess(ctx, id.Principal(principal), agent.ID)
+	grantCtx, grantSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.verify_agent_access")
+	grant, err = r.consentService.VerifyAgentAccess(grantCtx, principal, agent.ID)
+	grantSpan.End()
 	if err != nil {
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
 			return nil, NewAccessDeniedError("user has not granted permission for this agent to access the requested service").

@@ -215,7 +215,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	default:
 		svc = extprocserver.NewServer(cfg, exchanger, logger)
 	}
-	// 8a. Opt-in delegation context: discover and verify the PDP before listening (ADR 045).
+	// 8a. Opt-in delegation context: discover and verify the PDP before listening (ADR 048).
 	if cfg.DelegationContext.Enabled {
 		resolver, err := delegation.NewPermitResolverFromConfig(sigCtx, cfg, exchanger)
 		if err != nil {
@@ -270,7 +270,6 @@ func run(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// initLogger creates a structured slog.Logger from the service configuration.
 const (
 	// grpcDefaultMaxRecvMsgSize is grpc-go's default server receive limit.
 	grpcDefaultMaxRecvMsgSize = 4 << 20

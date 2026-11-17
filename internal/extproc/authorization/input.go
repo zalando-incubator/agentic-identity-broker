@@ -17,7 +17,7 @@ type OPAInput = map[string]any
 // ContextInput contains authorization context. In disabled delegation-context mode it is
 // forwarded from the token exchange response as token-bound snapshot data. In enabled mode
 // every member except AgentSessionID comes from a fresh broker delegation permit, and the
-// five delegation members are present (ADR 045).
+// five delegation members are present (ADR 048).
 type ContextInput struct {
 	GrantedPermissionSetsAvailable bool                   `json:"granted_permission_sets_available"`
 	GrantedPermissionSets          map[string][]string    `json:"granted_permission_sets,omitempty"`

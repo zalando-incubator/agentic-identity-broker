@@ -343,7 +343,7 @@ These new tasks depend on explicit ADR-2 approval through T001 and the Phase 2g 
 
 **Architecture & Documentation** (Principle II):
 
-- [X] T085 Verify `ARCHITECTURE.md`'s routes, glossary and four-gate model match implementation, and `adrs/047-authzen-delegation-pip.md` (or its recorded noncolliding replacement) has actual stakeholder acceptance and explicitly supersedes only ADR 028's enabled-mode input/order; do not silently accept/revise binding ADRs (Principle II). Recheck against revised API-2 and D-5 after T001; preserve historical approval records without treating them as sign-off on revisions.
+- [X] T085 Verify `ARCHITECTURE.md`'s routes, glossary and four-gate model match implementation, and `adrs/048-authzen-delegation-pip.md` (or its recorded noncolliding replacement) has actual stakeholder acceptance and explicitly supersedes only ADR 028's enabled-mode input/order; do not silently accept/revise binding ADRs (Principle II). Recheck against revised API-2 and D-5 after T001; preserve historical approval records without treating them as sign-off on revisions.
 
 **Configuration** (Principle VII):
 

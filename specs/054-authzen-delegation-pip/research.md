@@ -315,7 +315,7 @@ signals clearly that `actor` is unsupported, but it violates the standard and wo
 additive AuthZEN request member a breaking change for conforming PEPs.
 
 **Stakeholder (contract review)**: Recorded in
-[contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) §2.1, ADR 047 §1
+[contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) §2.1, ADR 048 §1
 and `api/enduser/openapi.yaml`. The maintainer confirmed this revision on 2026-10-31 and directed
 on 2026-11-05 that every artifact apply it. Sign-off is the revised approval item API-2 in the
 plan.
@@ -579,7 +579,7 @@ records it (R16).
 **Decision**: The original plan drafted a new ADR with status **Proposed**, checking the
 number before moving it to `adrs/`. The original 045 reservation was superseded when main
 assigned 045 to agent-subject impersonation; this feature's ADR is now
-`adrs/047-authzen-delegation-pip.md`. Its recorded historical acceptance and move are not
+`adrs/048-authzen-delegation-pip.md`. Its recorded historical acceptance and move are not
 repeated during task regeneration. T001 records only supplied approval for current covered
 revisions. The ADR records these decisions:
 
@@ -611,7 +611,7 @@ revisions. The ADR records these decisions:
 **Stakeholder**: Maintainer `mjungsbluth` endorsed this ADR decision set in the 2026-10-28
 review ("ADR accepted"). Under the pipeline's sign-off rules, review direction is not the
 approval record. The planning session drafted the ADR as
-[adr-047-authzen-delegation-pip.md](../../adrs/047-authzen-delegation-pip.md) with status
+[adr-048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md) with status
 **Proposed**, and registered it as approval item ADR-1 in the plan. The historical implementation recorded approval and moved the draft to
 `adrs/048-authzen-delegation-pip.md`, as documented in `quickstart.md` §7. T001 is now
 reopened for ADR-2, ADR-3, API-7, D-7 and D-8. Revised API-2 and D-5 have historical

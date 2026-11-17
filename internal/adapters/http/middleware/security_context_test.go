@@ -513,7 +513,7 @@ func TestNewHandler_AccessEvaluationDefersSecurityContextFinalization(t *testing
 	require.Equal(t, http.StatusNoContent, res.Code)
 	assert.False(t, beforeFinalize.ok, "evaluation must receive a deferred capture holder, not a finalized context")
 	require.True(t, afterFinalize.ok)
-	assert.Equal(t, "alice@example.com", afterFinalize.sc.Actor)
+	assert.Equal(t, id.Principal("alice@example.com"), afterFinalize.sc.Actor)
 	assert.Equal(t, "gateway-client", afterFinalize.sc.CallingPeer)
 	assert.Equal(t, "/access/v1/evaluation", afterFinalize.sc.RequestTarget)
 	assert.Equal(t, traceIDFromTraceResponse(t, res.Header().Get("traceresponse")), afterFinalize.sc.TraceID)
