@@ -183,7 +183,7 @@ Context
 | `resource.scopes`, each `services`, and each `services[].scopes` are arrays. Empty arrays are allowed. | `invalid_response` |
 | `permission_sets` is a non-empty array | `invalid_response` |
 | `updated_at`, and `valid_until` when present, parse as RFC 3339. The received string is kept unchanged. | `invalid_response` |
-| An optional `canonical_id` or `valid_until` is absent or a non-empty string. An explicit `null` or `""` contradicts the accepted contract. | `invalid_response` |
+| An optional `canonical_id` or `valid_until` is absent or a non-empty string. An explicit `null` or `""` contradicts the contract. | `invalid_response` |
 
 The `Result` is immutable after construction. The cache and singleflight followers share it.
 Consumers copy its slices (§3.5).

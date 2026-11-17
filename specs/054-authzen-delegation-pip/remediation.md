@@ -44,11 +44,14 @@ decision in a batch. If `now >= deadline`, the request is rejected with the same
 `service_unavailable` / `"delegation context unavailable"` response, and nothing is forwarded.
 ExtProc does not re-resolve and does not retry. Expired context never reaches policy.
 
-## HIGH I2 — Evaluation audit identity seam (ADR decision accepted)
+## HIGH I2 — Evaluation audit identity seam (ADR decision endorsed)
 
-The maintainer accepted the ADR decision set in research R16. That set includes the extension
-of ADR 033's token-only deferred-finalization seam to `POST /access/v1/evaluation`. The ADR
-file is still drafted in T008, at the next unused number, and records this acceptance. The
+The maintainer endorsed the ADR decision set in research R16 ("ADR accepted"). That set includes
+the extension of ADR 033's token-only deferred-finalization seam to `POST /access/v1/evaluation`.
+The 2026-10-29 planning session drafted it in
+[adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md) with status Proposed and
+registered it as approval item ADR-1 in the plan. T008 records the maintainer's 👍 on the
+approval comment and moves the draft to `adrs/`. The
 §3.1.4.2 reconciliation and the T044/T047 test-first work are still to be done. No runtime
 proof is claimed.
 
@@ -73,7 +76,7 @@ above. A malformed permit context fails closed with 503, as other malformed resp
 ## Gate and scope
 
 I1, U1, U2, the I2 architectural decision, and the OPA input shape are answered. `tasks.md`
-predates these decisions, and its T056 still describes the superseded verbatim `delegation`
-members. `/speckit-tasks` must regenerate it, and T049/T050/T052/T057/T058 must test the
-decided freshness semantics and the typed context mapping. The MEDIUM C1 Docker-label finding
+was regenerated after these decisions: T056 implements the typed direct members, and
+T049/T050/T052/T057/T058 test the decided freshness semantics and the typed context mapping.
+Formal sign-off of the contracts and the ADR draft is tracked in the plan's Approval Items. The MEDIUM C1 Docker-label finding
 from the previous analysis is not resolved here.
