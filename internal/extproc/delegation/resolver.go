@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -53,6 +55,16 @@ func NewResolver(evaluator Evaluator, maxStaleness time.Duration) *Resolver {
 // concurrent callers. The returned Result keeps its original Deadline; the caller must
 // check it again before every policy use. hit reports a cache hit.
 func (r *Resolver) Resolve(ctx context.Context, subjectToken, resourceURI string) (result Result, hit bool, err error) {
+	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.delegation.resolve")
+	defer func() {
+		cache := "miss"
+		if hit {
+			cache = "hit"
+		}
+		span.SetAttributes(attribute.String("delegation.cache", cache))
+		observeResolution(span, err)
+		span.End()
+	}()
 	key := cacheKey{subjectToken: subjectToken, resourceURI: resourceURI}
 	r.mu.RLock()
 	cached, ok := r.entries[key]

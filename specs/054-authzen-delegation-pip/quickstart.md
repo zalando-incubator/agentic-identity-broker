@@ -20,14 +20,17 @@ Before any implementation, these preconditions must hold:
    is frozen.
 4. The spec revision for the OPA input shape (research R15) has landed. This was done on
    2026-10-28.
-5. The Phase 0 extraction has its own maintainer-arranged PR and is reviewed and integrated
-   before dependent feature code starts (T002–T005). This feature's worker does not create
-   that separate PR. Record its URL and integrated revision here; an unavailable handoff
-   blocks dependent work, not independent approved documentation or test authoring.
+5. The Phase 0 extraction is isolated from feature behavior in its own commit with unchanged
+   regression assertions. The current implementation workflow explicitly permits this in-PR
+   refactoring commit; `b882d7b` is already in this branch (T002–T005).
 
-Tooling: `just install-tools` (Go 1.27.3, Ginkgo, golangci-lint). The focused broker run needs Docker or Podman for the real PostgreSQL outage scenario US2.19; the full gate also includes existing container-backed ExtProc/agentgateway and integration suites. Docker-in-Docker is unavailable in this sandbox. Run infrastructure gates on a capable runner; report any unfinished gate as a blocker, never as passed or waived.
+Tooling is installed by the workflow (Go 1.27.3, Ginkgo, golangci-lint and browsers). The
+PostgreSQL outage scenario US2.19 and container-backed ExtProc/agentgateway and integration
+suites run in downstream container tests on the pushed commit. Do not start these suites or
+try to enable a container runtime in the agent sandbox. Their absence is not a sandbox blocker;
+report them as deferred, never validated. Run all non-container verification recipes locally.
 
-Implementation evidence belongs in this guide: record approval provenance, the separate refactor PR and integrated revision, scenario-to-test `file:line` mappings, semantic-red assertions, green commands/results and deferred-task reasons. Keep the approved `spec.md` and `plan.md` unchanged throughout implementation.
+Implementation evidence belongs in this guide: record approval provenance, the isolated refactor commit, scenario-to-test `file:line` mappings, semantic-red assertions, green commands/results and deferred-task reasons. Keep the approved `spec.md` and `plan.md` unchanged throughout implementation.
 
 ## 1. Static checks and fast tests
 
@@ -227,12 +230,12 @@ Not run: the frontend Playwright suite and `just verify`; `just` itself is unava
 
 ### Scenario-to-test mapping
 
-US1.1 `tests/e2e/authzen_delegation_test.go:33`; US1.2 `:45`; US1.3 `:64`; US1.4 `:73`; US1.5 `:83`;
-US1.6 `:94`; US1.7 `:130`; US1.8 `:109`.
+US1.1 `tests/e2e/authzen_delegation_test.go:33`; US1.2 `:45`; US1.3 `:69`; US1.4 `:78`; US1.5 `:88`;
+US1.6 `:99`; US1.7 `:135`; US1.8 `:114`.
 US2.1 `tests/e2e/authzen_delegation_denial_test.go:23`; US2.2 `:30`; US2.3 `:38`; US2.4 `:47`;
 US2.5 `:55`; US2.6 `:63`; US2.7 `:76`; US2.8 `:85`; US2.9 `:97`; US2.10 `:105`.
 US2.11 `tests/e2e/authzen_delegation_errors_test.go:29`; US2.12 `:38`; US2.13 `:45`; US2.14 `:53`;
-US2.15 `:61`; US2.16 `:69`; US2.17 `:94`; US2.18 `:79`; US2.19 `:139`; US2.20 `:86`.
+US2.15 `:63`; US2.16 `:72`; US2.17 `:98`; US2.18 `:83`; US2.19 `:144`; US2.20 `:90`.
 US3.1 `tests/e2e/delegation_context_journey_test.go:105`; US3.2 `:114`; US3.3 `:122`; US3.4 `:132`;
 US3.5 `:143`; US3.6 `:169`; US3.7 `:184`; US3.8 `:203`; US3.9 `:225`; US3.10 `:236`; US4.5 `:248`.
 US4.1 `tests/e2e/extproc/delegation_context_startup_test.go:33`; US4.2 `:57`; US4.3 `:72`; US4.4 `:90`.
@@ -275,7 +278,9 @@ With item 1 confirmed, the four spec journeys were rechecked against the shipped
 OpenAPI. The spec excludes `context.actor` support, which ignoring it satisfies. Journeys 1, 2 and 4
 match the implemented permit, denial and `input.context` shapes (T028, T079).
 
-### Tasks left unchecked and why
+### Historical task status at the end of the 2026-10-31 session
+
+The continuation record below supersedes this table where tasks have since been completed.
 
 | Task | Reason | Needed to close |
 |---|---|---|
@@ -288,3 +293,90 @@ match the implemented permit, denial and `input.context` shapes (T028, T079).
 | T091 | Depends on T059 | As above |
 
 Pre-extraction baseline (T003): on base `a5042d5`, `go test ./internal/domain/tokenexchange/` passed and the four exchange regression files ran 58/58 green. The results after the extraction were identical.
+
+## 8. Implementation continuation (2026-11-04)
+
+### Outcome
+
+Closed the remaining observability, composed audit-correlation and unit schema-compatibility
+work (T044, T059, T064, T091), and reran the named non-container regression journeys (T099).
+The implementation phase is **blocked**, not complete: the static gate fails outside the
+feature, the security scanner cannot compile, and the historical test-first/scaffolding tasks
+remain unfulfilled. No test, check, approval or constitutional requirement was waived.
+
+### Approval boundary
+
+The supplied approval identifies `mjungsbluth`, `2026-10-30T10:40:47Z`, and
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>.
+ADR 045 already records that provenance. This run records no new approval and changes neither
+`spec.md` nor `plan.md`.
+
+The inherited API-2 revision and body-path cooldown are recorded as accepted in the historical
+section above and in `adrs/045-authzen-delegation-pip.md:44-49,151-156,162-172`. However, the
+supplied approval list still names a strict-member request contract, while the implementation,
+OpenAPI and revised contract ignore unknown members. The data model §2.5 and research R10
+also retain rejection language. No new slash-command direction or approval for the later
+revision was supplied in this run. Maintainer approval coverage and the frozen-artifact
+inconsistency need reconciliation; this run makes no further change to that request behavior
+or to the existing exchange cooldown.
+
+### New red-to-green evidence
+
+- `go test ./internal/extproc/delegation ./internal/extproc/server -run
+  'TestResolutionTelemetry|TestDelegationLogs'` compiled and failed semantically before the
+  observability changes: all five resolution cases emitted zero spans instead of two/three,
+  and permit hit/miss emitted no JSON log record. Existing denial/error log cases passed.
+- Added `extproc.delegation.resolve` and `extproc.delegation.evaluate` spans with bounded
+  operation, outcome/detail, cache and error categories, plus Debug permit logs. The identical
+  tests then passed with `-race`. Captured spans/logs exclude subject/assertion/provider
+  credentials, context, requested resource URI and dependency error text.
+- Composed production HTTP tests decorated the real evaluation service only to observe its
+  capture holder. Five existing acceptance scenarios failed because the access-log filter
+  excluded `/access/`: only the audit record, not the required audit/access pair, existed.
+  Adding `/access/` to the shared perimeter filter made all 28 non-container broker scenarios
+  pass. Assertions now bind the finalized context to both logs and `traceresponse`, preserve
+  verified Actor/distinct CallingPeer on permit and caller-CEL denial, omit an equal peer,
+  check anonymous fallback on malformed/missing/invalid credentials, and reject a second
+  finalization attempt. No production test-only API was added.
+- Added broker span credential-exclusion coverage and the unit OpenAPI compatibility test.
+  These already-existing behaviors passed immediately; no artificial red result is claimed.
+  The existing real-loader example table already includes the delegation-context example.
+
+### Current validation
+
+| Command | Result |
+|---|---|
+| `just test` | Pass, including new unit tests, with race coverage |
+| `just extproc-test` | Pass, with race coverage |
+| `just test-e2e-backend` | 950/950 selected scenarios pass, including unchanged exchange, diagnostics, local exchange and approval journeys |
+| `ginkgo --label-filter='authzen-delegation && !docker' ./tests/e2e/` | 28/28 pass; US2.19 explicitly deferred |
+| `ginkgo --no-color --label-filter="delegation-context" ./tests/e2e/` | 11/11 pass, including revocation/outage, both policy paths, canonical UUID parity and origin discovery |
+| `ginkgo --no-color --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 pass |
+| `ginkgo -v --procs=2 --skip="Agentgateway" ./tests/e2e/extproc/` | 102/102 selected scenarios pass, including unchanged OPA and metadata-input coverage; 17 Agentgateway scenarios excluded as container-backed |
+| `just test-e2e-frontend` | 67/67 pass |
+| `just docs-build` | Pass |
+| `just web-test` | 262/262 pass |
+| `just cdk-test` | Pass |
+| `just mock-sample-agent-test mock-upstream-oauth2-test` | Pass |
+| `just test-integration` | Pass, self-contained suites only |
+| `just check` | Formatting and vet pass; lint fails at `cmd/extproc-token-exchange/root_lifecycle_test.go:180` (`errcheck`, unchecked subprocess result). The offending code predates the feature; `origin/main` already contains an assertion for that result. No unrelated code changed here. |
+| `just security` | Scanner compilation terminated with `signal: killed` for the OpenAI and Anthropic SDK packages; retry with `GOMAXPROCS=2` failed the same way. No vulnerability-scan pass is claimed. |
+| `just verify` | Stops at the same lint failure; all other non-container recipes were attempted independently. |
+
+`just test-e2e` and the unfiltered `just test-e2e-extproc` include containers and were not
+invoked. US2.19, `just test-e2e-docker`, `just test-integration-infra` and all Agentgateway
+container scenarios are deferred to downstream container tests, not treated as sandbox
+blockers and not reported as validated. The earlier section's container results are historical
+records, not results from this continuation.
+
+### Remaining unchecked tasks
+
+| Tasks | Why they remain |
+|---|---|
+| T027, T036, T053, T065, T080, T094, T097 | The prior session explicitly says unit and consumer/startup tests were written alongside implementation. New red/green evidence above does not establish historical test-first compliance for that work. Recover authentic evidence or obtain an explicitly authorized constitutional resolution; do not manufacture a red phase or check these retrospectively. |
+| T029–T031 | The prior session implemented behavior directly instead of the planned compile-only scaffolding. Removing working behavior now would not establish the missing historical sequence. |
+| T071 | Startup/discovery/compatibility, ExtProc unit and non-container E2E, and docs checks pass, but its `just check` prerequisite still fails outside this feature. Container portions are deferred downstream. |
+| T100 | Full validation remains incomplete because of the baseline lint failure and scanner compilation failure; container-only recipes remain downstream. |
+
+No new frontend artifacts, dependencies, migrations, runtime configuration or API behavior were
+introduced by this continuation. The existing isolated refactor commit remains unchanged.

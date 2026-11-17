@@ -12,6 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
@@ -96,6 +99,43 @@ func TestAuthZENEvaluation_Permit(t *testing.T) {
 		assert.NotContains(t, output, evalAssertionMarker)
 	}
 	assert.Contains(t, logs, `"token_exchange.operation":"access_evaluation"`)
+}
+
+func TestAuthZENEvaluation_SpansExcludeCredentialsAndContext(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
+	for _, decision := range []tokenexchange.DelegationDecision{
+		permitDecision(),
+		{Kind: tokenexchange.DecisionDeny, Detail: tokenexchange.DetailGrantMissing,
+			Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing)},
+		{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError,
+			Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageResourceResolution, tokenexchange.DetailResourceRepositoryUnavailable)},
+	} {
+		rec, logs := serveEvaluation(t, &stubEvaluator{decision: decision}, newEvaluationRequest(validEvaluationBody()))
+		assert.NotContains(t, rec.Body.String(), evalSubjectMarker)
+		assert.NotContains(t, logs, evalAssertionMarker)
+	}
+	spans := recorder.Ended()
+	require.Len(t, spans, 3)
+	for _, span := range spans {
+		assert.Equal(t, "authzen.access_evaluation", span.Name())
+		encoded, err := json.Marshal(tracetest.SpanStubFromReadOnlySpan(span))
+		require.NoError(t, err)
+		for _, sensitive := range []string{evalSubjectMarker, evalAssertionMarker, "alice@example.com", "https://api.example.com/repos"} {
+			assert.NotContains(t, string(encoded), sensitive)
+		}
+		attrs := make(map[string]any)
+		for _, attr := range span.Attributes() {
+			attrs[string(attr.Key)] = attr.Value.AsInterface()
+		}
+		assert.Equal(t, "access_evaluation", attrs["token_exchange.operation"])
+	}
 }
 
 func TestAuthZENEvaluation_Denial(t *testing.T) {

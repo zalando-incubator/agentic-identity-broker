@@ -55,7 +55,12 @@ var _ = Describe("AuthZEN delegation evaluation", Label("authzen-delegation"), f
 			Expect(expected["subject"]).To(Equal(map[string]any{"id": "alice@example.com"}))
 			for _, resp := range []*helpers.AuthZENResponse{anchored, withoutAgent, withoutContext} {
 				Expect(maxAgeOf(resp)).To(BeNumerically("<=", 60))
+				f.ExpectEvaluationIdentity(resp, f.Principal.String(), "authzen-gateway", true)
 			}
+			equalPeer := f.SignAssertionFor(f.Principal.String(), time.Now().Add(time.Hour))
+			equalResponse := f.EvaluateRaw(equalPeer, helpers.AuthZENEvaluationBody(f.SubjectToken, authzenRepoResource, nil))
+			permitContext(equalResponse)
+			f.ExpectEvaluationIdentity(equalResponse, f.Principal.String(), "", true)
 			f.SeedSession(f.Repo, []string{"read:repo"})
 			status, _ := f.Exchange(authzenRepoResource)
 			Expect(status).To(Equal(http.StatusOK), "the same caller policy authorizes exchange")

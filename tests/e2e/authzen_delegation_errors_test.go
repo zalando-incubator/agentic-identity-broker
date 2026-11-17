@@ -52,7 +52,9 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 
 		// Scenario US2.14 from specs/054-authzen-delegation-pip/spec.md
 		It("returns 400 for malformed JSON without resolving delegation", func() {
-			expectAuthZENError(f.EvaluateRaw(f.ClientAssertion, []byte(`{"subject":`)), http.StatusBadRequest, "invalid_request")
+			resp := f.EvaluateRaw(f.ClientAssertion, []byte(`{"subject":`))
+			expectAuthZENError(resp, http.StatusBadRequest, "invalid_request")
+			f.ExpectEvaluationIdentity(resp, "anonymous", "", false)
 			Expect(f.Logs.Raw()).To(ContainSubstring(`"token_exchange.failure_stage":"request_validation"`))
 			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"token_exchange.failure_stage":"grant_authorization"`))
 			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"token_exchange.agent.id"`), "no delegation was resolved")
@@ -63,6 +65,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 			resp := f.EvaluateRaw("", helpers.AuthZENEvaluationBody(f.SubjectToken, authzenRepoResource, nil))
 			expectAuthZENError(resp, http.StatusUnauthorized, "unauthorized")
 			Expect(resp.Header.Get("WWW-Authenticate")).To(Equal("Bearer"))
+			f.ExpectEvaluationIdentity(resp, "anonymous", "", false)
 			Expect(resp.Raw).NotTo(ContainSubstring(f.Grant.ID.String()))
 		})
 
@@ -72,6 +75,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 				resp := f.EvaluateRaw(assertion, helpers.AuthZENEvaluationBody(f.SubjectToken, authzenRepoResource, nil))
 				expectAuthZENError(resp, http.StatusUnauthorized, "unauthorized")
 				Expect(resp.Header.Get("WWW-Authenticate")).To(Equal(`Bearer error="invalid_token"`))
+				f.ExpectEvaluationIdentity(resp, "anonymous", "", true)
 				Expect(resp.Raw).NotTo(ContainSubstring(f.Grant.ID.String()))
 			}
 		})
@@ -98,6 +102,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 		})
 		resp := f.Evaluate(authzenRepoResource, nil)
 		expectAuthZENError(resp, http.StatusForbidden, "forbidden")
+		f.ExpectEvaluationIdentity(resp, f.Principal.String(), "authzen-gateway", true)
 		f.SeedSession(f.Repo, []string{"read:repo"})
 		status, body := f.Exchange(authzenRepoResource)
 		Expect(status).To(Equal(http.StatusForbidden), "exchange is rejected by the same policy")

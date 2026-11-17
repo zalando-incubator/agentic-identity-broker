@@ -128,6 +128,23 @@ expired permit returns 503. OPA policies receive `input.context.principal`, `age
 `grant` and `permission_sets` and can key on canonical IDs, for example
 `input.context.permission_sets[_].canonical_id == "repo-reader"`.
 
+### Resolution observability
+
+ExtProc emits `extproc.delegation.resolve` for each resolution and
+`extproc.delegation.evaluate` for each broker evaluation. Both use the `extproc` scope and
+`token_exchange.operation=delegation_resolution`. The resolver span records
+`delegation.cache=hit|miss`; a hit makes no evaluation call. Bounded outcome/detail pairs are
+`success`/`none`, `authorization_denied`/`delegation_denied`,
+`infrastructure_error`/`delegation_unavailable`, and `canceled`/`caller_canceled`.
+Infrastructure failures set error status and `error.type` to `timeout`, `unavailable`,
+`rejected`, or `invalid_response`. Grant denials are ordinary decisions, not span errors.
+
+Server diagnostics use the same outcomes and cache values. Permit diagnostics are Debug;
+denials are Info and unavailable context is Warn. Neither logs nor spans include subject tokens,
+client assertions, delegation context, requested resource URIs, or dependency error text.
+Broker evaluation audit and perimeter access logs share the finalized actor, optional distinct
+calling peer, and the trace ID returned in `traceresponse`.
+
 ## Deprecation of `granted_permission_sets`
 
 End-user API `1.2.0` marks the token-exchange response field `granted_permission_sets` deprecated.
