@@ -32,6 +32,14 @@ Use it as a full ExtProc configuration file:
 EXTPROC_CONFIG_PATH=./examples/config/extproc-tool-approvals.yaml ./extproc-token-exchange
 ```
 
+### `extproc-delegation-context.yaml`
+
+This file enables broker delegation context for the standalone ExtProc service (ADR 045). ExtProc discovers the broker's AuthZEN Policy Decision Point at startup and supplies a fresh delegation permit to OPA before every policy decision. It requires `authorization.enabled` and shows the four `delegation_context` keys with their defaults (`enabled: false`, `policy_decision_point` from the origin of `oauth2.token_endpoint`, `request_timeout: 5s`, `max_staleness: 60s`).
+
+```bash
+EXTPROC_CONFIG_PATH=./examples/config/extproc-delegation-context.yaml ./extproc-token-exchange
+```
+
 ### `config.minimal.yaml`
 
 The most minimal valid configuration. Demonstrates:
