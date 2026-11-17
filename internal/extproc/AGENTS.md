@@ -124,7 +124,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)`, `ExchangeBound(ctx, subjectToken, resourceURI, observed *ExchangeResult, ExchangeResultBinding)` + `Shutdown()` |
 | `ExchangeResultBinding` | Permit principal/agent UUID, sorted, de-duplicated resource scopes and parsed grant-update instant; exchange identities must match; never broker grant-version provenance |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
-| `PermitResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (delegation.Result, hit bool, error)` + `Shutdown()` (ADR 048) |
+| `PermitResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (grantcontext.Result, hit bool, error)` + `Shutdown()` (ADR 048) |
 | `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `grantContextResolver`, `logger` |
 | `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
@@ -160,7 +160,7 @@ It does not permit these imports inside `internal/extproc/`.
 
 - Inject `TokenExchanger`, `OPAAuthorizer`, and `approval.Gate` through these interfaces.
 - Set `PermitResolver` (ADR 048) with `Server.WithPermitResolver` only when `grant_context.enabled`.
-  Its production implementation is `delegation.PermitResolver` from `delegation.NewPermitResolverFromConfig`.
+  Its production implementation is `grantcontext.PermitResolver` from `grantcontext.NewPermitResolverFromConfig`.
   With it disabled, the request paths and OPA input are unchanged byte for byte.
 - Keep the typed interface fields on `Server`. Do not add an adapter layer or map-based indirection.
 - Use mock or stub implementations for these interfaces in tests.

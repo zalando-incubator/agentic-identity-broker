@@ -59,7 +59,7 @@ Reason: [selected proposal approved by mjungsbluth](https://github.com/zalando-i
 
 - F2/P2: after enabled-mode exchange/binding succeeds, set the approval state's principal and agent UUID from the request permit. OPA already uses it. Keep disabled identity and session extraction unchanged; regression tests exercise conflicting and missing exchange identities through the headers/body/approval flow.
 - F3/P3: correct the released end-user API baseline to `1.2.0` and publish `1.3.0`. Retain response fields/deprecation; revise ADR 048 §8 and register its partial supersession in ADR 028 and the architecture index. Earlier version/approval entries below are historical, not the current release contract.
-- F4/P4: return `errInvalidGrantTimestamp` from `exchangeWithGrantContext` and match with `errors.Is`. Preserve ordinary exchange error mapping for unrelated `delegation.Error` values. F5/P5: document the canonical `error_kind` key and all three unavailable-event emitters in observability §2.1.
+- F4/P4: return `errInvalidGrantTimestamp` from `exchangeWithGrantContext` and match with `errors.Is`. Preserve ordinary exchange error mapping for unrelated `grantcontext.Error` values. F5/P5: document the canonical `error_kind` key and all three unavailable-event emitters in observability §2.1.
 - F6/P6: rename the local result-reuse value to `ExchangeResultBinding`, and both ExtProc resolver port and concrete cache to `PermitResolver`, including constructors, wiring and test doubles. Update ADR 048, instructions, contracts and both glossaries. Preserve existing wire text and telemetry names.
 - F1/P1 remains unresolved. Returning only exchange grant version and effective scopes does not specify how the separately fetched permission-set/context snapshot becomes consistent, or what happens when versions differ. Removing reconciliation without resolving that would replace the documented limitation with an unproven guarantee. No F1 API, ADR or broker implementation changes are included, and its alternative is not selected.
 
@@ -408,7 +408,7 @@ Add `GrantContextConfig`, its defaults, flags, and validation (R17). In `root.go
 feature is enabled:
 
 1. Derive or read the expected PDP.
-2. Run `delegation.Discover` with the `oauth2.tls` HTTP client and `request_timeout`. On any
+2. Run `grantcontext.Discover` with the `oauth2.tls` HTTP client and `request_timeout`. On any
    error, exit before listening (US4.3 and US4.4).
 3. Build the `Client` with the exchanger as the `AssertionProvider` and build the `Resolver`.
 4. Pass the resolver to a new server constructor option.
@@ -429,7 +429,7 @@ feature is enabled:
 - Policy input (R15, data model §3.5, and contract §4):
   - The `delegation` client decodes the permit's `context` into its own wire struct, ignoring
     unknown members. It validates the documented shape (data model §3.3.1) and returns a typed
-    `delegation.Context`. A violation is `invalid_response` and returns 503 (uncached).
+    `grantcontext.Context`. A violation is `invalid_response` and returns 503 (uncached).
   - `authorization.ContextInput` gains `principal`, `agent`, `resource`, `grant`, and
     `permission_sets` (`omitempty` on these five additions). Enabled-mode `permission_sets`
     is non-empty; nested `services` and all `scopes` arrays always serialize as arrays,
@@ -524,9 +524,9 @@ Add compile-only scaffolding so the tests fail semantically:
 - types and method signatures for `GrantResolver`, `AccessEvaluationService`, and the outcomes
 - handlers that return `501`
 - `GrantContextConfig` fields
-- the `delegation` package with constructors that return errors
+- the `grantcontext` package with constructors that return errors
 - the `ContextInput` members and the policy-input types (`AgentContext`, `ResourceContext`,
-  `GrantContext`, `PermissionSetContext`, `ServiceContext`), plus `delegation.Context`
+  `GrantContext`, `PermissionSetContext`, `ServiceContext`), plus `grantcontext.Context`
 - the server option
 
 ### Phases 3–6: User stories (test-first)

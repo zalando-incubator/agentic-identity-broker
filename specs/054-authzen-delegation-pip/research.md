@@ -515,9 +515,9 @@ the documented shape. Any violation is an `invalid_response` resolution error: E
 Timestamps are validated but kept as the received strings, so the policy sees the same values
 as the permit. No numbers appear in the context, so `UseNumber` is not needed.
 
-The client exports the validated value as `delegation.Context`, a Go struct whose fields mirror
-the five members with `Principal` taken from `subject.id`. `delegation.Result` carries it with
-the `Deadline` (R13). The server maps `delegation.Context` to `authorization.ContextInput` in
+The client exports the validated value as `grantcontext.Context`, a Go struct whose fields mirror
+the five members with `Principal` taken from `subject.id`. `grantcontext.Result` carries it with
+the `Deadline` (R13). The server maps `grantcontext.Context` to `authorization.ContextInput` in
 one pure function, `contextInputFromGrantContext(result, agentSessionID)`. This follows the
 existing pattern in which the server builds `ContextInput` from the exchange result. The
 function copies every slice, so a cached `Result` that singleflight followers share is never

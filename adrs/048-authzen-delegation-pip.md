@@ -140,7 +140,7 @@ unchanged. This separates service identity from protected-resource identity (ADR
 The ExtProc port is `server.PermitResolver`, distinct from the broker's
 `tokenexchange.GrantResolver`; the former retrieves fresh permit context, the latter
 enforces delegation invariants shared by exchange and evaluation. The implementation is
-`delegation.PermitResolver`. **ExchangeResultBinding** is a local result-reuse constraint,
+`grantcontext.PermitResolver`. **ExchangeResultBinding** is a local result-reuse constraint,
 not the IETF Token Binding proof-of-possession protocol (RFC 8471).
 
 The AuthZEN paths (`/access/v1/...`, `/.well-known/authzen-configuration`) and snake_case members
