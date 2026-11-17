@@ -35,10 +35,10 @@ func bindingPortExchanger(t *testing.T, lifetime int) (*TokenExchanger, *atomic.
 }
 
 func portBinding(scopes ...string) ExchangeResultBinding {
-	return ExchangeResultBinding{Scopes: scopes, GrantUpdatedAt: time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)}
+	return ExchangeResultBinding{Principal: "PRINCIPAL_SECRET", AgentID: "agent", Scopes: scopes, GrantUpdatedAt: time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)}
 }
 func boundPortResult(binding ExchangeResultBinding) ExchangeResult {
-	return ExchangeResult{Token: "PROVIDER_SECRET", handle: &tokenResultHandle{binding: &binding}}
+	return ExchangeResult{Token: "PROVIDER_SECRET", Principal: "PRINCIPAL_SECRET", AgentID: "agent", handle: &tokenResultHandle{binding: &binding}}
 }
 
 func TestBindingPortObservedAndReplacementOutcomes(t *testing.T) {
@@ -53,12 +53,12 @@ func TestBindingPortObservedAndReplacementOutcomes(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			te, calls, _ := bindingPortExchanger(t, 3600)
-			observed := ExchangeResult{Token: "PROVIDER_SECRET", handle: &tokenResultHandle{binding: tt.observed}}
+			observed := ExchangeResult{Token: "PROVIDER_SECRET", Principal: "PRINCIPAL_SECRET", AgentID: "agent", handle: &tokenResultHandle{binding: tt.observed}}
 			key := tokenCacheKey{"SUBJECT_SECRET", "https://resource.example"}
 			var replacement *tokenResultHandle
 			if tt.name != "absent observed" {
 				replacement = &tokenResultHandle{binding: tt.replacement}
-				te.cache[key] = &cachedToken{accessToken: "PROVIDER_SECRET", handle: replacement, expiresAt: time.Now().Add(time.Minute)}
+				te.cache[key] = &cachedToken{accessToken: "PROVIDER_SECRET", principal: "PRINCIPAL_SECRET", agentID: "agent", handle: replacement, expiresAt: time.Now().Add(time.Minute)}
 			}
 			result, err := te.ExchangeBound(context.Background(), key.subjectToken, key.resourceURI, &observed, portBinding("read"))
 			require.NoError(t, err)
@@ -76,6 +76,24 @@ func TestBindingPortObservedAndReplacementOutcomes(t *testing.T) {
 		})
 	}
 }
+func TestBindingIdentityCannotRebindResult(t *testing.T) {
+	for _, field := range []string{"principal", "agent"} {
+		t.Run(field, func(t *testing.T) {
+			handle := &tokenResultHandle{}
+			original := portBinding("read")
+			require.True(t, handle.bindOnce(original))
+			changed := original
+			if field == "principal" {
+				changed.Principal = "another-principal"
+			} else {
+				changed.AgentID = "another-agent"
+			}
+			assert.False(t, handle.bindOnce(changed))
+			assert.True(t, handle.bindOnce(original), "identity mismatch must not overwrite the first claim")
+		})
+	}
+}
+
 func ptrBinding(scopes ...string) *ExchangeResultBinding { b := portBinding(scopes...); return &b }
 
 // Done is consulted by awaitResult after this caller has joined the flight.
@@ -162,11 +180,13 @@ func TestExchangeResultBindingFormattingDoesNotExposeGrantOrScopes(t *testing.T)
 	binding := portBinding("SCOPE_SECRET")
 	for _, value := range []string{fmt.Sprint(binding), fmt.Sprintf("%#v", binding)} {
 		assert.NotContains(t, value, "SCOPE_SECRET")
+		assert.NotContains(t, value, "PRINCIPAL_SECRET")
 		assert.NotContains(t, value, "2026")
 	}
 	var logs bytes.Buffer
 	slog.New(slog.NewJSONHandler(&logs, nil)).Info("binding diagnostic", "binding", binding)
 	assert.NotContains(t, logs.String(), "SCOPE_SECRET")
+	assert.NotContains(t, logs.String(), "PRINCIPAL_SECRET")
 	assert.NotContains(t, logs.String(), "2026-10-26")
 }
 

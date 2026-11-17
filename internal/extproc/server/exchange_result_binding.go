@@ -11,6 +11,8 @@ import (
 
 // ExchangeResultBinding identifies the permit that first claims an exchange result, not exchange provenance.
 type ExchangeResultBinding struct {
+	Principal      string
+	AgentID        string
 	Scopes         []string
 	GrantUpdatedAt time.Time
 }
@@ -19,7 +21,7 @@ func (ExchangeResultBinding) String() string         { return "exchange result b
 func (b ExchangeResultBinding) GoString() string     { return b.String() }
 func (b ExchangeResultBinding) LogValue() slog.Value { return slog.StringValue(b.String()) }
 
-// ErrExchangeResultBindingConflict means the single permitted retry delivered an incompatible result.
+// ErrExchangeResultBindingConflict means the exchange identity or final result binding is incompatible.
 var ErrExchangeResultBindingConflict = errors.New("delegation token binding unavailable")
 
 type tokenResultHandle struct {
@@ -44,7 +46,8 @@ func (h *tokenResultHandle) bindOnce(binding ExchangeResultBinding) bool {
 		copy := binding.normalized()
 		h.binding = &copy
 	}
-	return slices.Equal(h.binding.Scopes, binding.Scopes) && h.binding.GrantUpdatedAt.Equal(binding.GrantUpdatedAt)
+	return h.binding.Principal == binding.Principal && h.binding.AgentID == binding.AgentID &&
+		slices.Equal(h.binding.Scopes, binding.Scopes) && h.binding.GrantUpdatedAt.Equal(binding.GrantUpdatedAt)
 }
 
 func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resourceURI string, observed *ExchangeResult, binding ExchangeResultBinding) (ExchangeResult, error) {
@@ -65,11 +68,14 @@ func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resou
 	} else {
 		result = *observed
 	}
+	if !result.matchesIdentity(binding) {
+		return ExchangeResult{}, ErrExchangeResultBindingConflict
+	}
 	if result.handle.bindOnce(binding) {
 		return result, nil
 	}
 	logger := loggerFromContext(ctx, te.logger).With(slog.String("delegation_binding", "mismatch"))
-	logDiagnostic(ctx, logger, slog.LevelDebug, "delegation token binding mismatch", SuccessDiagnostic(ExchangeUnknown))
+	logDiagnostic(ctx, logger, slog.LevelDebug, "exchange result binding mismatch", SuccessDiagnostic(ExchangeUnknown))
 
 	key := tokenCacheKey{subjectToken: subjectToken, resourceURI: resourceURI}
 	te.cacheMu.Lock()
@@ -82,7 +88,7 @@ func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resou
 		}
 	}
 	te.cacheMu.Unlock()
-	if replacement != nil && replacement.handle.bindOnce(binding) {
+	if replacement != nil && replacement.result().matchesIdentity(binding) && replacement.handle.bindOnce(binding) {
 		return replacement.result(), nil
 	}
 
@@ -91,10 +97,14 @@ func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resou
 	if err != nil {
 		return ExchangeResult{}, err
 	}
-	if !result.handle.bindOnce(binding) {
+	if !result.matchesIdentity(binding) || !result.handle.bindOnce(binding) {
 		return ExchangeResult{}, ErrExchangeResultBindingConflict
 	}
 	return result, nil
+}
+
+func (r ExchangeResult) matchesIdentity(binding ExchangeResultBinding) bool {
+	return r.Principal == binding.Principal && r.AgentID == binding.AgentID
 }
 
 func (c *cachedToken) result() ExchangeResult {

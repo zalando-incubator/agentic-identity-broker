@@ -27,7 +27,10 @@ type identityExchanger struct {
 func (e identityExchanger) Exchange(context.Context, string, string) (ExchangeResult, error) {
 	return e.result, nil
 }
-func (e identityExchanger) ExchangeBound(context.Context, string, string, *ExchangeResult, ExchangeResultBinding) (ExchangeResult, error) {
+func (e identityExchanger) ExchangeBound(_ context.Context, _, _ string, _ *ExchangeResult, binding ExchangeResultBinding) (ExchangeResult, error) {
+	if !e.result.matchesIdentity(binding) {
+		return ExchangeResult{}, ErrExchangeResultBindingConflict
+	}
 	return e.result, nil
 }
 func (identityExchanger) Shutdown() {}
@@ -51,10 +54,10 @@ func (g *identityGate) Evaluate(_ context.Context, invocation approval.Invocatio
 	return approval.Outcome{Proceed: true}
 }
 
-func TestApprovalIdentityUsesPermitOnlyWhenEnabled(t *testing.T) {
+func TestApprovalIdentityUsesExchangeAndRequiresPermitConsistencyWhenEnabled(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
-		for _, exchangeIdentity := range []approval.Identity{{Principal: "cached-principal", AgentID: "cached-agent"}, {}} {
-			t.Run(fmt.Sprintf("enabled=%t/identity=%t", enabled, exchangeIdentity.Principal != ""), func(t *testing.T) {
+		for _, exchangeIdentity := range []approval.Identity{{Principal: "cached-principal", AgentID: "cached-agent"}, {}, {Principal: "permit-principal", AgentID: "permit-agent"}} {
+			t.Run(fmt.Sprintf("enabled=%t/identity=%s/%s", enabled, exchangeIdentity.Principal, exchangeIdentity.AgentID), func(t *testing.T) {
 				var logs bytes.Buffer
 				logger := slog.New(slog.NewJSONHandler(&logs, nil))
 				permit := delegation.Result{Deadline: time.Now().Add(time.Minute), Context: delegation.Context{
@@ -70,6 +73,18 @@ func TestApprovalIdentityUsesPermitOnlyWhenEnabled(t *testing.T) {
 				headers := &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{{Key: ":method", RawValue: []byte("POST")}, {Key: "mcp-session-id", RawValue: []byte("mcp-session")}}}}
 				req := safetyRequest("subject-token-marker", "https://resource.example", headers)
 				response, state := s.processRequestHeadersOPA(context.Background(), false, req, headers)
+				if enabled && exchangeIdentity != (approval.Identity{Principal: permit.Context.Principal, AgentID: permit.Context.Agent.ID}) {
+					require.NotNil(t, response.GetImmediateResponse())
+					assert.Equal(t, int32(503), int32(response.GetImmediateResponse().Status.Code))
+					assert.JSONEq(t, delegationBindingUnavailableBody, string(response.GetImmediateResponse().Body))
+					assert.Empty(t, gate.invocations)
+					assert.Empty(t, authorizer.input.Principal)
+					assert.Nil(t, state)
+					for _, marker := range []string{"subject-token-marker", "provider-token-marker", "permit-principal", "cached-principal"} {
+						assert.NotContains(t, logs.String(), marker)
+					}
+					return
+				}
 				require.NotNil(t, response.GetRequestHeaders())
 				require.NotNil(t, state)
 				body := &extprocv3.HttpBody{Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_files"}}`), EndOfStream: true}
@@ -78,7 +93,6 @@ func TestApprovalIdentityUsesPermitOnlyWhenEnabled(t *testing.T) {
 				require.Len(t, gate.invocations, 1)
 				want := exchangeIdentity
 				if enabled {
-					want = approval.Identity{Principal: permit.Context.Principal, AgentID: permit.Context.Agent.ID}
 					assert.Equal(t, want.Principal, authorizer.input.Principal)
 					require.NotNil(t, authorizer.input.Agent)
 					assert.Equal(t, want.AgentID, authorizer.input.Agent.ID)

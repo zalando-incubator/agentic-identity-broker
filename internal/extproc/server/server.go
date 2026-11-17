@@ -574,10 +574,6 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
 	state.principal = exchangeResult.Principal
 	state.agentID = exchangeResult.AgentID
-	if state.delegation != nil {
-		state.principal = state.delegation.Context.Principal
-		state.agentID = state.delegation.Context.Agent.ID
-	}
 	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA: token exchanged in headers phase, buffering body for OPA evaluation", diagnostic)
 	return requestBodyBufferingResponseWithAuth("Bearer " + exchangeResult.Token), state
 }
@@ -968,7 +964,7 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extproc
 	if errors.Is(err, ErrExchangeResultBindingConflict) {
 		diagnostic := NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
 		logger := loggerFromContext(ctx, s.logger)
-		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindUnavailable), slog.LevelWarn, "delegation token binding conflicted", diagnostic)
+		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindUnavailable), slog.LevelWarn, "exchange result binding conflicted", diagnostic)
 		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationBindingUnavailableBody), diagnostic
 	}
 	if errors.Is(err, errInvalidGrantTimestamp) {

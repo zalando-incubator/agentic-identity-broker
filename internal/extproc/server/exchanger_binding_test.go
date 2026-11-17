@@ -119,6 +119,41 @@ func TestExchangeResultBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing
 	}
 }
 
+func TestExchangeResultBinding_IdentityMismatchFailsClosed(t *testing.T) {
+	for _, identity := range []struct {
+		name, principal, agentID string
+	}{
+		{"principal mismatch", "another-principal", "agent-uuid"},
+		{"agent mismatch", "alice@example.com", "another-agent"},
+		{"absent principal", "", "agent-uuid"},
+		{"absent agent", "alice@example.com", ""},
+	} {
+		for _, headerOnly := range []bool{false, true} {
+			t.Run(identity.name+"/"+map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
+				exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, _ int32) {
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"access_token": "SYNTHETIC_WRONG_IDENTITY", "expires_in": 3600,
+						"principal": identity.principal, "agent_id": identity.agentID,
+					})
+				})
+				permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
+				h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+				response := bindingHarnessCall(t, h, headerOnly)
+				status, body := immediate(t, response)
+				assert.Equal(t, 503, status)
+				assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "delegation token binding unavailable"}, body)
+				assert.Nil(t, response.GetRequestHeaders(), "no credential mutation or body buffering")
+				assert.Equal(t, int32(1), calls.Load(), "identity mismatch is terminal, not a grant-change retry")
+				wantPolicies := int32(0)
+				if headerOnly {
+					wantPolicies = 1
+				}
+				assert.Equal(t, wantPolicies, h.policies.Load())
+			})
+		}
+	}
+}
+
 func TestExchangeResultBinding_FailedReplacementCannotForwardThePriorToken(t *testing.T) {
 	for _, headerOnly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
