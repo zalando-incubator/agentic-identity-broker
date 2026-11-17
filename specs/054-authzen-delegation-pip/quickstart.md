@@ -15,8 +15,8 @@ Before any implementation, these preconditions must hold:
    still have to pass before the OpenAPI is frozen.
 2. The new ADR decision set (research R16) is Accepted. This was done on 2026-10-28. The ADR file
    is drafted in T008.
-3. The spec revision for the OPA input shape (research R15) has landed, and `tasks.md` has been
-   regenerated. This is still open.
+3. The spec revision for the OPA input shape (research R15) has landed. This was done on
+   2026-10-28. `tasks.md` must still be regenerated from the revised plan.
 
 Tooling: `just install-tools` (Go 1.27.3, Ginkgo, golangci-lint). Docker or Podman is needed
 only for the PostgreSQL-backed scenario US2.19.
@@ -73,6 +73,10 @@ composition against the real broker test server. Confirm these outcomes:
   set to the consent URL.
 - A broker outage with a still-cached exchanged token returns 503, not a stale permit.
 - A permit with a missing or zero `max-age`, or one that expires before policy use, returns 503.
+- The canonical-ID policy allows on both paths. The policy reads `input.context.agent`,
+  `input.context.resource`, and `input.context.permission_sets`, and
+  `granted_permission_sets_available` is `true`. Neither `input.context.delegation` nor
+  `delegation_available` is present (contract §4).
 
 ## 4. ExtProc startup journeys (US4.1–US4.4)
 

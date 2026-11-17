@@ -138,7 +138,8 @@ never from the body.
 ## 3. ExtProc value objects (`internal/extproc/delegation`, no broker imports)
 
 The freshness rules below apply the maintainer decisions of 2026-10-28 (HIGH I1/U1/U2 in
-[remediation.md](./remediation.md)). §3.5 is blocked on a spec revision (research R15).
+[remediation.md](./remediation.md)). §3.5 applies the 2026-10-28 spec clarification of the OPA
+input shape (FR-017, FR-018, and research R15).
 
 ### 3.1 `DelegationContextConfig` (`internal/extproc/config`)
 
@@ -158,9 +159,34 @@ startup. It is immutable afterwards.
 
 | Type | Fields | Meaning |
 |---|---|---|
-| `Result` (permit) | `Context map[string]any` (decoded with `UseNumber`, verbatim), `GrantedPermissionSets map[string][]string` (derived projection), `Deadline time.Time` (`requestStart + min(max-age, max_staleness)`, computed once) | `decision: true` with exactly one positive integer `max-age` |
+| `Result` (permit) | `Context Context` (typed and validated, §3.3.1), `Deadline time.Time` (`requestStart + min(max-age, max_staleness)`, computed once) | `decision: true`, a context that passes §3.3.1, and exactly one positive integer `max-age` |
 | `*DeniedError` | `Code string` (allowlisted `grant_*` value or `delegation_denied`), `ConsentURL string` | `decision: false` |
-| other `error` | Category: `timeout`, `unavailable`, `rejected` (non-200), or `invalid_response` (including a missing, zero, malformed, or duplicate `max-age` on a permit) | Fail closed with 503. The response is not used and not cached. |
+| other `error` | Category: `timeout`, `unavailable`, `rejected` (non-200), or `invalid_response` (including a missing, zero, malformed, or duplicate `max-age` on a permit, or a permit context that fails §3.3.1) | Fail closed with 503. The response is not used and not cached. |
+
+#### 3.3.1 `Context` (typed permit context, research R15)
+
+The client decodes the permit's `context` into an unexported wire struct. Unknown members at
+any level are ignored and never copied. It then validates the struct and exports this value:
+
+```text
+Context
+├── Principal       string                        ← context.subject.id
+├── Agent           { ID, CanonicalID? }
+├── Resource        { ID, CanonicalID?, ResourceURI, Scopes []string }
+├── Grant           { ID, UpdatedAt string (RFC 3339), ValidUntil? string (RFC 3339) }
+└── PermissionSets  [] { ID, CanonicalID?, Services [] { ID, CanonicalID?, Scopes []string } }
+```
+
+| Rule | Violation |
+|---|---|
+| Every `id`, `subject.id`, and `resource_uri` is a non-empty string | `invalid_response` |
+| `resource.scopes`, each `services`, and each `services[].scopes` are arrays. Empty arrays are allowed. | `invalid_response` |
+| `permission_sets` is a non-empty array | `invalid_response` |
+| `updated_at`, and `valid_until` when present, parse as RFC 3339. The received string is kept unchanged. | `invalid_response` |
+| An optional `canonical_id` or `valid_until` is absent or a non-empty string. An explicit `null` or `""` contradicts the accepted contract. | `invalid_response` |
+
+The `Result` is immutable after construction. The cache and singleflight followers share it.
+Consumers copy its slices (§3.5).
 
 ### 3.4 Permit cache
 
@@ -189,18 +215,29 @@ An unusable `max-age` counts as an error.
 
 ### 3.5 OPA `ContextInput` (changes)
 
-**Blocked: spec revision required (research R15).** The maintainer asked to extend the
-existing context attributes and fill them from the delegation, instead of adding the
-`delegation` and `delegation_available` members. The table below shows the pre-review shape
-that FR-017 requires today.
+`authorization.ContextInput` gains five members directly beside the existing ones (FR-017).
+There is no `delegation` wrapper, no `subject` member, and no `delegation_available` flag.
 
-| Member | Disabled mode | Enabled mode |
-|---|---|---|
-| `granted_permission_sets_available` | Unchanged (from exchange; `false` on header-only) | `true` |
-| `granted_permission_sets` | Unchanged (from exchange) | `{ps.id: [services[].id]}` derived from `delegation` |
-| `agent_session_id` | Unchanged | Unchanged |
-| `delegation_available` | **omitted** | `true` (a failure never reaches policy) |
-| `delegation` | **omitted** | Permit `context`, verbatim |
+| Member | Go type (package `authorization`) | Disabled mode | Enabled mode (body, batch, and header-only) |
+|---|---|---|---|
+| `granted_permission_sets_available` | `bool` (existing) | Unchanged (`true` only when the exchange returned the field; `false` on header-only) | `true`, permanently retained |
+| `granted_permission_sets` | `map[string][]string` (existing) | Unchanged (from exchange) | `{ps.ID: [ps.Services[].ID]}` in permit order, `[]` for no services; never from exchange; permanently retained |
+| `agent_session_id` | `string` (existing) | Unchanged | Unchanged |
+| `principal` | `string`, `omitempty` | **omitted** | `Context.Principal` |
+| `agent` | `*AgentContext{ID; CanonicalID omitempty}`, `omitempty` | **omitted** | `Context.Agent` |
+| `resource` | `*ResourceContext{ID; CanonicalID omitempty; ResourceURI; Scopes}`, `omitempty` | **omitted** | `Context.Resource` (`scopes` always an array) |
+| `grant` | `*GrantContext{ID; UpdatedAt; ValidUntil omitempty}`, `omitempty` | **omitted** | `Context.Grant` |
+| `permission_sets` | `[]PermissionSetContext{ID; CanonicalID omitempty; Services []ServiceContext{ID; CanonicalID omitempty; Scopes}}`, `omitempty` | **omitted** | `Context.PermissionSets` |
+
+**Mapping**: The server's pure function `contextInputFromDelegation(result, agentSessionID)`
+builds every enabled-mode input. It deep-copies the slices of the shared `Result`. Disabled mode
+never calls it, and its serialized input stays byte-for-byte unchanged.
+
+**Invariant**: In enabled mode, OPA is evaluated only with a validated permit whose `Deadline`
+has not passed. So `granted_permission_sets_available: true` implies that all five members are
+present. Only the nested optional `canonical_id` and `valid_until` members can be absent. A
+denial, a resolution error, or an expired deadline returns 403 or 503 before policy runs, never
+`false`.
 
 ## 4. Relationships
 
