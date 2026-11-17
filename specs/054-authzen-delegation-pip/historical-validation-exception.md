@@ -1,6 +1,6 @@
-# Proposed historical test-first exception (D-6)
+# Historical test-first exception (D-6)
 
-**Status**: Proposed — requires explicit maintainer sign-off; no exception is granted here.
+**Status**: Approved (approved by mjungsbluth on 2026-11-05: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255). The supplied approval time is `2026-11-05T16:38:49Z`; alternative-validation closure is recorded in `quickstart.md` §12.
 **Scope**: Feature 054 implementation already present at `34f4f2b94dd78707777e9b22b0a9b58ccb734576`, only the missing historical sequencing obligations identified below.
 
 ## Constraint and evidence
@@ -73,6 +73,8 @@ is not acceptable.
    affected task boxes unchecked until both sign-off and applicable validation are recorded;
    approval alone closes no task. Keep any unrelated validation or work unfinished.
 
-Until these conditions are met, historical VIII/XIII compliance remains unresolved. This
-proposal settles what the maintainer is asked to approve, not whether approval has occurred
-or whether implementation is complete.
+The sections above retain the approved proposal and its conditions. Implementation recorded
+the supplied approval in `quickstart.md` §11 and the completed alternative validation in §12,
+including downstream results on `277fec06b8b0ae735a6cfbd01cd7b8468c140d52`. The original
+sequence was **not performed; covered by approved D-6**. Closure of this exception is not
+retroactive historical TDD compliance, and no new correction is exempt from test-first work.
