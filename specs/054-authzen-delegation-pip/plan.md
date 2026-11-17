@@ -122,7 +122,7 @@ research R15, data model §§3.3.1 and 3.5, and ExtProc contract §4.
 | Config examples | Pass | Add `examples/config/extproc-delegation-context.yaml` and index it in `examples/config/README.md`. |
 | Helm deployment contract | Pass (boundary) | The broker chart gets no change: the broker has no new keys, and ExtProc is not deployed by `charts/agentic-identity-broker/`. ExtProc keys go to its own config path (ADR 011): `docs/configuration.md`, `configs/config.extproc.docker.yaml` (commented), and `docs/docker-compose-setup.md`. |
 | API design first | Pass with precondition | [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) is the proposed OpenAPI delta. `api/enduser/openapi.yaml` is edited only after confirmation. |
-| API documentation | Pass | `api/enduser/openapi.yaml` (end-user; `1.0.0` → `1.1.0`) and `docs/api/authzen-evaluation.md`. No admin change. |
+| API documentation | Pass | `api/enduser/openapi.yaml` (end-user; `1.1.0` → `1.2.0` (Proposed)) and `docs/api/authzen-evaluation.md`. No admin change. |
 | API changes confirmed | Pass with precondition | The maintainer endorsed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) in the 2026-10-28 review: the endpoints, the R10 strictness, denial form (a), and the deprecation marker (R12). Sign-off is approval items API-1–API-3; the OpenAPI is edited only after it. The API-003 check against the final AuthZEN text runs before the OpenAPI is frozen. Any conflict goes back to the stakeholder. |
 | Database design | Not applicable | No schema change and no migration. |
 | E2E acceptance tests | Pass | 44 `It()` blocks, written in Phase 2f before implementation (table below). |
@@ -177,8 +177,9 @@ Maintainer direction from the 2026-10-28 review and clarification, applied in th
 - **Freshness** (I1/U1/U2): see [remediation.md](./remediation.md).
 - **OPA input shape**: the spec clarification of 2026-10-28, applied in research R15.
 - **AuthZEN contract**: endorsed. This covers the endpoint shapes, the error mapping (R6),
-  strict member rejection (R10), the plain-UUID anchor, denial form (a) (R11), and the `1.1.0`
-  deprecation marker (R12).
+  strict member rejection (R10), the plain-UUID anchor, denial form (a) (R11), and the
+  deprecation marker (R12). The review used a stale version baseline; `1.2.0` is now Proposed
+  from the existing `1.1.0` and remains subject to API-3 sign-off.
 - **New ADR**: the R16 decision set is endorsed, including the I2 audit-perimeter extension,
   and drafted in [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md).
 
@@ -204,8 +205,8 @@ Still open:
 | ID | Type | Decision | Details |
 |---|---|---|---|
 | API-1 | API | Proposed: add `GET /.well-known/authzen-configuration` to the end-user API whenever token exchange is configured, publishing `policy_decision_point` (public URL) and `access_evaluation_endpoint`; no broker configuration key. Alternative: a broker `authzen.enabled` flag (rejected by FR-001). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:18-49` |
-| API-2 | API | Proposed: add `POST /access/v1/evaluation` with bearer client-assertion auth, strict request members (R10), optional plain-UUID `context.agent` anchor, permit context, denial form (a) `reason_admin.code`/`reason_user.consent_url`, 400/401/403/500 `ErrorResponse` mapping, fixed 60 s `max-age` cap, `no-store` otherwise, and `X-Request-ID` echo. Alternative: language-tagged denial form (b). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:51-237` |
-| API-3 | API | Proposed: bump end-user API to `1.1.0` and mark `/oauth2/token` `granted_permission_sets` deprecated (still populated); removal is a later, separately approved `2.0.0` change. Alternative: remove the field in this feature (rejected by FR-019). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:239-245` |
+| API-2 | API | Proposed: add `POST /access/v1/evaluation` with bearer client-assertion auth, strict request members (R10), optional plain-UUID `context.agent` anchor, permit context with non-empty principal/permission sets and non-empty canonical IDs when present (optional omissions and empty scope/service arrays retained), denial form (a) `reason_admin.code`/`reason_user.consent_url`, 400/401/403/500 `ErrorResponse` mapping, fixed 60 s `max-age` cap, `no-store` otherwise, and `X-Request-ID` echo. Alternative: language-tagged denial form (b). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:51-238` |
+| API-3 | API | Proposed: bump end-user API from the current `1.1.0` to `1.2.0` and mark `/oauth2/token` `granted_permission_sets` deprecated (still populated); removal is a later, separately approved `2.0.0` change. Alternative: intentionally reuse `1.1.0` (would not distinguish the new additive revision); immediate removal is rejected by FR-019. | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:240-252` |
 | API-4 | API | Proposed: add ExtProc keys `delegation_context.enabled` (false), `policy_decision_point` (origin of `oauth2.token_endpoint`), `request_timeout` (5s), `max_staleness` (60s), with startup validation and discovery failures. Alternative: no local staleness cap (broker `max-age` only). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:10-50` |
 | API-5 | API | Proposed: ExtProc enabled-mode client responses — 403 `access_denied` with `error_uri` consent URL for a delegation denial, and 503 `service_unavailable` `delegation context unavailable` for resolution errors or an expired permit deadline. Alternative: fall through to policy with availability `false` (rejected by FR-017). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:81-105` |
 | API-6 | API | Proposed: ExtProc OPA `input.context` gains direct `principal`, `agent`, `resource`, `grant`, `permission_sets` from a typed permit mapping; `granted_permission_sets*` are permit-derived and permanent, `true` on both enabled paths (header-only changes from `false`); disabled mode unchanged. Alternative: `delegation` wrapper and `delegation_available` flag (rejected by the 2026-10-28 clarification). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:107-186` |
@@ -213,7 +214,7 @@ Still open:
 | D-1 | Decision | Proposed: evaluation reuses the unchanged token-exchange caller CEL policy with `request.grant_type` set to the token-exchange URN, so a policy cannot distinguish evaluation from exchange. Alternative: an evaluation-specific grant type or discriminator. | `specs/054-authzen-delegation-pip/research.md:116-133` |
 | D-2 | Decision | Proposed: ExtProc fails closed on delegation — an unusable `max-age` (missing, zero, malformed, duplicate) or a permit deadline that passes before policy use returns 503; no stale-on-error, even with a cached exchanged token; one deadline `requestStart + min(max-age, max_staleness)` with accepted skew. Alternative: serve stale context during broker outages. | `specs/054-authzen-delegation-pip/adr-045-authzen-delegation-pip.md:55-69` |
 | D-3 | Decision | Proposed: ExtProc delegation context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `specs/054-authzen-delegation-pip/adr-045-authzen-delegation-pip.md:103-109` |
-| D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:611-614` |
+| D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:617-620` |
 
 ## Project Structure
 
@@ -240,7 +241,7 @@ specs/054-authzen-delegation-pip/
 ```text
 adrs/045-authzen-delegation-pip.md                       # Moved from the feature draft with the recorded approval; number rechecked
 
-api/enduser/openapi.yaml                                  # 2 paths, schemas, examples, deprecation, 1.1.0
+api/enduser/openapi.yaml                                  # 2 paths, schemas, examples, deprecation, proposed 1.2.0
 
 internal/
 ├── domain/tokenexchange/
@@ -387,7 +388,7 @@ feature is enabled:
 
 After stakeholder confirmation:
 
-1. Apply the OpenAPI delta, including the `granted_permission_sets` deprecation and `1.1.0`.
+1. Apply the OpenAPI delta, including the `granted_permission_sets` deprecation and proposed `1.2.0` (current baseline `1.1.0`).
 2. Write `docs/api/authzen-evaluation.md` and rebuild the docs site.
 3. Update the token-exchange reference with the deprecation.
 4. Update `ARCHITECTURE.md` and the AGENTS guides. In `internal/extproc/AGENTS.md`, document

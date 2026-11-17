@@ -322,8 +322,9 @@ goes back to the stakeholder. It is not resolved silently.
 
 - This feature adds `deprecated: true` and a removal note to the `granted_permission_sets`
   property of the `/oauth2/token` response schema.
-- It bumps `info.version` of `api/enduser/openapi.yaml` from `1.0.0` to `1.1.0` for the
-  additive endpoints.
+- Proposed: bump `info.version` of `api/enduser/openapi.yaml` from its current `1.1.0` to
+  `1.2.0` for the additive endpoints and deprecation marker (contract §3). Reusing `1.1.0`
+  would not distinguish this revision; removing the field now would violate FR-019.
 - It documents the deprecation in `docs/reference/token-exchange.md`.
 - The field remains populated. `principal` and `agent_id` are unchanged (US4.6 and FR-019).
 
@@ -332,9 +333,10 @@ end-user API `2.0.0`, following the feature-051 precedent. It is **not** an impl
 of this feature, because it must ship in a later release. It needs a separately confirmed
 contract change (spec API-006 and Principles IV and X). The plan records it as follow-up work.
 
-**Stakeholder**: The contract endorsed in the 2026-10-28 review covers the 1.1.0 additive bump
-and the deprecation marker with its removal note (contract §3). Sign-off is approval item API-3. The removal itself still needs a
-separately confirmed 2.0.0 contract change in a later release.
+**Stakeholder**: The 2026-10-28 review used a stale `1.0.0` baseline when describing the
+`1.1.0` additive bump. The corrected `1.2.0` version and deprecation marker with its removal
+note remain Proposed under approval item API-3; the earlier review is not approval of this
+correction. Removal itself still needs a separately confirmed `2.0.0` change in a later release.
 
 ## R13. ExtProc resolver boundary
 
