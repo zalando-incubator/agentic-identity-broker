@@ -411,6 +411,18 @@ Each acceptance scenario maps to one eventual `It()`; the grouped ranges below a
 
 Every task has a checkbox, stable unique ID, repository-relative file path and requirement/scenario/binding-constraint reference. The original 101 IDs are retained; implementation added T102 for the approved validation correction. Original `[X]` marks retain their recorded history; `quickstart.md` §§11–12 records continuation completion evidence and the explicit D-6 disposition for the ten historical obligations. All 102 boxes are checked, without claiming that the original test-first/scaffolding sequence occurred. Only story-phase tasks carry `[USn]`; `[P]` tasks run only within the prerequisite waves below. No code or approval is produced in the tasks phase.
 
+## Approved review remediation (2026-11-06)
+
+These tasks extend the historical 102-task inventory only for the selected items in
+[the proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407).
+Historical checklist markers and validation evidence above are unchanged.
+
+- [ ] T103 [F2] Pin telemetry identifiers/kind in `internal/adapters/http/enduser/authzen_evaluation_test.go`, then rename the span/events, register namespaces in `coding-standards/OPENTELEMETRY.md`, and document operations/details and identifier migration in `docs/reference/token-exchange.md` (SR-004). Unresolved: the push allowlist rejects the required coding-standard file. The tested implementation was withdrawn before publication; no partial F2 change is included.
+- [ ] T104 [F3] Name the enabled-mode canonical permission-set field in `adrs/047-authzen-delegation-pip.md` and policy docs, and file an issue for compatibility-field removal. Unresolved: no issue-creation safe output is available; leave this item unchanged rather than apply its unchosen immediate-removal alternative.
+- [X] T105 [F4] Rename the ExtProc resolver port, define Delegation and Access Evaluation in `ARCHITECTURE.md`, and rename the permit/OPA owning-service member to `service_id` through OpenAPI, domain, typed consumer, policy fixtures, tests and docs; revise ADR 047 with supplied proposal provenance (FR-007/FR-014/FR-017).
+- [X] T106 [F5] Add nested field-set and exact denial-set conformance tests against OpenAPI in `tests/integration/delegation_contract_test.go`, keeping production APIs and ExtProc independence unchanged (SR-004).
+- [X] T107 [F6] Test and add `extproc.delegation_context.*` events for denial, unavailability and permit expiry in `internal/extproc/server/delegation.go` and its log tests (SR-004).
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

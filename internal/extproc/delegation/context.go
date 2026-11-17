@@ -26,7 +26,7 @@ type wireEntity struct {
 }
 
 type wireResource struct {
-	ID          *string         `json:"id"`
+	ServiceID   *string         `json:"service_id"`
 	CanonicalID json.RawMessage `json:"canonical_id"`
 	ResourceURI *string         `json:"resource_uri"`
 	Scopes      *[]*string      `json:"scopes"`
@@ -71,7 +71,7 @@ func parsePermitContext(raw json.RawMessage) (Context, error) {
 		return Context{}, errInvalidContext
 	}
 
-	resourceRef, ok := entity(wire.Resource.ID, wire.Resource.CanonicalID)
+	resourceRef, ok := entity(wire.Resource.ServiceID, wire.Resource.CanonicalID)
 	if !ok {
 		return Context{}, errInvalidContext
 	}
@@ -83,7 +83,7 @@ func parsePermitContext(raw json.RawMessage) (Context, error) {
 	if !ok {
 		return Context{}, errInvalidContext
 	}
-	result.Resource = Resource{ID: resourceRef.ID, CanonicalID: resourceRef.CanonicalID, ResourceURI: resourceURI,
+	result.Resource = Resource{ServiceID: resourceRef.ID, CanonicalID: resourceRef.CanonicalID, ResourceURI: resourceURI,
 		Scopes: resourceScopes}
 
 	grantID, ok := required(wire.Grant.ID)

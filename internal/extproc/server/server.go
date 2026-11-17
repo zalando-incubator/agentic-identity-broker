@@ -86,7 +86,7 @@ type Server struct {
 	authorizer   authorization.Authorizer
 	approvalGate ApprovalGate
 	// delegationResolver is nil unless delegation_context is enabled.
-	delegationResolver DelegationResolver
+	delegationResolver DelegationContextResolver
 	now                func() time.Time
 	logger             *slog.Logger
 	requestCounter     metric.Int64Counter

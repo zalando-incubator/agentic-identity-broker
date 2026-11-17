@@ -34,7 +34,7 @@ func (s staticAssertion) ClientAssertion() (string, error) { return s.value, s.e
 const permitContextJSON = `{
 	"subject": {"id": "alice@example.com"},
 	"agent": {"id": "550e8400-e29b-41d4-a716-446655440000", "canonical_id": "data-assistant", "extra": 1},
-	"resource": {"id": "880e8400-e29b-41d4-a716-446655440010", "canonical_id": "repo-api",
+	"resource": {"service_id": "880e8400-e29b-41d4-a716-446655440010", "canonical_id": "repo-api",
 		"resource_uri": "https://api.example.com/repos", "scopes": ["read:repo"]},
 	"grant": {"id": "990e8400-e29b-41d4-a716-446655440020", "updated_at": "2026-10-26T09:59:00Z", "valid_until": "2026-10-26T10:30:00Z"},
 	"permission_sets": [{"id": "770e8400-e29b-41d4-a716-446655440001", "canonical_id": "repo-reader",
@@ -105,7 +105,7 @@ func TestClient_PermitSendsExactRequestAndDecodesTypedContext(t *testing.T) {
 	assert.Equal(t, Context{
 		Principal: "alice@example.com",
 		Agent:     EntityRef{ID: "550e8400-e29b-41d4-a716-446655440000", CanonicalID: "data-assistant"},
-		Resource: Resource{ID: "880e8400-e29b-41d4-a716-446655440010", CanonicalID: "repo-api",
+		Resource: Resource{ServiceID: "880e8400-e29b-41d4-a716-446655440010", CanonicalID: "repo-api",
 			ResourceURI: "https://api.example.com/repos", Scopes: []string{"read:repo"}},
 		Grant: Grant{ID: "990e8400-e29b-41d4-a716-446655440020", UpdatedAt: "2026-10-26T09:59:00Z", ValidUntil: "2026-10-26T10:30:00Z"},
 		PermissionSets: []PermissionSet{{ID: "770e8400-e29b-41d4-a716-446655440001", CanonicalID: "repo-reader",
@@ -218,13 +218,13 @@ func TestClient_TypedContextValidation(t *testing.T) {
 		"null permission sets":           mutate("permission_sets", nil),
 		"empty permission set canonical": mutate("permission_sets.canonical_id", ""),
 		"missing services":               mutate("permission_sets.services", "<delete>"),
-		"empty service canonical": `{"subject":{"id":"a"},"agent":{"id":"x"},"resource":{"id":"r","resource_uri":"https://a","scopes":[]},
+		"empty service canonical": `{"subject":{"id":"a"},"agent":{"id":"x"},"resource":{"service_id":"r","resource_uri":"https://a","scopes":[]},
 			"grant":{"id":"g","updated_at":"2026-10-26T09:59:00Z"},"permission_sets":[{"id":"p","services":[{"id":"s","canonical_id":"","scopes":[]}]}]}`,
-		"null service scopes": `{"subject":{"id":"a"},"agent":{"id":"x"},"resource":{"id":"r","resource_uri":"https://a","scopes":[]},
+		"null service scopes": `{"subject":{"id":"a"},"agent":{"id":"x"},"resource":{"service_id":"r","resource_uri":"https://a","scopes":[]},
 			"grant":{"id":"g","updated_at":"2026-10-26T09:59:00Z"},"permission_sets":[{"id":"p","services":[{"id":"s","scopes":null}]}]}`,
 		"context not object": `"permit"`,
 	}
-	for _, path := range []string{"subject.id", "agent.id", "resource.id", "resource.resource_uri", "grant.id", "grant.updated_at", "permission_sets.id", "permission_sets.services.id"} {
+	for _, path := range []string{"subject.id", "agent.id", "resource.service_id", "resource.resource_uri", "grant.id", "grant.updated_at", "permission_sets.id", "permission_sets.services.id"} {
 		for _, value := range []any{"<delete>", nil, 42, ""} {
 			invalid[path+"/"+fmt.Sprint(value)] = mutate(path, value)
 		}
@@ -247,7 +247,7 @@ func TestClient_TypedContextValidation(t *testing.T) {
 
 	t.Run("absent optional members and empty arrays are accepted", func(t *testing.T) {
 		t.Parallel()
-		minimal := `{"subject":{"id":"a"},"agent":{"id":"x"},"resource":{"id":"r","resource_uri":"https://a","scopes":[]},
+		minimal := `{"subject":{"id":"a"},"agent":{"id":"x"},"resource":{"service_id":"r","resource_uri":"https://a","scopes":[]},
 			"grant":{"id":"g","updated_at":"2026-10-26T09:59:00Z"},"permission_sets":[{"id":"p","services":[]}]}`
 		broker := &brokerStub{status: http.StatusOK, cacheControl: []string{"max-age=30"}, body: `{"decision":true,"context":` + minimal + `}`}
 		result, err := newTestClient(t, broker.server(t), time.Minute).Evaluate(context.Background(), testSubject, testResource)

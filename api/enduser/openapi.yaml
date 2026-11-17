@@ -2830,7 +2830,7 @@ paths:
                         id: 550e8400-e29b-41d4-a716-446655440000
                         canonical_id: data-assistant
                       resource:
-                        id: 880e8400-e29b-41d4-a716-446655440010
+                        service_id: 880e8400-e29b-41d4-a716-446655440010
                         canonical_id: repo-api
                         resource_uri: https://api.example.com/repos
                         scopes: ["read:repo"]
@@ -2855,7 +2855,7 @@ paths:
                       agent:
                         id: 550e8400-e29b-41d4-a716-446655440000
                       resource:
-                        id: 880e8400-e29b-41d4-a716-446655440010
+                        service_id: 880e8400-e29b-41d4-a716-446655440010
                         resource_uri: https://api.example.com/repos
                         scopes: ["read:repo"]
                       grant:
@@ -3152,9 +3152,9 @@ components:
           $ref: "#/components/schemas/DelegationEntityRef"
         resource:
           type: object
-          required: [id, resource_uri, scopes]
+          required: [service_id, resource_uri, scopes]
           properties:
-            id:
+            service_id:
               type: string
               format: uuid
               description: Resolved service UUID

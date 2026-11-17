@@ -25,6 +25,6 @@ result := {"action": "deny", "reasons": ["unexpected delegation wrapper"]} if {
 	some ps in c.permission_sets
 	ps.canonical_id == "repo-reader"
 	some svc in ps.services
-	svc.id == c.resource.id
+	svc.id == c.resource.service_id
 	count(c.granted_permission_sets[ps.id]) > 0
 }

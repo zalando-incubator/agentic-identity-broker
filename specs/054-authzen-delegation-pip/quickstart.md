@@ -714,3 +714,50 @@ claim the source wording was repaired. The remaining LOW wording inconsistency i
 not used to gate independently completed implementation or to conceal the original deviation.
 A later authorized design-phase edit can reconcile that summary without changing any
 approved requirement, runtime behavior or validation obligation.
+
+## 13. Approved review remediation (run 42177932182/1)
+
+The 2026-11-06 proposal selection by `mjungsbluth` at `2026-11-06T06:59:39Z` covers
+F2–F6: <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407>.
+This run applies only F4/F5/F6. Publication rejected F2's required
+`coding-standards/OPENTELEMETRY.md` registry change as outside allowed paths. Its tested
+implementation was withdrawn before publication rather than publish an unregistered namespace
+or bypass the allowlist. F3 remains unchanged because filing its required follow-up issue is
+unavailable: the workflow has no issue-creation safe output. T103/T104 record the remaining
+work; no immediate-removal alternative or unassigned F1 decision is implemented. This is a
+partly resolved review, not a claim that all findings are closed.
+
+### New test-first evidence
+
+Before production changes, the focused Go test run compiled and failed semantically:
+`TestAuthZENEvaluation_AuditRecords` and `TestAuthZENEvaluation_SpansExcludeCredentialsAndContext`
+expected the new `tokenexchange` identifiers; `TestDelegationLogs_ContainOnlyBoundedMetadata`
+and `TestDelegationExpiredLog` expected security events absent from existing records;
+`TestContextInput_SerializesDelegationMembersOnlyWhenPresent` and
+`TestAccessEvaluation_PermitProjectsCredentialFreeContext` expected `service_id` rather
+than `id`. F4/F6's assertions now pass. F2's implementation and test edits were restored to
+the supplied head after the push rejection; their initial red/green evidence is retained
+here only as publication-attempt history, not as evidence of a published F2 resolution.
+
+After the approved OpenAPI-first service-member revision, the new
+`TestDelegationContractConformance` compiled and failed against both producer and wire
+context declarations on `.resource.id` versus `.resource.service_id`. It now passes and
+compares all nested context fields plus the exact domain and ExtProc denial allowlists
+against OpenAPI. No test-only production API or cross-process production import was added.
+
+### Passing checks
+
+- `just check` — format, vet and lint, zero issues.
+- `just test` — fast Go/package suites with race detection.
+- `just extproc-test` — ExtProc and command suites with race detection.
+- `just test-integration` — self-contained integration, including contract conformance.
+- `just test-e2e-backend` — 985 passed, 12 excluded; includes 28 broker and 11 consumer
+  feature journeys (US2.19 is container-only).
+- `ginkgo -v --procs=2 --skip=Agentgateway ./tests/e2e/extproc/` — 102 passed, 17
+  container scenarios excluded; includes all four feature startup journeys.
+
+Thus all 43 non-container acceptance scenarios pass. US2.19, `just test-e2e-docker`,
+`just test-integration-infra`, and Agentgateway-backed ExtProc scenarios are deferred to
+container tests on the pushed commit, not validated locally. No frontend behavior changed.
+Optional before/after implementation commit hooks were skipped; no mandatory hook applies.
+The tracked legacy `.specify/feature.json` is restored before publication and not committed.

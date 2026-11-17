@@ -63,7 +63,7 @@ func permitDecision() tokenexchange.DelegationDecision {
 		Context: &tokenexchange.DelegationContext{
 			Subject:        tokenexchange.DelegationSubject{ID: "alice@example.com"},
 			Agent:          tokenexchange.DelegationEntityRef{ID: "550e8400-e29b-41d4-a716-446655440000"},
-			Resource:       tokenexchange.DelegationResource{ID: "880e8400-e29b-41d4-a716-446655440010", ResourceURI: "https://api.example.com/repos", Scopes: []string{}},
+			Resource:       tokenexchange.DelegationResource{ServiceID: "880e8400-e29b-41d4-a716-446655440010", ResourceURI: "https://api.example.com/repos", Scopes: []string{}},
 			Grant:          tokenexchange.DelegationGrant{ID: "990e8400-e29b-41d4-a716-446655440020", UpdatedAt: "2026-10-26T09:59:00Z"},
 			PermissionSets: []tokenexchange.DelegationPermissionSet{{ID: "770e8400-e29b-41d4-a716-446655440001", Services: []tokenexchange.DelegationService{}}},
 		},

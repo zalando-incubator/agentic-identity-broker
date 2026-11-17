@@ -437,14 +437,14 @@ func TestContextInput_SerializesDelegationMembersOnlyWhenPresent(t *testing.T) {
 		GrantedPermissionSets:          map[string][]string{"ps": {}},
 		Principal:                      "alice@example.com",
 		Agent:                          &authorization.AgentContext{ID: "a"},
-		Resource:                       &authorization.ResourceContext{ID: "r", ResourceURI: "https://api.example.com", Scopes: []string{}},
+		Resource:                       &authorization.ResourceContext{ServiceID: "r", ResourceURI: "https://api.example.com", Scopes: []string{}},
 		Grant:                          &authorization.GrantContext{ID: "g", UpdatedAt: "2026-10-26T09:59:00Z"},
 		PermissionSets:                 []authorization.PermissionSetContext{{ID: "ps", Services: []authorization.ServiceContext{}}},
 	})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"granted_permission_sets_available":true,"granted_permission_sets":{"ps":[]},
 		"principal":"alice@example.com","agent":{"id":"a"},
-		"resource":{"id":"r","resource_uri":"https://api.example.com","scopes":[]},
+		"resource":{"service_id":"r","resource_uri":"https://api.example.com","scopes":[]},
 		"grant":{"id":"g","updated_at":"2026-10-26T09:59:00Z"},
 		"permission_sets":[{"id":"ps","services":[]}]}`, string(enabled))
 	assert.NotContains(t, string(enabled), "null")

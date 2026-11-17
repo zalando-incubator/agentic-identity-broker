@@ -981,7 +981,7 @@ This can exceed reported expiry. The fresh-cache margin does not guarantee valid
 
 **Long-Poll Syncer**: One background ExtProc goroutine that receives broker approval snapshots. It uses ETags, replaces returned pair state, and retries with bounded backoff.
 
-**Delegation Resolver** (Port, [ADR 045](adrs/045-authzen-delegation-pip.md)): The fourth ExtProc port, implemented in `internal/extproc/delegation` without broker imports. When `delegation_context.enabled`, startup discovers the broker's AuthZEN metadata from the expected PDP identifier and verifies it exactly. The resolver calls `POST /access/v1/evaluation` with the client assertion and caches only permits, per `(subjectToken, resourceURI)` struct key, until `requestStart + min(max-age, max_staleness)`. That deadline is computed once and is never extended by hits or singleflight. Denials and errors are never cached, and the ADR 012 token-cache stale fallback never applies. The permit cache is independent of the token cache.
+**Delegation Context Resolver** (Port, [ADR 047](adrs/047-authzen-delegation-pip.md)): The fourth ExtProc port, implemented in `internal/extproc/delegation` without broker imports. When `delegation_context.enabled`, startup discovers the broker's AuthZEN metadata from the expected PDP identifier and verifies it exactly. The resolver calls `POST /access/v1/evaluation` with the client assertion and caches only permits, per `(subjectToken, resourceURI)` struct key, until `requestStart + min(max-age, max_staleness)`. That deadline is computed once and is never extended by hits or singleflight. Denials and errors are never cached, and the ADR 012 token-cache stale fallback never applies. The permit cache is independent of the token cache.
 
 **Four policy gates on one request chain**:
 
@@ -1605,9 +1605,13 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **TokenExchangeResponse**: RFC 8693 compliant response containing access_token, token_type, issued_token_type, and optional expires_in. Returned as JSON from successful token exchange. Format enables clients to use the exchanged token with third-party services.
 
+**Delegation**: The read-only, authorized resolution of a verified principal's UserGrant to an Agent for a normalized protected-resource URI: the agent, owning service, active grant, permission-set definitions and effective scopes. `tokenexchange.DelegationResolver` enforces the shared exchange and evaluation invariants; a Delegation is not a new persisted entity or a provider session.
+
+**Access Evaluation**: The AuthZEN operation that authenticates and authorizes a gateway caller, resolves a Delegation and returns a Delegation Decision. It issues no token, accesses no provider session and does not replace ExtProc's tool-call authorization.
+
 **Delegation Decision**: The outcome of an AuthZEN Access Evaluation: a permit carrying a Delegation Context and a bounded freshness (`max-age` ≤ 60 s and ≤ the grant expiry), a consent denial carrying one of nine grant details and the consent URL, or a request failure (400/401/403/500) that is never a decision.
 
-**Delegation Context**: The credential-free projection of an authorized delegation: verified principal, agent, resolved resource with effective scopes, grant version and expiry, and granted permission sets with grant-included services. Optional canonical IDs and the grant expiry are omitted when unset, never null.
+**Delegation Context**: The credential-free projection of an authorized delegation: verified principal, agent, resolved resource (`service_id` is the owning service UUID, `resource_uri` is the protected-resource identity) with effective scopes, grant version and expiry, and granted permission sets with grant-included services. Optional canonical IDs and the grant expiry are omitted when unset, never null.
 
 **Policy Decision Point (PDP) identifier**: The AuthZEN `policy_decision_point`, the broker's `server.enduser.public_url` without a trailing slash. A consumer compares it exactly with its expected value before sending credentials.
 

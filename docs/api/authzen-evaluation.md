@@ -72,7 +72,7 @@ X-Request-ID: delegation-001
 {"decision":true,"context":{
   "subject":{"id":"alice@example.com"},
   "agent":{"id":"550e8400-e29b-41d4-a716-446655440000","canonical_id":"data-assistant"},
-  "resource":{"id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"repo-api",
+  "resource":{"service_id":"880e8400-e29b-41d4-a716-446655440010","canonical_id":"repo-api",
               "resource_uri":"https://api.example.com/repos","scopes":["read:repo"]},
   "grant":{"id":"990e8400-e29b-41d4-a716-446655440020",
            "updated_at":"2026-10-26T09:59:00Z","valid_until":"2026-10-26T10:00:15Z"},
@@ -81,6 +81,9 @@ X-Request-ID: delegation-001
                  "scopes":["read:repo"]}]}]}}
 ```
 
+- `resource.service_id` is the resolved owning service UUID; `resource.resource_uri` is the
+  normalized protected-resource identity. This differs deliberately from the AuthZEN request's
+  `resource.id`, which is a URI. The same `service_id` name is used in enabled OPA input.
 - `resource.scopes` is the effective scope set after the agent's scope ceiling.
   `permission_sets[].services[].scopes` are each permission set's raw contributions for
   grant-included services, `[]` when it defines none.
@@ -116,6 +119,13 @@ Errors are never decisions. Every error is `Cache-Control: no-store` and uses th
 | 401 | `unauthorized` | Missing, invalid or expired client assertion; `WWW-Authenticate: Bearer`, with `error="invalid_token"` for an invalid credential |
 | 403 | `forbidden` | The token-exchange caller policy rejects the gateway or resource |
 | 500 | `server_error` | Configuration or dependency failure, such as a grant-repository outage |
+
+### Unreleased contract migration (PR #292)
+
+The approved vocabulary correction renames the permit's service UUID from `resource.id`
+to `resource.service_id`, including in enabled OPA input. Update clients, fixtures and Rego
+joins such as `svc.id == input.context.resource.service_id` together. The request URI stays
+in `resource.id`; permission-set service entries retain `id`. No legacy permit alias is emitted.
 
 ## ExtProc consumer
 

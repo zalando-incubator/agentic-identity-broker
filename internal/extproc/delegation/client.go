@@ -80,7 +80,7 @@ type EntityRef struct {
 }
 
 type Resource struct {
-	ID          string
+	ServiceID   string
 	CanonicalID string
 	ResourceURI string
 	Scopes      []string

@@ -187,7 +187,7 @@ func TestAccessEvaluation_PermitProjectsCredentialFreeContext(t *testing.T) {
 	expected := `{
 		"subject": {"id": "alice@example.com"},
 		"agent": {"id": "` + f.agent.ID.String() + `", "canonical_id": "data-assistant"},
-		"resource": {"id": "` + f.service.ID.String() + `", "canonical_id": "repo-api",
+		"resource": {"service_id": "` + f.service.ID.String() + `", "canonical_id": "repo-api",
 			"resource_uri": "https://api.example.com/repos", "scopes": ["read:repo"]},
 		"grant": {"id": "` + f.grant.ID.String() + `", "updated_at": "` + f.grant.UpdatedAt.UTC().Format(time.RFC3339) + `"},
 		"permission_sets": [

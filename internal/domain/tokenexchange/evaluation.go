@@ -50,7 +50,7 @@ type DelegationEntityRef struct {
 }
 
 type DelegationResource struct {
-	ID          string   `json:"id"`
+	ServiceID   string   `json:"service_id"`
 	CanonicalID string   `json:"canonical_id,omitempty"`
 	ResourceURI string   `json:"resource_uri"`
 	Scopes      []string `json:"scopes"`
@@ -289,7 +289,7 @@ func (s *AccessEvaluationService) project(ctx context.Context, d *Delegation) (*
 		Subject: DelegationSubject{ID: d.Principal},
 		Agent:   DelegationEntityRef{ID: d.Agent.ID.String(), CanonicalID: deref(d.Agent.CanonicalID)},
 		Resource: DelegationResource{
-			ID:          d.Service.ID.String(),
+			ServiceID:   d.Service.ID.String(),
 			CanonicalID: deref(d.Service.CanonicalID),
 			ResourceURI: d.ResourceURI,
 			Scopes:      sortedCopy(d.EffectiveScopes),
