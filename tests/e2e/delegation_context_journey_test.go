@@ -26,6 +26,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	extprochelpers "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 // delegationJourney runs the real broker and the production ExtProc composition with
@@ -193,6 +194,47 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 		Expect(bodyResp).To(extprochelpers.BeForwardedRequestBody(), "the canonical policy allows only with the direct members and permit-derived permission sets")
 		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(HavePrefix("Bearer "))
 		Expect(j.broker.EvaluationCount()).To(Equal(1))
+
+		By("creating and approving a pending tool call owned by the matching exchange identity")
+		matching := newDelegationJourneyConfigured("approval_journey.rego", time.Minute, true, func(_ *authzenFixture, options *bootstrap.ExtProcOptions) {
+			options.DisableToolApprovals = false
+		})
+		exchangeStatus, exchange := matching.broker.Exchange(authzenRepoResource)
+		Expect(exchangeStatus).To(Equal(http.StatusOK))
+		Expect(exchange["principal"]).To(Equal(matching.broker.Principal.String()))
+		Expect(exchange["agent_id"]).To(Equal(matching.broker.Agent.ID.String()))
+		toolBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}`)
+		headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), matching.client,
+			matching.request(http.MethodPost, false, authzenRepoResource, nil), toolBody)
+		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(Equal("Bearer " + exchange["access_token"].(string)))
+		approvalURL := approvalJourneyElicitationURL(bodyResp)
+		Expect(bodyResp).NotTo(extprochelpers.BeForwardedRequestBody())
+		pendingSync := approvalJourneySync(matching.broker.Enduser, matching.broker.ClientAssertion)
+		Expect(pendingSync.Data.Pairs).To(HaveLen(1))
+		pair := pendingSync.Data.Pairs[0]
+		Expect(pair.Principal).To(Equal(exchange["principal"]))
+		Expect(pair.AgentID).To(Equal(exchange["agent_id"]))
+		Expect(pair.Approvals).To(HaveLen(1))
+		pending := pair.Approvals[0]
+		Expect(pending.Status).To(Equal("pending"))
+		detail := approvalJourneyDetail(matching.broker.Enduser, pending.ID, pair.Principal)
+		Expect(detail.Data.ApprovalURL).To(Equal(approvalURL))
+		response, err := postJSON(matching.broker.Enduser, "/api/approvals/"+pending.ID+"/approve",
+			pair.Principal, helpers.ApproveRequest{Persistence: "once"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(response.StatusCode).To(Equal(http.StatusOK))
+		approved := decodeJSON[helpers.ApproveResponse](response)
+		Expect(approved.Data.Persistence).To(Equal("once"))
+
+		By("forwarding the retry only after the approval is synchronized and consumed")
+		Eventually(func() *extprocv3.ProcessingResponse {
+			headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), matching.client,
+				matching.request(http.MethodPost, false, authzenRepoResource, nil), toolBody)
+			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(Equal("Bearer " + exchange["access_token"].(string)))
+			return bodyResp
+		}, 5*time.Second, 50*time.Millisecond).Should(extprochelpers.BeForwardedRequestBody())
+		detail = approvalJourneyDetail(matching.broker.Enduser, pending.ID, pair.Principal)
+		Expect(detail.Data.Consumed).To(BeTrue())
 
 		By("rejecting an exchange identity that differs from the permit before approval or forwarding")
 		var exchangeCalls atomic.Int32

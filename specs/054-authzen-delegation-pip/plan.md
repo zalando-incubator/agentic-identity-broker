@@ -36,13 +36,21 @@ is a later, separately approved 2.0.0 contract change.
 
 In enabled mode the permit governs result-handle reuse, not provider-token capability or exchange provenance (Proposed ADR-2 and D-8; research R19). Binding compares permit principal/agent UUID, scope sets and grant-update instants. Exchange response identities must match the permit; mismatch or absence returns terminal API-7 503 without an identity-repair retry. Approval identity remains exchange-derived under ADR 036. Opaque entry identities preserve same-token replacements; a synchronized binding cell shared with followers permits one atomic first claim, never rebinding. A mismatched additional-exchange delivery fails closed with Proposed API-7 503.
 
+## Clarifications — apply-review 2026-11-13
+
+Reason: [F1/P1–F3/P3 proposal approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6805417890) at `2026-11-13T08:20:44Z`.
+
+- F1/P1: use existing [issue #462](https://github.com/zalando-incubator/agentic-identity-broker/issues/462) for the deferred exchange grant-version/effective-scope redesign and consistency contract; replace issue-title searches in ADR 048 §10, FR-020 and T132. Keep the current exchange contract and provenance limitation unchanged.
+- F2/P2: extend the existing US3.1 `It()` with a no-proxy matching-identity approval journey: observe the real exchange response, require a pending approval, sync and compare its principal/agent pair with that response, approve as the owner, then retry until forwarding and verify one-time consumption. Retain the terminal mismatch variant and 1:1 scenario mapping.
+- F3/P3: align the root AGENTS.md ExchangeResultBinding and PermitResolver glossary entries with ARCHITECTURE.md §12 and ADR 036. No production behavior changes.
+
 ## Clarifications — apply-review 2026-11-11
 
 Reason: [F1/P1–F4/P4 proposal approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783) at `2026-11-11T18:57:51Z`.
 
 - F1/P1: include principal/agent UUID in `ExchangeResultBinding` equality and check the exchange response against the permit before handle claim. Identity mismatch/absence returns terminal API-7 503; scope/grant changes retain the bounded retry. Remove the permit override from approval state, preserving ADR 036 authority and session extraction. Test each missing/different field on both paths using the production exchanger; US3.1 expects 503, no mutation/body or approval creation. This supersedes the historical 2026-11-09 override below.
 - F2/P2: restore merged ADR 028's original Accepted Status, moving the ADR 048 partial-supersession note into a banner after the header. Revise same-PR ADR 048 §§9.1/10 with the supplied approval, not ADR 036.
-- F3/P3: open [Follow-ups for #292](https://github.com/zalando-incubator/agentic-identity-broker/issues?q=is%3Aissue%20in%3Atitle%20%22Follow-ups%20for%20%23292%22) for the deferred `/oauth2/token` grant-version/effective-scope redesign and its consistency contract; link ADR 048 §10 and FR-020. Do not implement the future API or infer its guarantees here.
+- F3/P3: track the redesign in [Issue #462](https://github.com/zalando-incubator/agentic-identity-broker/issues/462) for the deferred `/oauth2/token` grant-version/effective-scope redesign and its consistency contract; link ADR 048 §10 and FR-020. Do not implement the future API or infer its guarantees here.
 - F4/P4: rename `token_binding*.go` to `exchange_result_binding*.go` and update the two diagnostic messages; keep the API-7 error text and telemetry keys.
 
 ## Clarifications — apply-review 2026-11-09

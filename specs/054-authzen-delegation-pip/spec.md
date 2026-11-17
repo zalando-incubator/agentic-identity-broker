@@ -10,13 +10,21 @@
 
 ## Clarifications
 
+### Apply-review 2026-11-13
+
+Reason: [F1/P1–F3/P3 proposal approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6805417890) at `2026-11-13T08:20:44Z`.
+
+- F1/P1: the deferred `/oauth2/token` grant-version/effective-scope redesign and consistency contract are tracked by existing [issue #462](https://github.com/zalando-incubator/agentic-identity-broker/issues/462), linked from FR-020 and ADR 048 §10. No exchange redesign is authorized in this PR.
+- F2/P2: US3.1 includes the matching-identity tool-call → pending approval → sync → user approval → forwarded retry journey without an identity-rewriting proxy, in addition to the mismatch rejection variant. Approval ownership is checked against the exchange response under ADR 036.
+- F3/P3: the shared glossary follows ARCHITECTURE.md §12: ExchangeResultBinding includes principal and agent UUID; the permit principal informs OPA and is checked against, not substituted for, exchange-derived approval identity. No runtime contract changes.
+
 ### Apply-review 2026-11-11
 
 Reason: [F1/P1–F4/P4 proposal approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6751402783) at `2026-11-11T18:57:51Z`.
 
 - F1/P1: enabled-mode result reuse MUST compare exchange `principal`/`agent_id` with the permit identities as well as scope sets and grant-update instants. An identity mismatch or absent exchange identity MUST return terminal API-7 503 before approval or forwarding, without an identity-repair retry. Approval identity remains exchange-derived under ADR 036. This replaces the 2026-11-09 permit override; US3.1, Journey 4 and FR-020 reflect the correction.
 - F2/P2: restore ADR 028's original Accepted Status and move the existing ADR 048 partial-supersession note below the header as a banner. Its original approval is not reattributed.
-- F3/P3: track the deferred `/oauth2/token` grant-version/effective-scope redesign in [Follow-ups for #292](https://github.com/zalando-incubator/agentic-identity-broker/issues?q=is%3Aissue%20in%3Atitle%20%22Follow-ups%20for%20%23292%22), also linked from FR-020 and ADR 048 §10. No redesign is implemented here.
+- F3/P3: track the deferred `/oauth2/token` grant-version/effective-scope redesign in [Issue #462](https://github.com/zalando-incubator/agentic-identity-broker/issues/462), also linked from FR-020 and ADR 048 §10. No redesign is implemented here.
 - F4/P4: finish ExchangeResultBinding vocabulary in file names and log messages. Retain the API-7 response text and telemetry identifiers.
 
 The earlier apply-review entries below are historical where superseded by this clarification.
@@ -586,6 +594,20 @@ and does not retry to repair identity. US3.1 exercises this through the real bro
 production ExtProc. When both identities match and OPA requires approval, the gate still uses
 the exchange response under ADR 036. Session IDs and disabled-mode identity are unchanged.
 
+**Step 3b — Matching identities complete the approval journey (US3.1)**
+
+With no identity-rewriting proxy, the broker exchange response identifies Alice and the
+Data Assistant UUID, matching the permit. Alice's `create_issue` tool call reaches OPA,
+which requires approval. ExtProc returns an MCP URL elicitation instead of forwarding the
+body and creates a pending approval. The gateway's client-assertion-authenticated
+`GET /api/approvals` sync returns one pair with `principal: alice@example.com` and
+`agent_id: 550e8400-e29b-41d4-a716-446655440000`, equal to the exchange response identities.
+Alice opens the returned approval URL and posts `{"persistence":"once"}` to
+`/api/approvals/{id}/approve`, receiving HTTP 200. Once synchronization delivers the
+approved record, her repeated tool call consumes it and forwards the exchanged credential.
+Approval detail then reports `consumed: true`. The gate does not replace the exchange
+identity with the permit identity.
+
 **Step 4 — The same subject makes a header-only request**
 
 ExtProc resolves the same pair (or uses its still-fresh permit), supplies the same direct context members and permit-derived `granted_permission_sets` with `granted_permission_sets_available: true` to policy, then exchanges only if policy allows. If policy denies, exchange is not called. A resolver denial instead returns 403 `access_denied` with the consent URL before policy; a resolution failure returns 503 and never falls through as `granted_permission_sets_available: false`. An expired permit never becomes stale policy input. A successful resolution with a failed exchange also cannot forward a request.
@@ -696,7 +718,7 @@ The first-claim serialization guarantees compatible handle reuse, not matching b
   Unset optional `canonical_id` (including nested service entries) and `valid_until` fields MUST be omitted, never null. ExtProc MUST NOT copy the permit verbatim, expose unknown permit fields to policies, or add a `delegation` wrapper or `delegation_available` flag. `granted_permission_sets` and `granted_permission_sets_available` MUST remain in OPA input in this increment, independently of FR-019's exchange-response deprecation. On both enabled paths, `granted_permission_sets` MUST be derived from permit permission-set IDs and included service IDs, not token-exchange extensions, and `granted_permission_sets_available: true` MUST guarantee that all five new members are present, subject to nested optional-field omissions. A resolution failure MUST return 503 before policy, never fall through with availability `false`. Existing `agent_session_id` behavior MUST remain unchanged.
 - **FR-018**: ExtProc MUST default `delegation_context.enabled` to false, require `authorization.enabled` when true, and preserve existing disabled-mode behavior byte-for-byte without discovery or evaluation calls, omitting the new `principal`, `agent`, `resource`, `grant`, and `permission_sets` members. Policy fixtures affected by enabled-mode acceptance MUST use `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id` rather than fixed deployment UUIDs.
 - **FR-019**: The broker-only increment MUST be additive. `granted_permission_sets` on exchange responses MUST be deprecated when the resolver ships and removed one release later under a confirmed contract change; `principal` and `agent_id` MUST stay. The new endpoint MUST not cause immediate removal or an unrelated change to impersonation or other token grants.
-- **FR-020**: With delegation context enabled, the permit MUST govern token-result reuse: forward only a result handle whose exchange principal and agent UUID match the permit and whose binding matches both identities, the permit resource scope set and grant-update instant. An identity mismatch or absent exchange identity MUST return terminal API-7 503 without approval lookup/creation, forwarding or an identity-repair retry; approval identity remains exchange-derived under ADR 036. Binding records first permit use, NOT the grant read by broker exchange. Each new result MUST have a distinct entry identity shared by all followers; first binding MUST be atomic and irreversible. On mismatch preserve concurrent replacements (even identical credentials with new identities), use a compatible replacement or exchange at most once more, and revalidate the delivered handle. A remaining mismatch MUST return API-7 503 `service_unavailable` / `delegation token binding unavailable`, with no rebind, loop, forwarding or removed/mismatched stale fallback. Existing exchange errors retain their handling. Permit expiry before final forwarding MUST return existing delegation-unavailable 503. Unchanged broader provider tokens and unbound/concurrent first use remain possible: this guarantees compatible reuse, NOT provider downscoping or exchange provenance (Proposed D-8). Stronger guarantees need separately approved scope; [Follow-ups for #292](https://github.com/zalando-incubator/agentic-identity-broker/issues?q=is%3Aissue%20in%3Atitle%20%22Follow-ups%20for%20%23292%22) tracks the selected exchange grant-version/effective-scope redesign and consistency contract (approved F3/P3 on the 2026-11-11 proposal). Disabled mode and D-5 cooldown are unchanged.
+- **FR-020**: With delegation context enabled, the permit MUST govern token-result reuse: forward only a result handle whose exchange principal and agent UUID match the permit and whose binding matches both identities, the permit resource scope set and grant-update instant. An identity mismatch or absent exchange identity MUST return terminal API-7 503 without approval lookup/creation, forwarding or an identity-repair retry; approval identity remains exchange-derived under ADR 036. Binding records first permit use, NOT the grant read by broker exchange. Each new result MUST have a distinct entry identity shared by all followers; first binding MUST be atomic and irreversible. On mismatch preserve concurrent replacements (even identical credentials with new identities), use a compatible replacement or exchange at most once more, and revalidate the delivered handle. A remaining mismatch MUST return API-7 503 `service_unavailable` / `delegation token binding unavailable`, with no rebind, loop, forwarding or removed/mismatched stale fallback. Existing exchange errors retain their handling. Permit expiry before final forwarding MUST return existing delegation-unavailable 503. Unchanged broader provider tokens and unbound/concurrent first use remain possible: this guarantees compatible reuse, NOT provider downscoping or exchange provenance (Proposed D-8). Stronger guarantees need separately approved scope; [Issue #462](https://github.com/zalando-incubator/agentic-identity-broker/issues/462) tracks the selected exchange grant-version/effective-scope redesign and consistency contract (approved F3/P3 on the 2026-11-11 proposal). Disabled mode and D-5 cooldown are unchanged.
 
 ### Domain Model *(document before API or database design)*
 
