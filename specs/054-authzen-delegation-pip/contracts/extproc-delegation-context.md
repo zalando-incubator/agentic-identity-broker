@@ -17,6 +17,9 @@ It covers API-4–API-6 and the thirteen-item decision set, including D-5's unch
 exchange cooldown below. The Proposed wording in §3 is retained as decision history, not an
 outstanding sign-off request. Quickstart §11 records the approval and validation separately.
 
+**Proposed revision (2026-11-06, approval item ADR-2)**: §3.1 records the maintainer's F1
+direction that the permit is authoritative for upstream scopes. No approval above covers §3.1.
+
 ## 1. Configuration
 
 ```yaml
@@ -96,16 +99,16 @@ transit accounting. The maintainer chose to accept the remaining skew.
 | Resolution error (either path) | `503`, `{"error":"service_unavailable","error_description":"delegation context unavailable"}` |
 | Permit deadline passed before a policy evaluation (header-only policy, body policy, or any batch decision) | The same `503`. Policy is not evaluated, nothing is forwarded, and ExtProc does not re-resolve (HIGH U2). |
 | Body path: permit and exchange error | Existing exchange-error handling (`exchangeErrorResponse`) |
-| Body path: permit and exchange success | Buffer the body. Policy sees the context, then the existing allow, deny, or approval flow runs. |
+| Body path: permit and exchange success | Apply the token binding (§3.1). Buffer the body. Policy sees the context, then the existing allow, deny, or approval flow runs. |
 | Header-only: permit and policy deny | Existing 403 policy denial. **No exchange call.** |
-| Header-only: permit and policy allow | Exchange, then the existing exchange success or error handling |
+| Header-only: permit and policy allow | Exchange under the permit's token binding (§3.1), then the existing exchange success or error handling |
 
 **Precedence on the body path** (both calls complete first):
 
 1. Delegation denial
 2. Resolution error
 3. Exchange error
-4. Proceed
+4. Token binding (§3.1), then proceed
 
 Immediately before every OPA evaluation that receives delegation input, ExtProc checks
 `now < Deadline`. A permit that expires while ExtProc waits for the concurrent exchange,
@@ -120,6 +123,33 @@ not a delegation negative cache. Rationale: preserve the existing exchange cache
 bounding delegation freshness independently. Alternative: bypass the exchange cooldown in
 enabled mode, which changes ADR 012 semantics. Sign-off is D-5 in the plan; prior contract
 approval does not automatically cover this consequence.
+
+### 3.1 Permit-bound exchanged tokens (Proposed, [ADR 048 revision draft](../adr-048-revision-permit-bound-tokens.md))
+
+In enabled mode the permit is authoritative for the scopes under which a token goes upstream.
+An exchanged token from the ADR 012 cache carries a **token binding**: the set of
+`resource.scopes` and the instant of `grant.updated_at` from the permit that it was exchanged
+or first used under.
+
+| Situation (after the precedence above) | Behavior |
+|---|---|
+| The token was exchanged by this request | Bind it to this request's permit and forward it. |
+| Cached token with no binding yet | Bind it to this request's permit and forward it. |
+| Cached token whose binding equals the permit's scopes (as a set) and `grant.updated_at` (as an instant) | Forward it. No broker call. |
+| Cached token whose scopes or `grant.updated_at` differ | Do **not** forward it. Remove the entry only if it still holds that token, exchange again once, bind the new token to this permit, and forward the new token. |
+| The re-exchange fails | Existing exchange-error handling (`exchangeErrorResponse`). The removed token is never a stale-on-error fallback. Nothing is forwarded. |
+| A re-consent cooldown entry (no token) | Unchanged D-5 behavior. A cooldown entry has no binding. |
+
+- Body path: the comparison runs after both concurrent calls complete, before the body is
+  buffered for policy. The Authorization mutation carries the forwarded token.
+- Header-only path: the exchange after a policy allow uses the binding of the permit that
+  policy evaluated.
+- Each request exchanges again at most once. Disabled mode is unchanged.
+- The forwarded token is the broker's exchange result, which is the provider session's current
+  token. Upstream receives narrowed provider scopes only when that session carries them; the
+  broker does not narrow provider tokens (limitation in the ADR 048 revision draft).
+- A re-exchange caused by a binding mismatch writes a Debug record with
+  `delegation_binding=mismatch`. It holds no token, scope, or principal.
 
 Metadata validation (ADR 036), protocol checks, transport checks, the body-size limit, the
 approval gate, and policy fail-closed behavior are unchanged and still apply.

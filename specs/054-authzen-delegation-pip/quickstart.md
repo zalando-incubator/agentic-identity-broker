@@ -91,8 +91,9 @@ Spot-check these observable outcomes against spec Journeys 1–3:
 ginkgo -v --label-filter="delegation-context" ./tests/e2e/
 ```
 
-**Expected**: 11 specs pass (US3.1–US3.10 and US4.5). They run the production ExtProc
-composition against the real broker test server. Confirm these outcomes:
+**Expected**: 12 specs pass (US3.1–US3.11 and US4.5). They run the production ExtProc
+composition against the real broker test server. US3.11 is pending implementation under
+Proposed ADR-2; until then 11 specs exist. Confirm these outcomes:
 
 - The body path forwards only after both exchange and resolution succeed.
 - The header-only path never calls exchange when policy denies.
@@ -107,14 +108,25 @@ composition against the real broker test server. Confirm these outcomes:
   `input.context.resource`, and `input.context.permission_sets`, and
   `granted_permission_sets_available` is `true`. Neither `input.context.delegation` nor
   `delegation_available` is present (contract §4).
+- US3.11 (Journey 5, ADR-2): narrow Alice's grant from a two-scope to a one-scope permission
+  set and replace her provider session with a one-scope token. After the permit deadline
+  (`max_staleness: 2s`, bounded `Eventually`), the body and header-only paths forward the
+  one-scope session's token, not the cached two-scope token; the broker exchange count rises by
+  one per path; policy sees the narrowed `resource.scopes`. A re-exchange failure forwards
+  nothing (contract §3.1).
 
 **Complementary unit gates** (T049–T053, run by `just extproc-test`): synthetic broker replies
 exercise missing, zero, malformed and duplicate `max-age`, invalid typed context, and unknown
 members. Controlled-clock and synchronization tests cover a response received after its original
 deadline and expiry during exchange, body buffering or batch processing. Assert 503 before the
 expired decision reaches policy, with no forwarding or re-resolution. These checks complement
-the 11 real-broker journeys above; they are not extra acceptance scenarios or evidence that the
+the real-broker journeys above; they are not extra acceptance scenarios or evidence that the
 real broker emits malformed responses.
+
+**ADR-2 unit gates** (`just extproc-test`, `-race`): binding equality by scope set and instant,
+compare-and-delete under concurrency, one re-exchange per request, no stale-on-error fallback to
+a removed token, unbound-token binding, and unchanged disabled mode and cooldown entries
+(contract §3.1, data model §3.6).
 
 ## 4. ExtProc startup journeys (US4.1–US4.4)
 
