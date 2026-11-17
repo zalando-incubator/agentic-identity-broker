@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	subjectTypeJWT         = "urn:ietf:params:oauth:token-type:jwt" // #nosec G101 -- RFC-defined token type URI, not a credential.
-	actionTokenExchange    = "urn:ietf:params:oauth:grant-type:token-exchange"
+	subjectTypeJWT         = "urn:ietf:params:oauth:token-type:jwt"            // #nosec G101 -- RFC-defined token type URI, not a credential.
+	actionTokenExchange    = "urn:ietf:params:oauth:grant-type:token-exchange" // #nosec G101 -- RFC 8693 grant type URI, not a credential.
 	resourceTypeProtected  = "protected_resource"
 	maxEvaluationBodyBytes = 1 << 20
 )
