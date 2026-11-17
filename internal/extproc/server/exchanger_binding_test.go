@@ -14,22 +14,30 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
 func bindingExchanger(t *testing.T, respond func(http.ResponseWriter, int32), enabled ...bool) (*server.TokenExchanger, *atomic.Int32) {
 	t.Helper()
+	return bindingConfiguredExchanger(t, func(w http.ResponseWriter, _ *http.Request, call int32) { respond(w, call) },
+		func(cfg *extprocconfig.Config) { cfg.DelegationContext.Enabled = len(enabled) == 0 || enabled[0] })
+}
+
+func bindingConfiguredExchanger(t *testing.T, respond func(http.ResponseWriter, *http.Request, int32), configure func(*extprocconfig.Config)) (*server.TokenExchanger, *atomic.Int32) {
+	t.Helper()
 	mocks := newMockServers()
 	t.Cleanup(mocks.Close)
 	mocks.tokenExchServer.Close()
 	calls := &atomic.Int32{}
-	mocks.tokenExchServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mocks.tokenExchServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		respond(w, calls.Add(1))
+		respond(w, r, calls.Add(1))
 	}))
 	cfg := configForMocks(mocks)
-	cfg.DelegationContext.Enabled = len(enabled) == 0 || enabled[0]
+	cfg.DelegationContext.Enabled = true
+	configure(cfg)
 	exchanger, err := server.NewTokenExchanger(cfg, testLogger())
 	require.NoError(t, err)
 	t.Cleanup(exchanger.Shutdown)
