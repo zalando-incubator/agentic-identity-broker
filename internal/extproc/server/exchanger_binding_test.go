@@ -155,6 +155,10 @@ func (e *observedExchange) Exchange(ctx context.Context, subject, resource strin
 	return result, err
 }
 
+func (e *observedExchange) ExchangeBound(ctx context.Context, subject, resource string, observed *server.ExchangeResult, binding server.TokenBinding) (server.ExchangeResult, error) {
+	return e.inner.ExchangeBound(ctx, subject, resource, observed, binding)
+}
+
 func (e *observedExchange) Shutdown() {}
 
 func awaitBindingBarrier(t *testing.T, barrier <-chan struct{}) {

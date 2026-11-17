@@ -3,6 +3,7 @@ package server_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"sync"
 	"testing"
@@ -37,7 +38,10 @@ func TestTokenBinding_ReplacementFailuresRetainExchangeErrorHandling(t *testing.
 		},
 		{
 			name: "exchange timeout", status: 500, error: "token_exchange_failed",
-			respond: func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() },
+			respond: func(_ http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				<-r.Context().Done()
+			},
 		},
 		{
 			name: "malformed success", status: 500, error: "token_exchange_failed",

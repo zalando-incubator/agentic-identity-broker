@@ -87,7 +87,7 @@ X-Request-ID: delegation-001
 - `resource.scopes` is the effective scope set after the agent's scope ceiling.
   `permission_sets[].services[].scopes` are each permission set's raw contributions for
   grant-included services, `[]` when it defines none.
-- Optional `canonical_id` members and `grant.valid_until` are omitted when unset, never null.
+- Optional `canonical_id` members and `grant.valid_until` are omitted when unset, never null. `grant.updated_at` preserves the stored RFC 3339 instant, including fractional seconds, so updates within one second remain distinct.
 - Freshness: `max-age` is `floor(seconds until grant expiry)` capped at 60, or 60 without an
   expiry. The broker re-checks expiry before permitting, so a permit never outlives its grant.
 - Evaluation reads no provider session and never refreshes or returns a credential. A permit
@@ -146,6 +146,16 @@ disabled-mode serialization is unchanged. [Issue #441](https://github.com/zaland
 tracks a future separately approved, versioned policy-input contract, availability replacement
 and migration. It does not authorize removal, and is separate from the exchange-response
 field deprecation below.
+
+### Permit-bound token reuse
+
+With delegation enabled, the permit governs reuse of an exchange result. Its binding is the effective resource scope set (order and duplicates ignored) and grant-update instant (equivalent RFC 3339 offsets compare equal). An unbound successful result is atomically claimed once. Cache hits, singleflight followers and non-cacheable successes share that binding; no caller may rebind it.
+
+A mismatched result is never forwarded. ExtProc deletes only its observed cache identity, preserves concurrent replacements even when token bytes repeat, and uses a compatible replacement if present. Otherwise it exchanges once more through the existing singleflight/breaker. Retry failure forwards nothing and never uses the removed/mismatched stale result. If another live permit already claimed the retry result, ExtProc returns `503` with `{"error":"service_unavailable","error_description":"delegation token binding unavailable"}` without another retry or competing-result deletion. Original permit deadlines still apply before policy and final forwarding.
+
+Body requests validate binding after both concurrent calls and existing failure precedence, before buffering or Authorization mutation. Header-only validates after policy allows, against the evaluated permit. Disabled mode, cache TTL/defaults and the five-second exchange re-consent cooldown are unchanged.
+
+This guarantees compatible result reuse, not upstream downscoping or exchange grant-version provenance. Concurrent evaluation and exchange can read different grant versions before first claim. Re-exchange can legitimately return the same broader token under a fresh identity when the provider session is unchanged. Only provider-session re-authorization demonstrates narrowed upstream capability.
 
 ### Resolution observability
 

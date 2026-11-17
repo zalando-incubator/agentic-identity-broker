@@ -149,6 +149,82 @@ func immediate(t *testing.T, response *extprocv3.ProcessingResponse) (int, map[s
 
 var mcpCall = []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_files"}}`)
 
+type bindingPortStub struct {
+	*mockExchanger
+	bind func(context.Context, *server.ExchangeResult, server.TokenBinding) (server.ExchangeResult, error)
+}
+
+func (e *bindingPortStub) ExchangeBound(ctx context.Context, _, _ string, observed *server.ExchangeResult, binding server.TokenBinding) (server.ExchangeResult, error) {
+	return e.bind(ctx, observed, binding)
+}
+
+func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
+	for _, headerOnly := range []bool{false, true} {
+		failures := []string{"binding conflict", "exchange failure", "denial", "resolution failure"}
+		if !headerOnly {
+			failures = append(failures, "initial exchange failure")
+		}
+		for _, failure := range failures {
+			t.Run(failure+"/"+map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
+				var binds atomic.Int32
+				var h *delegationHarness
+				exchanger := &bindingPortStub{mockExchanger: &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
+					if failure == "initial exchange failure" {
+						return server.ExchangeResult{}, errors.New("initial failure")
+					}
+					return server.ExchangeResult{Token: "prior"}, nil
+				}}, bind: func(_ context.Context, observed *server.ExchangeResult, binding server.TokenBinding) (server.ExchangeResult, error) {
+					binds.Add(1)
+					assert.Equal(t, []string{"read:repo"}, binding.Scopes)
+					assert.True(t, binding.GrantUpdatedAt.Equal(time.Date(2026, 10, 26, 9, 59, 0, 0, time.UTC)))
+					assert.Equal(t, headerOnly, observed == nil)
+					assert.Equal(t, int32(1), h.resolver.calls.Load())
+					if headerOnly {
+						assert.Equal(t, int32(1), h.policies.Load())
+					} else {
+						assert.Zero(t, h.policies.Load())
+					}
+					if failure == "binding conflict" {
+						return server.ExchangeResult{}, server.ErrTokenBindingConflict
+					}
+					return server.ExchangeResult{}, errors.New("replacement failure")
+				}}
+				h = newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) {
+					if failure == "denial" {
+						return delegation.Result{}, &delegation.DeniedError{Code: "grant_missing", ConsentURL: consentURL}
+					}
+					if failure == "resolution failure" {
+						return delegation.Result{}, errors.New("resolver failure")
+					}
+					return samplePermit(time.Unix(1000, 0).Add(time.Minute)), nil
+				}, exchanger)
+				response := bindingHarnessCall(t, h, headerOnly)
+				status, body := immediate(t, response)
+				wantStatus := 500
+				wantBinds := int32(1)
+				if failure == "binding conflict" {
+					wantStatus = 503
+					assert.Equal(t, "delegation token binding unavailable", body["error_description"])
+				}
+				if failure == "denial" {
+					wantStatus = 403
+					wantBinds = 0
+				}
+				if failure == "resolution failure" {
+					wantStatus = 503
+					wantBinds = 0
+				}
+				if failure == "initial exchange failure" {
+					wantBinds = 0
+				}
+				assert.Equal(t, wantStatus, status)
+				assert.Equal(t, wantBinds, binds.Load())
+				assert.Nil(t, response.GetRequestHeaders())
+			})
+		}
+	}
+}
+
 func TestDelegation_RejectsExpiryDuringBindingReplacement(t *testing.T) {
 	for _, headerOnly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
@@ -281,10 +357,11 @@ func TestDelegation_BodyPathRejectsPermitExpiredBeforePolicy(t *testing.T) {
 		return server.ExchangeResult{Token: "exchanged"}, nil
 	}
 
-	_, bodyResp := sendHeadersThenBodyWithMetadata(t, h.client, map[string]string{":method": "POST"}, validTokenExchangeMetadata("mcp"), mcpCall)
+	headersResp, bodyResp := sendHeadersThenBodyWithMetadata(t, h.client, map[string]string{":method": "POST"}, validTokenExchangeMetadata("mcp"), mcpCall)
 
-	require.NotNil(t, bodyResp)
-	status, body := immediate(t, bodyResp)
+	require.Nil(t, bodyResp, "an expired permit cannot mutate headers or start body buffering")
+	assert.Nil(t, headersResp.GetRequestHeaders())
+	status, body := immediate(t, headersResp)
 	assert.Equal(t, 503, status)
 	assert.Equal(t, "delegation context unavailable", body["error_description"])
 	assert.Zero(t, h.policies.Load(), "an expired permit never reaches policy")

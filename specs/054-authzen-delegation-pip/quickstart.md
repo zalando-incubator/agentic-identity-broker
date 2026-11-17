@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-authzen-delegation-pip` | **Plan**: [plan.md](./plan.md)
 
-**Latest outcome**: Partial implementation (run 42381635025/1): 14 new retry-failure and shared-first-use cases compile and fail semantically, extending T111/T112 coverage. Binding runtime, terminal-conflict coverage and US3.13 remain unfinished. Static, security, integration and independent regression gates pass; unit suites and US3.11/US3.12 remain red. T103 and issue-backed T104 retain their completed approval records. Current inventory: 123 tasks, 112 checked and 11 unchecked. See §19 for current evidence; historical D-6 does not cover new work.
+**Latest outcome**: Implementation complete (run 42527822363/1). All 124 tasks are checked; permit-bound reuse, terminal conflict and US3.13 are implemented with genuine red/green evidence. All required non-container gates pass, including 46 local feature scenarios. US2.19, infra integration and Agentgateway container suites are deferred to downstream container tests on the pushed commit. Current evidence is in [implementation-log.md §20](implementation-log.md#20-binding-implementation-continuation--run-425278223631); historical D-6 does not cover new work.
 
 This guide proves the feature end to end after implementation. It is a validation guide, not an
 implementation description. The contracts are in [contracts/](./contracts/). The value objects
@@ -17,7 +17,7 @@ Before any implementation, these preconditions must hold:
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
    [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
    ADR draft [adr-048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md).
-2. T001 records only supplied approval for current covered items. The ADR-2 revision has been incorporated into [ADR 048 §10](../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse) with the current five-item approval in Status/Revision history; its incorporated draft was removed. Historical direction or thirteen-item approval does not cover the continuation. ADR-3 incorporation still needs T104's follow-up issue.
+2. T001 records only supplied approval for current covered items. The ADR-2 revision has been incorporated into [ADR 048 §10](../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse) with the current five-item approval in Status/Revision history; its incorporated draft was removed. Historical direction or thirteen-item approval does not cover the continuation. ADR-3 is incorporated with T104's recorded issue #441; it approves canonical guidance, not removal.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
    is frozen.
 4. The spec revision for the OPA input shape (research R15) has landed. This was done on
@@ -32,7 +32,7 @@ suites run in downstream container tests on the pushed commit. Do not start thes
 try to enable a container runtime in the agent sandbox. Their absence is not a sandbox blocker;
 report them as deferred, never validated. Run all non-container verification recipes locally.
 
-Implementation evidence belongs in this guide: record approval provenance, the isolated refactor commit, scenario-to-test `file:line` mappings, semantic-red assertions, green commands/results and deferred-task reasons. Keep the approved `spec.md` and `plan.md` unchanged throughout implementation.
+Implementation evidence belongs in `implementation-log.md`: record approval provenance, isolated refactor commits, scenario-to-test `file:line` mappings, semantic-red assertions, green commands/results and deferred-task reasons. Keep the approved `spec.md` and `plan.md` unchanged throughout implementation.
 
 ## 1. Static checks and fast tests
 
@@ -87,9 +87,7 @@ Spot-check these observable outcomes against spec Journeys 1–3:
 ginkgo -v --label-filter="delegation-context" ./tests/e2e/
 ```
 
-**Expected after approved implementation**: 14 specs pass (US3.1–US3.13 and US4.5). They run the production ExtProc
-composition against the real broker test server. US3.11 is pending implementation under
-Proposed ADR-2; until then 11 specs exist. Confirm these outcomes:
+**Expected**: 14 specs pass (US3.1–US3.13 and US4.5). They run the production ExtProc composition against the real broker test server, including the approved ADR-2 binding journeys. Confirm these outcomes:
 
 - The body path forwards only after both exchange and resolution succeed.
 - The header-only path never calls exchange when policy denies.
@@ -183,9 +181,8 @@ absence does not block independent local tasks and is never a validation pass.
 `grant_diagnostics_test.go`, `tests/e2e/extproc/opa_authorization_test.go`, and
 `extproc_approval_journey_test.go` pass unchanged, which proves SC-006 compatibility.
 
-## 7–19. Implementation evidence
+## 7–20. Implementation evidence
 
-Sections 7 to 19 recorded evidence from individual implementation runs. They
-moved unchanged, with the same numbers, to
+Sections 7 to 19 retain evidence from earlier implementation runs; section 20 records the completed binding continuation and current validation. The evidence lives in
 [`implementation-log.md`](implementation-log.md). References such as
 "quickstart §12" resolve to that file.

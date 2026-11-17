@@ -35,6 +35,10 @@ func newDelegationJourney(maxStaleness time.Duration, seedSession bool, mutate .
 }
 
 func newDelegationJourneyWithPolicy(policy string, maxStaleness time.Duration, seedSession bool, mutate ...func(*authzenFixture)) *delegationJourney {
+	return newDelegationJourneyConfigured(policy, maxStaleness, seedSession, nil, mutate...)
+}
+
+func newDelegationJourneyConfigured(policy string, maxStaleness time.Duration, seedSession bool, configure func(*authzenFixture, *bootstrap.ExtProcOptions), mutate ...func(*authzenFixture)) *delegationJourney {
 	j := &delegationJourney{broker: newAuthZENData(nil)}
 	for _, m := range mutate {
 		m(j.broker)
@@ -45,13 +49,11 @@ func newDelegationJourneyWithPolicy(policy string, maxStaleness time.Duration, s
 	}
 	policyPath, err := filepath.Abs(filepath.Join("fixtures/policies", policy))
 	Expect(err).NotTo(HaveOccurred())
-	j.env, err = bootstrap.NewExtProcEnvironmentWithOptions(j.broker.Enduser.BaseURL(), j.broker.ClientAssertion, policyPath,
-		bootstrap.TestLogger(0), bootstrap.ExtProcOptions{
-			DisableToolApprovals: true,
-			DelegationContext: extprocconfig.DelegationContextConfig{
-				Enabled: true, RequestTimeout: 2 * time.Second, MaxStaleness: maxStaleness,
-			},
-		})
+	options := bootstrap.ExtProcOptions{DisableToolApprovals: true, DelegationContext: extprocconfig.DelegationContextConfig{Enabled: true, RequestTimeout: 2 * time.Second, MaxStaleness: maxStaleness}}
+	if configure != nil {
+		configure(j.broker, &options)
+	}
+	j.env, err = bootstrap.NewExtProcEnvironmentWithOptions(j.broker.Enduser.BaseURL(), j.broker.ClientAssertion, policyPath, bootstrap.TestLogger(0), options)
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(j.env.Close)
 	var conn *grpc.ClientConn
@@ -383,6 +385,84 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 			session, err := j.broker.Storage.UserSessions().FindByPrincipalAndService(context.Background(), j.broker.Principal, j.broker.Repo.ID)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(session.Scope).To(ConsistOf("read:repo", "write:repo"))
+		}
+	})
+
+	// Scenario US3.13 from specs/054-authzen-delegation-pip/spec.md
+	It("fails closed on a shared retry claimed by another live permit", func() {
+		for _, headerOnly := range []bool{false, true} {
+			var barrier *bootstrap.BindingConcurrencyBroker
+			j := newDelegationJourneyConfigured("delegation_canonical.rego", time.Minute, false, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+				barrier = bootstrap.NewBindingConcurrencyBroker(f.Enduser.BaseURL())
+				DeferCleanup(barrier.Close)
+				options.ExchangeEndpoint = barrier.Server.URL
+				options.DelegationContext.PolicyDecisionPoint = f.Enduser.BaseURL()
+			}, broadDelegation)
+			seed := j.HeaderOnly(authzenRepoResource, nil)
+			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(seed)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+			shared := bootstrap.NewBindingConcurrencyExchanger(j.env)
+			DeferCleanup(shared.Release)
+			policy, err := filepath.Abs("fixtures/policies/delegation_canonical.rego")
+			Expect(err).NotTo(HaveOccurred())
+			peers := make([]*delegationJourney, 2)
+			for i := range peers {
+				env, err := bootstrap.NewExtProcEnvironmentWithOptions(j.broker.Enduser.BaseURL(), j.broker.ClientAssertion, policy, bootstrap.TestLogger(0), bootstrap.ExtProcOptions{DisableToolApprovals: true, Exchanger: shared, DelegationContext: extprocconfig.DelegationContextConfig{Enabled: true, RequestTimeout: 2 * time.Second, MaxStaleness: time.Minute}})
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(env.Close)
+				client, conn := extprochelpers.ConnectToExtProc(env.Address)
+				DeferCleanup(func() { _ = conn.Close() })
+				peers[i] = &delegationJourney{broker: j.broker, env: env, client: client}
+			}
+			j.narrowConsent()
+			type result struct {
+				index         int
+				headers, body *extprocv3.ProcessingResponse
+			}
+			results := make(chan result, 2)
+			call := func(index int) {
+				defer GinkgoRecover()
+				headers, body := peers[index].bindingCall(headerOnly, "", "")
+				results <- result{index, headers, body}
+			}
+			go call(0)
+			Eventually(shared.Ready, 5*time.Second).Should(Receive())
+			grantBody, err := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{j.broker.Reader.ID.String(): {j.broker.Repo.ID.String()}, j.broker.Agent.PermissionSets[1].PermissionSetID.String(): {j.broker.Repo.ID.String()}}})
+			Expect(err).NotTo(HaveOccurred())
+			resp, err := j.broker.Enduser.AuthenticatedPOST("/api/consent/agents/"+j.broker.Agent.ID.String()+"/grants", j.broker.Principal.String(), "application/json", strings.NewReader(string(grantBody)))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+			Expect(resp.Body.Close()).To(Succeed())
+			go call(1)
+			Eventually(shared.Ready, 5*time.Second).Should(Receive())
+			shared.Release()
+			Eventually(shared.RetryJoined, 5*time.Second).Should(Receive())
+			Eventually(shared.RetryJoined, 5*time.Second).Should(Receive())
+			barrier.Release()
+			var winner int
+			statuses := make([]uint32, 0, 2)
+			for range 2 {
+				var r result
+				Eventually(results, 5*time.Second).Should(Receive(&r))
+				status := extprochelpers.ExtractImmediateResponseStatus(r.headers)
+				statuses = append(statuses, status)
+				if status == 0 {
+					winner = r.index
+					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(r.headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+					if !headerOnly {
+						Expect(r.body).To(extprochelpers.BeForwardedRequestBody())
+					}
+				} else {
+					_, body := immediateJSON(r.headers)
+					Expect(body).To(Equal(map[string]string{"error": "service_unavailable", "error_description": "delegation token binding unavailable"}))
+					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(r.headers)).To(BeEmpty())
+					Expect(r.body).To(BeNil())
+				}
+			}
+			Expect(statuses).To(ConsistOf(uint32(0), uint32(http.StatusServiceUnavailable)))
+			Expect(barrier.Calls.Load()).To(Equal(int32(2)), "one shared additional flight and no third exchange")
+			winnerResponse := peers[winner].HeaderOnly(authzenRepoResource, nil)
+			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(winnerResponse)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+			Expect(barrier.Calls.Load()).To(Equal(int32(2)), "the compatible same-token replacement survives")
 		}
 	})
 

@@ -52,6 +52,7 @@ const (
 
 // ExchangeResult holds the result of a successful token exchange.
 type ExchangeResult struct {
+	handle                *tokenResultHandle
 	Token                 string
 	GrantedPermissionSets map[string][]string
 	Principal             string
@@ -65,6 +66,8 @@ type Exchanger interface {
 	// ctx carries trace context and deadlines and must be passed to outbound HTTP requests.
 	// Returns an ExchangeResult containing the token and any granted permission sets, or an error.
 	Exchange(ctx context.Context, subjectToken, resourceURI string) (ExchangeResult, error)
+	// ExchangeBound validates an observed result or exchanges after policy allow.
+	ExchangeBound(ctx context.Context, subjectToken, resourceURI string, observed *ExchangeResult, binding TokenBinding) (ExchangeResult, error)
 	// Shutdown releases any resources held by the exchanger (e.g., background goroutines).
 	Shutdown()
 }
@@ -556,6 +559,18 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		diagnostic = failure
 		return response, nil
 	}
+	if state.delegation != nil {
+		exchangeResult, exchErr = s.exchangeWithDelegation(ctx, state, &exchangeResult)
+		if exchErr != nil {
+			response, failure := s.exchangeErrorResponse(ctx, exchErr)
+			diagnostic = failure
+			return response, nil
+		}
+		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+			return response, nil
+		}
+	}
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
 	state.principal = exchangeResult.Principal
 	state.agentID = exchangeResult.AgentID
@@ -699,7 +714,13 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		return accessDeniedResponse(decision.Reasons)
 	}
 
-	exchangeResult, exchErr := s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
+	var exchangeResult ExchangeResult
+	var exchErr error
+	if state.delegation != nil {
+		exchangeResult, exchErr = s.exchangeWithDelegation(ctx, state, nil)
+	} else {
+		exchangeResult, exchErr = s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
+	}
 	if exchErr != nil {
 		response, failure := s.exchangeErrorResponse(ctx, exchErr)
 		diagnostic = failure
@@ -940,6 +961,13 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 }
 
 func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
+	if errors.Is(err, ErrTokenBindingConflict) {
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationBindingUnavailableBody), NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable)
+	}
+	var delegationErr *delegation.Error
+	if errors.As(err, &delegationErr) {
+		return delegationFailureResponse(delegationErr)
+	}
 	metadata := metadataFromError(ctx, err)
 	diagnostic := diagnosticFromError(ctx, err)
 	var brokerErr *BrokerExchangeError

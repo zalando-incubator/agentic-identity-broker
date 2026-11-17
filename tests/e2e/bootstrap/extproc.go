@@ -52,6 +52,8 @@ type ExtProcOptions struct {
 	DelegationContext extprocconfig.DelegationContextConfig
 	// DisableToolApprovals runs OPA without the approval gate.
 	DisableToolApprovals bool
+	ExchangeEndpoint     string
+	Exchanger            extprocserver.Exchanger
 }
 
 // NewExtProcEnvironment starts production ExtProc components wired to the supplied broker.
@@ -79,6 +81,9 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 	cfg := extprocfixtures.DefaultConfig()
 	cfg.GRPC.Bind = "127.0.0.1"
 	cfg.OAuth2.TokenEndpoint = brokerBaseURL + "/oauth2/token"
+	if options.ExchangeEndpoint != "" {
+		cfg.OAuth2.TokenEndpoint = options.ExchangeEndpoint
+	}
 	cfg.OAuth2.Issuer = issuer.URL
 	cfg.OAuth2.ClientCredentialsEndpoint = issuer.URL + "/oauth/token"
 	cfg.OAuth2.TLS.AllowHTTP = true
@@ -131,6 +136,10 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 	}
 	environment.authorizer = authorizer
 
+	var exchangePort extprocserver.Exchanger = exchanger
+	if options.Exchanger != nil {
+		exchangePort = options.Exchanger
+	}
 	var (
 		svc            *extprocserver.Server
 		approvalCache  *approval.Cache
@@ -148,9 +157,9 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 			return nil, fmt.Errorf("initialize ExtProc approval client: %w", err)
 		}
 		approvalCache = approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness)
-		svc = extprocserver.NewServerWithApprovalGate(cfg, exchanger, authorizer, approval.NewGate(approvalCache, approvalClient), logger)
+		svc = extprocserver.NewServerWithApprovalGate(cfg, exchangePort, authorizer, approval.NewGate(approvalCache, approvalClient), logger)
 	} else {
-		svc = extprocserver.NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)
+		svc = extprocserver.NewServerWithAuthorizer(cfg, exchangePort, authorizer, logger)
 	}
 	if cfg.DelegationContext.Enabled {
 		resolver, err := delegation.NewResolverFromConfig(context.Background(), cfg, exchanger)

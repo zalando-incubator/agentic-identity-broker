@@ -296,7 +296,7 @@ func (s *AccessEvaluationService) project(ctx context.Context, d *Delegation) (*
 		},
 		Grant: DelegationGrant{
 			ID:        d.Grant.ID.String(),
-			UpdatedAt: d.Grant.UpdatedAt.UTC().Format(time.RFC3339),
+			UpdatedAt: d.Grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		},
 		PermissionSets: make([]DelegationPermissionSet, 0, len(d.Grant.GrantedPermissionSets)),
 	}
