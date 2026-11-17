@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
@@ -73,7 +73,7 @@ func TestExchangeResultBinding_ReplacementFailuresRetainExchangeErrorHandling(t 
 					tt.respond(w, r)
 				}, func(cfg *extprocconfig.Config) { cfg.OAuth2.ExchangeTimeout = 100 * time.Millisecond })
 				permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
-				h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+				h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 				require.Equal(t, "Bearer SYNTHETIC_PRIOR_RESULT", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
 				if tt.prepare != nil {
 					tt.prepare(exchanger)
@@ -138,14 +138,14 @@ func TestExchangeResultBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
 			release := make(chan struct{})
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
-			permits := []delegation.Result{
+			permits := []grantcontext.Result{
 				samplePermit(time.Unix(1_000, 0).Add(time.Minute)),
 				samplePermit(time.Unix(1_000, 0).Add(time.Minute)),
 			}
 			permits[1].Context.Resource.Scopes = []string{"read:repo", "write:repo"}
 			responses := make(chan *extprocv3.ProcessingResponse, 2)
 			for _, permit := range permits {
-				h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) {
+				h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) {
 					<-release
 					return permit, nil
 				}, shared)
@@ -191,7 +191,7 @@ func TestExchangeResultBinding_CanceledReplacementCannotForwardPriorResult(t *te
 				w.WriteHeader(http.StatusServiceUnavailable)
 			}, func(cfg *extprocconfig.Config) { cfg.OAuth2.ExchangeTimeout = time.Second })
 			permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
-			h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+			h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 			t.Cleanup(unblock)
 			require.Equal(t, "Bearer SYNTHETIC_PRIOR_RESULT", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
 			permit.Context.Grant.UpdatedAt = "2026-10-26T10:00:00Z"

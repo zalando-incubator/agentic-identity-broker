@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"context"
@@ -24,10 +24,10 @@ func TestResolutionTelemetry_ClassifiesWithoutCredentials(t *testing.T) {
 		assertionError                        error
 	}{
 		{name: "permit", status: http.StatusOK, body: `{"decision":true,"context":` + permitContextJSON + `}`, outcome: "success", detail: "none"},
-		{name: "denial", status: http.StatusOK, body: `{"decision":false,"context":{"reason_admin":{"code":"grant_missing"},"reason_user":{"consent_url":"https://broker.example/consent"}}}`, outcome: "authorization_denied", detail: "delegation_denied"},
-		{name: "rejected", status: http.StatusServiceUnavailable, body: testSubject + testAssertion, outcome: "infrastructure_error", detail: "delegation_unavailable", category: CategoryRejected},
-		{name: "invalid response", status: http.StatusOK, body: testSubject + testAssertion, outcome: "infrastructure_error", detail: "delegation_unavailable", category: CategoryInvalidResponse},
-		{name: "assertion unavailable", assertionError: errors.New("dependency-cause-marker " + testAssertion), outcome: "infrastructure_error", detail: "delegation_unavailable", category: CategoryUnavailable},
+		{name: "denial", status: http.StatusOK, body: `{"decision":false,"context":{"reason_admin":{"code":"grant_missing"},"reason_user":{"consent_url":"https://broker.example/consent"}}}`, outcome: "authorization_denied", detail: "grant_context_denied"},
+		{name: "rejected", status: http.StatusServiceUnavailable, body: testSubject + testAssertion, outcome: "infrastructure_error", detail: "grant_context_unavailable", category: CategoryRejected},
+		{name: "invalid response", status: http.StatusOK, body: testSubject + testAssertion, outcome: "infrastructure_error", detail: "grant_context_unavailable", category: CategoryInvalidResponse},
+		{name: "assertion unavailable", assertionError: errors.New("dependency-cause-marker " + testAssertion), outcome: "infrastructure_error", detail: "grant_context_unavailable", category: CategoryUnavailable},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -67,7 +67,7 @@ func TestResolutionTelemetry_ClassifiesWithoutCredentials(t *testing.T) {
 				for _, attr := range span.Attributes() {
 					attrs[string(attr.Key)] = attr.Value.AsInterface()
 				}
-				assert.Equal(t, "delegation_resolution", attrs["token_exchange.operation"])
+				assert.Equal(t, "grant_resolution", attrs["token_exchange.operation"])
 				assert.Equal(t, tt.outcome, attrs["token_exchange.outcome"])
 				assert.Equal(t, tt.detail, attrs["token_exchange.failure_detail"])
 				if tt.category != "" {
@@ -77,15 +77,15 @@ func TestResolutionTelemetry_ClassifiesWithoutCredentials(t *testing.T) {
 					assert.NotEqual(t, codes.Error, span.Status().Code)
 				}
 				assert.Equal(t, "extproc", span.InstrumentationScope().Name)
-				if span.Name() == "extproc.delegation.resolve" {
+				if span.Name() == "extproc.grant_context.resolve" {
 					assert.Equal(t, trace.SpanKindInternal, span.SpanKind())
 					cache := "miss"
 					if span == spans[len(spans)-1] && tt.outcome == "success" {
 						cache = "hit"
 					}
-					assert.Equal(t, cache, attrs["delegation.cache"])
+					assert.Equal(t, cache, attrs["grant_context.cache"])
 				} else {
-					assert.Equal(t, "extproc.delegation.evaluate", span.Name())
+					assert.Equal(t, "extproc.grant_context.evaluate", span.Name())
 					assert.Equal(t, trace.SpanKindClient, span.SpanKind())
 				}
 				encoded, marshalErr := json.Marshal(tracetest.SpanStubFromReadOnlySpan(span))

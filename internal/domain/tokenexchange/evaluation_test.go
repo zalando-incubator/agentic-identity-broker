@@ -136,7 +136,7 @@ func (f *evaluationFixture) newService(t *testing.T) *AccessEvaluationService {
 	psService := permissionset.NewPermissionSetService(f.psRepo, f.grantRepo, slog.Default())
 	t.Cleanup(psService.Close)
 	consentService := consent.NewService(f.agentRepo, providerService, f.grantRepo, nil, nil, nil, slog.Default())
-	resolver, err := NewDelegationResolver(jwtValidator, celEvaluator, providerService, consentService, psService, f.agentRepo, "https://broker.example.com/")
+	resolver, err := NewGrantResolver(jwtValidator, celEvaluator, providerService, consentService, psService, f.agentRepo, "https://broker.example.com/")
 	require.NoError(t, err)
 	svc, err := NewAccessEvaluationService(resolver, f.canonical)
 	require.NoError(t, err)

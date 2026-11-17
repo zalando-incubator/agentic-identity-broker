@@ -121,14 +121,14 @@ func NewTokenExchangeService(
 	}, nil
 }
 
-// DelegationResolver returns the resolver for exchange steps 2–9a over this service's
+// GrantResolver returns the resolver for exchange steps 2–9a over this service's
 // dependencies. It is stateless, so access evaluation and exchange resolve identically.
-func (s *TokenExchangeService) DelegationResolver() *DelegationResolver {
+func (s *TokenExchangeService) GrantResolver() *GrantResolver {
 	var consentBaseURL string
 	if s.oauth2SessionService != nil {
 		consentBaseURL = s.oauth2SessionService.GetCallbackBaseURL()
 	}
-	return &DelegationResolver{
+	return &GrantResolver{
 		jwtValidator:         s.jwtValidator,
 		celEvaluator:         s.celEvaluator,
 		providerService:      s.providerService,
@@ -213,8 +213,8 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		return nil, err
 	}
 
-	// Steps 2–9a: authoritative delegation resolution shared with access evaluation.
-	delegation, err := s.DelegationResolver().Resolve(ctx, DelegationRequest{
+	// Steps 2–9a: authoritative grant resolution shared with access evaluation.
+	resolved, err := s.GrantResolver().Resolve(ctx, GrantResolutionRequest{
 		SubjectToken:    req.SubjectToken,
 		ClientAssertion: req.ClientAssertion,
 		Resource:        req.Resource,
@@ -230,10 +230,10 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 		}
 		return nil, err
 	}
-	principal, agent, service, grant := delegation.Principal, delegation.Agent, delegation.Service, delegation.Grant
+	principal, agent, service, grant := resolved.Principal, resolved.Agent, resolved.Service, resolved.Grant
 	serviceRef = ServiceRef{ID: service.ID}
 	authRef = authorizationRef(agent.ID, grant)
-	serviceScopes := delegation.EffectiveScopes
+	serviceScopes := resolved.EffectiveScopes
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)
 	// This single call handles:

@@ -148,9 +148,9 @@ AccessEvaluationPermit:
   required: [decision, context]
   properties:
     decision: { type: boolean, enum: [true] }
-    context:  { $ref: "#/components/schemas/DelegationContext" }
+    context:  { $ref: "#/components/schemas/GrantContext" }
 
-DelegationContext:
+GrantContext:
   type: object
   required: [subject, agent, resource, grant, permission_sets]
   properties:
@@ -158,7 +158,7 @@ DelegationContext:
       type: object
       required: [id]
       properties: { id: { type: string, minLength: 1, description: Verified principal } }
-    agent:    { $ref: "#/components/schemas/DelegationEntityRef" }
+    agent:    { $ref: "#/components/schemas/GrantEntityRef" }
     resource:
       type: object
       required: [service_id, resource_uri, scopes]
@@ -194,7 +194,7 @@ DelegationContext:
                 canonical_id: { type: string, minLength: 1, description: Omitted when unset }
                 scopes:       { type: array, items: { type: string } }
 
-DelegationEntityRef:
+GrantEntityRef:
   type: object
   required: [id]
   properties:
@@ -243,7 +243,7 @@ members, for example:
   "consent_url": "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}}
 ```
 
-The ExtProc client (see [extproc-delegation-context.md](./extproc-delegation-context.md))
+The ExtProc client (see [extproc-grant-context.md](./extproc-grant-context.md))
 parses the confirmed form (a); form (b) is not an implementation option.
 
 ### 2.3 Examples
@@ -270,7 +270,7 @@ supersedes that version choice. Response behavior and the separately approved re
 are unchanged.
 
 The `TokenExchangeResponse.granted_permission_sets` property gains `deprecated: true` and this
-description suffix: "Deprecated: superseded by the AuthZEN Delegation Context from
+description suffix: "Deprecated: superseded by the AuthZEN Grant Context from
 `POST /access/v1/evaluation`. Removal is scheduled for one release after the ExtProc delegation
 resolver ships and requires end-user API 2.0.0." The response behavior is unchanged.
 `principal` and `agent_id` are unchanged and not deprecated.

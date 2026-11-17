@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"encoding/json"

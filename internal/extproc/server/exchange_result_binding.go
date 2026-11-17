@@ -22,7 +22,7 @@ func (b ExchangeResultBinding) GoString() string     { return b.String() }
 func (b ExchangeResultBinding) LogValue() slog.Value { return slog.StringValue(b.String()) }
 
 // ErrExchangeResultBindingConflict means the exchange identity or final result binding is incompatible.
-var ErrExchangeResultBindingConflict = errors.New("delegation token binding unavailable")
+var ErrExchangeResultBindingConflict = errors.New("exchange result binding unavailable")
 
 type tokenResultHandle struct {
 	mu      sync.Mutex
@@ -74,7 +74,7 @@ func (te *TokenExchanger) ExchangeBound(ctx context.Context, subjectToken, resou
 	if result.handle.bindOnce(binding) {
 		return result, nil
 	}
-	logger := loggerFromContext(ctx, te.logger).With(slog.String("delegation_binding", "mismatch"))
+	logger := loggerFromContext(ctx, te.logger).With(slog.String("grant_context_binding", "mismatch"))
 	logDiagnostic(ctx, logger, slog.LevelDebug, "exchange result binding mismatch", SuccessDiagnostic(ExchangeUnknown))
 
 	key := tokenCacheKey{subjectToken: subjectToken, resourceURI: resourceURI}

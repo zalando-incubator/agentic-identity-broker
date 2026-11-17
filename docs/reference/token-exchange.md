@@ -47,10 +47,10 @@ New instances emit only the replacement names, not duplicate spans or audit even
 the old query branches after older instances and the required historical window expire.
 
 The broker scope remains `tokenexchange`; its evaluation span is explicitly Internal.
-The ExtProc scope and span names remain `extproc`, `extproc.delegation.resolve` (Internal)
-and `extproc.delegation.evaluate` (Client). Attribute names and values are unchanged:
+The ExtProc scope and span names remain `extproc`, `extproc.grant_context.resolve` (Internal)
+and `extproc.grant_context.evaluate` (Client). Attribute names and values are unchanged:
 `access_evaluation.decision=permit|deny|error`, permit-only integer
-`access_evaluation.max_age` (0–60), and `delegation.cache=hit|miss`. Both namespaces are
+`access_evaluation.max_age` (0–60), and `grant_context.cache=hit|miss`. Both namespaces are
 registered in the OpenTelemetry standard. No metric is renamed or dual-emitted.
 
 ## Overview
@@ -179,7 +179,7 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `expires_in` | Optional | Remaining lifetime in whole seconds. Omitted means unknown; zero means less than one second remains and must not use default caching. |
 | `scope` | Optional | Scopes associated with the token, when they differ from the request. |
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
-| `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. Deprecated in end-user API `1.3.0` in favor of the AuthZEN Delegation Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)); still populated. Removal is scheduled for one release after the ExtProc delegation resolver ships and requires end-user API `2.0.0`. `principal` and `agent_id` are not deprecated. |
+| `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. Deprecated in end-user API `1.3.0` in favor of the AuthZEN Grant Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)); still populated. Removal is scheduled for one release after the ExtProc grant-context resolver ships and requires end-user API `2.0.0`. `principal` and `agent_id` are not deprecated. |
 
 New enabled ExtProc policies should use canonical `input.context.permission_sets` and the
 effective ceiling in `input.context.resource.scopes`. The OPA compatibility fields
@@ -222,9 +222,9 @@ curl -X POST http://localhost:8000/oauth2/token \
 
 ## ExtProc delegation-bound result reuse
 
-Enabled delegation context binds each delivered exchange-result handle to the permit’s effective scope set and grant-update instant. First claim is atomic; shared cache/flight results cannot be rebound. Initial mismatches compare-and-delete only the observed identity, preserve compatible replacements (including identical token bytes under a new identity), and otherwise exchange at most once more without stale fallback. An incompatible retry returns 503 `service_unavailable` / `delegation token binding unavailable`, with no forwarding, further retry or competing-entry deletion. Body validation precedes buffering/mutation; header-only validation follows policy allow. The original permit deadline is checked again before forwarding.
+Enabled grant context binds each delivered exchange-result handle to the permit’s effective scope set and grant-update instant. First claim is atomic; shared cache/flight results cannot be rebound. Initial mismatches compare-and-delete only the observed identity, preserve compatible replacements (including identical token bytes under a new identity), and otherwise exchange at most once more without stale fallback. An incompatible retry returns 503 `service_unavailable` / `exchange result binding unavailable`, with no forwarding, further retry or competing-entry deletion. Body validation precedes buffering/mutation; header-only validation follows policy allow. The original permit deadline is checked again before forwarding.
 
-The binding records local first-use ownership, not the grant actually read by broker exchange or the scopes of the provider token. A new handle may carry identical broader credentials after a grant change; provider-session re-authorization is necessary for upstream narrowing. Concurrent unbound first use retains this provenance limitation. Disabled behavior, TTL bounds, assertions, per-key singleflight and the five-second re-consent cooldown are unchanged. A mismatch adds only the Debug log field `delegation_binding=mismatch`; no credentials, raw scopes, principal, grant contents or binding span/metric are emitted. See [AuthZEN consumer guidance](../api/authzen-evaluation.md#permit-bound-token-reuse) and [ADR 048 §10](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse).
+The binding records local first-use ownership, not the grant actually read by broker exchange or the scopes of the provider token. A new handle may carry identical broader credentials after a grant change; provider-session re-authorization is necessary for upstream narrowing. Concurrent unbound first use retains this provenance limitation. Disabled behavior, TTL bounds, assertions, per-key singleflight and the five-second re-consent cooldown are unchanged. A mismatch adds only the Debug log field `grant_context_binding=mismatch`; no credentials, raw scopes, principal, grant contents or binding span/metric are emitted. See [AuthZEN consumer guidance](../api/authzen-evaluation.md#permit-bound-token-reuse) and [ADR 048 §10](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse).
 
 ## Third-party token exchange errors
 

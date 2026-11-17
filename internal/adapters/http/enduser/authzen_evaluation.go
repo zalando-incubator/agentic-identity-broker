@@ -29,7 +29,7 @@ const MaxAccessEvaluationBodyBytes = 64 << 10
 
 // AccessEvaluator answers AuthZEN access evaluations.
 type AccessEvaluator interface {
-	Evaluate(ctx context.Context, req tokenexchange.AccessEvaluationRequest, clientAssertion string) tokenexchange.DelegationDecision
+	Evaluate(ctx context.Context, req tokenexchange.AccessEvaluationRequest, clientAssertion string) tokenexchange.GrantDecision
 }
 
 // AuthZENEvaluationHandler serves POST /access/v1/evaluation. It only decodes, authenticates
@@ -45,8 +45,8 @@ type evaluationErrorBody struct {
 }
 
 type evaluationPermitBody struct {
-	Decision bool                             `json:"decision"`
-	Context  *tokenexchange.DelegationContext `json:"context"`
+	Decision bool                        `json:"decision"`
+	Context  *tokenexchange.GrantContext `json:"context"`
 }
 
 type evaluationDenialBody struct {
@@ -181,7 +181,7 @@ func (h *AuthZENEvaluationHandler) writeEarlyFailure(ctx context.Context, span t
 		stage = tokenexchange.StageClientValidation
 	}
 	httpmiddleware.FinalizeRequestSecurityContext(ctx)
-	h.observe(ctx, span, tokenexchange.DelegationDecision{
+	h.observe(ctx, span, tokenexchange.GrantDecision{
 		Kind:       tokenexchange.DecisionRequestFailure,
 		Status:     status,
 		Diagnostic: tokenexchange.NewDiagnostic(stage, detail),
@@ -216,7 +216,7 @@ func writeEvaluationJSON(w http.ResponseWriter, status int, body any) {
 
 // observe records a credential-free audit event and span attributes using the
 // token-exchange diagnostic vocabulary.
-func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span, decision tokenexchange.DelegationDecision) {
+func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span, decision tokenexchange.GrantDecision) {
 	diagnostic := decision.Diagnostic
 	attrs := []attribute.KeyValue{
 		attribute.String("token_exchange.operation", "access_evaluation"),

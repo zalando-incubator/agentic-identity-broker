@@ -20,9 +20,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-// DelegationRequest is the input to the authoritative delegation resolution shared by
+// GrantResolutionRequest is the input to the authoritative grant resolution shared by
 // token exchange and AuthZEN access evaluation.
-type DelegationRequest struct {
+type GrantResolutionRequest struct {
 	SubjectToken    string
 	ClientAssertion string
 	Resource        string
@@ -33,9 +33,9 @@ type DelegationRequest struct {
 	ExpectedAgentID *id.AgentID
 }
 
-// Delegation is the outcome of a successful resolution: every invariant of exchange
+// ResolvedGrant is the outcome of a successful resolution: every invariant of exchange
 // steps 2–9a holds. It never contains a credential.
-type Delegation struct {
+type ResolvedGrant struct {
 	Principal       id.Principal
 	Agent           *storage.Agent
 	Service         *model.ThirdpartyOAuth2ProviderEntity
@@ -45,10 +45,10 @@ type Delegation struct {
 	EffectiveScopes []string
 }
 
-// DelegationResolver verifies the subject and caller, authorizes the caller, resolves the
+// GrantResolver verifies the subject and caller, authorizes the caller, resolves the
 // resource and agent, and authorizes the requested service against the active grant.
 // It has no provider-session dependency, so resolution never reads provider credentials.
-type DelegationResolver struct {
+type GrantResolver struct {
 	jwtValidator         *JWTValidator
 	celEvaluator         *CELEvaluator
 	providerService      *thirdparty.ThirdpartyOAuth2ProviderService
@@ -58,9 +58,9 @@ type DelegationResolver struct {
 	consentBaseURL       string
 }
 
-// NewDelegationResolver creates a resolver. consentBaseURL is the end-user public base used
+// NewGrantResolver creates a resolver. consentBaseURL is the end-user public base used
 // for consent recovery URLs.
-func NewDelegationResolver(
+func NewGrantResolver(
 	jwtValidator *JWTValidator,
 	celEvaluator *CELEvaluator,
 	providerService *thirdparty.ThirdpartyOAuth2ProviderService,
@@ -68,7 +68,7 @@ func NewDelegationResolver(
 	permissionSetService *permissionset.Service,
 	agentRepository ports.AgentRepository,
 	consentBaseURL string,
-) (*DelegationResolver, error) {
+) (*GrantResolver, error) {
 	if jwtValidator == nil {
 		return nil, fmt.Errorf("jwtValidator cannot be nil")
 	}
@@ -87,7 +87,7 @@ func NewDelegationResolver(
 	if agentRepository == nil {
 		return nil, fmt.Errorf("agentRepository cannot be nil")
 	}
-	return &DelegationResolver{
+	return &GrantResolver{
 		jwtValidator:         jwtValidator,
 		celEvaluator:         celEvaluator,
 		providerService:      providerService,
@@ -100,7 +100,7 @@ func NewDelegationResolver(
 
 // Resolve runs exchange steps 2–9a. Every error is a *TokenExchangeError that carries the
 // failing stage's diagnostic and the service and authorization references observed so far.
-func (r *DelegationResolver) Resolve(ctx context.Context, req DelegationRequest) (_ *Delegation, err error) {
+func (r *GrantResolver) Resolve(ctx context.Context, req GrantResolutionRequest) (_ *ResolvedGrant, err error) {
 	var serviceRef ServiceRef
 	var registeredAgentID id.AgentID
 	var grant *storage.UserGrant
@@ -246,7 +246,7 @@ func (r *DelegationResolver) Resolve(ctx context.Context, req DelegationRequest)
 			WithErrorURI(r.agentConsentURL(agent.ID)).WithDiagnostic(NewDiagnostic(stage, coverageDetail))
 	}
 
-	return &Delegation{
+	return &ResolvedGrant{
 		Principal:       principal,
 		Agent:           agent,
 		Service:         service,
@@ -258,11 +258,11 @@ func (r *DelegationResolver) Resolve(ctx context.Context, req DelegationRequest)
 }
 
 // ConsentURL returns the end-user consent page for the agent.
-func (r *DelegationResolver) ConsentURL(agentID id.AgentID) string {
+func (r *GrantResolver) ConsentURL(agentID id.AgentID) string {
 	return r.agentConsentURL(agentID)
 }
 
-func (r *DelegationResolver) agentConsentURL(agentID id.AgentID) string {
+func (r *GrantResolver) agentConsentURL(agentID id.AgentID) string {
 	return strings.TrimRight(r.consentBaseURL, "/") + "/agents/" + agentID.String()
 }
 
@@ -286,7 +286,7 @@ func authorizationRef(agentID id.AgentID, grant *storage.UserGrant) Authorizatio
 //
 // Coverage details describe the requested service; structural reference and repository
 // failures retain their diagnostic on the error and return DetailNone separately.
-func (r *DelegationResolver) resolveGrantCoverage(
+func (r *GrantResolver) resolveGrantCoverage(
 	ctx context.Context,
 	grant *storage.UserGrant,
 	agent *storage.Agent,

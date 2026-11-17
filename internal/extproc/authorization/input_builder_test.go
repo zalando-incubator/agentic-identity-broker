@@ -426,7 +426,7 @@ func TestBuildOPAInputHeadersOnly_TargetServerName_Propagated(t *testing.T) {
 	assert.Equal(t, "github-mcp", mcp["target_server_name"])
 }
 
-func TestContextInput_SerializesDelegationMembersOnlyWhenPresent(t *testing.T) {
+func TestContextInput_SerializesGrantContextMembersOnlyWhenPresent(t *testing.T) {
 	disabled, err := json.Marshal(authorization.ContextInput{GrantedPermissionSetsAvailable: true,
 		GrantedPermissionSets: map[string][]string{"ps": {"svc"}}, AgentSessionID: "s"})
 	require.NoError(t, err)

@@ -18,7 +18,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	extprocfixtures "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
@@ -39,7 +39,7 @@ type ExtProcEnvironment struct {
 	grpcServer *grpc.Server
 	exchanger  *extprocserver.TokenExchanger
 	authorizer authorization.Authorizer
-	resolver   *delegation.PermitResolver
+	resolver   *grantcontext.PermitResolver
 	syncCancel context.CancelFunc
 	syncDone   chan struct{}
 	logger     *slog.Logger
@@ -48,8 +48,8 @@ type ExtProcEnvironment struct {
 
 // ExtProcOptions selects optional ExtProc features for an environment.
 type ExtProcOptions struct {
-	// DelegationContext enables the delegation resolver with these settings when Enabled.
-	DelegationContext extprocconfig.DelegationContextConfig
+	// GrantContext enables the grant-context resolver with these settings when Enabled.
+	GrantContext extprocconfig.GrantContextConfig
 	// DisableToolApprovals runs OPA without the approval gate.
 	DisableToolApprovals bool
 	ExchangeEndpoint     string
@@ -110,7 +110,7 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 	if options.DisableToolApprovals {
 		cfg.ToolApprovals = extprocconfig.ToolApprovalsConfig{}
 	}
-	cfg.DelegationContext = options.DelegationContext
+	cfg.GrantContext = options.GrantContext
 	if err := extprocconfig.Validate(cfg); err != nil {
 		issuer.Close()
 		return nil, fmt.Errorf("invalid ExtProc configuration: %w", err)
@@ -161,8 +161,8 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 	} else {
 		svc = extprocserver.NewServerWithAuthorizer(cfg, exchangePort, authorizer, logger)
 	}
-	if cfg.DelegationContext.Enabled {
-		resolver, err := delegation.NewPermitResolverFromConfig(context.Background(), cfg, exchanger)
+	if cfg.GrantContext.Enabled {
+		resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), cfg, exchanger)
 		if err != nil {
 			environment.Close()
 			return nil, err
@@ -170,7 +170,7 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 		environment.resolver = resolver
 		svc.WithPermitResolver(resolver)
 	}
-	environment.PolicyDecisionPoint = cfg.DelegationContext.PolicyDecisionPoint
+	environment.PolicyDecisionPoint = cfg.GrantContext.PolicyDecisionPoint
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

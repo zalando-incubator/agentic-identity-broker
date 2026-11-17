@@ -19,7 +19,7 @@ artifacts apply them. It records no implementation evidence.
 A permit is usable only if its `Cache-Control` header has exactly one `max-age` directive with a
 positive integer value. A missing, zero, malformed, or duplicate directive, or a value that does
 not parse as an integer, is a resolution error. ExtProc returns 503 `service_unavailable` with
-`"delegation context unavailable"`. It does not use the permit for the current request, and it
+`"grant context unavailable"`. It does not use the permit for the current request, and it
 does not cache the permit. The maintainer named the missing and zero cases. The plan treats
 malformed values in the same way, because they also give no usable freshness (FR-015).
 Large values need no separate rule. The usable lifetime is `min(max-age, max_staleness)`, so
@@ -41,7 +41,7 @@ never runs past the broker's window. The maintainer accepted the remaining skew.
 ExtProc checks the stored deadline immediately before every OPA evaluation that receives
 delegation input. This includes the header-only policy call, the body policy call, and each
 decision in a batch. If `now >= deadline`, the request is rejected with the same 503
-`service_unavailable` / `"delegation context unavailable"` response, and nothing is forwarded.
+`service_unavailable` / `"grant context unavailable"` response, and nothing is forwarded.
 ExtProc does not re-resolve and does not retry. Expired context never reaches policy.
 
 ## HIGH I2 — Evaluation audit identity seam (ADR decision endorsed)

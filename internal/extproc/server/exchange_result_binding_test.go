@@ -198,7 +198,7 @@ func TestBindingPortDiagnosticIsLogOnlyAndCredentialSafe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), calls.Load())
 	assert.Equal(t, "PROVIDER_SECRET", result.Token)
-	assert.Contains(t, logs.String(), `"delegation_binding":"mismatch"`)
+	assert.Contains(t, logs.String(), `"grant_context_binding":"mismatch"`)
 	assert.Empty(t, recorder.Ended(), "binding adds no span or span attribute")
 	assertSafetyTelemetry(t, recorder, reader, logs.String(), "PROVIDER_SECRET", "ASSERTION_SECRET", "SUBJECT_SECRET", "SCOPE_SECRET", "PRINCIPAL_SECRET", "resource.example")
 	for _, secret := range []string{"PROVIDER_SECRET", "ASSERTION_SECRET", "SUBJECT_SECRET", "SCOPE_SECRET", "PRINCIPAL_SECRET", "resource.example"} {

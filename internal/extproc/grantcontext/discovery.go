@@ -1,6 +1,6 @@
-// Package delegation resolves broker delegation context through the AuthZEN Access
+// Package grantcontext resolves broker grant context through the AuthZEN Access
 // Evaluation API (ADR 048). It imports no broker domain, port, or adapter package.
-package delegation
+package grantcontext
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type Metadata struct {
 }
 
 // ErrDiscoveryFailed reports unusable PDP metadata.
-var ErrDiscoveryFailed = errors.New("delegation context discovery failed")
+var ErrDiscoveryFailed = errors.New("grant context discovery failed")
 
 // DiscoveryURL inserts the AuthZEN well-known string between the host and the path of the
 // PDP identifier (AuthZEN 1.0 PDP metadata access).
@@ -69,13 +69,13 @@ func Discover(ctx context.Context, client *http.Client, expectedPDP string, allo
 		return nil, fmt.Errorf("%w: missing metadata members", ErrDiscoveryFailed)
 	}
 	if *document.PolicyDecisionPoint != expectedPDP {
-		return nil, fmt.Errorf("delegation context discovery: policy_decision_point mismatch (expected %s, advertised %s)",
+		return nil, fmt.Errorf("grant context discovery: policy_decision_point mismatch (expected %s, advertised %s)",
 			expectedPDP, boundedValue(*document.PolicyDecisionPoint))
 	}
 	endpoint, err := url.Parse(*document.AccessEvaluationEndpoint)
 	if err != nil || !endpoint.IsAbs() || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" ||
 		(endpoint.Scheme != "https" && (endpoint.Scheme != "http" || !allowHTTP)) {
-		return nil, errors.New("delegation context discovery: invalid access_evaluation_endpoint")
+		return nil, errors.New("grant context discovery: invalid access_evaluation_endpoint")
 	}
 	return &Metadata{PolicyDecisionPoint: expectedPDP, AccessEvaluationEndpoint: endpoint}, nil
 }

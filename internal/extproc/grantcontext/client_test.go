@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"context"
@@ -271,7 +271,7 @@ func TestClient_DenialAndFailures(t *testing.T) {
 		{name: "allowlisted denial", broker: &brokerStub{status: 200, body: `{"decision":false,"context":{"reason_admin":{"code":"grant_missing"},"reason_user":{"consent_url":"` + consent + `"}}}`},
 			denied: &DeniedError{Code: "grant_missing", ConsentURL: consent}},
 		{name: "unknown denial code is generalized", broker: &brokerStub{status: 200, body: `{"decision":false,"context":{"reason_admin":{"code":"<script>"},"reason_user":{"consent_url":"` + consent + `"}}}`},
-			denied: &DeniedError{Code: "delegation_denied", ConsentURL: consent}},
+			denied: &DeniedError{Code: "grant_context_denied", ConsentURL: consent}},
 		{name: "relative consent URL", broker: &brokerStub{status: 200, body: `{"decision":false,"context":{"reason_admin":{"code":"grant_missing"},"reason_user":{"consent_url":"/agents/x"}}}`},
 			category: CategoryInvalidResponse},
 		{name: "javascript consent URL", broker: &brokerStub{status: 200, body: `{"decision":false,"context":{"reason_admin":{"code":"grant_missing"},"reason_user":{"consent_url":"javascript:alert(1)"}}}`},

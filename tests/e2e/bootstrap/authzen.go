@@ -32,7 +32,7 @@ func ObserveAuthZENEvaluation(application *app.App) *EvaluationSecurityObserver 
 	return observer
 }
 
-func (o *EvaluationSecurityObserver) Evaluate(ctx context.Context, req tokenexchange.AccessEvaluationRequest, assertion string) tokenexchange.DelegationDecision {
+func (o *EvaluationSecurityObserver) Evaluate(ctx context.Context, req tokenexchange.AccessEvaluationRequest, assertion string) tokenexchange.GrantDecision {
 	holder, _ := security.CaptureHolderFromContext(ctx)
 	_, finalized := security.FromContext(ctx)
 	o.mu.Lock()

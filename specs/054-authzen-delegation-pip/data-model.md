@@ -21,7 +21,7 @@ expiry are observed on each resolution. Nothing in this feature writes to any ag
 
 ## 2. Broker domain value objects (`internal/domain/tokenexchange`)
 
-### 2.1 `DelegationRequest` (input to the shared resolver)
+### 2.1 `GrantResolutionRequest` (input to the shared resolver)
 
 | Field | Type | Rule |
 |---|---|---|
@@ -32,7 +32,7 @@ expiry are observed on each resolution. Nothing in this feature writes to any ag
 | `Scope` | `string` | Exchange passes the request scope. Evaluation passes `""` (absent-scope semantics). |
 | `ExpectedAgentID` | `*id.AgentID` | Optional anchor (FR-005). Compared after agent load and before the grant read. |
 
-### 2.2 `Delegation` (result of the shared resolver)
+### 2.2 `ResolvedGrant` (result of the shared resolver)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -58,10 +58,10 @@ expiry are observed on each resolution. Nothing in this feature writes to any ag
 
 Any violation returns the existing `*TokenExchangeError` with its `FailureDetail`.
 
-### 2.3 `DelegationContext` (credential-free projection, FR-007 and FR-008)
+### 2.3 `GrantContext` (credential-free projection, FR-007 and FR-008)
 
 ```text
-DelegationContext
+GrantContext
 ├── subject         { id: Principal }
 ├── agent           { id: AgentID, canonical_id?: string }
 ├── resource        { service_id: ServiceID, canonical_id?: string, resource_uri: string, scopes: []string }
@@ -82,12 +82,12 @@ DelegationContext
 - The projection never contains a subject token, assertion, provider token, secret, raw
   claims, or error text (SR-003).
 
-### 2.4 `DelegationDecision` (outcome of `AccessEvaluationService.Evaluate`)
+### 2.4 `GrantDecision` (outcome of `AccessEvaluationService.Evaluate`)
 
 ```text
-DelegationDecision = Permit | Deny | RequestFailure
+GrantDecision = Permit | Deny | RequestFailure
 
-Permit         { Context: DelegationContext, MaxAge: int (0..60) }
+Permit         { Context: GrantContext, MaxAge: int (0..60) }
 Deny           { Detail: FailureDetail (grant_* only), ConsentURL: string }
 RequestFailure { Status: 400 | 401 | 403 | 500, Code: string, Detail: FailureDetail }
 ```
@@ -136,20 +136,20 @@ never from the body. The delegation is always resolved from the verified subject
 | `policy_decision_point` | `TrimRight(server.enduser.public_url, "/")` |
 | `access_evaluation_endpoint` | `policy_decision_point + "/access/v1/evaluation"` |
 
-## 3. ExtProc value objects (`internal/extproc/delegation`, no broker imports)
+## 3. ExtProc value objects (`internal/extproc/grantcontext`, no broker imports)
 
 The freshness rules below apply the maintainer decisions of 2026-10-28 (HIGH I1/U1/U2 in
 [remediation.md](./remediation.md)). §3.5 applies the 2026-10-28 spec clarification of the OPA
 input shape (FR-017, FR-018, and research R15).
 
-### 3.1 `DelegationContextConfig` (`internal/extproc/config`)
+### 3.1 `GrantContextConfig` (`internal/extproc/config`)
 
 | Field | Key | Type | Default | Validation (when `enabled`) |
 |---|---|---|---|---|
-| `Enabled` | `delegation_context.enabled` | bool | `false` | Requires `authorization.enabled` |
-| `PolicyDecisionPoint` | `delegation_context.policy_decision_point` | string | `""` → origin of `oauth2.token_endpoint` | Absolute `https` URL (or `http` with `allow_http`), with a host, without userinfo, query, or fragment |
-| `RequestTimeout` | `delegation_context.request_timeout` | duration | `5s` | `> 0` |
-| `MaxStaleness` | `delegation_context.max_staleness` | duration | `60s` | `> 0` |
+| `Enabled` | `grant_context.enabled` | bool | `false` | Requires `authorization.enabled` |
+| `PolicyDecisionPoint` | `grant_context.policy_decision_point` | string | `""` → origin of `oauth2.token_endpoint` | Absolute `https` URL (or `http` with `allow_http`), with a host, without userinfo, query, or fragment |
+| `RequestTimeout` | `grant_context.request_timeout` | duration | `5s` | `> 0` |
+| `MaxStaleness` | `grant_context.max_staleness` | duration | `60s` | `> 0` |
 
 ### 3.2 `Metadata`
 
@@ -161,7 +161,7 @@ startup. It is immutable afterwards.
 | Type | Fields | Meaning |
 |---|---|---|
 | `Result` (permit) | `Context Context` (typed and validated, §3.3.1), `Deadline time.Time` (`requestStart + min(max-age, max_staleness)`, computed once) | `decision: true`, a context that passes §3.3.1, and exactly one positive integer `max-age` |
-| `*DeniedError` | `Code string` (allowlisted `grant_*` value or `delegation_denied`), `ConsentURL string` | `decision: false` |
+| `*DeniedError` | `Code string` (allowlisted `grant_*` value or `grant_context_denied`), `ConsentURL string` | `decision: false` |
 | other `error` | Category: `timeout`, `unavailable`, `rejected` (non-200), or `invalid_response` (including a missing, zero, malformed, or duplicate `max-age` on a permit, or a permit context that fails §3.3.1) | Fail closed with 503. The response is not used and not cached. |
 
 #### 3.3.1 `Context` (typed permit context, research R15)
@@ -237,7 +237,7 @@ There is no `delegation` wrapper, no `subject` member, and no `delegation_availa
 | `grant` | `*GrantContext{ID; UpdatedAt; ValidUntil omitempty}`, `omitempty` | **omitted** | `Context.Grant` |
 | `permission_sets` | `[]PermissionSetContext{ID; CanonicalID omitempty; Services []ServiceContext{ID; CanonicalID omitempty; Scopes}}`, `omitempty` | **omitted** | `Context.PermissionSets` |
 
-**Mapping**: The server's pure function `contextInputFromDelegation(result, agentSessionID)`
+**Mapping**: The server's pure function `contextInputFromGrantContext(result, agentSessionID)`
 builds every enabled-mode input. It deep-copies the slices of the shared `Result`. Disabled mode
 never calls it, and its serialized input stays byte-for-byte unchanged.
 
@@ -279,9 +279,9 @@ erDiagram
     PermissionSet ||--o{ ServiceScope : defines
     ThirdpartyOAuth2Provider ||--o{ ProtectedResource : owns
     Agent ||--o{ ServiceRequirement : caps
-    Delegation }o--|| UserGrant : "reads (active)"
-    Delegation }o--|| Agent : "resolved from subject token"
-    Delegation }o--|| ThirdpartyOAuth2Provider : "resolved from resource URI"
-    DelegationDecision ||--o| DelegationContext : "Permit carries"
-    DelegationContext ||--o{ ExtProcPermitCacheEntry : "cached until requestStart + min(max-age, max_staleness)"
+    ResolvedGrant }o--|| UserGrant : "reads (active)"
+    ResolvedGrant }o--|| Agent : "resolved from subject token"
+    ResolvedGrant }o--|| ThirdpartyOAuth2Provider : "resolved from resource URI"
+    GrantDecision ||--o| GrantContext : "Permit carries"
+    GrantContext ||--o{ ExtProcPermitCacheEntry : "cached until requestStart + min(max-age, max_staleness)"
 ```

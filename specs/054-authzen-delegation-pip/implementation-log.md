@@ -31,14 +31,14 @@ on the pull request, not in this file.
 
 The historical implementation record described a separate-PR requirement. The user
 running that session kept the extraction in this PR as its own commit:
-`b882d7b refactor(tokenexchange): extract shared DelegationResolver (exchange steps 2–9a)`.
+`b882d7b refactor(tokenexchange): extract shared GrantResolver (exchange steps 2–9a)`.
 This was recorded as a deviation at that time, not a maintainer-arranged handoff. The current
 constitution explicitly requires an isolated no-behavior-change commit ahead of feature commits
 in the same PR, not another PR. Retain the commit and its existing regression evidence.
 
 - Baseline and regression: `go test ./internal/domain/tokenexchange/` passed after the extraction.
   The only test edits are receiver changes (`svc.resolveEffectiveScopes(...)` →
-  `svc.DelegationResolver().resolveGrantCoverage(...)` with one extra ignored return); no
+  `svc.GrantResolver().resolveGrantCoverage(...)` with one extra ignored return); no
   assertion changed. The exchange E2E regression files (`token_exchange_test.go`,
   `grant_diagnostics_test.go`, `local_token_exchange_e2e_test.go`,
   `extproc_approval_journey_test.go`) ran 58/58 green after the extraction.
@@ -85,8 +85,8 @@ Source: the AuthZEN Authorization API 1.0 source text in the OpenID `authzen` re
 | `ginkgo --label-filter="!performance && !docker" ./tests/e2e/` (after `cd web && npm ci && npm run build`) | 950/950 passed |
 | `ginkgo --procs=1 --label-filter="docker" ./tests/e2e/` | 8/8 passed, including US2.19 on real PostgreSQL |
 | `ginkgo --label-filter="authzen-delegation" ./tests/e2e/` | 29 broker scenarios pass (28 in-memory + US2.19 on PostgreSQL) |
-| `ginkgo --label-filter="delegation-context" ./tests/e2e/` | 11/11 passed |
-| `ginkgo --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 passed |
+| `ginkgo --label-filter="grant-context" ./tests/e2e/` | 11/11 passed |
+| `ginkgo --label-filter="grant-context-startup" ./tests/e2e/extproc/` | 4/4 passed |
 | `ginkgo ./tests/e2e/extproc/` | 102 passed, 5 failed: all agentgateway container scenarios, which fail to pull `cr.agentgateway.dev/agentgateway:v1.5.0` (registry 403 from the sandbox network policy) |
 | `cd assets/docusaurus && npm run build` | Pass |
 
@@ -100,14 +100,14 @@ US2.1 `tests/e2e/authzen_delegation_denial_test.go:23`; US2.2 `:30`; US2.3 `:38`
 US2.5 `:55`; US2.6 `:63`; US2.7 `:76`; US2.8 `:85`; US2.9 `:97`; US2.10 `:105`.
 US2.11 `tests/e2e/authzen_delegation_errors_test.go:29`; US2.12 `:38`; US2.13 `:45`; US2.14 `:53`;
 US2.15 `:63`; US2.16 `:72`; US2.17 `:98`; US2.18 `:83`; US2.19 `:144`; US2.20 `:90`.
-US3.1 `tests/e2e/delegation_context_journey_test.go:105`; US3.2 `:114`; US3.3 `:122`; US3.4 `:132`;
+US3.1 `tests/e2e/grant_context_journey_test.go:105`; US3.2 `:114`; US3.3 `:122`; US3.4 `:132`;
 US3.5 `:143`; US3.6 `:169`; US3.7 `:184`; US3.8 `:203`; US3.9 `:225`; US3.10 `:236`; US4.5 `:248`.
-US4.1 `tests/e2e/extproc/delegation_context_startup_test.go:33`; US4.2 `:57`; US4.3 `:72`; US4.4 `:90`.
+US4.1 `tests/e2e/extproc/grant_context_startup_test.go:33`; US4.2 `:57`; US4.3 `:72`; US4.4 `:90`.
 US4.6 `tests/e2e/authzen_delegation_compat_test.go:25`.
 
 ### Findings for the maintainer
 
-- **F-1 (US3.5, body path)**: The delegation resolver never caches denials, and the header-only path
+- **F-1 (US3.5, body path)**: The grant-context resolver never caches denials, and the header-only path
   permits immediately after consent. On the body path, however, the concurrent exchange during
   the denied request receives the broker's re-consent error. The existing ADR 012 exchanger then
   caches that error for its 5 s re-consent cooldown (`reAuthCooldownTTL`). A body request right
@@ -151,7 +151,7 @@ The continuation record below supersedes this table where tasks have since been 
 | T027, T036, T053, T065, T080, T094, T097 | Semantic-red evidence was recorded for the 28 in-memory broker scenarios only; unit tests and the consumer/startup E2E tests were written alongside the implementation | Historical proposal, superseded by §10: a retrospective rerun cannot establish test-first order. D-6 requires explicit exception sign-off plus alternative validation, not acceptance of evidence alone. |
 | T029–T031 | No separate compile-only scaffolding step was done; the code was implemented directly | Historical proposal, superseded by §10: not automatically inapplicable or performed; retain noncompliance and use the explicit D-6 disposition conditions. |
 | T044 | The deferred-holder matcher test and credential-free audit assertions exist; the full trace-ID equality across context, audit, access log and `traceresponse` for evaluation is not asserted end to end | Add the composed HTTP-harness assertion |
-| T059 | ExtProc logs carry `operation=delegation_resolution`, `delegation.cache` hit/miss and bounded categories, but no test captures server log output | Add captured-log tests |
+| T059 | ExtProc logs carry `operation=grant_resolution`, `grant_context.cache` hit/miss and bounded categories, but no test captures server log output | Add captured-log tests |
 | T064 | US4.6 asserts the deprecation marker in E2E; no separate `authzen_compat_test.go` unit test | Add the unit test or accept the E2E coverage |
 | T071, T099, T100 | The agentgateway container image cannot be pulled here (403), so 5 ExtProc E2E specs (including the agentgateway `metadata_input_test.go` scenario) fail; the frontend Playwright suite and `just verify` were not run; three unrelated unit tests fail on the base commit in this sandbox | Run `just verify` on a capable runner |
 | T091 | Depends on T059 | As above |
@@ -191,11 +191,11 @@ cooldown (D-5) are registered in the plan's Approval Items for sign-off.
 
 ### New red-to-green evidence
 
-- `go test ./internal/extproc/delegation ./internal/extproc/server -run
-  'TestResolutionTelemetry|TestDelegationLogs'` compiled and failed semantically before the
+- `go test ./internal/extproc/grantcontext ./internal/extproc/server -run
+  'TestResolutionTelemetry|TestGrantContextLogs'` compiled and failed semantically before the
   observability changes: all five resolution cases emitted zero spans instead of two/three,
   and permit hit/miss emitted no JSON log record. Existing denial/error log cases passed.
-- Added `extproc.delegation.resolve` and `extproc.delegation.evaluate` spans with bounded
+- Added `extproc.grant_context.resolve` and `extproc.grant_context.evaluate` spans with bounded
   operation, outcome/detail, cache and error categories, plus Debug permit logs. The identical
   tests then passed with `-race`. Captured spans/logs exclude subject/assertion/provider
   credentials, context, requested resource URI and dependency error text.
@@ -209,7 +209,7 @@ cooldown (D-5) are registered in the plan's Approval Items for sign-off.
   finalization attempt. No production test-only API was added.
 - Added broker span credential-exclusion coverage and the unit OpenAPI compatibility test.
   These already-existing behaviors passed immediately; no artificial red result is claimed.
-  The existing real-loader example table already includes the delegation-context example.
+  The existing real-loader example table already includes the grant-context example.
 
 ### Current validation
 
@@ -219,8 +219,8 @@ cooldown (D-5) are registered in the plan's Approval Items for sign-off.
 | `just extproc-test` | Pass, with race coverage |
 | `just test-e2e-backend` | 950/950 selected scenarios pass, including unchanged exchange, diagnostics, local exchange and approval journeys |
 | `ginkgo --label-filter='authzen-delegation && !docker' ./tests/e2e/` | 28/28 pass; US2.19 explicitly deferred |
-| `ginkgo --no-color --label-filter="delegation-context" ./tests/e2e/` | 11/11 pass, including revocation/outage, both policy paths, canonical UUID parity and origin discovery |
-| `ginkgo --no-color --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 pass |
+| `ginkgo --no-color --label-filter="grant-context" ./tests/e2e/` | 11/11 pass, including revocation/outage, both policy paths, canonical UUID parity and origin discovery |
+| `ginkgo --no-color --label-filter="grant-context-startup" ./tests/e2e/extproc/` | 4/4 pass |
 | `ginkgo -v --procs=2 --skip="Agentgateway" ./tests/e2e/extproc/` | 102/102 selected scenarios pass, including unchanged OPA and metadata-input coverage; 17 Agentgateway scenarios excluded as container-backed |
 | `just test-e2e-frontend` | 67/67 pass |
 | `just docs-build` | Pass |
@@ -337,17 +337,17 @@ all existing exchange regression assertions. Concrete coverage and corrections:
 | JSON shape, required types, Content-Type, bounded body and ignore-unknown invariance | `internal/adapters/http/enduser/authzen_evaluation_test.go:192-364` | Added null-context and every required member's missing/null/wrong-type cases; made overflow body otherwise valid, added exact-64-KiB acceptance, and compared domain requests/assertions/responses with and without ignored fields at every level. Existing handler already satisfies these; no artificial red claim or request-behavior change. |
 | Response statuses, reasons, caching, request ID, credential-free logs/spans | `internal/adapters/http/enduser/authzen_evaluation_test.go:81-190,366-388` | Permit/deny/error assertions, challenge matrix and absent-ID behavior remain green. |
 | Shared audit/perimeter identity and trace seam | `internal/adapters/http/middleware/security_context_test.go:496`, `tests/e2e/authzen_fixture_test.go:228-271`, `tests/e2e/authzen_delegation_test.go:46`, `tests/e2e/authzen_delegation_errors_test.go:54-108` | Deferred holder plus production composed actor/peer/trace assertions on permit, policy denial and early fallback retained; §8 holds the original correction's red/green evidence. |
-| Producer/schema/consumer parity and no unknown fields reaching policy | `internal/extproc/delegation/client_test.go:90-303`, `internal/extproc/authorization/input_builder_test.go:429-460` | Expanded required-string and optional metadata matrix at every nesting level. Found and fixed null scope-element coercion; empty arrays and omitted optionals remain accepted. |
-| Single request-start deadline, fail-closed freshness, independent permit cache | `internal/extproc/delegation/client_test.go:116-173`, `internal/extproc/delegation/resolver_test.go:57-213` | Clock-read count, bad/duplicate max-age, exact-deadline misses, late response, unchanged singleflight deadline, denial/error noncaching, eviction and shutdown assertions retained. |
-| Body precedence, header-only ordering, expiry and immutable mapping | `internal/extproc/server/delegation_test.go:139-394` | Replaced the precedence sleep with completion-order channels; added deny over success/cancellation and resolution error/timeout/cancellation precedence in both orders. Added expiry while buffering, complementing exchange-wait, batch and header-only expiry tests; zero policy/re-resolution assertions. |
-| Direct typed policy input and unchanged disabled mode | `internal/extproc/authorization/input_builder_test.go:429-460`, `internal/extproc/server/delegation_test.go:139-163,299-394` | Exact enabled JSON, byte-for-byte disabled JSON, deep-copy checks, permit-derived compatibility fields and session identity preserved. |
-| Config defaults/precedence/validation and example loading | `internal/extproc/config/validate_delegation_test.go:27-119`, `internal/extproc/config/loader_test.go:85-156` | All four settings use the existing loader; enabled-only rules, origin/port and explicit path, example-file validation retained. |
-| Startup discovery, exact identifier, credential exclusion and lifecycle | `internal/extproc/delegation/discovery_test.go:15-89`, `cmd/extproc-token-exchange/root_delegation_test.go:66-133`, `tests/e2e/extproc/delegation_context_startup_test.go:34-104` | Real startup errors precede listening; discovery has no bearer credential, mismatch has zero evaluation calls, advertised endpoint and shutdown are exercised. |
-| Bounded observability and credential exclusion | `internal/extproc/delegation/telemetry_test.go:19-95`, `internal/extproc/server/delegation_telemetry_test.go:28-69` | Captured client/resolver spans and permit hit/miss/deny/error logs exclude tokens, context, principals, resource URIs and dependency causes. |
+| Producer/schema/consumer parity and no unknown fields reaching policy | `internal/extproc/grantcontext/client_test.go:90-303`, `internal/extproc/authorization/input_builder_test.go:429-460` | Expanded required-string and optional metadata matrix at every nesting level. Found and fixed null scope-element coercion; empty arrays and omitted optionals remain accepted. |
+| Single request-start deadline, fail-closed freshness, independent permit cache | `internal/extproc/grantcontext/client_test.go:116-173`, `internal/extproc/grantcontext/resolver_test.go:57-213` | Clock-read count, bad/duplicate max-age, exact-deadline misses, late response, unchanged singleflight deadline, denial/error noncaching, eviction and shutdown assertions retained. |
+| Body precedence, header-only ordering, expiry and immutable mapping | `internal/extproc/server/grant_context_test.go:139-394` | Replaced the precedence sleep with completion-order channels; added deny over success/cancellation and resolution error/timeout/cancellation precedence in both orders. Added expiry while buffering, complementing exchange-wait, batch and header-only expiry tests; zero policy/re-resolution assertions. |
+| Direct typed policy input and unchanged disabled mode | `internal/extproc/authorization/input_builder_test.go:429-460`, `internal/extproc/server/grant_context_test.go:139-163,299-394` | Exact enabled JSON, byte-for-byte disabled JSON, deep-copy checks, permit-derived compatibility fields and session identity preserved. |
+| Config defaults/precedence/validation and example loading | `internal/extproc/config/validate_grant_context_test.go:27-119`, `internal/extproc/config/loader_test.go:85-156` | All four settings use the existing loader; enabled-only rules, origin/port and explicit path, example-file validation retained. |
+| Startup discovery, exact identifier, credential exclusion and lifecycle | `internal/extproc/grantcontext/discovery_test.go:15-89`, `cmd/extproc-token-exchange/root_grant_context_test.go:66-133`, `tests/e2e/extproc/grant_context_startup_test.go:34-104` | Real startup errors precede listening; discovery has no bearer credential, mismatch has zero evaluation calls, advertised endpoint and shutdown are exercised. |
+| Bounded observability and credential exclusion | `internal/extproc/grantcontext/telemetry_test.go:19-95`, `internal/extproc/server/grant_context_telemetry_test.go:28-69` | Captured client/resolver spans and permit hit/miss/deny/error logs exclude tokens, context, principals, resource URIs and dependency causes. |
 | Deprecation without response-field removal | `internal/adapters/http/enduser/authzen_compat_test.go:14-57`, `tests/e2e/authzen_delegation_compat_test.go:26-46` | `1.2.0`, deprecated permission map shape and unchanged principal/agent fields asserted through schema and actual exchange. |
 
 **New red/green evidence (T102)**: before changing `context.go`,
-`go test ./internal/extproc/delegation -run TestClient_TypedContextValidation -count=1`
+`go test ./internal/extproc/grantcontext -run TestClient_TypedContextValidation -count=1`
 compiled and failed exactly two assertions: `null_resource_scope_element` and
 `null_service_scope_element` expected an error but got nil. Go's `encoding/json` silently
 converted null array entries into empty strings in `[]string`. The wire decoder now uses
@@ -380,8 +380,8 @@ counting metadata provider. No scenario or acceptance assertion was removed.
 | `tests/e2e/authzen_delegation_test.go` | US1.1 → 34; US1.2 → 46; US1.3 → 70; US1.4 → 79; US1.5 → 89; US1.6 → 100; US1.7 → 136; US1.8 → 115 |
 | `tests/e2e/authzen_delegation_denial_test.go` | US2.1 → 24; US2.2 → 31; US2.3 → 39; US2.4 → 48; US2.5 → 56; US2.6 → 64; US2.7 → 77; US2.8 → 86; US2.9 → 98; US2.10 → 106 |
 | `tests/e2e/authzen_delegation_errors_test.go` | US2.11 → 30; US2.12 → 39; US2.13 → 46; US2.14 → 54; US2.15 → 64; US2.16 → 73; US2.17 → 99; US2.18 → 84; US2.19 → 145 (downstream, `docker`); US2.20 → 91 |
-| `tests/e2e/delegation_context_journey_test.go` | US3.1 → 106; US3.2 → 115; US3.3 → 123; US3.4 → 133; US3.5 → 144; US3.6 → 174; US3.7 → 189; US3.8 → 208; US3.9 → 230; US3.10 → 241; US4.5 → 253 |
-| `tests/e2e/extproc/delegation_context_startup_test.go` | US4.1 → 34; US4.2 → 58; US4.3 → 73; US4.4 → 91 |
+| `tests/e2e/grant_context_journey_test.go` | US3.1 → 106; US3.2 → 115; US3.3 → 123; US3.4 → 133; US3.5 → 144; US3.6 → 174; US3.7 → 189; US3.8 → 208; US3.9 → 230; US3.10 → 241; US4.5 → 253 |
+| `tests/e2e/extproc/grant_context_startup_test.go` | US4.1 → 34; US4.2 → 58; US4.3 → 73; US4.4 → 91 |
 | `tests/e2e/authzen_delegation_compat_test.go` | US4.6 → 26 |
 
 The complete assertions—not just identifiers—were reviewed: ten separate grant-denial
@@ -410,8 +410,8 @@ rerun as the final local guard after the decoder correction and strengthened ass
 | `just docs-build` | Pass. Existing build warnings remain non-fatal; no dependency-lock update retained. |
 | `just test-e2e-backend` | 985 selected scenarios pass; 12 performance/container scenarios excluded by the existing recipe. Includes unchanged exchange/diagnostics/local-exchange/approval regressions. |
 | `ginkgo -v --no-color --label-filter="authzen-delegation && !docker" ./tests/e2e/` | 28/28 pass; US2.19 remains downstream. |
-| `ginkgo -v --no-color --label-filter="delegation-context" ./tests/e2e/` | 11/11 pass, including the strengthened US3.5 and both canonical UUID fixtures. |
-| `ginkgo -v --no-color --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 pass. |
+| `ginkgo -v --no-color --label-filter="grant-context" ./tests/e2e/` | 11/11 pass, including the strengthened US3.5 and both canonical UUID fixtures. |
+| `ginkgo -v --no-color --label-filter="grant-context-startup" ./tests/e2e/extproc/` | 4/4 pass. |
 | `ginkgo -v --no-color --procs=2 --skip="Agentgateway" ./tests/e2e/extproc/` | 102/102 non-container scenarios pass; 17 Agentgateway scenarios excluded, not validated. Includes unchanged OPA and metadata-input coverage. |
 | `just test-e2e-frontend` | 67/67 pass; no frontend code or screenshot changes retained. |
 
@@ -486,8 +486,8 @@ E2E followed the static, unit, integration, docs and security gates as the final
 | `just test-e2e-frontend` | 67/67 pass. |
 | `ginkgo -v --no-color --procs=2 --skip="Agentgateway" ./tests/e2e/extproc/` | 102/102 selected non-container scenarios pass; 17 Agentgateway cases excluded locally. |
 | `ginkgo -v --no-color --label-filter="authzen-delegation && !docker" ./tests/e2e/` | 28/28 pass. |
-| `ginkgo -v --no-color --label-filter="delegation-context" ./tests/e2e/` | 11/11 pass, including re-consent/cooldown and canonical-ID parity. |
-| `ginkgo -v --no-color --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 pass. |
+| `ginkgo -v --no-color --label-filter="grant-context" ./tests/e2e/` | 11/11 pass, including re-consent/cooldown and canonical-ID parity. |
+| `ginkgo -v --no-color --label-filter="grant-context-startup" ./tests/e2e/extproc/` | 4/4 pass. |
 
 ### Downstream results on the supplied head (D-6 condition 4)
 
@@ -559,16 +559,16 @@ partly resolved review, not a claim that all findings are closed.
 
 Before production changes, the focused Go test run compiled and failed semantically:
 `TestAuthZENEvaluation_AuditRecords` and `TestAuthZENEvaluation_SpansExcludeCredentialsAndContext`
-expected the new `tokenexchange` identifiers; `TestDelegationLogs_ContainOnlyBoundedMetadata`
-and `TestDelegationExpiredLog` expected security events absent from existing records;
-`TestContextInput_SerializesDelegationMembersOnlyWhenPresent` and
+expected the new `tokenexchange` identifiers; `TestGrantContextLogs_ContainOnlyBoundedMetadata`
+and `TestGrantContextExpiredLog` expected security events absent from existing records;
+`TestContextInput_SerializesGrantContextMembersOnlyWhenPresent` and
 `TestAccessEvaluation_PermitProjectsCredentialFreeContext` expected `service_id` rather
 than `id`. F4/F6's assertions now pass. F2's implementation and test edits were restored to
 the supplied head after the push rejection; their initial red/green evidence is retained
 here only as publication-attempt history, not as evidence of a published F2 resolution.
 
 After the approved OpenAPI-first service-member revision, the new
-`TestDelegationContractConformance` compiled and failed against both producer and wire
+`TestGrantContextContractConformance` compiled and failed against both producer and wire
 context declarations on `.resource.id` versus `.resource.service_id`. It now passes and
 compares all nested context fields plus the exact domain and ExtProc denial allowlists
 against OpenAPI. No test-only production API or cross-process production import was added.
@@ -612,7 +612,7 @@ not yet implemented. ADR-3 remains unincorporated until its issue prerequisite i
 D-7 approval does not itself supply permission to publish the standard-file registry change.
 
 T108/T109 review confirms the binding mismatch diagnostic is log-only Debug metadata
-`delegation_binding=mismatch`, with no principal, token, raw scopes, grant contents, span
+`grant_context_binding=mismatch`, with no principal, token, raw scopes, grant contents, span
 attribute or metric. Broker/resolver baseline identifiers and the exact D-7 rename/explicit
 kinds/namespace requirements remain those in `contracts/observability.md`. No binding
 mismatch diagnostic is emitted yet, and this design review does not close T103.
@@ -626,14 +626,14 @@ and ExtProc guidance describe this change; spec.md and plan.md remain unchanged.
 
 ### Test-first evidence
 
-`internal/extproc/server/delegation_test.go:367` adds
-`TestDelegation_RejectsExpiryBeforeFinalForwarding` with three subtests. Before implementation,
-`go test ./internal/extproc/server -run '^TestDelegation_RejectsExpiryBeforeFinalForwarding$' -count=1`
+`internal/extproc/server/grant_context_test.go:367` adds
+`TestGrantContext_RejectsExpiryBeforeFinalForwarding` with three subtests. Before implementation,
+`go test ./internal/extproc/server -run '^TestGrantContext_RejectsExpiryBeforeFinalForwarding$' -count=1`
 compiled and failed semantically in all three: body and final batch policy evaluation returned
 a forwarding RequestBody response, and header-only exchange returned an Authorization-bearing
 RequestHeaders response after the clock reached the original deadline. After implementation
 the unchanged status/body assertions pass. Buffer-log assertions verify the existing
-`extproc.delegation_context.permit_expired` event and exclude subject/provider credentials,
+`extproc.grant_context.permit_expired` event and exclude subject/provider credentials,
 raw scopes and the grant-update timestamp. `just extproc-test` passes with the race detector.
 This is new evidence only for final-forwarding expiry, not for binding or US3.11–US3.13.
 
@@ -651,8 +651,8 @@ This is new evidence only for final-forwarding expiry, not for binding or US3.11
 - `just test-e2e-backend`: 999 passed, 0 failed
 - `just test-e2e-frontend`: 67 passed, 0 failed
 - `ginkgo -v --label-filter="authzen-delegation && !docker" ./tests/e2e/`: 28 passed
-- `ginkgo -v --label-filter="delegation-context" ./tests/e2e/`: 11 passed
-- `ginkgo -v --label-filter="delegation-context-startup" ./tests/e2e/extproc/`: 4 passed
+- `ginkgo -v --label-filter="grant-context" ./tests/e2e/`: 11 passed
+- `ginkgo -v --label-filter="grant-context-startup" ./tests/e2e/extproc/`: 4 passed
 - `ginkgo -v --focus="OPA Authorization|ExtProc Metadata Input" --label-filter="!docker" ./tests/e2e/extproc/`: 30 passed
 
 The focused feature total is still **43 local scenarios**, not the target 46: the three new
@@ -741,8 +741,8 @@ Passed on this run's changes:
 - `just test-e2e-backend` (999 passed)
 - `just test-e2e-frontend` (67 passed)
 - `ginkgo -v --label-filter="authzen-delegation && !docker" ./tests/e2e/` (28 passed)
-- `ginkgo -v --label-filter="delegation-context" ./tests/e2e/` (11 passed)
-- `ginkgo -v --label-filter="delegation-context-startup" ./tests/e2e/extproc/` (4 passed)
+- `ginkgo -v --label-filter="grant-context" ./tests/e2e/` (11 passed)
+- `ginkgo -v --label-filter="grant-context-startup" ./tests/e2e/extproc/` (4 passed)
 - `ginkgo -v --focus="OPA Authorization|ExtProc Metadata Input" --label-filter="!docker" ./tests/e2e/extproc/` (30 non-container scenarios passed; Agentgateway cases did not execute)
 
 The focused feature coverage remains 43 local scenarios, not the target 46. US3.11–US3.13
@@ -797,14 +797,14 @@ field is removed or deprecated, and no future removal is approved. Policy guidan
 ### New test-first evidence
 
 The test-harness extraction is a separate behavior-preserving commit. Before adding binding
-unit tests, `go test ./internal/extproc/server -run '^TestDelegation_' -count=1` passed with
+unit tests, `go test ./internal/extproc/server -run '^TestGrantContext_' -count=1` passed with
 all existing assertions unchanged. The helper can now use the production TokenExchanger.
 No production binding signatures, stubs or behavior were added.
 
 | Scenario / test | Location | Observed semantic red |
 |---|---|---|
-| US3.11 (T110) | `tests/e2e/delegation_context_journey_test.go:329` | The first target request after permit expiry leaves broker exchange count at 1, expected 2. Broad warmup, real consent narrowing and provider re-authorization complete successfully; the stored session has only `read:repo`. |
-| US3.12 (T121) | `tests/e2e/delegation_context_journey_test.go:365` | Without re-authorization, the count again stays 1 instead of 2. The expected identical broad token is explicitly retained under the provider-capability limitation. |
+| US3.11 (T110) | `tests/e2e/grant_context_journey_test.go:329` | The first target request after permit expiry leaves broker exchange count at 1, expected 2. Broad warmup, real consent narrowing and provider re-authorization complete successfully; the stored session has only `read:repo`. |
+| US3.12 (T121) | `tests/e2e/grant_context_journey_test.go:365` | Without re-authorization, the count again stays 1 instead of 2. The expected identical broad token is explicitly retained under the provider-capability limitation. |
 | Scope-set / grant-instant reuse (partial T111) | `internal/extproc/server/exchanger_binding_test.go:63` | Changed scopes alone, changed grant instant alone and empty scopes forward `SYNTHETIC_OLD_RESULT` instead of `SYNTHETIC_NEW_RESULT`, and make 1 broker call instead of 2, on both paths. Equal/reordered/duplicate scope sets and equal timestamp instants remain passing controls. |
 | Failed replacement (partial T111/T112 coverage) | `internal/extproc/server/exchanger_binding_test.go:113` | Both paths return Authorization-bearing request headers instead of an immediate failure after the permit changes and the replacement broker response would fail. |
 | Disabled Exchange control | `internal/extproc/server/exchanger_binding_test.go:137` | Passes: 1 broker call with unchanged token, identities and permission-set extensions. |
@@ -818,11 +818,11 @@ later variants remain authored but not green-validated.
 
 Commands and current results:
 
-- `ginkgo -v --label-filter='delegation-context' --focus='forwards the reauthorized reader|re-exchanges after narrowing' ./tests/e2e/`: compiled, 2 semantic failures, no pending specs.
+- `ginkgo -v --label-filter='grant-context' --focus='forwards the reauthorized reader|re-exchanges after narrowing' ./tests/e2e/`: compiled, 2 semantic failures, no pending specs.
 - `go test ./internal/extproc/server -run '^TestTokenBinding_' -count=1`: compiled, 8 failing subtests across 2 new test functions; equality and disabled controls pass.
 - `just extproc-test`: expected semantic red in those same new tests, all other ExtProc packages pass; no race-detector warning.
 - `just test`: expected semantic red in those same new tests; no other test failures reported.
-- `ginkgo --no-color --succinct --label-filter='delegation-context' ./tests/e2e/`: 13 scenarios executed, 11 existing scenarios pass and 2 new scenarios fail, no pending specs. US3.13 is not authored yet; this is not the required 14-scenario green gate.
+- `ginkgo --no-color --succinct --label-filter='grant-context' ./tests/e2e/`: 13 scenarios executed, 11 existing scenarios pass and 2 new scenarios fail, no pending specs. US3.13 is not authored yet; this is not the required 14-scenario green gate.
 
 ### Passing checks and remaining work
 
@@ -866,7 +866,7 @@ tasks; this session is **blocked**, not feature completion.
 |---|---|---|
 | `TestTokenBinding_PreservesIdenticalTokenReplacementAndDetachedDelivery` | `internal/extproc/server/exchanger_binding_test.go:161` | Three barrier-controlled body-path cases capture an initial exchange result before a successor request, then release resolution: compatible replacement reuse, incompatible replacement requiring one extra exchange, and a matching detached result that remains usable. All provider token bytes are identical. The test also checks that a subsequent successor request can reuse its binding unless legitimately replaced. All three cases compile and fail semantically because the changed successor permit still makes only one broker call, not two; subsequent expected totals also fail. |
 | `TestTokenBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentity` | `internal/extproc/server/exchanger_binding_test.go:225` | Both request paths pass the existing-behavior control: `expires_in: 0` remains non-cacheable, every request exchanges, and principal, agent and permission-set extensions are preserved. This is not evidence of atomic first-claim or shared non-cacheable delivery. |
-| `TestDelegation_RejectsExpiryDuringBindingReplacement` | `internal/extproc/server/delegation_test.go:152` | Both request paths compile and fail semantically: they return Authorization-bearing RequestHeaders rather than the required delegation-unavailable 503. The broker fixture advances the test clock to the original permit deadline during the replacement response; assertions require no buffering/mutation, no re-resolution, and no body policy evaluation after expiry. The current implementation never requests that replacement, so these tests are red for missing binding integration, not proof of an existing final-forwarding-check regression. |
+| `TestGrantContext_RejectsExpiryDuringBindingReplacement` | `internal/extproc/server/grant_context_test.go:152` | Both request paths compile and fail semantically: they return Authorization-bearing RequestHeaders rather than the required delegation-unavailable 503. The broker fixture advances the test clock to the original permit deadline during the replacement response; assertions require no buffering/mutation, no re-resolution, and no body policy evaluation after expiry. The current implementation never requests that replacement, so these tests are red for missing binding integration, not proof of an existing final-forwarding-check regression. |
 
 The replacement fixture synchronizes both resolver entry and completion of the production
 exchanger's initial call before running the successor request. It uses test-only wrappers,
@@ -880,7 +880,7 @@ were run with `-race`, compiled, reached their semantic assertions, and emitted 
 |---|---|
 | `just check` | Pass after both test-file changes; format, vet and lint, 0 issues. |
 | `go test -race ./internal/extproc/server -run '^TestTokenBinding_(PreservesIdenticalTokenReplacementAndDetachedDelivery\|NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentity)$' -count=1` | Three new replacement/detached cases are semantically red; both non-cacheable controls pass. |
-| `go test -race ./internal/extproc/server -run '^TestDelegation_RejectsExpiryDuringBindingReplacement$' -count=1` | Both new expiry cases are semantically red. |
+| `go test -race ./internal/extproc/server -run '^TestGrantContext_RejectsExpiryDuringBindingReplacement$' -count=1` | Both new expiry cases are semantically red. |
 | `just extproc-test` | Fails only in the unfinished binding tests: the two existing binding test functions and the two new semantically red functions. No race warning. |
 | `just test` | Same unfinished binding-test failures; no additional test failure reported. |
 | `just test-integration` | Pass, including delegation contract conformance. |
@@ -971,8 +971,8 @@ permutations in T111, binding-aware port stubs in T112, or the complete US3.13 j
 | `just test-e2e-frontend` | Pass, 67 scenarios. |
 | `ginkgo -v --no-color --procs=2 --skip='Agentgateway' ./tests/e2e/extproc/` | 103 non-container scenarios pass; 17 Agentgateway scenarios are excluded and not validated. |
 | `ginkgo -v --no-color --label-filter='authzen-delegation && !docker' ./tests/e2e/` | 28 pass. |
-| `ginkgo -v --no-color --label-filter='delegation-context' ./tests/e2e/` | 11 pass, US3.11/US3.12 fail. US3.13 is absent, not skipped or validated. |
-| `ginkgo -v --no-color --label-filter='delegation-context-startup' ./tests/e2e/extproc/` | 4 pass. |
+| `ginkgo -v --no-color --label-filter='grant-context' ./tests/e2e/` | 11 pass, US3.11/US3.12 fail. US3.13 is absent, not skipped or validated. |
+| `ginkgo -v --no-color --label-filter='grant-context-startup' ./tests/e2e/extproc/` | 4 pass. |
 
 ### Unfinished work
 
@@ -1003,15 +1003,15 @@ The supplied approval is unchanged: mjungsbluth, 2026-11-06T15:30:38Z, https://g
 
 Minimal compiling TokenBinding/result-handle/ExchangeBound signatures retain the old behavior only. New port tests cover atomic claiming, detached/matching/replaced identity, compatible and incompatible replacements, joined retry delivery (including zero-lifetime result), terminal conflict, exchange failure, and credential-safe log-only diagnostics. Server port stubs require binding after precedence and before buffering, and exact terminal API-7 mapping on both paths.
 
-- `go test ./internal/extproc/server -run 'TestBindingPort|TestTokenBinding_|TestDelegation.*Expir' -count=1`: semantic failures for missing claims/replacement exchanges; existing equality/disabled controls pass.
-- `go test ./internal/extproc/server -run 'TestBindingPort|TestDelegation_BindingPort' -count=1`: semantic failures for missing claim, missing retry-flight participation, missing mismatch diagnostic and absent binding-port invocation; tests compile.
-- `ginkgo --label-filter='delegation-context' --focus='shared retry|reauthorized reader token|without claiming provider' ./tests/e2e/`: all three scenarios compile and fail semantically. US3.11/US3.12 exchange counts remain 1 rather than 2; new US3.13 fails to reach the required binding-validation barrier because the server never calls ExchangeBound. The new journey uses independent production resolver instances against the real broker, differing live grant snapshots, a shared production exchanger and a response barrier around the real broker's retry. It checks winner forwarding, loser terminal 503 and same-token replacement survival.
+- `go test ./internal/extproc/server -run 'TestBindingPort|TestTokenBinding_|TestGrantContext.*Expir' -count=1`: semantic failures for missing claims/replacement exchanges; existing equality/disabled controls pass.
+- `go test ./internal/extproc/server -run 'TestBindingPort|TestGrantContext_BindingPort' -count=1`: semantic failures for missing claim, missing retry-flight participation, missing mismatch diagnostic and absent binding-port invocation; tests compile.
+- `ginkgo --label-filter='grant-context' --focus='shared retry|reauthorized reader token|without claiming provider' ./tests/e2e/`: all three scenarios compile and fail semantically. US3.11/US3.12 exchange counts remain 1 rather than 2; new US3.13 fails to reach the required binding-validation barrier because the server never calls ExchangeBound. The new journey uses independent production resolver instances against the real broker, differing live grant snapshots, a shared production exchanger and a response barrier around the real broker's retry. It checks winner forwarding, loser terminal 503 and same-token replacement survival.
 
 Runtime implementation and green verification follow this checkpoint; no historical D-6 evidence is substituted for this red run.
 
 ### Implementation and corrections
 
-- `de74ea2a` isolates the behavior-preserving exchanger extraction: shared flights return the original broker outcome and each caller applies the existing stale fallback. On a clean checkout with only this refactor applied, `go test -race ./internal/extproc/server -skip 'TestTokenBinding_|TestDelegation_RejectsExpiryDuringBinding' -count=1` passed unchanged pre-existing regression assertions. The exclusions are the already-red binding continuation, not validation of those cases. Enabled retries can now forbid stale fallback per caller without changing the singleflight key or breaker accounting.
+- `de74ea2a` isolates the behavior-preserving exchanger extraction: shared flights return the original broker outcome and each caller applies the existing stale fallback. On a clean checkout with only this refactor applied, `go test -race ./internal/extproc/server -skip 'TestTokenBinding_|TestGrantContext_RejectsExpiryDuringBinding' -count=1` passed unchanged pre-existing regression assertions. The exclusions are the already-red binding continuation, not validation of those cases. Enabled retries can now forbid stale fallback per caller without changing the singleflight key or breaker accounting.
 - Every successful result now has an opaque shared handle, including zero-lifetime successes. `ExchangeBound` normalizes copied scope sets, atomically claims once, compares grant instants, deletes only its observed identity, preserves compatible replacements, and retries at most once without incompatible success-cache reuse or stale fallback. Retry conflict returns the exact API-7 503 with no rebind/deletion/forwarding. Body and header-only paths use the validated permit and retain the original deadline through final forwarding.
 - The real-broker journeys exposed truncation of grant update instants. `TestAccessEvaluation_GrantBindingPreservesUpdateInstant` failed semantically before the producer correction: fractional instants became the same whole-second string, losing same-scope version changes. RFC3339Nano preserves the approved grant-instant binding within the existing date-time contract; it introduces no field, token claim, key/default, schema or dependency. Whole-second instants serialize unchanged. The projection expectation was updated to retain, not round, that instant. The test and both narrowing/concurrency journeys now pass.
 - The timeout fixture now drains its request body before awaiting HTTP cancellation; otherwise httptest cleanup waits indefinitely because the server has not consumed the request. All timeout/error assertions remain intact. The pre-policy expiry test now asserts the stronger approved API-7 boundary: an already-expired permit gets 503 before Authorization mutation or buffering, rather than waiting for the body phase. Buffering/batch/approval expiry coverage remains enabled.
@@ -1022,11 +1022,11 @@ Runtime implementation and green verification follow this checkpoint; no histori
 
 | Scenario / gate | Location / result |
 |---|---|
-| US3.11 | `tests/e2e/delegation_context_journey_test.go:330-365`: real consent narrowing and provider re-authorization; success and failed replacement on both paths; red then green. |
-| US3.12 | `tests/e2e/delegation_context_journey_test.go:366-390`: consent narrowing with unchanged broader provider session; new result identity and identical token bytes on both paths; red then green. |
-| US3.13 | `tests/e2e/delegation_context_journey_test.go:391-467`: independent production resolver/server instances share one production exchanger; controlled real-broker grant reads yield different live permits; both join one held retry; exactly one winner forwards, loser returns terminal 503, winner's identical-token replacement survives. Initial missing binding-port invocation was semantically red; complete journey now green on both paths. |
+| US3.11 | `tests/e2e/grant_context_journey_test.go:330-365`: real consent narrowing and provider re-authorization; success and failed replacement on both paths; red then green. |
+| US3.12 | `tests/e2e/grant_context_journey_test.go:366-390`: consent narrowing with unchanged broader provider session; new result identity and identical token bytes on both paths; red then green. |
+| US3.13 | `tests/e2e/grant_context_journey_test.go:391-467`: independent production resolver/server instances share one production exchanger; controlled real-broker grant reads yield different live permits; both join one held retry; exactly one winner forwards, loser returns terminal 503, winner's identical-token replacement survives. Initial missing binding-port invocation was semantically red; complete journey now green on both paths. |
 | Port outcomes / diagnostics | `internal/extproc/server/token_binding_test.go`: claim/replacement/detached outcomes, shared retry compatibility/conflict/failure including actual zero-lifetime results, redacted formatting and log-only credential safety. |
-| Server integration | `internal/extproc/server/delegation_test.go`: binding-aware stubs pin precedence, evaluated permit, terminal API-7 and pre-buffer/final-forward expiry; prior cache/timeout/cancellation/claim tests remain active. |
+| Server integration | `internal/extproc/server/grant_context_test.go`: binding-aware stubs pin precedence, evaluated permit, terminal API-7 and pre-buffer/final-forward expiry; prior cache/timeout/cancellation/claim tests remain active. |
 | `go test -race ./internal/extproc/server ./internal/domain/tokenexchange -count=1 -timeout=90s` | Pass. |
 | `just check` | Pass, zero lint issues; final formatting/vet/lint checks pass. |
 | `just test` | Pass, complete fast Go/package race suite. |
@@ -1042,9 +1042,9 @@ Runtime implementation and green verification follow this checkpoint; no histori
 | `just test-e2e-frontend` | Pass, all 67 scenarios. |
 | `ginkgo -v --no-color --procs=2 --skip='Agentgateway' ./tests/e2e/extproc/` | Pass, 103 non-container scenarios; 17 container Agentgateway scenarios excluded/deferred, not validated. |
 | `ginkgo --no-color --label-filter='authzen-delegation && !docker' ./tests/e2e/` | Pass, 28 local broker feature scenarios. |
-| `ginkgo --no-color --label-filter='delegation-context' ./tests/e2e/` | Pass, 14 consumer scenarios. |
-| `ginkgo --no-color --label-filter='delegation-context-startup' ./tests/e2e/extproc/` | Pass, 4 startup scenarios. |
-| `ginkgo --no-color --label-filter='delegation-context' --focus='shared retry' --repeat=4 ./tests/e2e/` | Pass, five consecutive executions, both body/header-only paths in each. |
+| `ginkgo --no-color --label-filter='grant-context' ./tests/e2e/` | Pass, 14 consumer scenarios. |
+| `ginkgo --no-color --label-filter='grant-context-startup' ./tests/e2e/extproc/` | Pass, 4 startup scenarios. |
+| `ginkgo --no-color --label-filter='grant-context' --focus='shared retry' --repeat=4 ./tests/e2e/` | Pass, five consecutive executions, both body/header-only paths in each. |
 
 ### Completion and downstream boundary
 

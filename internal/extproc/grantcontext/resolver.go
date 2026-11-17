@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"context"
@@ -56,13 +56,13 @@ func NewPermitResolver(evaluator Evaluator, maxStaleness time.Duration) *PermitR
 // concurrent callers. The returned Result keeps its original Deadline; the caller must
 // check it again before every policy use. hit reports a cache hit.
 func (r *PermitResolver) Resolve(ctx context.Context, subjectToken, resourceURI string) (result Result, hit bool, err error) {
-	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.delegation.resolve", trace.WithSpanKind(trace.SpanKindInternal))
+	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.grant_context.resolve", trace.WithSpanKind(trace.SpanKindInternal))
 	defer func() {
 		cache := "miss"
 		if hit {
 			cache = "hit"
 		}
-		span.SetAttributes(attribute.String("delegation.cache", cache))
+		span.SetAttributes(attribute.String("grant_context.cache", cache))
 		observeResolution(span, err)
 		span.End()
 	}()

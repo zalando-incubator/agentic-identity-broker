@@ -1,4 +1,4 @@
-# Contract: ExtProc Delegation Context (configuration, broker calls, request outcomes, and policy input)
+# Contract: ExtProc Grant Context (configuration, broker calls, request outcomes, and policy input)
 
 **Owner**: standalone `extproc-token-exchange` (ADR 011). It uses the `EXTPROC_` configuration
 namespace and is **not** part of the broker Helm chart. **Status**: Accepted under approval items
@@ -25,8 +25,8 @@ outstanding sign-off request. Quickstart §11 records the approval and validatio
 oauth2:
   token_endpoint: https://broker.example.com/oauth2/token   # existing; its origin is the default PDP
 authorization:
-  enabled: true                                              # existing; required when delegation_context.enabled
-delegation_context:                                          # new
+  enabled: true                                              # existing; required when grant_context.enabled
+grant_context:                                          # new
   enabled: false                                             # default; true opts in
   policy_decision_point: ""                                  # default: origin of oauth2.token_endpoint
   request_timeout: 5s
@@ -35,10 +35,10 @@ delegation_context:                                          # new
 
 | Key | Env var | Flag | Default |
 |---|---|---|---|
-| `delegation_context.enabled` | `EXTPROC_DELEGATION_CONTEXT_ENABLED` | `--delegation_context.enabled` | `false` |
-| `delegation_context.policy_decision_point` | `EXTPROC_DELEGATION_CONTEXT_POLICY_DECISION_POINT` | `--delegation_context.policy_decision_point` | `""` |
-| `delegation_context.request_timeout` | `EXTPROC_DELEGATION_CONTEXT_REQUEST_TIMEOUT` | `--delegation_context.request_timeout` | `5s` |
-| `delegation_context.max_staleness` | `EXTPROC_DELEGATION_CONTEXT_MAX_STALENESS` | `--delegation_context.max_staleness` | `60s` |
+| `grant_context.enabled` | `EXTPROC_GRANT_CONTEXT_ENABLED` | `--grant_context.enabled` | `false` |
+| `grant_context.policy_decision_point` | `EXTPROC_GRANT_CONTEXT_POLICY_DECISION_POINT` | `--grant_context.policy_decision_point` | `""` |
+| `grant_context.request_timeout` | `EXTPROC_GRANT_CONTEXT_REQUEST_TIMEOUT` | `--grant_context.request_timeout` | `5s` |
+| `grant_context.max_staleness` | `EXTPROC_GRANT_CONTEXT_MAX_STALENESS` | `--grant_context.max_staleness` | `60s` |
 
 Precedence is flags, then environment, then file, then defaults (existing `loader.go` behavior).
 The flag names use the same dotted form as the existing `tool_approvals.*` flags in `RegisterFlags`.
@@ -49,14 +49,14 @@ Messages are credential-free and name the key.
 
 | Condition | Error (substring) |
 |---|---|
-| `authorization.enabled: false` | `delegation_context.enabled requires authorization.enabled` |
-| `policy_decision_point` is not an absolute http(s) URL with a host, or has userinfo, query, or fragment | `delegation_context.policy_decision_point must be an absolute URL` |
-| `http` scheme without `oauth2.tls.allow_http` | `delegation_context.policy_decision_point must use https` |
-| `request_timeout <= 0` | `delegation_context.request_timeout must be positive` |
-| `max_staleness <= 0` | `delegation_context.max_staleness must be positive` |
-| Discovery transport error, non-200, invalid JSON, or missing members | `delegation context discovery failed` |
-| `policy_decision_point` mismatch | `delegation context discovery: policy_decision_point mismatch (expected <expected>, advertised <advertised>)` |
-| `access_evaluation_endpoint` is not an absolute URL, or uses http without `allow_http` | `delegation context discovery: invalid access_evaluation_endpoint` |
+| `authorization.enabled: false` | `grant_context.enabled requires authorization.enabled` |
+| `policy_decision_point` is not an absolute http(s) URL with a host, or has userinfo, query, or fragment | `grant_context.policy_decision_point must be an absolute URL` |
+| `http` scheme without `oauth2.tls.allow_http` | `grant_context.policy_decision_point must use https` |
+| `request_timeout <= 0` | `grant_context.request_timeout must be positive` |
+| `max_staleness <= 0` | `grant_context.max_staleness must be positive` |
+| Discovery transport error, non-200, invalid JSON, or missing members | `grant context discovery failed` |
+| `policy_decision_point` mismatch | `grant context discovery: policy_decision_point mismatch (expected <expected>, advertised <advertised>)` |
+| `access_evaluation_endpoint` is not an absolute URL, or uses http without `allow_http` | `grant context discovery: invalid access_evaluation_endpoint` |
 
 When the feature is disabled, no discovery runs, no resolver is created, and no new log lines
 or requests appear (US4.1).
@@ -95,7 +95,7 @@ transit accounting. The maintainer chose to accept the remaining skew.
 | Situation | Response to the client |
 |---|---|
 | Delegation denied (either path) | `403`, `{"error":"access_denied","error_description":"delegation denied: <code>","error_uri":"<consent_url>"}`. Policy is not evaluated and nothing is forwarded. |
-| Resolution error (either path) | `503`, `{"error":"service_unavailable","error_description":"delegation context unavailable"}` |
+| Resolution error (either path) | `503`, `{"error":"service_unavailable","error_description":"grant context unavailable"}` |
 | Permit deadline passed before a policy evaluation (header-only policy, body policy, or any batch decision) | The same `503`. Policy is not evaluated, nothing is forwarded, and ExtProc does not re-resolve (HIGH U2). |
 | Body path: permit and exchange error | Existing exchange-error handling (`exchangeErrorResponse`) |
 | Body path: permit and exchange success | Apply the token binding (§3.1). Buffer the body. Policy sees the context, then the existing allow, deny, or approval flow runs. |
@@ -138,16 +138,16 @@ The permit governs local policy and token-result reuse. It does not prove provid
 | Delete succeeds or observed entry is absent | Perform at most one additional exchange, with stale-on-error forbidden for removed/mismatched results. |
 | Delete fails because a replacement exists | Preserve and read the replacement once. Compare/claim its handle; use it if compatible, otherwise perform the one additional exchange. Never delete by token bytes, including equal-token/different-binding replacements. |
 | Concurrent permits share the additional exchange | All receive the same handle. First atomic claim wins; equal-binding followers may use it. Different-binding followers take the terminal conflict row, not another exchange. |
-| Additional exchange delivers a mismatched handle, including one bound by another live permit | **API-7 Proposed**: return `503`, `{"error":"service_unavailable","error_description":"delegation token binding unavailable"}`. Nothing forwarded; no further retry, rebind, competing-entry deletion or fallback. |
+| Additional exchange delivers a mismatched handle, including one bound by another live permit | **API-7 Proposed**: return `503`, `{"error":"service_unavailable","error_description":"exchange result binding unavailable"}`. Nothing forwarded; no further retry, rebind, competing-entry deletion or fallback. |
 | Additional exchange fails (timeout, cancellation, broker error or breaker rejection) | Existing `exchangeErrorResponse`; nothing forwarded, no removed/mismatched stale fallback. |
-| Permit expires before policy use or final forwarding | Existing `503 service_unavailable` / `delegation context unavailable`; no expired-context forwarding or re-resolution. |
+| Permit expires before policy use or final forwarding | Existing `503 service_unavailable` / `grant context unavailable`; no expired-context forwarding or re-resolution. |
 | Cooldown entry (no token) | Unchanged D-5; no binding. |
 
 Body validation precedes buffering and Authorization mutation; header validation uses the exact permit policy evaluated. Check deadlines immediately before every policy decision and final forwarding, including expiry during header exchange or retry. Each request has at most one additional exchange; revalidating its result cannot restart the loop. Disabled cache keys, TTLs, singleflight and cooldown remain unchanged. Successful non-cacheable results follow identical claim/compare and terminal rules.
 
 **Guarantee and limitations (D-8 Proposed)**: a request never forwards a handle bound to a different permit scope set/grant instant. It may forward identical broader provider token bytes under a new handle when the provider session is unchanged. First use does not attest exchange provenance; concurrent grant reads can differ. Only provider-session re-authorization in Journey 5 demonstrates upstream narrowing. Stronger broker downscoping or exchange-version response members require separately approved API/ADR scope.
 
-The log-only Debug diagnostic remains `delegation_binding=mismatch`, without credentials, scopes or principal.
+The log-only Debug diagnostic remains `grant_context_binding=mismatch`, without credentials, scopes or principal.
 
 Metadata validation (ADR 036), protocol checks, transport checks, the body-size limit, the
 approval controls, and policy fail-closed behavior still apply. In enabled mode, the approval
@@ -221,7 +221,7 @@ byte-for-byte unchanged.
 
 The previous permanent-retention commitment is revised only to allow a future, separately approved removal; this feature does not remove or deprecate either OPA member. ADR-3 records the rationale and alternative. T104 requires a maintainer-created follow-up issue before its implementation revision is recorded; issue creation is an external prerequisite, not permission to implement removal here. The issue must cover OPA policy migration, enabled/disabled behavior, availability replacement and versioned contract approval. FR-019's separate exchange-response deprecation is unchanged; ExtProc still reads that response in disabled mode until its separately approved removal.
 
-**Example canonical-ID policy** (`tests/e2e/fixtures/policies/delegation_canonical.rego`, illustrative):
+**Example canonical-ID policy** (`tests/e2e/fixtures/policies/grant_context_canonical.rego`, illustrative):
 
 ```rego
 package aib.extproc.authz
@@ -240,25 +240,25 @@ result := {"action": "allow"} if {
 
 The ExtProc logs and spans use the existing diagnostic vocabulary. They add these values:
 
-- an operation value: `delegation_resolution`
-- outcome details: `delegation_denied`, `delegation_unavailable`, `delegation_discovery_failed`, and
-  `delegation_pdp_mismatch`
+- an operation value: `grant_resolution`
+- outcome details: `grant_context_denied`, `grant_context_unavailable`, `grant_context_discovery_failed`, and
+  `grant_context_pdp_mismatch`
 - a cache attribute: `hit` or `miss`
 
-The subject token, the assertion, and the delegation context are never logged.
+The subject token, the assertion, and the grant context are never logged.
 
-Implementation signals: `extproc.delegation.resolve` (Internal) and
-`extproc.delegation.evaluate` (Client), both in scope `extproc`, carry
-`token_exchange.operation=delegation_resolution`, `token_exchange.outcome` and
+Implementation signals: `extproc.grant_context.resolve` (Internal) and
+`extproc.grant_context.evaluate` (Client), both in scope `extproc`, carry
+`token_exchange.operation=grant_resolution`, `token_exchange.outcome` and
 `token_exchange.failure_detail`. Outcome/detail pairs are `success`/`none`,
-`authorization_denied`/`delegation_denied`, `infrastructure_error`/`delegation_unavailable`,
-and `canceled`/`caller_canceled`. The resolver span adds `delegation.cache=hit|miss`.
+`authorization_denied`/`grant_context_denied`, `infrastructure_error`/`grant_context_unavailable`,
+and `canceled`/`caller_canceled`. The resolver span adds `grant_context.cache=hit|miss`.
 Infrastructure failures use a constant error status description and `error.type` from
 `timeout|unavailable|rejected|invalid_response`; denials do not set error status. No raw error,
 credential, principal, context, or requested resource URI is exported by these spans.
 Server logs classify the same resolution outcomes; permit hit/miss diagnostics are Debug.
-Security records carry `event=extproc.delegation_context.denied` for a delegation denial,
-`event=extproc.delegation_context.unavailable` for resolution failure, and
-`event=extproc.delegation_context.permit_expired` when the permit expires before policy use.
-The last two retain the `delegation_unavailable` detail. These identifiers follow the
-`extproc.delegation_context.enabled` lifecycle family (F6, approved remediation proposal).
+Security records carry `event=extproc.grant_context.denied` for a delegation denial,
+`event=extproc.grant_context.unavailable` for resolution failure, and
+`event=extproc.grant_context.permit_expired` when the permit expires before policy use.
+The last two retain the `grant_context_unavailable` detail. These identifiers follow the
+`extproc.grant_context.enabled` lifecycle family (F6, approved remediation proposal).

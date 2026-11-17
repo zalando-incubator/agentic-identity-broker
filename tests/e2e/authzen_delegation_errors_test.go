@@ -17,7 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
-// Every scenario here is a request or dependency failure, never a delegation decision.
+// Every scenario here is a request or dependency failure, never a grant decision.
 var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegation"), func() {
 	Context("with the in-memory broker", func() {
 		var f *authzenFixture

@@ -38,7 +38,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 )
 
 const (
@@ -88,12 +88,12 @@ type Server struct {
 	exchanger    Exchanger
 	authorizer   authorization.Authorizer
 	approvalGate ApprovalGate
-	// delegationResolver is nil unless delegation_context is enabled.
-	delegationResolver PermitResolver
-	now                func() time.Time
-	logger             *slog.Logger
-	requestCounter     metric.Int64Counter
-	requestDuration    metric.Float64Histogram
+	// grantContextResolver is nil unless grant_context is enabled.
+	grantContextResolver PermitResolver
+	now                  func() time.Time
+	logger               *slog.Logger
+	requestCounter       metric.Int64Counter
+	requestDuration      metric.Float64Histogram
 }
 
 // requestState holds per-stream state accumulated from the RequestHeaders phase
@@ -109,7 +109,7 @@ type requestState struct {
 	agentID               string
 	agentSessionID        string
 	// delegation is the enabled-mode permit; policy may use it only before its Deadline.
-	delegation        *delegation.Result
+	grantContext      *grantcontext.Result
 	requestContext    context.Context
 	finishObservation func(Diagnostic)
 }
@@ -117,8 +117,8 @@ type requestState struct {
 // policyContext is the OPA context for body and batch decisions: permit-derived in enabled
 // mode, the exchange snapshot otherwise.
 func (st *requestState) policyContext() authorization.ContextInput {
-	if st.delegation != nil {
-		return contextInputFromDelegation(st.delegation, st.agentSessionID)
+	if st.grantContext != nil {
+		return contextInputFromGrantContext(st.grantContext, st.agentSessionID)
 	}
 	return authorization.ContextInput{GrantedPermissionSetsAvailable: st.grantedPermissionSets != nil, GrantedPermissionSets: st.grantedPermissionSets, AgentSessionID: st.agentSessionID}
 }
@@ -543,11 +543,11 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 
 	var exchangeResult ExchangeResult
 	var exchErr error
-	if s.delegationEnabled() {
-		var delegationErr error
-		exchangeResult, state.delegation, delegationErr, exchErr = s.exchangeAndResolve(ctx, logger, input.subjectToken, resourceURI)
-		if delegationErr != nil {
-			response, failure := delegationFailureResponse(delegationErr)
+	if s.grantContextEnabled() {
+		var grantContextErr error
+		exchangeResult, state.grantContext, grantContextErr, exchErr = s.exchangeAndResolve(ctx, logger, input.subjectToken, resourceURI)
+		if grantContextErr != nil {
+			response, failure := grantContextFailureResponse(grantContextErr)
 			diagnostic = failure
 			return response, nil
 		}
@@ -559,15 +559,15 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		diagnostic = failure
 		return response, nil
 	}
-	if state.delegation != nil {
-		exchangeResult, exchErr = s.exchangeWithDelegation(ctx, state, &exchangeResult)
+	if state.grantContext != nil {
+		exchangeResult, exchErr = s.exchangeWithGrantContext(ctx, state, &exchangeResult)
 		if exchErr != nil {
 			response, failure := s.exchangeErrorResponse(ctx, exchErr)
 			diagnostic = failure
 			return response, nil
 		}
-		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
-			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
 			return response, nil
 		}
 	}
@@ -622,8 +622,8 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 
-	if state.delegation != nil {
-		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
+	if state.grantContext != nil {
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
 			return response
 		}
 	}
@@ -678,19 +678,19 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 	}
 
 	contextInput := authorization.ContextInput{GrantedPermissionSetsAvailable: false, AgentSessionID: state.agentSessionID}
-	if s.delegationEnabled() {
-		result, delegationErr := s.resolveDelegation(ctx, logger, state.subjectToken, state.resourceURI)
-		if delegationErr != nil {
+	if s.grantContextEnabled() {
+		result, grantContextErr := s.resolveGrantContext(ctx, logger, state.subjectToken, state.resourceURI)
+		if grantContextErr != nil {
 			var response *extprocv3.ProcessingResponse
-			response, diagnostic = delegationFailureResponse(delegationErr)
+			response, diagnostic = grantContextFailureResponse(grantContextErr)
 			return response
 		}
-		if response, expired := s.delegationExpired(ctx, logger, result); expired {
-			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
+		if response, expired := s.grantContextExpired(ctx, logger, result); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
 			return response
 		}
-		state.delegation = result
-		contextInput = contextInputFromDelegation(result, state.agentSessionID)
+		state.grantContext = result
+		contextInput = contextInputFromGrantContext(result, state.agentSessionID)
 	}
 	opaInput, buildErr := authorization.BuildOPAInputHeadersOnlyWithContext(state.protocol, state.headers, state.targetServerName, contextInput)
 	if buildErr != nil {
@@ -716,8 +716,8 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 
 	var exchangeResult ExchangeResult
 	var exchErr error
-	if state.delegation != nil {
-		exchangeResult, exchErr = s.exchangeWithDelegation(ctx, state, nil)
+	if state.grantContext != nil {
+		exchangeResult, exchErr = s.exchangeWithGrantContext(ctx, state, nil)
 	} else {
 		exchangeResult, exchErr = s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
 	}
@@ -726,9 +726,9 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		diagnostic = failure
 		return response
 	}
-	if state.delegation != nil {
-		if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
-			diagnostic = NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
+	if state.grantContext != nil {
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
 			return response
 		}
 	}
@@ -776,8 +776,8 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 			denyReasons = append(denyReasons, "failed to parse batch element")
 			continue
 		}
-		if state.delegation != nil {
-			if response, expired := s.delegationExpired(ctx, logger, state.delegation); expired {
+		if state.grantContext != nil {
+			if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
 				return response
 			}
 		}
@@ -962,16 +962,16 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 
 func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
 	if errors.Is(err, ErrExchangeResultBindingConflict) {
-		diagnostic := NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindUnavailable)
+		diagnostic := NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
 		logger := loggerFromContext(ctx, s.logger)
-		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindUnavailable), slog.LevelWarn, "exchange result binding conflicted", diagnostic)
-		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationBindingUnavailableBody), diagnostic
+		logDiagnostic(ctx, logger.With("event", "extproc.grant_context.unavailable", "error_kind", KindUnavailable), slog.LevelWarn, "exchange result binding conflicted", diagnostic)
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, grantContextBindingUnavailableBody), diagnostic
 	}
 	if errors.Is(err, errInvalidGrantTimestamp) {
-		diagnostic := NewDiagnostic(StageClientAuthorization, DetailDelegationUnavailable).asServerError(KindInvalidResponse)
+		diagnostic := NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindInvalidResponse)
 		logger := loggerFromContext(ctx, s.logger)
-		logDiagnostic(ctx, logger.With("event", "extproc.delegation_context.unavailable", "error_kind", KindInvalidResponse), slog.LevelWarn, "delegation grant timestamp invalid", diagnostic)
-		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, delegationUnavailableBody), diagnostic
+		logDiagnostic(ctx, logger.With("event", "extproc.grant_context.unavailable", "error_kind", KindInvalidResponse), slog.LevelWarn, "grant timestamp invalid", diagnostic)
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, grantContextUnavailableBody), diagnostic
 	}
 	metadata := metadataFromError(ctx, err)
 	diagnostic := diagnosticFromError(ctx, err)

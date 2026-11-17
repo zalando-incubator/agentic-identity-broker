@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"context"
@@ -10,19 +10,19 @@ import (
 
 // NewPermitResolverFromConfig discovers the configured PDP without credentials and builds the
 // permit resolver. Any discovery failure is returned so startup stops instead of silently
-// disabling delegation context. cfg must already be validated.
+// disabling grant context. cfg must already be validated.
 func NewPermitResolverFromConfig(ctx context.Context, cfg *extprocconfig.Config, assertions AssertionProvider) (*PermitResolver, error) {
-	httpClient, err := httpclient.New(cfg, cfg.DelegationContext.RequestTimeout)
+	httpClient, err := httpclient.New(cfg, cfg.GrantContext.RequestTimeout)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize delegation context HTTP client: %w", err)
+		return nil, fmt.Errorf("failed to initialize grant context HTTP client: %w", err)
 	}
-	metadata, err := Discover(ctx, httpClient, cfg.DelegationContext.PolicyDecisionPoint, cfg.OAuth2.TLS.AllowHTTP)
+	metadata, err := Discover(ctx, httpClient, cfg.GrantContext.PolicyDecisionPoint, cfg.OAuth2.TLS.AllowHTTP)
 	if err != nil {
 		return nil, err
 	}
-	client, err := NewClient(httpClient, metadata, assertions, cfg.DelegationContext.MaxStaleness)
+	client, err := NewClient(httpClient, metadata, assertions, cfg.GrantContext.MaxStaleness)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize delegation context client: %w", err)
+		return nil, fmt.Errorf("failed to initialize grant context client: %w", err)
 	}
-	return NewPermitResolver(client, cfg.DelegationContext.MaxStaleness), nil
+	return NewPermitResolver(client, cfg.GrantContext.MaxStaleness), nil
 }

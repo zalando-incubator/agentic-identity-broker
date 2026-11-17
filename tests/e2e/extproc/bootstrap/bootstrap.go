@@ -37,7 +37,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
@@ -68,7 +68,7 @@ type TestEnvironment struct {
 	approvalSyncCancel     context.CancelFunc
 	approvalSyncDone       chan struct{}
 	ownsMockApprovalBroker bool
-	delegationResolver     *delegation.PermitResolver
+	grantContextResolver   *grantcontext.PermitResolver
 	logger                 *slog.Logger
 	stopOnce               sync.Once
 }
@@ -135,11 +135,11 @@ func (e *TestEnvironment) Start() {
 	e.startApprovalSync()
 }
 
-// StartWithDelegationContext follows production startup order for delegation context:
+// StartWithGrantContext follows production startup order for grant context:
 // validate configuration, build the exchanger and authorizer, then discover and verify the
 // PDP before listening. It returns the startup error instead of failing the test so
 // startup-failure scenarios can observe it; no gRPC listener exists after a failure.
-func (e *TestEnvironment) StartWithDelegationContext() error {
+func (e *TestEnvironment) StartWithGrantContext() error {
 	e.startMockServers()
 	if err := extprocconfig.Validate(e.Config); err != nil {
 		return err
@@ -162,12 +162,12 @@ func (e *TestEnvironment) StartWithDelegationContext() error {
 	} else {
 		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
 	}
-	if e.Config.DelegationContext.Enabled {
-		resolver, err := delegation.NewPermitResolverFromConfig(context.Background(), e.Config, exchanger)
+	if e.Config.GrantContext.Enabled {
+		resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), e.Config, exchanger)
 		if err != nil {
 			return err
 		}
-		e.delegationResolver = resolver
+		e.grantContextResolver = resolver
 		svc.WithPermitResolver(resolver)
 	}
 	e.startGRPCServer(svc)
@@ -249,8 +249,8 @@ func (e *TestEnvironment) Stop() {
 		if e.grpcServer != nil {
 			e.grpcServer.GracefulStop()
 		}
-		if e.delegationResolver != nil {
-			e.delegationResolver.Shutdown()
+		if e.grantContextResolver != nil {
+			e.grantContextResolver.Shutdown()
 		}
 		if e.exchanger != nil {
 			e.exchanger.Shutdown()

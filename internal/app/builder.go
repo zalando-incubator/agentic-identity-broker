@@ -1354,7 +1354,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		}
 		app.TokenExchangeService = tokenExchangeService
 
-		accessEvaluationService, err := tokenexchange.NewAccessEvaluationService(tokenExchangeService.DelegationResolver(), app.ProviderService)
+		accessEvaluationService, err := tokenexchange.NewAccessEvaluationService(tokenExchangeService.GrantResolver(), app.ProviderService)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create access evaluation service: %w", err)
 		}

@@ -4,7 +4,7 @@
 
 Latest approval scope: F1/P1 replaces §10's issue-search link with existing provenance tracking issue #462. Prior F1/P1–F4/P4 approval on 2026-11-11 covers fail-closed permit/exchange identity consistency retaining ADR 036 approval identity, ADR 028's restored Status and supersession banner, deferred provenance tracking and ExchangeResultBinding naming. Prior ADR-2/API-7/D-8 approval covers the existing reuse, conflict, expiry and provenance limits; ADR-3 guidance uses follow-up issue #441. Earlier approvals remain in Revision history. The exchange-provenance redesign itself remains unapplied.
 **Date**: 2026-10-29 (accepted 2026-10-30)
-**Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
+**Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc grant context;
 `/oauth2/token` `granted_permission_sets` deprecation
 **Supersedes in part**: ADR 028 (enabled-mode OPA input schema and request ordering only)
 **Extends**: ADR 033 (deferred-finalization seam), ADR 009 (caller CEL reuse), ADR 012 (separate cache; permit-bound token reuse in §10)
@@ -35,10 +35,10 @@ Authorization API 1.0 Access Evaluation endpoint, and ExtProc to consume it with
   flag or configuration key, and no admin API.
 - `policy_decision_point` is `server.enduser.public_url` without a trailing slash, the same base
   as consent links and RFC 8414 metadata.
-- Evaluation and exchange share one `tokenexchange.DelegationResolver` that holds exchange steps
+- Evaluation and exchange share one `tokenexchange.GrantResolver` that holds exchange steps
   2–9a unchanged. Evaluation never reaches session retrieval, decryption, or refresh, so it never
   touches provider credentials (FR-013).
-- A permit is `decision: true` with a credential-free Delegation Context (UUIDs, canonical IDs
+- A permit is `decision: true` with a credential-free Grant Context (UUIDs, canonical IDs
   when configured and omitted otherwise, effective scopes, grant version and expiry). A grant
   denial is HTTP 200 `decision: false` with `reason_admin.code` and `reason_user.consent_url`.
   Request, credential, caller-policy, and dependency failures keep HTTP 400/401/403/500 and are
@@ -78,7 +78,7 @@ evaluation is never more permissive than exchange, and it issues no token.
 ### 4. ExtProc `PermitResolver` (fourth port) and ordering — supersedes ADR 028 ordering when enabled
 
 - `server.PermitResolver` joins `Exchanger`, `Authorizer`, and `ApprovalGate`. Its
-  implementation lives in `internal/extproc/delegation` and imports no broker package (ADR 011).
+  implementation lives in `internal/extproc/grantcontext` and imports no broker package (ADR 011).
 - At startup ExtProc discovers the metadata from the expected PDP identifier (default: the origin
   of `oauth2.token_endpoint`), compares `policy_decision_point` by exact string, and refuses to
   start on any discovery error or mismatch. Discovery sends no credentials.
@@ -118,7 +118,7 @@ token-route behavior is unchanged. `ARCHITECTURE.md` §3.1.4.2 is reconciled.
 
 ### 7. Opt-in consumer — Security-First reconciliation
 
-`delegation_context.enabled` defaults to `false` and requires `authorization.enabled: true`.
+`grant_context.enabled` defaults to `false` and requires `authorization.enabled: true`.
 Like ADR 028's reconciliation, the consumer is an additive policy-input surface. With it
 disabled, today's controls (exchange, ADR 009 CEL, ExtProc OPA when enabled, the approval gate)
 remain in force. With it enabled, every failure is closed. The broker endpoint itself is always
@@ -138,7 +138,7 @@ The permit's `context.resource.service_id` and the enabled OPA context's
 identifies the protected resource. The AuthZEN request's `resource.id` remains the URI,
 unchanged. This separates service identity from protected-resource identity (ADR 030).
 The ExtProc port is `server.PermitResolver`, distinct from the broker's
-`tokenexchange.DelegationResolver`; the former retrieves fresh permit context, the latter
+`tokenexchange.GrantResolver`; the former retrieves fresh permit context, the latter
 enforces delegation invariants shared by exchange and evaluation. The implementation is
 `delegation.PermitResolver`. **ExchangeResultBinding** is a local result-reuse constraint,
 not the IETF Token Binding proof-of-possession protocol (RFC 8471).
@@ -149,7 +149,7 @@ are defined by the standard and are a documented exception to general REST namin
 ### 9.1. Approval identity in enabled mode
 
 The approval gate takes its principal and agent UUID only from the exchange response under
-ADR 036, in both enabled and disabled modes. With delegation context enabled, the exchange
+ADR 036, in both enabled and disabled modes. With grant context enabled, the exchange
 principal and agent UUID must match the request permit's principal and agent UUID before
 result reuse, approval or forwarding. A mismatch, including an absent exchange identity field,
 returns the terminal API-7 503 without approval lookup/creation or an identity-repair retry.
@@ -185,7 +185,7 @@ unchanged; this ADR does not supersede ADR 036.
   not an exchange error and does not authorize deletion of the replacement.
 - After that one additional exchange, compare/claim the delivered handle again. If it is
   already bound to another live permit, return the terminal API-7 503
-  `service_unavailable` / `delegation token binding unavailable`. Do not rebind, loop,
+  `service_unavailable` / `exchange result binding unavailable`. Do not rebind, loop,
   delete the competing result, forward either incompatible result or use stale fallback.
   An exchange failure retains existing `exchangeErrorResponse` handling, with no removed
   or mismatched token fallback. Detailed outcomes are in contract §3.1.
@@ -309,7 +309,7 @@ not authorize that redesign or provider downscoping in this PR.
 - **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved P3/F4 on
   [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407)
   at `2026-11-06T06:59:39Z`: rename the ExtProc resolver port to
-  `DelegationContextResolver` (subsequently renamed `PermitResolver` under F6/P6), define Delegation and Access Evaluation in the architecture
+  `GrantContextResolver` (subsequently renamed `PermitResolver` under F6/P6), define Resolved Grant and Access Evaluation in the architecture
   glossary, and use `resource.service_id` in permits and enabled OPA input. The request URI
   member is unchanged. P2/F3's issue-dependent permission-set revision remains unapplied
   because this workflow cannot create its required follow-up issue.

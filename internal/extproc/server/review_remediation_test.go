@@ -17,7 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 )
 
 type identityExchanger struct {
@@ -60,15 +60,15 @@ func TestApprovalIdentityUsesExchangeAndRequiresPermitConsistencyWhenEnabled(t *
 			t.Run(fmt.Sprintf("enabled=%t/identity=%s/%s", enabled, exchangeIdentity.Principal, exchangeIdentity.AgentID), func(t *testing.T) {
 				var logs bytes.Buffer
 				logger := slog.New(slog.NewJSONHandler(&logs, nil))
-				permit := delegation.Result{Deadline: time.Now().Add(time.Minute), Context: delegation.Context{
-					Principal: "permit-principal", Agent: delegation.EntityRef{ID: "permit-agent"},
-					Grant: delegation.Grant{UpdatedAt: "2026-10-26T09:59:00Z"},
+				permit := grantcontext.Result{Deadline: time.Now().Add(time.Minute), Context: grantcontext.Context{
+					Principal: "permit-principal", Agent: grantcontext.EntityRef{ID: "permit-agent"},
+					Grant: grantcontext.Grant{UpdatedAt: "2026-10-26T09:59:00Z"},
 				}}
 				exchanger := identityExchanger{result: ExchangeResult{Token: "provider-token-marker", Principal: exchangeIdentity.Principal, AgentID: exchangeIdentity.AgentID}}
 				authorizer, gate := &identityAuthorizer{}, &identityGate{}
 				s := NewServerWithApprovalGate(&extprocconfig.Config{}, exchanger, authorizer, gate, logger)
 				if enabled {
-					s.WithPermitResolver(observedDelegationResolver{result: &permit})
+					s.WithPermitResolver(observedGrantResolver{result: &permit})
 				}
 				headers := &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{{Key: ":method", RawValue: []byte("POST")}, {Key: "mcp-session-id", RawValue: []byte("mcp-session")}}}}
 				req := safetyRequest("subject-token-marker", "https://resource.example", headers)
@@ -76,7 +76,7 @@ func TestApprovalIdentityUsesExchangeAndRequiresPermitConsistencyWhenEnabled(t *
 				if enabled && exchangeIdentity != (approval.Identity{Principal: permit.Context.Principal, AgentID: permit.Context.Agent.ID}) {
 					require.NotNil(t, response.GetImmediateResponse())
 					assert.Equal(t, int32(503), int32(response.GetImmediateResponse().Status.Code))
-					assert.JSONEq(t, delegationBindingUnavailableBody, string(response.GetImmediateResponse().Body))
+					assert.JSONEq(t, grantContextBindingUnavailableBody, string(response.GetImmediateResponse().Body))
 					assert.Empty(t, gate.invocations)
 					assert.Empty(t, authorizer.input.Principal)
 					assert.Nil(t, state)
@@ -108,18 +108,18 @@ func TestApprovalIdentityUsesExchangeAndRequiresPermitConsistencyWhenEnabled(t *
 }
 
 func TestExchangeErrorDoesNotClassifyPermitClientErrorsAsGrantTimestamps(t *testing.T) {
-	for _, category := range []string{delegation.CategoryTimeout, delegation.CategoryUnavailable, delegation.CategoryRejected, delegation.CategoryInvalidResponse} {
+	for _, category := range []string{grantcontext.CategoryTimeout, grantcontext.CategoryUnavailable, grantcontext.CategoryRejected, grantcontext.CategoryInvalidResponse} {
 		t.Run(category, func(t *testing.T) {
 			var logs bytes.Buffer
 			s := NewServer(&extprocconfig.Config{}, &safetyExchanger{}, slog.New(slog.NewJSONHandler(&logs, nil)))
-			err := fmt.Errorf("wrapped: %w", &delegation.Error{Category: category})
+			err := fmt.Errorf("wrapped: %w", &grantcontext.Error{Category: category})
 			response, _ := s.exchangeErrorResponse(context.Background(), err)
 			require.NotNil(t, response.GetImmediateResponse())
 			assert.Equal(t, int32(500), int32(response.GetImmediateResponse().Status.Code))
 			assert.JSONEq(t, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`, string(response.GetImmediateResponse().Body))
 			var record map[string]any
 			require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
-			assert.NotEqual(t, "extproc.delegation_context.unavailable", record["event"])
+			assert.NotEqual(t, "extproc.grant_context.unavailable", record["event"])
 		})
 	}
 }

@@ -17,20 +17,20 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 )
 
-type delegationSchema struct {
-	Ref        string                       `yaml:"$ref"`
-	Type       string                       `yaml:"type"`
-	Properties map[string]*delegationSchema `yaml:"properties"`
-	Items      *delegationSchema            `yaml:"items"`
-	Enum       []string                     `yaml:"enum"`
+type grantContextSchema struct {
+	Ref        string                         `yaml:"$ref"`
+	Type       string                         `yaml:"type"`
+	Properties map[string]*grantContextSchema `yaml:"properties"`
+	Items      *grantContextSchema            `yaml:"items"`
+	Enum       []string                       `yaml:"enum"`
 }
 
-func TestDelegationContractConformance(t *testing.T) {
+func TestGrantContextContractConformance(t *testing.T) {
 	encoded, err := os.ReadFile("../../api/enduser/openapi.yaml")
 	require.NoError(t, err)
 	var document struct {
 		Components struct {
-			Schemas map[string]*delegationSchema `yaml:"schemas"`
+			Schemas map[string]*grantContextSchema `yaml:"schemas"`
 		} `yaml:"components"`
 	}
 	require.NoError(t, yaml.Unmarshal(encoded, &document))
@@ -39,9 +39,9 @@ func TestDelegationContractConformance(t *testing.T) {
 	t.Run("denial codes", func(t *testing.T) {
 		codes := schemas["AccessEvaluationDenial"].Properties["context"].Properties["reason_admin"].Properties["code"].Enum
 		require.NotEmpty(t, codes)
-		constants := delegationStringConstants(t, "../../internal/domain/tokenexchange/diagnostic.go")
-		domainCodes := delegationMapKeys(t, "../../internal/domain/tokenexchange/evaluation.go", "consentDenialDetails", constants)
-		extprocCodes := delegationMapKeys(t, "../../internal/extproc/delegation/client.go", "allowlistedDenialCodes", nil)
+		constants := grantContextStringConstants(t, "../../internal/domain/tokenexchange/diagnostic.go")
+		domainCodes := grantContextMapKeys(t, "../../internal/domain/tokenexchange/evaluation.go", "consentDenialDetails", constants)
+		extprocCodes := grantContextMapKeys(t, "../../internal/extproc/grantcontext/client.go", "allowlistedDenialCodes", nil)
 		assert.ElementsMatch(t, codes, domainCodes, "domain denial set must match OpenAPI exactly")
 		assert.ElementsMatch(t, codes, extprocCodes, "ExtProc allowlist must match OpenAPI exactly")
 		for _, code := range codes {
@@ -52,13 +52,13 @@ func TestDelegationContractConformance(t *testing.T) {
 
 	t.Run("context fields", func(t *testing.T) {
 		expected := make(map[string]bool)
-		delegationSchemaFields(t, schemas["DelegationContext"], schemas, "", expected)
+		grantContextSchemaFields(t, schemas["GrantContext"], schemas, "", expected)
 		for _, model := range []struct{ path, root string }{
-			{"../../internal/domain/tokenexchange/evaluation.go", "DelegationContext"},
-			{"../../internal/extproc/delegation/context.go", "wireContext"},
+			{"../../internal/domain/tokenexchange/evaluation.go", "GrantContext"},
+			{"../../internal/extproc/grantcontext/context.go", "wireContext"},
 		} {
 			t.Run(model.root, func(t *testing.T) {
-				file := delegationParseFile(t, model.path)
+				file := grantContextParseFile(t, model.path)
 				types := make(map[string]ast.Expr)
 				ast.Inspect(file, func(node ast.Node) bool {
 					if spec, ok := node.(*ast.TypeSpec); ok {
@@ -67,24 +67,24 @@ func TestDelegationContractConformance(t *testing.T) {
 					return true
 				})
 				actual := make(map[string]bool)
-				delegationModelFields(t, types[model.root], types, "", actual)
+				grantContextModelFields(t, types[model.root], types, "", actual)
 				assert.Equal(t, expected, actual, "all nested JSON field sets must match OpenAPI")
 			})
 		}
 	})
 }
 
-func delegationParseFile(t *testing.T, path string) *ast.File {
+func grantContextParseFile(t *testing.T, path string) *ast.File {
 	t.Helper()
 	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 	require.NoError(t, err)
 	return file
 }
 
-func delegationStringConstants(t *testing.T, path string) map[string]string {
+func grantContextStringConstants(t *testing.T, path string) map[string]string {
 	t.Helper()
 	values := make(map[string]string)
-	ast.Inspect(delegationParseFile(t, path), func(node ast.Node) bool {
+	ast.Inspect(grantContextParseFile(t, path), func(node ast.Node) bool {
 		spec, ok := node.(*ast.ValueSpec)
 		if !ok || len(spec.Names) != 1 || len(spec.Values) != 1 {
 			return true
@@ -101,10 +101,10 @@ func delegationStringConstants(t *testing.T, path string) map[string]string {
 
 // The private wire types and allowlists stay private: this cross-process contract
 // check inspects their declarations instead of adding test-only production APIs.
-func delegationMapKeys(t *testing.T, path, name string, constants map[string]string) []string {
+func grantContextMapKeys(t *testing.T, path, name string, constants map[string]string) []string {
 	t.Helper()
 	var keys []string
-	ast.Inspect(delegationParseFile(t, path), func(node ast.Node) bool {
+	ast.Inspect(grantContextParseFile(t, path), func(node ast.Node) bool {
 		spec, ok := node.(*ast.ValueSpec)
 		if !ok || len(spec.Names) != 1 || spec.Names[0].Name != name {
 			return true
@@ -137,7 +137,7 @@ func delegationMapKeys(t *testing.T, path, name string, constants map[string]str
 	return keys
 }
 
-func delegationSchemaFields(t *testing.T, schema *delegationSchema, schemas map[string]*delegationSchema, prefix string, fields map[string]bool) {
+func grantContextSchemaFields(t *testing.T, schema *grantContextSchema, schemas map[string]*grantContextSchema, prefix string, fields map[string]bool) {
 	t.Helper()
 	require.NotNil(t, schema)
 	if schema.Ref != "" {
@@ -145,26 +145,26 @@ func delegationSchemaFields(t *testing.T, schema *delegationSchema, schemas map[
 		require.NotNil(t, schema)
 	}
 	if schema.Type == "array" {
-		delegationSchemaFields(t, schema.Items, schemas, prefix+"[]", fields)
+		grantContextSchemaFields(t, schema.Items, schemas, prefix+"[]", fields)
 		return
 	}
 	for name, child := range schema.Properties {
 		path := prefix + "." + name
 		fields[path] = true
-		delegationSchemaFields(t, child, schemas, path, fields)
+		grantContextSchemaFields(t, child, schemas, path, fields)
 	}
 }
 
-func delegationModelFields(t *testing.T, expr ast.Expr, types map[string]ast.Expr, prefix string, fields map[string]bool) {
+func grantContextModelFields(t *testing.T, expr ast.Expr, types map[string]ast.Expr, prefix string, fields map[string]bool) {
 	t.Helper()
 	switch node := expr.(type) {
 	case *ast.StarExpr:
-		delegationModelFields(t, node.X, types, prefix, fields)
+		grantContextModelFields(t, node.X, types, prefix, fields)
 	case *ast.ArrayType:
-		delegationModelFields(t, node.Elt, types, prefix+"[]", fields)
+		grantContextModelFields(t, node.Elt, types, prefix+"[]", fields)
 	case *ast.Ident:
 		if nested, ok := types[node.Name]; ok {
-			delegationModelFields(t, nested, types, prefix, fields)
+			grantContextModelFields(t, nested, types, prefix, fields)
 		}
 	case *ast.StructType:
 		for _, field := range node.Fields.List {
@@ -175,7 +175,7 @@ func delegationModelFields(t *testing.T, expr ast.Expr, types map[string]ast.Exp
 			require.NotEmpty(t, name)
 			path := prefix + "." + name
 			fields[path] = true
-			delegationModelFields(t, field.Type, types, path, fields)
+			grantContextModelFields(t, field.Type, types, path, fields)
 		}
 	}
 }

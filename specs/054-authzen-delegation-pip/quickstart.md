@@ -15,7 +15,7 @@ Before any implementation, these preconditions must hold:
 1. The maintainer has signed off the items in the plan's
    [Approval Items](./plan.md#approval-items) with a 👍 on the pipeline's approval comment.
    These cover [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md),
-   [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md), and the
+   [contracts/extproc-grant-context.md](./contracts/extproc-grant-context.md), and the
    ADR draft [adr-048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md).
 2. T001 records only supplied approval for current covered items. The ADR-2 revision has been incorporated into [ADR 048 §10](../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse) with the current five-item approval in Status/Revision history; its incorporated draft was removed. Historical direction or thirteen-item approval does not cover the continuation. ADR-3 is incorporated with T104's recorded issue #441; it approves canonical guidance, not removal.
 3. The API-003 **Verify** checks against the final AuthZEN text have passed before the OpenAPI
@@ -84,7 +84,7 @@ Spot-check these observable outcomes against spec Journeys 1–3:
 ## 3. Consumer journeys (US3, US4.5)
 
 ```bash
-ginkgo -v --label-filter="delegation-context" ./tests/e2e/
+ginkgo -v --label-filter="grant-context" ./tests/e2e/
 ```
 
 **Expected**: 14 specs pass (US3.1–US3.13 and US4.5). They run the production ExtProc composition against the real broker test server, including the approved ADR-2 binding journeys. Confirm these outcomes:
@@ -129,12 +129,12 @@ a removed token, unbound-token binding, and unchanged disabled mode and cooldown
 ## 4. ExtProc startup journeys (US4.1–US4.4)
 
 ```bash
-ginkgo -v --label-filter="delegation-context-startup" ./tests/e2e/extproc/
+ginkgo -v --label-filter="grant-context-startup" ./tests/e2e/extproc/
 ```
 
 **Expected**: The disabled default makes zero discovery or evaluation requests to the mock
 broker. Each of these conditions stops startup with the error substring from
-[contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md) §1:
+[contracts/extproc-grant-context.md](./contracts/extproc-grant-context.md) §1:
 
 - `authorization.enabled: false`
 - discovery failure
@@ -146,7 +146,7 @@ The mismatch case makes **zero** evaluation requests.
 
 1. Start the stack with `just compose-extproc-up`.
 2. Add to `configs/config.extproc.docker.yaml`:
-   `delegation_context: {enabled: true}` and `authorization.enabled: true`. Use a policy that
+   `grant_context: {enabled: true}` and `authorization.enabled: true`. Use a policy that
    keys on canonical IDs.
 3. Configure canonical IDs `data-assistant`, `repo-reader`, and `repo-api` through the admin API.
    Grant consent in the SPA.

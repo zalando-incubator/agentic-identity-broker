@@ -30,13 +30,13 @@ const (
 )
 
 type stubEvaluator struct {
-	decision  tokenexchange.DelegationDecision
+	decision  tokenexchange.GrantDecision
 	calls     int
 	request   tokenexchange.AccessEvaluationRequest
 	assertion string
 }
 
-func (s *stubEvaluator) Evaluate(_ context.Context, req tokenexchange.AccessEvaluationRequest, assertion string) tokenexchange.DelegationDecision {
+func (s *stubEvaluator) Evaluate(_ context.Context, req tokenexchange.AccessEvaluationRequest, assertion string) tokenexchange.GrantDecision {
 	s.calls++
 	s.request = req
 	s.assertion = assertion
@@ -57,16 +57,16 @@ func newEvaluationRequest(body string) *http.Request {
 	return req
 }
 
-func permitDecision() tokenexchange.DelegationDecision {
-	return tokenexchange.DelegationDecision{
+func permitDecision() tokenexchange.GrantDecision {
+	return tokenexchange.GrantDecision{
 		Kind:   tokenexchange.DecisionPermit,
 		MaxAge: 15,
-		Context: &tokenexchange.DelegationContext{
-			Subject:        tokenexchange.DelegationSubject{ID: "alice@example.com"},
-			Agent:          tokenexchange.DelegationEntityRef{ID: "550e8400-e29b-41d4-a716-446655440000"},
-			Resource:       tokenexchange.DelegationResource{ServiceID: "880e8400-e29b-41d4-a716-446655440010", ResourceURI: "https://api.example.com/repos", Scopes: []string{}},
-			Grant:          tokenexchange.DelegationGrant{ID: "990e8400-e29b-41d4-a716-446655440020", UpdatedAt: "2026-10-26T09:59:00Z"},
-			PermissionSets: []tokenexchange.DelegationPermissionSet{{ID: "770e8400-e29b-41d4-a716-446655440001", Services: []tokenexchange.DelegationService{}}},
+		Context: &tokenexchange.GrantContext{
+			Subject:        tokenexchange.GrantSubject{ID: "alice@example.com"},
+			Agent:          tokenexchange.GrantEntityRef{ID: "550e8400-e29b-41d4-a716-446655440000"},
+			Resource:       tokenexchange.GrantResource{ServiceID: "880e8400-e29b-41d4-a716-446655440010", ResourceURI: "https://api.example.com/repos", Scopes: []string{}},
+			Grant:          tokenexchange.GrantDetails{ID: "990e8400-e29b-41d4-a716-446655440020", UpdatedAt: "2026-10-26T09:59:00Z"},
+			PermissionSets: []tokenexchange.GrantPermissionSet{{ID: "770e8400-e29b-41d4-a716-446655440001", Services: []tokenexchange.GrantService{}}},
 		},
 		Diagnostic: tokenexchange.SuccessDiagnostic(tokenexchange.ExchangeThirdParty),
 	}
@@ -85,16 +85,16 @@ func TestAuthZENEvaluation_AuditRecords(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		name     string
-		decision tokenexchange.DelegationDecision
+		decision tokenexchange.GrantDecision
 		event    string
 		level    string
 	}{
 		{"permit", permitDecision(), "tokenexchange.access_evaluation.permitted", "INFO"},
-		{"denial", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionDeny}, "tokenexchange.access_evaluation.denied", "INFO"},
-		{"malformed", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusBadRequest}, "tokenexchange.access_evaluation.failed", "WARN"},
-		{"unauthenticated", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusUnauthorized}, "tokenexchange.access_evaluation.failed", "WARN"},
-		{"forbidden", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusForbidden}, "tokenexchange.access_evaluation.failed", "WARN"},
-		{"server failure", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError}, "tokenexchange.access_evaluation.failed", "ERROR"},
+		{"denial", tokenexchange.GrantDecision{Kind: tokenexchange.DecisionDeny}, "tokenexchange.access_evaluation.denied", "INFO"},
+		{"malformed", tokenexchange.GrantDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusBadRequest}, "tokenexchange.access_evaluation.failed", "WARN"},
+		{"unauthenticated", tokenexchange.GrantDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusUnauthorized}, "tokenexchange.access_evaluation.failed", "WARN"},
+		{"forbidden", tokenexchange.GrantDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusForbidden}, "tokenexchange.access_evaluation.failed", "WARN"},
+		{"server failure", tokenexchange.GrantDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError}, "tokenexchange.access_evaluation.failed", "ERROR"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -160,7 +160,7 @@ func TestAuthZENEvaluation_SpansExcludeCredentialsAndContext(t *testing.T) {
 		otel.SetTracerProvider(previous)
 		require.NoError(t, provider.Shutdown(context.Background()))
 	})
-	for _, decision := range []tokenexchange.DelegationDecision{
+	for _, decision := range []tokenexchange.GrantDecision{
 		permitDecision(),
 		{Kind: tokenexchange.DecisionDeny, Detail: tokenexchange.DetailGrantMissing,
 			Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing)},
@@ -198,7 +198,7 @@ func TestAuthZENEvaluation_SpansExcludeCredentialsAndContext(t *testing.T) {
 
 func TestAuthZENEvaluation_Denial(t *testing.T) {
 	t.Parallel()
-	evaluator := &stubEvaluator{decision: tokenexchange.DelegationDecision{
+	evaluator := &stubEvaluator{decision: tokenexchange.GrantDecision{
 		Kind:       tokenexchange.DecisionDeny,
 		Detail:     tokenexchange.DetailGrantMissing,
 		ConsentURL: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000",
@@ -229,7 +229,7 @@ func TestAuthZENEvaluation_DomainFailureMapping(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(http.StatusText(tt.status), func(t *testing.T) {
 			t.Parallel()
-			evaluator := &stubEvaluator{decision: tokenexchange.DelegationDecision{
+			evaluator := &stubEvaluator{decision: tokenexchange.GrantDecision{
 				Kind: tokenexchange.DecisionRequestFailure, Status: tt.status,
 				Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageResourceResolution, tokenexchange.DetailResourceRepositoryUnavailable),
 			}}

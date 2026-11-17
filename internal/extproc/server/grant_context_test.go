@@ -19,7 +19,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
@@ -27,10 +27,10 @@ const consentURL = "https://broker.example.com/agents/550e8400-e29b-41d4-a716-44
 
 type stubResolver struct {
 	calls   atomic.Int32
-	resolve func() (delegation.Result, error)
+	resolve func() (grantcontext.Result, error)
 }
 
-func (r *stubResolver) Resolve(_ context.Context, _, _ string) (delegation.Result, bool, error) {
+func (r *stubResolver) Resolve(_ context.Context, _, _ string) (grantcontext.Result, bool, error) {
 	r.calls.Add(1)
 	result, err := r.resolve()
 	return result, false, err
@@ -55,18 +55,18 @@ func (c *testClock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-func samplePermit(deadline time.Time) delegation.Result {
-	return delegation.Result{Deadline: deadline, Context: delegation.Context{
+func samplePermit(deadline time.Time) grantcontext.Result {
+	return grantcontext.Result{Deadline: deadline, Context: grantcontext.Context{
 		Principal: "alice@example.com",
-		Agent:     delegation.EntityRef{ID: "agent-uuid", CanonicalID: "data-assistant"},
-		Resource:  delegation.Resource{ServiceID: "svc-uuid", CanonicalID: "repo-api", ResourceURI: "https://api.example.com/repos", Scopes: []string{"read:repo"}},
-		Grant:     delegation.Grant{ID: "grant-uuid", UpdatedAt: "2026-10-26T09:59:00Z"},
-		PermissionSets: []delegation.PermissionSet{{ID: "ps-uuid", CanonicalID: "repo-reader",
-			Services: []delegation.Service{{ID: "svc-uuid", CanonicalID: "repo-api", Scopes: []string{"read:repo"}}}}},
+		Agent:     grantcontext.EntityRef{ID: "agent-uuid", CanonicalID: "data-assistant"},
+		Resource:  grantcontext.Resource{ServiceID: "svc-uuid", CanonicalID: "repo-api", ResourceURI: "https://api.example.com/repos", Scopes: []string{"read:repo"}},
+		Grant:     grantcontext.Grant{ID: "grant-uuid", UpdatedAt: "2026-10-26T09:59:00Z"},
+		PermissionSets: []grantcontext.PermissionSet{{ID: "ps-uuid", CanonicalID: "repo-reader",
+			Services: []grantcontext.Service{{ID: "svc-uuid", CanonicalID: "repo-api", Scopes: []string{"read:repo"}}}}},
 	}}
 }
 
-type delegationHarness struct {
+type grantContextHarness struct {
 	client     extprocv3.ExternalProcessorClient
 	clock      *testClock
 	resolver   *stubResolver
@@ -77,14 +77,14 @@ type delegationHarness struct {
 	policyFn   func(input authorization.OPAInput) (*authorization.OPADecision, error)
 }
 
-func newDelegationHarness(t *testing.T, resolve func() (delegation.Result, error), loggers ...*slog.Logger) *delegationHarness {
+func newGrantContextHarness(t *testing.T, resolve func() (grantcontext.Result, error), loggers ...*slog.Logger) *grantContextHarness {
 	t.Helper()
-	return newDelegationHarnessWithExchanger(t, resolve, nil, loggers...)
+	return newGrantContextHarnessWithExchanger(t, resolve, nil, loggers...)
 }
 
-func newDelegationHarnessWithExchanger(t *testing.T, resolve func() (delegation.Result, error), exchanger server.Exchanger, loggers ...*slog.Logger) *delegationHarness {
+func newGrantContextHarnessWithExchanger(t *testing.T, resolve func() (grantcontext.Result, error), exchanger server.Exchanger, loggers ...*slog.Logger) *grantContextHarness {
 	t.Helper()
-	h := &delegationHarness{
+	h := &grantContextHarness{
 		clock:    &testClock{now: time.Unix(1_000, 0)},
 		resolver: &stubResolver{resolve: resolve},
 		exchangeFn: func() (server.ExchangeResult, error) {
@@ -134,8 +134,8 @@ func newDelegationHarnessWithExchanger(t *testing.T, resolve func() (delegation.
 	return h
 }
 
-func (h *delegationHarness) permitFor(d time.Duration) func() (delegation.Result, error) {
-	return func() (delegation.Result, error) { return samplePermit(h.clock.Now().Add(d)), nil }
+func (h *grantContextHarness) permitFor(d time.Duration) func() (grantcontext.Result, error) {
+	return func() (grantcontext.Result, error) { return samplePermit(h.clock.Now().Add(d)), nil }
 }
 
 func immediate(t *testing.T, response *extprocv3.ProcessingResponse) (int, map[string]string) {
@@ -158,7 +158,7 @@ func (e *bindingPortStub) ExchangeBound(ctx context.Context, _, _ string, observ
 	return e.bind(ctx, observed, binding)
 }
 
-func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
+func TestGrantContext_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
 	for _, headerOnly := range []bool{false, true} {
 		failures := []string{"binding conflict", "exchange failure", "denial", "resolution failure"}
 		if !headerOnly {
@@ -167,7 +167,7 @@ func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
 		for _, failure := range failures {
 			t.Run(failure+"/"+map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
 				var binds atomic.Int32
-				var h *delegationHarness
+				var h *grantContextHarness
 				exchanger := &bindingPortStub{mockExchanger: &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 					if failure == "initial exchange failure" {
 						return server.ExchangeResult{}, errors.New("initial failure")
@@ -189,12 +189,12 @@ func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
 					}
 					return server.ExchangeResult{}, errors.New("replacement failure")
 				}}
-				h = newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) {
+				h = newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) {
 					if failure == "denial" {
-						return delegation.Result{}, &delegation.DeniedError{Code: "grant_missing", ConsentURL: consentURL}
+						return grantcontext.Result{}, &grantcontext.DeniedError{Code: "grant_missing", ConsentURL: consentURL}
 					}
 					if failure == "resolution failure" {
-						return delegation.Result{}, errors.New("resolver failure")
+						return grantcontext.Result{}, errors.New("resolver failure")
 					}
 					return samplePermit(time.Unix(1000, 0).Add(time.Minute)), nil
 				}, exchanger)
@@ -204,7 +204,7 @@ func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
 				wantBinds := int32(1)
 				if failure == "binding conflict" {
 					wantStatus = 503
-					assert.Equal(t, "delegation token binding unavailable", body["error_description"])
+					assert.Equal(t, "exchange result binding unavailable", body["error_description"])
 				}
 				if failure == "denial" {
 					wantStatus = 403
@@ -225,10 +225,10 @@ func TestDelegation_BindingPortPrecedenceAndTerminalResponse(t *testing.T) {
 	}
 }
 
-func TestDelegation_RejectsExpiryDuringBindingReplacement(t *testing.T) {
+func TestGrantContext_RejectsExpiryDuringBindingReplacement(t *testing.T) {
 	for _, headerOnly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
-			var h *delegationHarness
+			var h *grantContextHarness
 			exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, call int32) {
 				if call > 1 {
 					h.clock.Advance(time.Minute)
@@ -236,13 +236,13 @@ func TestDelegation_RejectsExpiryDuringBindingReplacement(t *testing.T) {
 				bindingSuccess(w, "SYNTHETIC_PROVIDER_TOKEN", 3600)
 			})
 			permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
-			h = newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+			h = newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 			require.Equal(t, "Bearer SYNTHETIC_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
 			permit.Context.Grant.UpdatedAt = "2026-10-26T10:00:00Z"
 			response := bindingHarnessCall(t, h, headerOnly)
 			status, body := immediate(t, response)
 			assert.Equal(t, http.StatusServiceUnavailable, status)
-			assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "delegation context unavailable"}, body)
+			assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "grant context unavailable"}, body)
 			assert.Nil(t, response.GetRequestHeaders(), "expiry during replacement must precede Authorization mutation and body buffering")
 			assert.Equal(t, int32(2), calls.Load(), "one replacement exchange, no retry or re-resolution on expiry")
 			wantPolicies := int32(1)
@@ -255,9 +255,9 @@ func TestDelegation_RejectsExpiryDuringBindingReplacement(t *testing.T) {
 	}
 }
 
-func TestDelegation_BodyPathGivesPolicyPermitDerivedDirectMembers(t *testing.T) {
-	var h *delegationHarness
-	h = newDelegationHarness(t, func() (delegation.Result, error) { return h.permitFor(time.Minute)() })
+func TestGrantContext_BodyPathGivesPolicyPermitDerivedDirectMembers(t *testing.T) {
+	var h *grantContextHarness
+	h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return h.permitFor(time.Minute)() })
 
 	headersResp, bodyResp := sendHeadersThenBodyWithMetadata(t, h.client, map[string]string{":method": "POST", "mcp-session-id": "sess-1"},
 		validTokenExchangeMetadata("mcp"), mcpCall)
@@ -281,9 +281,9 @@ func TestDelegation_BodyPathGivesPolicyPermitDerivedDirectMembers(t *testing.T) 
 	}`, h.lastInput.Load().(string))
 }
 
-func TestDelegation_BodyPathPrecedence(t *testing.T) {
-	denied := &delegation.DeniedError{Code: "grant_missing", ConsentURL: consentURL}
-	unavailable := &delegation.Error{Category: delegation.CategoryUnavailable}
+func TestGrantContext_BodyPathPrecedence(t *testing.T) {
+	denied := &grantcontext.DeniedError{Code: "grant_missing", ConsentURL: consentURL}
+	unavailable := &grantcontext.Error{Category: grantcontext.CategoryUnavailable}
 	exchangeErr := errors.New("broker exchange failed")
 	tests := []struct {
 		name        string
@@ -306,14 +306,14 @@ func TestDelegation_BodyPathPrecedence(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				resolverDone := make(chan struct{})
 				exchangeDone := make(chan struct{})
-				var h *delegationHarness
-				h = newDelegationHarness(t, func() (delegation.Result, error) {
+				var h *grantContextHarness
+				h = newGrantContextHarness(t, func() (grantcontext.Result, error) {
 					if !resolverFirst {
 						<-exchangeDone
 					}
 					defer close(resolverDone)
 					if tt.resolveErr != nil {
-						return delegation.Result{}, tt.resolveErr
+						return grantcontext.Result{}, tt.resolveErr
 					}
 					return h.permitFor(time.Minute)()
 				})
@@ -342,16 +342,16 @@ func TestDelegation_BodyPathPrecedence(t *testing.T) {
 					assert.Equal(t, "delegation denied: grant_missing", body["error_description"])
 					assert.Equal(t, consentURL, body["error_uri"])
 				} else {
-					assert.Equal(t, "delegation context unavailable", body["error_description"])
+					assert.Equal(t, "grant context unavailable", body["error_description"])
 				}
 			})
 		}
 	}
 }
 
-func TestDelegation_BodyPathRejectsPermitExpiredBeforePolicy(t *testing.T) {
+func TestGrantContext_BodyPathRejectsPermitExpiredBeforePolicy(t *testing.T) {
 	start := time.Unix(1_000, 0)
-	h := newDelegationHarness(t, func() (delegation.Result, error) { return samplePermit(start.Add(time.Second)), nil })
+	h := newGrantContextHarness(t, func() (grantcontext.Result, error) { return samplePermit(start.Add(time.Second)), nil })
 	h.exchangeFn = func() (server.ExchangeResult, error) {
 		h.clock.Advance(time.Second)
 		return server.ExchangeResult{Token: "exchanged"}, nil
@@ -363,14 +363,14 @@ func TestDelegation_BodyPathRejectsPermitExpiredBeforePolicy(t *testing.T) {
 	assert.Nil(t, headersResp.GetRequestHeaders())
 	status, body := immediate(t, headersResp)
 	assert.Equal(t, 503, status)
-	assert.Equal(t, "delegation context unavailable", body["error_description"])
+	assert.Equal(t, "grant context unavailable", body["error_description"])
 	assert.Zero(t, h.policies.Load(), "an expired permit never reaches policy")
 	assert.Equal(t, int32(1), h.resolver.calls.Load(), "no re-resolution")
 }
 
-func TestDelegation_RejectsPermitExpiredWhileBufferingBody(t *testing.T) {
-	var h *delegationHarness
-	h = newDelegationHarness(t, func() (delegation.Result, error) { return h.permitFor(time.Second)() })
+func TestGrantContext_RejectsPermitExpiredWhileBufferingBody(t *testing.T) {
+	var h *grantContextHarness
+	h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return h.permitFor(time.Second)() })
 	stream, err := h.client.Process(context.Background())
 	require.NoError(t, err)
 	require.NoError(t, stream.Send(&extprocv3.ProcessingRequest{
@@ -393,15 +393,15 @@ func TestDelegation_RejectsPermitExpiredWhileBufferingBody(t *testing.T) {
 	require.NoError(t, err)
 	status, body := immediate(t, bodyResp)
 	assert.Equal(t, 503, status)
-	assert.Equal(t, "delegation context unavailable", body["error_description"])
+	assert.Equal(t, "grant context unavailable", body["error_description"])
 	assert.Zero(t, h.policies.Load())
 	assert.Equal(t, int32(1), h.resolver.calls.Load(), "no re-resolution after buffering")
 	assert.Equal(t, int32(1), h.exchanges.Load())
 }
 
-func TestDelegation_BatchRejectsPermitExpiringBetweenDecisions(t *testing.T) {
-	var h *delegationHarness
-	h = newDelegationHarness(t, func() (delegation.Result, error) { return h.permitFor(2 * time.Second)() })
+func TestGrantContext_BatchRejectsPermitExpiringBetweenDecisions(t *testing.T) {
+	var h *grantContextHarness
+	h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return h.permitFor(2 * time.Second)() })
 	h.policyFn = func(authorization.OPAInput) (*authorization.OPADecision, error) {
 		h.clock.Advance(2 * time.Second)
 		return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
@@ -416,10 +416,10 @@ func TestDelegation_BatchRejectsPermitExpiringBetweenDecisions(t *testing.T) {
 	assert.Equal(t, int32(1), h.policies.Load(), "the expired second decision is not evaluated")
 }
 
-func TestDelegation_HeaderOnlyOrdering(t *testing.T) {
+func TestGrantContext_HeaderOnlyOrdering(t *testing.T) {
 	t.Run("resolve, then policy, then exchange", func(t *testing.T) {
-		var h *delegationHarness
-		h = newDelegationHarness(t, func() (delegation.Result, error) {
+		var h *grantContextHarness
+		h = newGrantContextHarness(t, func() (grantcontext.Result, error) {
 			assert.Zero(t, h.policies.Load())
 			return h.permitFor(time.Minute)()
 		})
@@ -440,8 +440,8 @@ func TestDelegation_HeaderOnlyOrdering(t *testing.T) {
 	})
 
 	t.Run("policy deny makes no exchange call", func(t *testing.T) {
-		var h *delegationHarness
-		h = newDelegationHarness(t, func() (delegation.Result, error) { return h.permitFor(time.Minute)() })
+		var h *grantContextHarness
+		h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return h.permitFor(time.Minute)() })
 		h.policyFn = func(authorization.OPAInput) (*authorization.OPADecision, error) {
 			return &authorization.OPADecision{Action: "deny", Reasons: []string{"not repo-reader"}}, nil
 		}
@@ -453,20 +453,20 @@ func TestDelegation_HeaderOnlyOrdering(t *testing.T) {
 	})
 
 	for name, tc := range map[string]struct {
-		resolve func(h *delegationHarness) (delegation.Result, error)
+		resolve func(h *grantContextHarness) (grantcontext.Result, error)
 		status  int
 	}{
-		"denial": {func(*delegationHarness) (delegation.Result, error) {
-			return delegation.Result{}, &delegation.DeniedError{Code: "grant_expired", ConsentURL: consentURL}
+		"denial": {func(*grantContextHarness) (grantcontext.Result, error) {
+			return grantcontext.Result{}, &grantcontext.DeniedError{Code: "grant_expired", ConsentURL: consentURL}
 		}, 403},
-		"resolution error": {func(*delegationHarness) (delegation.Result, error) {
-			return delegation.Result{}, &delegation.Error{Category: delegation.CategoryTimeout}
+		"resolution error": {func(*grantContextHarness) (grantcontext.Result, error) {
+			return grantcontext.Result{}, &grantcontext.Error{Category: grantcontext.CategoryTimeout}
 		}, 503},
-		"expired permit": {func(h *delegationHarness) (delegation.Result, error) { return samplePermit(h.clock.Now()), nil }, 503},
+		"expired permit": {func(h *grantContextHarness) (grantcontext.Result, error) { return samplePermit(h.clock.Now()), nil }, 503},
 	} {
 		t.Run(name+" stops before policy and exchange", func(t *testing.T) {
-			var h *delegationHarness
-			h = newDelegationHarness(t, func() (delegation.Result, error) { return tc.resolve(h) })
+			var h *grantContextHarness
+			h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return tc.resolve(h) })
 			resp, err := sendRequestHeadersWithMetadata(t, h.client, map[string]string{":method": "GET"}, validTokenExchangeMetadata("mcp"), true)
 			require.NoError(t, err)
 			status, body := immediate(t, resp)
@@ -479,12 +479,12 @@ func TestDelegation_HeaderOnlyOrdering(t *testing.T) {
 	}
 }
 
-func TestDelegation_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
+func TestGrantContext_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
 	for _, path := range []string{"body", "batch", "header-only"} {
 		t.Run(path, func(t *testing.T) {
 			logger, logs := newJSONTestLogger()
-			var h *delegationHarness
-			h = newDelegationHarness(t, func() (delegation.Result, error) { return h.permitFor(time.Second)() }, logger)
+			var h *grantContextHarness
+			h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return h.permitFor(time.Second)() }, logger)
 			if path == "header-only" {
 				h.exchangeFn = func() (server.ExchangeResult, error) {
 					h.clock.Advance(time.Second)
@@ -511,7 +511,7 @@ func TestDelegation_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
 			require.NotNil(t, response)
 			status, body := immediate(t, response)
 			assert.Equal(t, 503, status)
-			assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "delegation context unavailable"}, body)
+			assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "grant context unavailable"}, body)
 			assert.Equal(t, int32(1), h.policies.Load())
 			assert.Equal(t, int32(1), h.exchanges.Load())
 			assert.Equal(t, int32(1), h.resolver.calls.Load(), "the expired permit is never re-resolved")
@@ -526,9 +526,9 @@ func TestDelegation_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
 			assert.NotContains(t, string(raw), "read:repo")
 			found := false
 			for _, record := range records {
-				if record["event"] == "extproc.delegation_context.permit_expired" {
+				if record["event"] == "extproc.grant_context.permit_expired" {
 					found = true
-					assert.Equal(t, "delegation_resolution", record["operation"])
+					assert.Equal(t, "grant_resolution", record["operation"])
 				}
 			}
 			assert.True(t, found, "the expiry is reported through the existing credential-safe event")
@@ -536,9 +536,9 @@ func TestDelegation_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
 	}
 }
 
-func TestContextInputFromDelegation_DeepCopiesAndIgnoresExchange(t *testing.T) {
+func TestContextInputFromGrantContext_DeepCopiesAndIgnoresExchange(t *testing.T) {
 	result := samplePermit(time.Now().Add(time.Minute))
-	input := server.ContextInputFromDelegation(&result, "sess-1")
+	input := server.ContextInputFromGrantContext(&result, "sess-1")
 
 	input.Resource.Scopes[0] = "mutated"
 	input.PermissionSets[0].Services[0].Scopes[0] = "mutated"
@@ -551,7 +551,7 @@ func TestContextInputFromDelegation_DeepCopiesAndIgnoresExchange(t *testing.T) {
 	assert.Equal(t, "sess-1", input.AgentSessionID)
 }
 
-func TestDelegation_DisabledModeMakesNoResolverCallsAndKeepsInput(t *testing.T) {
+func TestGrantContext_DisabledModeMakesNoResolverCallsAndKeepsInput(t *testing.T) {
 	var captured atomic.Value
 	authorizer := &mockAuthorizer{evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 		raw, _ := json.Marshal(input["context"])

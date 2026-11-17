@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"context"
@@ -17,9 +17,9 @@ func observeResolution(span trace.Span, err error) {
 	case errors.Is(err, context.Canceled):
 		outcome, detail = "canceled", "caller_canceled"
 	case errors.As(err, &denied):
-		outcome, detail = "authorization_denied", "delegation_denied"
+		outcome, detail = "authorization_denied", "grant_context_denied"
 	default:
-		outcome, detail = "infrastructure_error", "delegation_unavailable"
+		outcome, detail = "infrastructure_error", "grant_context_unavailable"
 		category := CategoryUnavailable
 		var resolutionErr *Error
 		if errors.As(err, &resolutionErr) {
@@ -29,10 +29,10 @@ func observeResolution(span trace.Span, err error) {
 			}
 		}
 		span.SetAttributes(attribute.String("error.type", category))
-		span.SetStatus(codes.Error, "delegation context unavailable")
+		span.SetStatus(codes.Error, "grant context unavailable")
 	}
 	span.SetAttributes(
-		attribute.String("token_exchange.operation", "delegation_resolution"),
+		attribute.String("token_exchange.operation", "grant_resolution"),
 		attribute.String("token_exchange.outcome", outcome),
 		attribute.String("token_exchange.failure_detail", detail),
 	)

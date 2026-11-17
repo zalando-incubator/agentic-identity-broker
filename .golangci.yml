@@ -35,4 +35,4 @@ linters:
       - linters:
           - sloglint
         text: keys should be written in snake_case
-        source: '"(token_exchange|delegation)(\.[a-z0-9_]+)+"'
+        source: '"(token_exchange|grant_context)(\.[a-z0-9_]+)+"'

@@ -130,11 +130,11 @@ in `resource.id`; permission-set service entries retain `id`. No legacy permit a
 ## ExtProc consumer
 
 The standalone ExtProc service can consume this endpoint before every policy decision. Enable it
-with `delegation_context.enabled` (see
-[ExtProc delegation context configuration](../configuration.md#extproc-delegation-context-configuration)).
+with `grant_context.enabled` (see
+[ExtProc grant context configuration](../configuration.md#extproc-grant-context-configuration)).
 ExtProc caches only permits, for at most `min(max-age, max_staleness)` from the moment it sent the
 request, and fails closed: a denial returns 403 with the consent URL, and a broker failure or an
-expired permit returns 503. ExtProc rechecks the original deadline before final forwarding, including after header-only exchange and body or batch policy evaluation. Expiry returns `{"error":"service_unavailable","error_description":"delegation context unavailable"}` without forwarding or re-resolution. OPA policies receive `input.context.principal`, `agent`, `resource`,
+expired permit returns 503. ExtProc rechecks the original deadline before final forwarding, including after header-only exchange and body or batch policy evaluation. Expiry returns `{"error":"service_unavailable","error_description":"grant context unavailable"}` without forwarding or re-resolution. OPA policies receive `input.context.principal`, `agent`, `resource`,
 `grant` and `permission_sets` and can key on canonical IDs, for example
 `input.context.permission_sets[_].canonical_id == "repo-reader"`.
 
@@ -149,9 +149,9 @@ field deprecation below.
 
 ### Permit-bound token reuse
 
-With delegation enabled, the permit governs reuse of an exchange result. Its binding includes the permit principal and agent UUID, effective resource scope set (order and duplicates ignored) and grant-update instant (equivalent RFC 3339 offsets compare equal). Exchange response `principal` and `agent_id` must match the permit before any result claim. Mismatch or absence returns the terminal `503 service_unavailable` / `delegation token binding unavailable`, without approval creation, forwarding or an identity-repair retry. Approval identity remains exchange-derived under ADR 036 in both modes. An unbound successful result is atomically claimed once. Cache hits, singleflight followers and non-cacheable successes share that binding; no caller may rebind it.
+With delegation enabled, the permit governs reuse of an exchange result. Its binding includes the permit principal and agent UUID, effective resource scope set (order and duplicates ignored) and grant-update instant (equivalent RFC 3339 offsets compare equal). Exchange response `principal` and `agent_id` must match the permit before any result claim. Mismatch or absence returns the terminal `503 service_unavailable` / `exchange result binding unavailable`, without approval creation, forwarding or an identity-repair retry. Approval identity remains exchange-derived under ADR 036 in both modes. An unbound successful result is atomically claimed once. Cache hits, singleflight followers and non-cacheable successes share that binding; no caller may rebind it.
 
-A mismatched result is never forwarded. ExtProc deletes only its observed cache identity, preserves concurrent replacements even when token bytes repeat, and uses a compatible replacement if present. Otherwise it exchanges once more through the existing singleflight/breaker. Retry failure forwards nothing and never uses the removed/mismatched stale result. If another live permit already claimed the retry result, ExtProc returns `503` with `{"error":"service_unavailable","error_description":"delegation token binding unavailable"}` without another retry or competing-result deletion. Original permit deadlines still apply before policy and final forwarding.
+A mismatched result is never forwarded. ExtProc deletes only its observed cache identity, preserves concurrent replacements even when token bytes repeat, and uses a compatible replacement if present. Otherwise it exchanges once more through the existing singleflight/breaker. Retry failure forwards nothing and never uses the removed/mismatched stale result. If another live permit already claimed the retry result, ExtProc returns `503` with `{"error":"service_unavailable","error_description":"exchange result binding unavailable"}` without another retry or competing-result deletion. Original permit deadlines still apply before policy and final forwarding.
 
 Body requests validate binding after both concurrent calls and existing failure precedence, before buffering or Authorization mutation. Header-only validates after policy allows, against the evaluated permit. Disabled mode, cache TTL/defaults and the five-second exchange re-consent cooldown are unchanged.
 
@@ -159,18 +159,18 @@ This guarantees compatible result reuse, not upstream downscoping or exchange gr
 
 ### Resolution observability
 
-ExtProc emits `extproc.delegation.resolve` for each resolution and
-`extproc.delegation.evaluate` for each broker evaluation. Both use the `extproc` scope and
-`token_exchange.operation=delegation_resolution`. The resolver span records
-`delegation.cache=hit|miss`; a hit makes no evaluation call. Bounded outcome/detail pairs are
-`success`/`none`, `authorization_denied`/`delegation_denied`,
-`infrastructure_error`/`delegation_unavailable`, and `canceled`/`caller_canceled`.
+ExtProc emits `extproc.grant_context.resolve` for each resolution and
+`extproc.grant_context.evaluate` for each broker evaluation. Both use the `extproc` scope and
+`token_exchange.operation=grant_resolution`. The resolver span records
+`grant_context.cache=hit|miss`; a hit makes no evaluation call. Bounded outcome/detail pairs are
+`success`/`none`, `authorization_denied`/`grant_context_denied`,
+`infrastructure_error`/`grant_context_unavailable`, and `canceled`/`caller_canceled`.
 Infrastructure failures set error status and `error.type` to `timeout`, `unavailable`,
 `rejected`, or `invalid_response`. Grant denials are ordinary decisions, not span errors.
 
 Server diagnostics use the same outcomes and cache values. Permit diagnostics are Debug;
 denials are Info and unavailable context is Warn. Neither logs nor spans include subject tokens,
-client assertions, delegation context, requested resource URIs, or dependency error text.
+client assertions, grant context, requested resource URIs, or dependency error text.
 Broker evaluation audit and perimeter access logs share the finalized actor, optional distinct
 calling peer, and the trace ID returned in `traceresponse`.
 
@@ -178,5 +178,5 @@ calling peer, and the trace ID returned in `traceresponse`.
 
 End-user API `1.3.0` marks the token-exchange response field `granted_permission_sets` deprecated.
 It remains populated, and `principal` and `agent_id` are unchanged. Removal is scheduled for one
-release after the ExtProc delegation resolver ships and requires a separately approved end-user API
+release after the ExtProc grant-context resolver ships and requires a separately approved end-user API
 `2.0.0`.

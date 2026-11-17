@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"bytes"
@@ -38,13 +38,13 @@ type Error struct {
 	cause    error
 }
 
-func (e *Error) Error() string { return "delegation context unavailable: " + e.Category }
+func (e *Error) Error() string { return "grant context unavailable: " + e.Category }
 func (e *Error) Unwrap() error { return e.cause }
 
 func newError(category string, cause error) *Error { return &Error{Category: category, cause: cause} }
 
 // DeniedError is a delegation denial from the broker. Code is an allowlisted grant detail
-// or "delegation_denied"; ConsentURL is an absolute http(s) URL.
+// or "grant_context_denied"; ConsentURL is an absolute http(s) URL.
 type DeniedError struct {
 	Code       string
 	ConsentURL string
@@ -127,10 +127,10 @@ type Client struct {
 // NewClient creates an evaluation client for verified metadata.
 func NewClient(httpClient *http.Client, metadata *Metadata, assertions AssertionProvider, maxStaleness time.Duration) (*Client, error) {
 	if httpClient == nil || metadata == nil || metadata.AccessEvaluationEndpoint == nil || assertions == nil {
-		return nil, errors.New("delegation client requires an HTTP client, verified metadata and an assertion provider")
+		return nil, errors.New("grant-context client requires an HTTP client, verified metadata and an assertion provider")
 	}
 	if maxStaleness <= 0 {
-		return nil, errors.New("delegation client requires a positive max staleness")
+		return nil, errors.New("grant-context client requires a positive max staleness")
 	}
 	return &Client{httpClient: httpClient, endpoint: metadata.AccessEvaluationEndpoint.String(), assertions: assertions,
 		maxStaleness: maxStaleness, now: time.Now}, nil
@@ -154,7 +154,7 @@ type evaluationAction struct {
 // Evaluate asks the broker for the delegation of subjectToken to resourceURI. A permit's
 // deadline is computed once from the clock read immediately before the request is sent.
 func (c *Client) Evaluate(ctx context.Context, subjectToken, resourceURI string) (result Result, err error) {
-	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.delegation.evaluate", trace.WithSpanKind(trace.SpanKindClient))
+	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.grant_context.evaluate", trace.WithSpanKind(trace.SpanKindClient))
 	defer func() {
 		observeResolution(span, err)
 		span.End()
@@ -269,7 +269,7 @@ func parseDenial(raw json.RawMessage) error {
 	if err != nil || !consentURL.IsAbs() || consentURL.Host == "" || (consentURL.Scheme != "http" && consentURL.Scheme != "https") {
 		return newError(CategoryInvalidResponse, nil)
 	}
-	code := "delegation_denied"
+	code := "grant_context_denied"
 	if denial.Context.ReasonAdmin != nil && allowlistedDenialCodes[denial.Context.ReasonAdmin.Code] {
 		code = denial.Context.ReasonAdmin.Code
 	}

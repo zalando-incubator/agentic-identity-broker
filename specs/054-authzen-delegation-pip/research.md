@@ -35,11 +35,11 @@ choices. Revised API-2 and the cooldown consequence D-5 have recorded approval i
 
 ---
 
-## R1. Where the shared delegation resolution lives
+## R1. Where the shared grant resolution lives
 
 **Decision**: Extract exchange steps 2–9a from `TokenExchangeService.Exchange` into one domain
-type, `tokenexchange.DelegationResolver`, in a new file `internal/domain/tokenexchange/delegation.go`.
-`Resolve(ctx, DelegationRequest) (*Delegation, error)` performs, in today's order:
+type, `tokenexchange.GrantResolver`, in a new file `internal/domain/tokenexchange/grant_resolver.go`.
+`Resolve(ctx, GrantResolutionRequest) (*ResolvedGrant, error)` performs, in today's order:
 
 1. Validate the subject token.
 2. Validate the client assertion.
@@ -102,7 +102,7 @@ The service also performs these steps:
 - It passes the optional `context.agent` anchor as `ExpectedAgentID` to the shared resolver,
   which compares it after agent load and before any grant read (FR-005).
 - It computes freshness (R5).
-- It builds the Delegation Context (R4).
+- It builds the Grant Context (R4).
 
 The HTTP handler only decodes JSON, extracts the bearer assertion, calls the service, and
 serializes the outcome. This avoids domain-logic leakage (Principle VI).
@@ -135,9 +135,9 @@ evaluation.
 **Consequence documented in the ADR**: A policy cannot distinguish evaluation from exchange.
 This is intentional. Evaluation is never more permissive than exchange, and it issues no token.
 
-## R4. Delegation Context projection
+## R4. Grant Context projection
 
-**Decision**: Build the context from the resolver's `Delegation` value:
+**Decision**: Build the context from the resolver's `ResolvedGrant` value:
 
 | Field | Source |
 |---|---|
@@ -254,7 +254,7 @@ the same header that the RFC 8414 handler (`oauth2_metadata.go`) sets.
   of the PDP identifier, as RFC 8414 does for issuers.
 
 The broker registers only the root path. Deployments whose `public_url` has a path prefix must
-set `delegation_context.policy_decision_point` explicitly in ExtProc (spec Edge Cases). The
+set `grant_context.policy_decision_point` explicitly in ExtProc (spec Edge Cases). The
 proxy must also route the standard discovery URL. The docs will state this.
 
 ## R9. Route availability and namespace reservation
@@ -379,7 +379,7 @@ correction. Removal itself still needs a separately confirmed `2.0.0` change in 
   The broker already caps `max-age` by the grant expiry, and the maintainer chose to accept the
   remaining skew.
 
-**Decision**: Add a new package, `internal/extproc/delegation/`, with no broker imports (ADR 011
+**Decision**: Add a new package, `internal/extproc/grantcontext/`, with no broker imports (ADR 011
 and the AGENTS invariant). It contains:
 
 - `discovery.go`: `Discover(ctx, client, expectedPDP) (Metadata, error)`. It builds the
@@ -424,22 +424,22 @@ Reject with 503. `requestState` stores the permit's `Deadline` together with the
 Immediately before every OPA evaluation that receives delegation input, ExtProc checks
 `now < Deadline`. This covers the header-only policy call, the body policy call, and each
 decision in a batch. If the check fails, ExtProc returns 503 `service_unavailable` with
-`"delegation context unavailable"`, does not evaluate policy, and forwards nothing. It does not
+`"grant context unavailable"`, does not evaluate policy, and forwards nothing. It does not
 re-resolve or retry.
 
-**Decision** (when `delegation_context.enabled`):
+**Decision** (when `grant_context.enabled`):
 
 **Body-bearing path** (`processRequestHeadersOPA`):
 
 1. After metadata, protocol, and transport checks, start `Exchanger.Exchange` and
    `PermitResolver.Resolve` concurrently.
 2. **Wait for both results.** No sibling is canceled. Each call is bounded by its own timeout
-   (`oauth2.exchange_timeout` and `delegation_context.request_timeout`). This makes the outcome
+   (`oauth2.exchange_timeout` and `grant_context.request_timeout`). This makes the outcome
    independent of completion order (FR-016).
 3. Apply this precedence:
    1. A delegation denial returns 403 `access_denied` with `error_uri` set to the consent URL.
       Consent recovery precedes session recovery, matching grant-before-session ordering (SR-004).
-   2. A resolution error returns 503 `service_unavailable` with `"delegation context unavailable"`.
+   2. A resolution error returns 503 `service_unavailable` with `"grant context unavailable"`.
    3. An exchange error uses the existing `exchangeErrorResponse`.
    4. Otherwise, apply the Proposed ADR-2 binding/re-exchange step (R19) before buffering or Authorization mutation, then store the context and its
       `Deadline` in `requestState`. The deadline is checked again before each body policy
@@ -468,7 +468,7 @@ depend on completion order.
 dependency responses (`service_unavailable`). The 403 denial body is
 `{"error":"access_denied","error_description":"delegation denied: <code>","error_uri":"<consent_url>"}`.
 The administrative code is a bounded enum from the broker. The resolver allowlists the
-`grant_*` details and maps any other value to `delegation_denied`.
+`grant_*` details and maps any other value to `grant_context_denied`.
 
 ## R15. OPA input changes
 
@@ -494,7 +494,7 @@ The policy-input types live in `internal/extproc/authorization`, which owns the 
 document. Their `scopes` fields have no `omitempty`, so an empty scope list is `[]`, never
 `null` and never absent.
 
-**Typed decoding (no verbatim copy)**: `internal/extproc/delegation` decodes the permit's
+**Typed decoding (no verbatim copy)**: `internal/extproc/grantcontext` decodes the permit's
 `context` into its own unexported wire struct with `encoding/json`. Unknown members at any
 level are ignored. They are never copied, so they cannot reach Rego. The client then validates
 the documented shape. Any violation is an `invalid_response` resolution error: ExtProc returns
@@ -518,7 +518,7 @@ as the permit. No numbers appear in the context, so `UseNumber` is not needed.
 The client exports the validated value as `delegation.Context`, a Go struct whose fields mirror
 the five members with `Principal` taken from `subject.id`. `delegation.Result` carries it with
 the `Deadline` (R13). The server maps `delegation.Context` to `authorization.ContextInput` in
-one pure function, `contextInputFromDelegation(result, agentSessionID)`. This follows the
+one pure function, `contextInputFromGrantContext(result, agentSessionID)`. This follows the
 existing pattern in which the server builds `ContextInput` from the exchange result. The
 function copies every slice, so a cached `Result` that singleflight followers share is never
 aliased into a policy input.
@@ -540,7 +540,7 @@ absent. A resolution error, a denial, or an expired deadline returns before poli
 enabled mode never produces `false`. On the header-only path, enabled mode therefore reports
 `true` where it reports `false` today.
 
-**Disabled mode**: `contextInputFromDelegation` is never called. The five members are zero
+**Disabled mode**: `contextInputFromGrantContext` is never called. The five members are zero
 values and `omitempty` drops them. The existing body path (`state.grantedPermissionSets` from
 exchange) and header-only path (`false`, no permission sets) keep their current code. Their
 serialized input is byte-for-byte unchanged. `ast.InterfaceToValue` honors the JSON tags.
@@ -622,8 +622,8 @@ planning session itself accepts nothing.
 
 ## R17. ExtProc configuration
 
-**Decision**: Add `DelegationContextConfig` to `extprocconfig.Config` under the
-`delegation_context` key:
+**Decision**: Add `GrantContextConfig` to `extprocconfig.Config` under the
+`grant_context` key:
 
 | Key | Default |
 |---|---|
@@ -657,8 +657,8 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
   (renaming `user_grants` on the PostgreSQL test database).
 - **Consumer journeys** (US3.1–US3.13 and US4.5) also go in the backend suite. They run the
   production ExtProc composition against the real broker through `tests/e2e/bootstrap/extproc.go`.
-  That file is extended with a delegation-context option. Revocation uses the real consent API.
-  Freshness scenarios use a short `delegation_context.max_staleness` (for example, `2s`), not
+  That file is extended with a grant-context option. Revocation uses the real consent API.
+  Freshness scenarios use a short `grant_context.max_staleness` (for example, `2s`), not
   clock injection, so no test-only production API is needed. US3.5 distinguishes immediate
   broker re-consultation on both paths from forwarding: header-only permits immediately;
   body-path forwarding follows the unchanged 5 s exchange re-consent cooldown (Proposed D-5).
@@ -668,7 +668,7 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
   `MockAuthZENBroker` in `tests/e2e/extproc/bootstrap/` counts discovery and evaluation requests,
   and can serve a mismatched identifier or fail discovery.
 - **Canonical-ID policy fixture** (R15 shape, FR-018): add
-  `tests/e2e/fixtures/policies/delegation_canonical.rego`. It allows when the input satisfies
+  `tests/e2e/fixtures/policies/grant_context_canonical.rego`. It allows when the input satisfies
   all of these conditions:
   - `input.context.agent.canonical_id == "data-assistant"`
   - some `input.context.permission_sets[_]` has `canonical_id == "repo-reader"`

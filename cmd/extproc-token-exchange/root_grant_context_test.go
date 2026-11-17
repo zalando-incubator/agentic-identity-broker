@@ -19,10 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 )
 
-type delegationBrokerStub struct {
+type grantContextBrokerStub struct {
 	discoveryBody  func(baseURL string) string
 	discoveryCode  int
 	discoveries    atomic.Int32
@@ -30,7 +30,7 @@ type delegationBrokerStub struct {
 	authorizations atomic.Int32
 }
 
-func (b *delegationBrokerStub) start(t *testing.T) *httptest.Server {
+func (b *grantContextBrokerStub) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -56,35 +56,35 @@ func (b *delegationBrokerStub) start(t *testing.T) *httptest.Server {
 	return srv
 }
 
-func enableDelegationRun(t *testing.T) {
+func enableGrantContextRun(t *testing.T) {
 	t.Helper()
 	policyPath := filepath.Join(t.TempDir(), "policy.rego")
 	require.NoError(t, os.WriteFile(policyPath, []byte("package aib.extproc.authz\nresult := {\"action\": \"allow\"}\n"), 0o600))
 	t.Setenv("EXTPROC_AUTHORIZATION_ENABLED", "true")
 	t.Setenv("EXTPROC_AUTHORIZATION_POLICY_PATH", policyPath)
-	t.Setenv("EXTPROC_DELEGATION_CONTEXT_ENABLED", "true")
+	t.Setenv("EXTPROC_GRANT_CONTEXT_ENABLED", "true")
 }
 
-func TestRun_DelegationContextStartupFailures(t *testing.T) {
+func TestRun_GrantContextStartupFailures(t *testing.T) {
 	tests := []struct {
 		name    string
 		code    int
 		body    func(string) string
 		errText string
 	}{
-		{"discovery unavailable", http.StatusServiceUnavailable, func(string) string { return `{}` }, "delegation context discovery failed"},
-		{"discovery invalid", http.StatusOK, func(string) string { return `{"policy_decision_point":` }, "delegation context discovery failed"},
+		{"discovery unavailable", http.StatusServiceUnavailable, func(string) string { return `{}` }, "grant context discovery failed"},
+		{"discovery invalid", http.StatusOK, func(string) string { return `{"policy_decision_point":` }, "grant context discovery failed"},
 		{"PDP mismatch", http.StatusOK, func(string) string {
 			return `{"policy_decision_point":"https://other.example.com","access_evaluation_endpoint":"https://other.example.com/access/v1/evaluation"}`
 		}, "policy_decision_point mismatch"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			broker := &delegationBrokerStub{discoveryCode: tt.code, discoveryBody: tt.body}
+			broker := &grantContextBrokerStub{discoveryCode: tt.code, discoveryBody: tt.body}
 			srv := broker.start(t)
 			port := availableExtProcPort(t)
 			configureExtProcRun(t, srv.URL, port, "secret")
-			enableDelegationRun(t)
+			enableGrantContextRun(t)
 
 			err := run(rootCmd, nil)
 
@@ -100,8 +100,8 @@ func TestRun_DelegationContextStartupFailures(t *testing.T) {
 	}
 }
 
-func TestRun_DelegationContextLifecycleEvent(t *testing.T) {
-	broker := &delegationBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
+func TestRun_GrantContextLifecycleEvent(t *testing.T) {
+	broker := &grantContextBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
 		return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"` + base + `/access/v1/evaluation"}`
 	}}
 	srv := broker.start(t)
@@ -109,7 +109,7 @@ func TestRun_DelegationContextLifecycleEvent(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, listener.Close()) })
 	configureExtProcRun(t, srv.URL, listener.Addr().(*net.TCPAddr).Port, "secret")
-	enableDelegationRun(t)
+	enableGrantContextRun(t)
 	t.Setenv("EXTPROC_LOG_FORMAT", "json")
 
 	reader, writer, err := os.Pipe()
@@ -137,7 +137,7 @@ func TestRun_DelegationContextLifecycleEvent(t *testing.T) {
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
-		if record["event"] == "extproc.delegation_context.enabled" {
+		if record["event"] == "extproc.grant_context.enabled" {
 			found = true
 			assert.Equal(t, "INFO", record["level"])
 		}
@@ -145,29 +145,29 @@ func TestRun_DelegationContextLifecycleEvent(t *testing.T) {
 	assert.True(t, found, "successful delegation discovery must emit a lifecycle event")
 }
 
-func TestRun_DelegationContextRequiresAuthorization(t *testing.T) {
-	broker := &delegationBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(string) string { return `{}` }}
+func TestRun_GrantContextRequiresAuthorization(t *testing.T) {
+	broker := &grantContextBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(string) string { return `{}` }}
 	srv := broker.start(t)
 	configureExtProcRun(t, srv.URL, availableExtProcPort(t), "secret")
-	t.Setenv("EXTPROC_DELEGATION_CONTEXT_ENABLED", "true")
+	t.Setenv("EXTPROC_GRANT_CONTEXT_ENABLED", "true")
 
 	err := run(rootCmd, nil)
 
-	require.ErrorContains(t, err, "delegation_context.enabled requires authorization.enabled")
+	require.ErrorContains(t, err, "grant_context.enabled requires authorization.enabled")
 	assert.Zero(t, broker.discoveries.Load())
 }
 
 func TestNewPermitResolverFromConfig_UsesAdvertisedEndpointAndShutsDown(t *testing.T) {
-	broker := &delegationBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
+	broker := &grantContextBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
 		return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"` + base + `/access/v1/evaluation"}`
 	}}
 	srv := broker.start(t)
 	cfg := &extprocconfig.Config{
-		OAuth2:            extprocconfig.OAuth2Config{TLS: extprocconfig.TLSConfig{AllowHTTP: true}},
-		DelegationContext: extprocconfig.DelegationContextConfig{Enabled: true, PolicyDecisionPoint: srv.URL, RequestTimeout: time.Second, MaxStaleness: time.Minute},
+		OAuth2:       extprocconfig.OAuth2Config{TLS: extprocconfig.TLSConfig{AllowHTTP: true}},
+		GrantContext: extprocconfig.GrantContextConfig{Enabled: true, PolicyDecisionPoint: srv.URL, RequestTimeout: time.Second, MaxStaleness: time.Minute},
 	}
 
-	resolver, err := delegation.NewPermitResolverFromConfig(context.Background(), cfg, staticAssertionProvider("assertion"))
+	resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), cfg, staticAssertionProvider("assertion"))
 	require.NoError(t, err)
 	_, _, resolveErr := resolver.Resolve(context.Background(), "subject", "https://api.example.com")
 	require.Error(t, resolveErr, "the stub endpoint rejects evaluation, which must fail closed")

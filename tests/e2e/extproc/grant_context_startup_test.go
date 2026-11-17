@@ -14,15 +14,15 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
 )
 
-func delegationStartupConfig(broker *bootstrap.MockAuthZENBroker) *extprocconfig.Config {
-	cfg := opaEnabledConfig(policyPath("delegation_disabled_input.rego"))
-	cfg.DelegationContext = extprocconfig.DelegationContextConfig{
+func grantContextStartupConfig(broker *bootstrap.MockAuthZENBroker) *extprocconfig.Config {
+	cfg := opaEnabledConfig(policyPath("grant_context_disabled_input.rego"))
+	cfg.GrantContext = extprocconfig.GrantContextConfig{
 		Enabled: true, PolicyDecisionPoint: broker.URL(), RequestTimeout: time.Second, MaxStaleness: time.Minute,
 	}
 	return cfg
 }
 
-var _ = Describe("ExtProc delegation context startup", Label("delegation-context-startup"), func() {
+var _ = Describe("ExtProc grant context startup", Label("grant-context-startup"), func() {
 	var broker *bootstrap.MockAuthZENBroker
 
 	BeforeEach(func() {
@@ -32,10 +32,10 @@ var _ = Describe("ExtProc delegation context startup", Label("delegation-context
 
 	// Scenario US4.1 from specs/054-authzen-delegation-pip/spec.md
 	It("makes no discovery or evaluation requests when disabled by default", func() {
-		cfg := opaEnabledConfig(policyPath("delegation_disabled_input.rego"))
-		Expect(cfg.DelegationContext.Enabled).To(BeFalse())
+		cfg := opaEnabledConfig(policyPath("grant_context_disabled_input.rego"))
+		Expect(cfg.GrantContext.Enabled).To(BeFalse())
 		env := bootstrap.NewTestEnvironment(cfg, opaLogger)
-		Expect(env.StartWithDelegationContext()).To(Succeed())
+		Expect(env.StartWithGrantContext()).To(Succeed())
 		DeferCleanup(env.Stop)
 		env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
 		client, conn := env.NewExtProcClient()
@@ -55,15 +55,15 @@ var _ = Describe("ExtProc delegation context startup", Label("delegation-context
 	})
 
 	// Scenario US4.2 from specs/054-authzen-delegation-pip/spec.md
-	It("fails startup when delegation context is enabled without authorization", func() {
-		cfg := delegationStartupConfig(broker)
+	It("fails startup when grant context is enabled without authorization", func() {
+		cfg := grantContextStartupConfig(broker)
 		cfg.Authorization.Enabled = false
 		env := bootstrap.NewTestEnvironment(cfg, opaLogger)
 		DeferCleanup(env.Stop)
 
-		err := env.StartWithDelegationContext()
+		err := env.StartWithGrantContext()
 
-		Expect(err).To(MatchError(ContainSubstring("delegation_context.enabled requires authorization.enabled")))
+		Expect(err).To(MatchError(ContainSubstring("grant_context.enabled requires authorization.enabled")))
 		Expect(err.Error()).NotTo(ContainSubstring(cfg.OAuth2.ClientSecret))
 		Expect(env.GRPCAddress()).To(BeEmpty())
 		Expect(broker.TotalRequestCount()).To(BeZero())
@@ -77,10 +77,10 @@ var _ = Describe("ExtProc delegation context startup", Label("delegation-context
 			func() { broker.DiscoveryBody = `{"policy_decision_point":"` + broker.URL() + `"}` },
 		} {
 			configure()
-			env := bootstrap.NewTestEnvironment(delegationStartupConfig(broker), opaLogger)
-			err := env.StartWithDelegationContext()
+			env := bootstrap.NewTestEnvironment(grantContextStartupConfig(broker), opaLogger)
+			err := env.StartWithGrantContext()
 			env.Stop()
-			Expect(err).To(MatchError(ContainSubstring("delegation context discovery failed")))
+			Expect(err).To(MatchError(ContainSubstring("grant context discovery failed")))
 			Expect(env.GRPCAddress()).To(BeEmpty(), "no listener after a failed discovery")
 		}
 		Expect(broker.DiscoveryCount()).To(Equal(3))
@@ -90,10 +90,10 @@ var _ = Describe("ExtProc delegation context startup", Label("delegation-context
 	// Scenario US4.4 from specs/054-authzen-delegation-pip/spec.md
 	It("fails startup on a PDP identifier mismatch without sending evaluation credentials", func() {
 		broker.AdvertisedPDP = "https://other.example.com"
-		env := bootstrap.NewTestEnvironment(delegationStartupConfig(broker), opaLogger)
+		env := bootstrap.NewTestEnvironment(grantContextStartupConfig(broker), opaLogger)
 		DeferCleanup(env.Stop)
 
-		err := env.StartWithDelegationContext()
+		err := env.StartWithGrantContext()
 
 		Expect(err).To(MatchError(ContainSubstring("policy_decision_point mismatch (expected " + broker.URL() + ", advertised https://other.example.com)")))
 		Expect(env.GRPCAddress()).To(BeEmpty())

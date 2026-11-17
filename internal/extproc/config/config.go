@@ -16,13 +16,13 @@ type Config struct {
 	ToolApprovals  ToolApprovalsConfig  `mapstructure:"tool_approvals"`
 	Sessions       SessionsConfig       `mapstructure:"sessions"`
 	Telemetry      TelemetryConfig      `mapstructure:"telemetry"`
-	// DelegationContext opts into fresh broker delegation context before every policy decision (ADR 048).
-	DelegationContext DelegationContextConfig `mapstructure:"delegation_context"`
+	// GrantContext opts into fresh broker grant context before every policy decision (ADR 048).
+	GrantContext GrantContextConfig `mapstructure:"grant_context"`
 }
 
-// DelegationContextConfig configures the AuthZEN delegation resolver.
+// GrantContextConfig configures the AuthZEN delegation resolver.
 // PolicyDecisionPoint defaults to the origin of oauth2.token_endpoint after validation.
-type DelegationContextConfig struct {
+type GrantContextConfig struct {
 	Enabled             bool          `mapstructure:"enabled"`
 	PolicyDecisionPoint string        `mapstructure:"policy_decision_point"`
 	RequestTimeout      time.Duration `mapstructure:"request_timeout"`

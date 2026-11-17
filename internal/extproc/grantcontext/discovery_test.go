@@ -1,4 +1,4 @@
-package delegation
+package grantcontext
 
 import (
 	"context"
@@ -39,9 +39,9 @@ func TestDiscover(t *testing.T) {
 		{name: "valid", status: 200, allowHTTP: true, body: func() string {
 			return `{"policy_decision_point":"` + srvURL + `","access_evaluation_endpoint":"` + srvURL + `/access/v1/evaluation","unknown":1}`
 		}},
-		{name: "unavailable", status: 503, allowHTTP: true, body: func() string { return `{}` }, errText: "delegation context discovery failed"},
-		{name: "invalid JSON", status: 200, allowHTTP: true, body: func() string { return `{` }, errText: "delegation context discovery failed"},
-		{name: "missing endpoint", status: 200, allowHTTP: true, body: func() string { return `{"policy_decision_point":"` + srvURL + `"}` }, errText: "delegation context discovery failed"},
+		{name: "unavailable", status: 503, allowHTTP: true, body: func() string { return `{}` }, errText: "grant context discovery failed"},
+		{name: "invalid JSON", status: 200, allowHTTP: true, body: func() string { return `{` }, errText: "grant context discovery failed"},
+		{name: "missing endpoint", status: 200, allowHTTP: true, body: func() string { return `{"policy_decision_point":"` + srvURL + `"}` }, errText: "grant context discovery failed"},
 		{name: "PDP mismatch", status: 200, allowHTTP: true, body: func() string {
 			return `{"policy_decision_point":"https://evil.example.com","access_evaluation_endpoint":"https://evil.example.com/access/v1/evaluation"}`
 		}, errText: "policy_decision_point mismatch (expected " + "SRV" + ", advertised https://evil.example.com)"},

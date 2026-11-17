@@ -15,14 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
 func bindingExchanger(t *testing.T, respond func(http.ResponseWriter, int32), enabled ...bool) (*server.TokenExchanger, *atomic.Int32) {
 	t.Helper()
 	return bindingConfiguredExchanger(t, func(w http.ResponseWriter, _ *http.Request, call int32) { respond(w, call) },
-		func(cfg *extprocconfig.Config) { cfg.DelegationContext.Enabled = len(enabled) == 0 || enabled[0] })
+		func(cfg *extprocconfig.Config) { cfg.GrantContext.Enabled = len(enabled) == 0 || enabled[0] })
 }
 
 func bindingConfiguredExchanger(t *testing.T, respond func(http.ResponseWriter, *http.Request, int32), configure func(*extprocconfig.Config)) (*server.TokenExchanger, *atomic.Int32) {
@@ -36,7 +36,7 @@ func bindingConfiguredExchanger(t *testing.T, respond func(http.ResponseWriter, 
 		respond(w, r, calls.Add(1))
 	}))
 	cfg := configForMocks(mocks)
-	cfg.DelegationContext.Enabled = true
+	cfg.GrantContext.Enabled = true
 	configure(cfg)
 	exchanger, err := server.NewTokenExchanger(cfg, testLogger())
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func bindingSuccess(w http.ResponseWriter, token string, expiry int) {
 	})
 }
 
-func bindingHarnessCall(t *testing.T, h *delegationHarness, headerOnly bool) *extprocv3.ProcessingResponse {
+func bindingHarnessCall(t *testing.T, h *grantContextHarness, headerOnly bool) *extprocv3.ProcessingResponse {
 	t.Helper()
 	if headerOnly {
 		response, err := sendRequestHeadersWithMetadata(t, h.client, map[string]string{":method": "GET"}, validTokenExchangeMetadata("mcp"), true)
@@ -100,7 +100,7 @@ func TestExchangeResultBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing
 				})
 				permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
 				permit.Context.Resource.Scopes = []string{"read:repo", "write:repo"}
-				h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+				h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 				assert.Equal(t, "Bearer SYNTHETIC_OLD_RESULT", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
 				permit.Context.Resource.Scopes = tt.scopes
 				permit.Context.Grant.UpdatedAt = tt.updatedAt
@@ -137,11 +137,11 @@ func TestExchangeResultBinding_IdentityMismatchFailsClosed(t *testing.T) {
 					})
 				})
 				permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
-				h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+				h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 				response := bindingHarnessCall(t, h, headerOnly)
 				status, body := immediate(t, response)
 				assert.Equal(t, 503, status)
-				assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "delegation token binding unavailable"}, body)
+				assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "exchange result binding unavailable"}, body)
 				assert.Nil(t, response.GetRequestHeaders(), "no credential mutation or body buffering")
 				assert.Equal(t, int32(1), calls.Load(), "identity mismatch is terminal, not a grant-change retry")
 				wantPolicies := int32(0)
@@ -166,7 +166,7 @@ func TestExchangeResultBinding_FailedReplacementCannotForwardThePriorToken(t *te
 				_, _ = w.Write([]byte(`{"error":"temporarily_unavailable"}`))
 			})
 			permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
-			h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+			h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 			require.Equal(t, "Bearer SYNTHETIC_OLD_RESULT", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
 			permit.Context.Grant.UpdatedAt = "2026-10-26T10:00:00Z"
 			response := bindingHarnessCall(t, h, headerOnly)
@@ -221,7 +221,7 @@ func TestExchangeResultBinding_PreservesIdenticalTokenReplacementAndDetachedDeli
 				bindingSuccess(w, "SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", 3600)
 			})
 			original := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
-			warm := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return original, nil }, exchanger)
+			warm := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return original, nil }, exchanger)
 			require.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, warm, false)))
 			require.Equal(t, int32(1), calls.Load())
 
@@ -232,7 +232,7 @@ func TestExchangeResultBinding_PreservesIdenticalTokenReplacementAndDetachedDeli
 			observed := &observedExchange{inner: exchanger, delivered: make(chan struct{})}
 			waitingPermit := original
 			waitingPermit.Context.Grant.UpdatedAt = tt.updatedAt
-			waiting := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) {
+			waiting := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) {
 				close(resolved)
 				<-release
 				return waitingPermit, nil
@@ -245,7 +245,7 @@ func TestExchangeResultBinding_PreservesIdenticalTokenReplacementAndDetachedDeli
 
 			successorPermit := original
 			successorPermit.Context.Grant.UpdatedAt = "2026-10-26T10:00:00Z"
-			successor := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return successorPermit, nil }, exchanger)
+			successor := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return successorPermit, nil }, exchanger)
 			assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, successor, true)))
 			assert.Equal(t, int32(2), calls.Load(), "a changed binding installs a new generation even when token bytes repeat")
 			unblock()
@@ -276,7 +276,7 @@ func TestExchangeResultBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchan
 				bindingSuccess(w, "SYNTHETIC_NONCACHEABLE_TOKEN", 0)
 			})
 			permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
-			h := newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+			h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 			for i := range 2 {
 				assert.Equal(t, "Bearer SYNTHETIC_NONCACHEABLE_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
 				assert.Equal(t, int32(i+1), calls.Load(), "binding does not create a cache lifetime for expires_in=0")
