@@ -1,8 +1,11 @@
 # Contract: ExtProc Delegation Context (configuration, broker calls, request outcomes, and policy input)
 
 **Owner**: standalone `extproc-token-exchange` (ADR 011). It uses the `EXTPROC_` configuration
-namespace and is **not** part of the broker Helm chart. **Status**: Proposed; sign-off is
-approval items API-4–API-6 and ADR-1 in the plan. The maintainer endorsed the new ADR decision
+namespace and is **not** part of the broker Helm chart. **Status**: Accepted under approval items
+API-4–API-6 and ADR-1 (👍 on
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>);
+implemented in `internal/extproc/{config,delegation,server,authorization}` and
+[ADR 045](../../../adrs/045-authzen-delegation-pip.md). The maintainer endorsed the new ADR decision
 set (research R16) in the 2026-10-28 review. This contract changes ADR 028's input schema and
 request ordering when the feature is enabled. The input schema in §4 follows the 2026-10-28
 spec clarification (FR-017, FR-018, and research R15).

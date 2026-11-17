@@ -49,7 +49,7 @@ ExtProc does not re-resolve and does not retry. Expired context never reaches po
 The maintainer endorsed the ADR decision set in research R16 ("ADR accepted"). That set includes
 the extension of ADR 033's token-only deferred-finalization seam to `POST /access/v1/evaluation`.
 The 2026-10-29 planning session drafted it in
-[adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md) with status Proposed and
+[adr-045-authzen-delegation-pip.md](../../adrs/045-authzen-delegation-pip.md) with status Proposed and
 registered it as approval item ADR-1 in the plan. T001 records the maintainer's 👍 on the
 approval comment and moves the draft to `adrs/`. The
 §3.1.4.2 reconciliation and the T044/T047 test-first work are still to be done. No runtime
