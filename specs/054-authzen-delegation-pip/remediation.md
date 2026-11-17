@@ -50,7 +50,7 @@ The maintainer endorsed the ADR decision set in research R16 ("ADR accepted"). T
 the extension of ADR 033's token-only deferred-finalization seam to `POST /access/v1/evaluation`.
 The 2026-10-29 planning session drafted it in
 [adr-045-authzen-delegation-pip.md](./adr-045-authzen-delegation-pip.md) with status Proposed and
-registered it as approval item ADR-1 in the plan. T008 records the maintainer's 👍 on the
+registered it as approval item ADR-1 in the plan. T001 records the maintainer's 👍 on the
 approval comment and moves the draft to `adrs/`. The
 §3.1.4.2 reconciliation and the T044/T047 test-first work are still to be done. No runtime
 proof is claimed.
@@ -79,4 +79,4 @@ I1, U1, U2, the I2 architectural decision, and the OPA input shape are answered.
 was regenerated after these decisions: T056 implements the typed direct members, and
 T049/T050/T052/T057/T058 test the decided freshness semantics and the typed context mapping.
 Formal sign-off of the contracts and the ADR draft is tracked in the plan's Approval Items. The MEDIUM C1 Docker-label finding
-from the previous analysis is not resolved here.
+from the previous analysis is addressed in the task and validation documents: T006/T023/T098 require the `docker` label on US2.19, `just test-e2e-docker` and a capable runner; `quickstart.md` distinguishes the 28 non-Docker broker scenarios from the full 29. Runtime verification remains implementation work.
