@@ -149,6 +149,11 @@ are defined by the standard and are a documented exception to general REST namin
 - A broker outage now blocks enabled-mode ExtProc requests with 503 even when a cached exchanged
   token exists.
 - Policies can key on canonical IDs instead of deployment UUIDs.
+- Delegation denials are never cached, and header-only requests permit as soon as the user
+  consents. On the body path, the concurrent exchange during a denied request records the
+  existing ADR 012 exchange re-consent cooldown (5 s), so a body-bearing request right after
+  consent is answered from that cooldown until it lapses. The exchange cache is unchanged by this
+  ADR; the maintainer accepted this behavior.
 - Gateways other than ExtProc can consume the endpoint.
 - The AuthZEN 1.0 discovery member names, well-known path insertion (between host and path),
   request identification and the implementation-defined decision `context` were verified against
@@ -161,5 +166,7 @@ are defined by the standard and are a documented exception to general REST namin
   (research R10). Following the user's direction in the implementation session, §1 now ignores
   unknown members and `properties`. Error bodies keep the approved `ErrorResponse` object; the
   standard's "error message string" is interpreted as a JSON body carrying an error message.
-  This revision of the approved contract item API-2 needs the maintainer's confirmation during
-  review.
+  The maintainer confirmed this revision of API-2 on 2026-10-31 in the implementation session.
+- **2026-10-31 (same PR, before merge)**: The maintainer accepted the body-path consequence
+  recorded below (consent after a denial takes effect on body-bearing requests once the existing
+  ADR 012 re-consent cooldown lapses) and the in-PR Phase 0 resolver extraction.

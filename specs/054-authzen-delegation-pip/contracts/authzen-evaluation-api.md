@@ -6,8 +6,8 @@ applied to `api/enduser/openapi.yaml` (`1.2.0`). The API-003 verification agains
 source text is recorded in [quickstart.md](../quickstart.md) §7. It found one conflict: AuthZEN
 requires receivers to ignore unknown request fields. Following the user's direction in the
 implementation session, unknown members, `properties` and other `context` members are ignored
-instead of rejected (ADR 045 §1). Error bodies keep `ErrorResponse`. That revision of API-2 needs the
-maintainer's confirmation during review. The schemas below keep the original proposal for
+instead of rejected (ADR 045 §1). Error bodies keep `ErrorResponse`. The maintainer confirmed that revision
+of API-2 on 2026-10-31. The schemas below keep the original proposal for
 traceability; the OpenAPI is authoritative.
 
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
