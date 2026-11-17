@@ -4,7 +4,7 @@
 
 **Created**: 2026-10-26
 
-**Status**: Draft — clarification complete; contract review and architectural approval remain required
+**Status**: Draft — blocked on the freshness decisions I1/U1/U2 in [remediation.md](./remediation.md); prior clarification answers remain valid, but do not settle these findings. Contract review and architectural approval (including I2's audit-perimeter extension) remain required.
 
 **Input**: The title and body supplied for [issue #289](https://github.com/zalando-incubator/agentic-identity-broker/issues/289): “Broker AuthZEN Access Evaluation endpoint as Delegation Policy Information Point”. No issue comments were used.
 
