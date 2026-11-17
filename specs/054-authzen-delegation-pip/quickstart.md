@@ -1027,3 +1027,69 @@ No additional maintainer decision is needed: continuation uses the existing supp
 Resume from the unfinished test-authoring tasks before runtime implementation. Container-backed
 US2.19, `just test-e2e-docker`, `just test-integration-infra` and Agentgateway cases remain
 **deferred to downstream container tests**, not locally validated and not a blocker here.
+
+## 18. Binding test continuation (run 42378270217/1)
+
+### Outcome
+
+T111 and T112 have additional genuine test-first coverage, but both remain partially
+complete. No runtime binding implementation, new approval, requirement change, production
+API, configuration change or dependency change is recorded. The existing five-item approval
+and ADR 048 acceptance remain unchanged. There are still 112 checked tasks and 11 unchecked
+tasks; this session is **blocked**, not feature completion.
+
+### New assertions and observed evidence
+
+| Test | Location | Evidence |
+|---|---|---|
+| `TestTokenBinding_PreservesIdenticalTokenReplacementAndDetachedDelivery` | `internal/extproc/server/exchanger_binding_test.go:161` | Three barrier-controlled body-path cases capture an initial exchange result before a successor request, then release resolution: compatible replacement reuse, incompatible replacement requiring one extra exchange, and a matching detached result that remains usable. All provider token bytes are identical. The test also checks that a subsequent successor request can reuse its binding unless legitimately replaced. All three cases compile and fail semantically because the changed successor permit still makes only one broker call, not two; subsequent expected totals also fail. |
+| `TestTokenBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentity` | `internal/extproc/server/exchanger_binding_test.go:225` | Both request paths pass the existing-behavior control: `expires_in: 0` remains non-cacheable, every request exchanges, and principal, agent and permission-set extensions are preserved. This is not evidence of atomic first-claim or shared non-cacheable delivery. |
+| `TestDelegation_RejectsExpiryDuringBindingReplacement` | `internal/extproc/server/delegation_test.go:152` | Both request paths compile and fail semantically: they return Authorization-bearing RequestHeaders rather than the required delegation-unavailable 503. The broker fixture advances the test clock to the original permit deadline during the replacement response; assertions require no buffering/mutation, no re-resolution, and no body policy evaluation after expiry. The current implementation never requests that replacement, so these tests are red for missing binding integration, not proof of an existing final-forwarding-check regression. |
+
+The replacement fixture synchronizes both resolver entry and completion of the production
+exchanger's initial call before running the successor request. It uses test-only wrappers,
+channels and clocks; there is no scheduler sleep, production test API, token-byte identity
+comparison, skipped test or deliberately broken production behavior. The new focused tests
+were run with `-race`, compiled, reached their semantic assertions, and emitted no race warning.
+
+### Validation
+
+| Command | Result |
+|---|---|
+| `just check` | Pass after both test-file changes; format, vet and lint, 0 issues. |
+| `go test -race ./internal/extproc/server -run '^TestTokenBinding_(PreservesIdenticalTokenReplacementAndDetachedDelivery\|NonCacheableSuccessPreservesZeroLifetimeAndExchangeIdentity)$' -count=1` | Three new replacement/detached cases are semantically red; both non-cacheable controls pass. |
+| `go test -race ./internal/extproc/server -run '^TestDelegation_RejectsExpiryDuringBindingReplacement$' -count=1` | Both new expiry cases are semantically red. |
+| `just extproc-test` | Fails only in the unfinished binding tests: the two existing binding test functions and the two new semantically red functions. No race warning. |
+| `just test` | Same unfinished binding-test failures; no additional test failure reported. |
+| `just test-integration` | Pass, including delegation contract conformance. |
+| `just web-test` | Pass. |
+| `just cdk-test` | Pass. |
+| `just mock-sample-agent-test` | Pass. |
+| `just mock-upstream-oauth2-test` | Pass. |
+| `just docs-build` | Pass; generated dependency-lock changes were not retained. |
+| `bash "$SECURITY_SCAN_SCRIPT" .` | Pass before the test additions, with the workflow-prepared existing scoped exceptions unchanged; no production code or dependency changed afterward. |
+| `just test-e2e-backend` | 1001 selected scenarios execute: 999 pass, US3.11 and US3.12 fail semantically on missing replacement exchange. The recipe excludes 19 scenarios; none is claimed as validated. |
+| `just test-e2e-frontend` | 67/67 pass. |
+| `ginkgo -v --no-color --procs=2 --skip="Agentgateway" ./tests/e2e/extproc/` | 103 selected non-container scenarios pass; 17 Agentgateway scenarios are excluded, not validated. |
+
+### Remaining work
+
+- T111: add atomic competing first-claim, exact same-flight delivery, non-cacheable conflict,
+  all retry-result outcomes, timeout/cancellation/breaker failure and TTL/cooldown assertions.
+  The new same-token replacement/detached tests do not substitute for these cases.
+- T112: add binding-aware port stubs, API-7 terminal conflict, retry-error precedence and
+  remaining buffering/batch/concurrency coverage. The new replacement-expiry tests cover
+  only that portion of the task.
+- T122: US3.13's barrier-controlled, complete concurrent-live-permit journey is not authored.
+- T113: the complete required unit and E2E red gate remains unfinished.
+- T114–T117: token-binding types and port, opaque shared result identity, atomic first claim,
+  identity-safe removal/replacement/retry, server integration, terminal 503 mapping and
+  credential-safe mismatch diagnostic remain unimplemented behind T113.
+- T118: Token Binding glossary and complete architecture/operator documentation remain open.
+- T119–T120: green acceptance, fresh compliance and final successful non-container validation
+  remain open. The failed commands above are not passing checks or completion evidence.
+
+No additional sign-off or permission is needed to continue. Resume implementation with the
+remaining test-authoring and semantic-red gate, then runtime binding and green verification.
+US2.19, `just test-e2e-docker`, `just test-integration-infra` and Agentgateway-backed tests
+remain deferred to downstream container tests on the pushed commit, never validated locally.

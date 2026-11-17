@@ -390,7 +390,19 @@ These new tasks depend on explicit ADR-2 approval through T001 and the Phase 2g 
 
 - [X] T123 [US3] Complete the independent API-7 final-forwarding expiry portion of T116: test `internal/extproc/server/delegation_test.go` against body, final batch decision and header-only exchange expiry; observe semantic red, then retain the original header-only permit and recheck it before Authorization mutation and every successful body-forwarding exit in `server.go`/`delegation.go`. Preserve disabled mode and existing error precedence; assert credential-safe expiry events. Validate with `just check`, `just extproc-test`, existing complete local E2E and record evidence in `quickstart.md` §15. T116 remains unchecked for its binding integration; T120 remains unchecked because the security gate failed (FR-020/API-7; SR-002/SR-004; Principles VIII/XIII/XV).
 
-Current inventory: 123 tasks, 112 checked and 11 unchecked. T001 records the supplied five-item approval and incorporates ADR-2 into ADR 048. T103 completes the D-7 telemetry migration. T104 incorporates canonical-input guidance with issue #441. T110/T121 author US3.11/US3.12 and have genuine semantic-red evidence, not green validation. T111 is partially authored; T112–T120 and T122 remain open. Current evidence is in `quickstart.md` §17; §16's security failure is historical. Historical completion markers above remain historical.
+Current inventory: 123 tasks, 112 checked and 11 unchecked. T001 records the supplied five-item approval and incorporates ADR-2 into ADR 048. T103 completes the D-7 telemetry migration. T104 incorporates canonical-input guidance with issue #441. T110/T121 author US3.11/US3.12 and have genuine semantic-red evidence, not green validation. T111 and T112 are partially authored; T113–T120 and T122 remain open. Current evidence is in `quickstart.md` §18; §16's security failure is historical. Historical completion markers above remain historical.
+
+### Test continuation (run 42378270217/1)
+
+T111 now includes barrier-controlled same-token compatible/incompatible replacement and
+matching-detached-result assertions, plus passing zero-lifetime/identity compatibility
+controls. T112 adds body and header-only expiry-during-replacement assertions. The new
+binding assertions compile and fail semantically with race detection; no runtime behavior
+or production signature has changed. These additions are partial coverage, not completion
+of either task. Their remaining first-claim/singleflight/retry/error cases and T122's US3.13
+journey are required before T113 closes. No checkbox is changed. `quickstart.md` §18 records
+the red evidence, passing independent checks and unfinished implementation. The existing
+US3.11/US3.12 and binding-test failures remain enabled; they are not bypassed or declared green.
 
 ## Approved implementation corrections (2026-11-05)
 

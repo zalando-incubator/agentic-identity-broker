@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -147,6 +148,36 @@ func immediate(t *testing.T, response *extprocv3.ProcessingResponse) (int, map[s
 }
 
 var mcpCall = []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_files"}}`)
+
+func TestDelegation_RejectsExpiryDuringBindingReplacement(t *testing.T) {
+	for _, headerOnly := range []bool{false, true} {
+		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
+			var h *delegationHarness
+			exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, call int32) {
+				if call > 1 {
+					h.clock.Advance(time.Minute)
+				}
+				bindingSuccess(w, "SYNTHETIC_PROVIDER_TOKEN", 3600)
+			})
+			permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
+			h = newDelegationHarnessWithExchanger(t, func() (delegation.Result, error) { return permit, nil }, exchanger)
+			require.Equal(t, "Bearer SYNTHETIC_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
+			permit.Context.Grant.UpdatedAt = "2026-10-26T10:00:00Z"
+			response := bindingHarnessCall(t, h, headerOnly)
+			status, body := immediate(t, response)
+			assert.Equal(t, http.StatusServiceUnavailable, status)
+			assert.Equal(t, map[string]string{"error": "service_unavailable", "error_description": "delegation context unavailable"}, body)
+			assert.Nil(t, response.GetRequestHeaders(), "expiry during replacement must precede Authorization mutation and body buffering")
+			assert.Equal(t, int32(2), calls.Load(), "one replacement exchange, no retry or re-resolution on expiry")
+			wantPolicies := int32(1)
+			if headerOnly {
+				wantPolicies++
+			}
+			assert.Equal(t, wantPolicies, h.policies.Load(), "expired body requests never reach policy; header-only retains its evaluated permit")
+			assert.Equal(t, int32(2), h.resolver.calls.Load())
+		})
+	}
+}
 
 func TestDelegation_BodyPathGivesPolicyPermitDerivedDirectMembers(t *testing.T) {
 	var h *delegationHarness
