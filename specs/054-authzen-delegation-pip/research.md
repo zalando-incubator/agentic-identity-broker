@@ -407,7 +407,7 @@ and the AGENTS invariant). It contains:
   - Denials and errors are never cached.
   - There is no stale-on-error fallback.
 
-`server.DelegationResolver` becomes the fourth ExtProc port, next to `Exchanger`, `Authorizer`,
+`server.DelegationContextResolver` becomes the fourth ExtProc port, next to `Exchanger`, `Authorizer`,
 and `ApprovalGate`.
 
 **Alternatives**:
@@ -431,7 +431,7 @@ re-resolve or retry.
 **Body-bearing path** (`processRequestHeadersOPA`):
 
 1. After metadata, protocol, and transport checks, start `Exchanger.Exchange` and
-   `DelegationResolver.Resolve` concurrently.
+   `DelegationContextResolver.Resolve` concurrently.
 2. **Wait for both results.** No sibling is canceled. Each call is bounded by its own timeout
    (`oauth2.exchange_timeout` and `delegation_context.request_timeout`). This makes the outcome
    independent of completion order (FR-016).
@@ -440,7 +440,7 @@ re-resolve or retry.
       Consent recovery precedes session recovery, matching grant-before-session ordering (SR-004).
    2. A resolution error returns 503 `service_unavailable` with `"delegation context unavailable"`.
    3. An exchange error uses the existing `exchangeErrorResponse`.
-   4. Otherwise, buffer the body with the Authorization mutation and store the context and its
+   4. Otherwise, apply the Proposed ADR-2 binding/re-exchange step (R19) before buffering or Authorization mutation, then store the context and its
       `Deadline` in `requestState`. The deadline is checked again before each body policy
       evaluation (503 if it has passed).
 
@@ -448,7 +448,7 @@ re-resolve or retry.
 
 1. Resolve the delegation. Apply the same denial and error responses as the body path.
 2. Check the deadline (503 if it has passed), build the input with the context, and evaluate policy.
-3. On allow, call `Exchange`.
+3. On allow, exchange under the evaluated permit's binding (Proposed ADR-2, R19). Disabled mode retains the original `Exchange` call.
 
 Policy denial never calls exchange (US3.9).
 
@@ -589,7 +589,7 @@ revisions. The ADR records these decisions:
   also records the 2026-10-28 freshness decisions: an unusable `max-age` fails closed (I1), a
   single deadline based on request start with accepted skew (U1), and a 503 rejection when the
   context expires before policy use (U2);
-- the ExtProc `DelegationResolver` as a fourth port, with concurrent body-path ordering (R14);
+- the ExtProc `DelegationContextResolver` as a fourth port, with concurrent body-path ordering (R14);
 - the superseded parts of ADR 028: the input schema (R15: the five direct `input.context`
   members, the typed permit mapping, the permanent permit-derived `granted_permission_sets*`
   inputs, and `true` availability on both enabled paths) and the header-only and body-bearing
@@ -654,7 +654,7 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
   `services.go`, and `protected_resource.go`.
 - **US2.19** reuses the grant-repository outage technique from `impersonation_test.go`
   (renaming `user_grants` on the PostgreSQL test database).
-- **Consumer journeys** (US3.1–US3.10 and US4.5) also go in the backend suite. They run the
+- **Consumer journeys** (US3.1–US3.11 and US4.5) also go in the backend suite. They run the
   production ExtProc composition against the real broker through `tests/e2e/bootstrap/extproc.go`.
   That file is extended with a delegation-context option. Revocation uses the real consent API.
   Freshness scenarios use a short `delegation_context.max_staleness` (for example, `2s`), not

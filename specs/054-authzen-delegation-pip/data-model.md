@@ -180,7 +180,7 @@ Context
 
 | Rule | Violation |
 |---|---|
-| Every `id`, `subject.id`, and `resource_uri` is a non-empty string | `invalid_response` |
+| Every `id`, `resource.service_id`, `subject.id`, and `resource_uri` is a non-empty string | `invalid_response` |
 | `resource.scopes`, each `services`, and each `services[].scopes` are arrays. Empty arrays are allowed. | `invalid_response` |
 | `permission_sets` is a non-empty array | `invalid_response` |
 | `updated_at`, and `valid_until` when present, parse as RFC 3339. The received string is kept unchanged. | `invalid_response` |

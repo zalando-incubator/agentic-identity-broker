@@ -2,7 +2,7 @@
 
 **Input**: `specs/054-authzen-delegation-pip/{spec.md,plan.md,research.md,data-model.md,quickstart.md,contracts/}`
 
-**Prerequisites**: Current feature design artifacts, including revised API-2 (ignore unknown members) and D-5 (body-path exchange re-consent cooldown). The supplied thirteen-item approval covers D-6's conditional historical exception. `quickstart.md` §§11–12 records the independent review, 44-scenario mapping, authentic correction evidence and current local/downstream validation. All 102 tasks are closed; the ten historical obligations are closed through approved D-6, not certified as originally performed. Earlier open-gate descriptions below retain the original sequencing requirements and are superseded by that recorded disposition. Never regress working code to stubs or invent historical compliance.
+**Prerequisites**: Current feature design artifacts, including Proposed ADR-2 (permit-bound exchanged tokens, FR-020). Historical approval and validation for the original thirteen-item decision set and D-6 are retained in `quickstart.md` §§11–12; they do not approve ADR-2. The original 102-task inventory is historically closed, including ten obligations disposed of through approved D-6 rather than certified as originally performed. F4–F6 are recorded complete; F2/F3 remain open. T001 is reopened only for the current approval boundary; T108–T120 add design, genuine test-first development and fresh validation for ADR-2. Never regress working code to stubs or invent historical compliance.
 
 **Tests**: Mandatory under Constitution VIII and XIII. Write tests first, compile them with minimal nonfunctional scaffolding where needed, observe semantic failure, implement, then refactor with tests green. Do not use pending/skipped tests, placeholder failures, or test-only production APIs. Preserve existing exchange tests unchanged.
 
@@ -24,7 +24,7 @@ Every task cites a requirement, scenario, research decision implementing that re
 
 ## Approval prerequisite
 
-- [X] T001 As the first task when implementation resumes, verify that `context.approval` covers each applicable row of `specs/054-authzen-delegation-pip/plan.md` (API-1–API-6, ADR-1, D-1–D-6), explicitly revised API-2, D-5 and the Proposed D-6 exception; record only the supplied approval URL, approving maintainers and times in `specs/054-authzen-delegation-pip/quickstart.md`. For every covered feature-local ADR draft, set its Status to `Accepted (approved by <login> on <date>: <url>)` and move it into `adrs/` after checking its number. ADR 047 already resides at `adrs/047-authzen-delegation-pip.md`: preserve its historical approval and record covered same-PR revisions without inventing a draft or duplicating the move. Check the final ADR against its approved information boundary, CEL reuse, freshness, fourth port/ordering, direct typed OPA input, permanent compatibility fields, audit seam, opt-in rationale, deprecation, ignore-unknown rule and cooldown consequence. Never infer approval from historical review direction or amend a main-merged ADR; leave uncovered work open and continue independently covered tasks (API-002, API-005; Principles II, IV, X).
+- [ ] T001 As the first implementation task, verify the supplied `context.approval` covers each applicable item in `specs/054-authzen-delegation-pip/plan.md`, explicitly ADR-2; historical API-2/D-5/D-6/F4 approval is not approval of this revision. For the covered `specs/054-authzen-delegation-pip/adr-048-revision-permit-bound-tokens.md`, record `Accepted (approved by <login> on <date>: <url>)` using only the supplied approval, incorporate it into `adrs/048-authzen-delegation-pip.md` with that provenance in Status/Revision history, then remove the incorporated revision draft. Record approval scope in `specs/054-authzen-delegation-pip/quickstart.md`; accept and move any other covered feature-local ADR drafts to a checked unused number in `adrs/`. Preserve ADR 048's existing move/approvals, do not duplicate it or amend a default-branch ADR, and leave uncovered consequential work unchecked while continuing independently covered tasks (API-002/API-005; FR-020; Principles II, IV, X).
 
 ## Historical VIII/XIII disposition prerequisite (D-6)
 
@@ -142,6 +142,17 @@ All tests below use production bootstrap, Ginkgo/Gomega `Describe → Context �
 
 ---
 
+### Phase 2g: Observability Design [MANDATORY IF TELEMETRY]
+
+**Constitution Reference**: Principle XV (Binding Coding Standards). The current continuation adds only the ADR-2 Debug diagnostic; it does not silently apply the unresolved F2 identifier/namespace revision.
+
+- [ ] T108 Review `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md` against `specs/054-authzen-delegation-pip/contracts/observability.md`: pin existing broker/ExtProc span names, kinds, log events and bounded attribute families, the Proposed log-only `delegation_binding=mismatch`, credential-handling safety cases and no new metric instruments. Identify F2 registration/migration as T103 work, not a completed design exception (SR-003–SR-004; Principle XV).
+- [ ] T109 Verify `specs/054-authzen-delegation-pip/contracts/observability.md` against the final approved scope before ADR-2 code: log-only binding metadata introduces no span namespace, metric, principal, raw scopes or grant contents; existing F2 namespace registration and identifier migration still require T103 and its permitted publication path. Record the design check in `specs/054-authzen-delegation-pip/quickstart.md`, leaving uncovered or unavailable work open while independently covered binding work continues (FR-020; SR-003–SR-004; Principle XV).
+
+**Checkpoint**: Observability inventory and safety-test design exist. F2 remains a separate unresolved compliance obligation; neither this inventory nor ADR-2 authorizes unregistered trace attributes.
+
+---
+
 ## Phase 2.5: Foundational Infrastructure (Compile-only Scaffolding)
 
 **Purpose**: Original compile-only foundation after design approval and the isolated extraction, before T027. T029–T031 were not performed in that sequence; their checked markers record only approved D-6's alternative-validation closure in `quickstart.md` §12. Retain the original obligations, not instructions to replace working code with stubs or a claim of historical compliance. Phase 2.7 is omitted: no new persisted entities or CRUD repositories.
@@ -211,7 +222,7 @@ All tests below use production bootstrap, Ginkgo/Gomega `Describe → Context �
 
 **Goal**: Give both policy paths a bounded-freshness permit independently of token-cache lifetime, with no stale or failure fallback.
 
-**Independent Test**: US3.1–US3.10 use real broker/ExtProc composition, canonical-ID policy, controlled short freshness, consent/revocation and cached provider credentials, asserting no forwarding unless every gate succeeds.
+**Independent Test**: US3.1–US3.11 use real broker/ExtProc composition, canonical-ID policy, controlled short freshness, consent/revocation and cached provider credentials, asserting no forwarding unless every gate succeeds. US3.11 warms each request path independently under a broad grant, narrows the grant and provider session, then observes the new token upstream on the first request after permit expiry; a failed re-exchange forwards nothing.
 
 ### Tests for User Story 3 [MANDATORY - Principle VIII] ⚠️
 
@@ -233,7 +244,21 @@ All tests below use production bootstrap, Ginkgo/Gomega `Describe → Context �
 - [X] T059 [US3] Add credential-free operation/outcome/cache-hit attributes in `internal/extproc/delegation/client.go`, `resolver.go` and `internal/extproc/server/server.go` using existing logging/tracing vocabulary; test captured output in their `_test.go` files contains no tokens/assertions/context (SR-003–SR-004; ExtProc contract §5).
 - [X] T060 [US3] After US4 startup wiring (T066–T069), run `just check`, `just extproc-test` with race coverage and `just test-e2e-backend` plus non-container US3.1–US3.10 in `tests/e2e/delegation_context_journey_test.go`; verify revised US3.5 broker re-consultation, immediate header-only permit and body-path permit after the unchanged 5 s exchange cooldown separately (D-5), and the canonical policy across two UUID sets and revocation/outage despite cached exchanged tokens, then record green evidence in `specs/054-authzen-delegation-pip/quickstart.md` (SC-002–SC-005).
 
-**Checkpoint**: Both paths enforce independent permit freshness and existing independent gates. US3 can be unit-tested before US4, but real startup journeys require its config/discovery wiring.
+### ADR-2 continuation: permit-bound exchanged tokens (Proposed; genuine TDD)
+
+These new tasks depend on explicit ADR-2 approval through T001 and the Phase 2g design checks. Historical D-6 covers only the original 44 scenarios, never US3.11 or new binding code. The original US3/US4 runtime is already present; no scaffolding replay or second refactoring PR is required.
+
+- [ ] T110 [P] [US3] Write exactly one new `It()` for US3.11 in `tests/e2e/delegation_context_journey_test.go` with `Label("delegation-context")` and a nearby scenario reference. In isolated real-broker/production-ExtProc fixtures for both body and header-only paths, warm a two-scope permit and distinct broad provider token; narrow the grant through the real consent API and re-authorize/replace the provider session with a distinct one-scope token; use `max_staleness: 2s` and bounded `Eventually` to await permit expiry. Assert the first post-expiry request performs the additional broker exchange, emits only the one-scope token in the forwarded Authorization mutation, and satisfies a policy checking the new `resource.scopes` and `grant.updated_at`; exercise failed re-exchange with no broad-token forwarding. Do not let one path warm the other path's replacement token, use fixed sleeps, or count polling retries as the single target request (FR-020; US3.11; SC-007; Principles VIII, XIII).
+- [ ] T111 [P] [US3] Write cache/binding tests in `internal/extproc/server/exchanger_binding_test.go`: equal scope sets (including reordered/duplicate scopes), equal RFC 3339 timestamp instants, changed scopes alone, changed `grant.updated_at` alone, empty scopes, unbound first use, unchanged disabled/cooldown behavior and unchanged TTL bounds. Use barriers to prove compare-and-delete preserves a concurrently installed entry, singleflight delivery never forwards a mismatched token, and failed re-exchange (timeout, cancellation, broker error or circuit-breaker rejection) cannot use the removed token even inside its prior stale window. Cover non-cacheable successful results and at most one extra exchange per request; preserve exchange-derived identities/extensions (FR-020; data-model §3.6; ADR-2; SR-002; Principles VIII, XIII).
+- [ ] T112 [P] [US3] Extend `internal/extproc/server/delegation_test.go` with binding-aware port stubs: body path waits for both calls and retains denial > resolver error > exchange error precedence before binding, then binds/re-exchanges before buffering; header-only path derives binding from the evaluated permit and exchanges only after policy allows. Assert mismatches never emit the old Authorization token, binding/re-exchange failure uses the existing exchange-error response, expiry during re-exchange/body buffering is rejected before policy, batch decisions retain the original deadline, and disabled mode uses the original call/input. Keep synchronization and clocks in `_test.go` (FR-015–FR-020; US3.11; SC-003/SC-007; SR-006).
+- [ ] T113 [US3] Run the new unit assertions and US3.11 in `tests/e2e/delegation_context_journey_test.go` against minimal compiling binding signatures/port stubs only; record genuine semantic-red expectations in `specs/054-authzen-delegation-pip/quickstart.md` before T114–T117. A missing method, build failure, pending test or historical D-6 disposition is not red evidence; retain all existing passing behavior (Principles VIII, XIII; ADR-2).
+- [ ] T114 [US3] Define `TokenBinding` and the binding-aware `Exchanger` contract in `internal/extproc/server/server.go`/`exchanger.go`, deriving it from the already validated permit in `internal/extproc/server/delegation.go`. Preserve the exact data-model §3.6 constraints: `Scopes` is a "sorted, de-duplicated set of Context.Resource.Scopes", `GrantUpdatedAt` is "time.Time parsed from Context.Grant.UpdatedAt", equality compares "both sets and both instants", and `cachedToken.binding` is "Always nil in disabled mode and on cooldown entries". Copy binding scopes rather than aliasing the immutable cached permit; the exchanger never parses permits and ExtProc imports no broker types. Update all `Exchanger` stubs in `internal/extproc/server/*_test.go` to compile without test-only production APIs (FR-020; ADR-2; Principles VI, VIII).
+- [ ] T115 [US3] Implement binding-aware cache reuse in `internal/extproc/server/exchanger.go`: bind first use, reuse only equal bindings, compare-and-delete mismatches under the cache lock, exchange once through the existing singleflight/circuit breaker and store the new binding with the new result. Revalidate the returned binding after concurrent delivery without an unbounded retry loop; never fall back to the removed token. Keep key, TTL calculation/eviction, assertion validation, cooldown and disabled `Exchange` semantics unchanged; a non-cacheable successful token still receives request-local binding checks (FR-020; data-model §3.6; ADR-2; SR-002).
+- [ ] T116 [US3] Integrate binding into `internal/extproc/server/delegation.go` and `server.go`: after body concurrency and unchanged precedence, use the fresh permit binding before buffering or Authorization mutation; on header-only allow call the binding-aware exchange with the permit policy evaluated. Preserve deadline checks immediately before every OPA decision, metadata-only inputs, exchange-derived approval identities and existing exchange-error handling; failed re-exchange has no removed-token mutation, fallback or forwarding and each request re-exchanges at most once (FR-015–FR-020; US3.11; SC-007; SR-004/SR-006).
+- [ ] T117 [US3] First add credential-safe buffer/span assertions in `internal/extproc/server/exchanger_binding_test.go` and `delegation_test.go`, then emit the log-only Debug diagnostic `delegation_binding=mismatch` through the request-context logger in `internal/extproc/server/exchanger.go` per `specs/054-authzen-delegation-pip/contracts/observability.md`. Assert no subject/assertion/provider token, raw scope list, principal, grant contents or dependency cause in any signal; reuse bounded diagnostic helpers, introduce no span attribute/namespace or metric, and do not apply T103 implicitly (FR-020; SR-003–SR-004; Principle XV).
+- [ ] T119 [US3] After T114–T118, run `just check`, `just test`, `just extproc-test` (race), `just test-integration` (including `tests/integration/delegation_contract_test.go`) and `just test-e2e-backend`, then the three focused labels in `specs/054-authzen-delegation-pip/quickstart.md` §§2–4. Require 28 local broker + 12 consumer + 4 startup scenarios (44 local, 45 with downstream US2.19); pin the US3.11 `file:line` mapping and actual red/green evidence separately from historic D-6. Refactor only with all relevant assertions green; no assertion weakening, skips or container-runtime attempts (FR-020; US3.11; SC-001–SC-007; Principles VIII, XIII).
+
+**Checkpoint**: Both paths enforce independent permit freshness, permit-bound token reuse and existing independent gates. US3 can be unit-tested before US4, but real startup journeys require its config/discovery wiring. US3.11 and binding code remain unchecked until implementation and fresh validation, regardless of historical task completion.
 
 ---
 
@@ -270,6 +295,10 @@ All tests below use production bootstrap, Ginkgo/Gomega `Describe → Context �
 
 - [X] T072 Update `internal/AGENTS.md`'s tokenexchange description and `internal/extproc/AGENTS.md`'s fourth port, enabled/disabled paths, config, independent cache and test commands after implementation, retaining ADR 011 isolation and ADR 036 metadata-only invariants; reconcile `ARCHITECTURE.md`'s feature-affected sections without bundling independent cleanup (FR-006, FR-014–FR-018; Principles II, VI).
 - [X] T073 Reconcile verified commands, all 44 test locations and observed results in `specs/054-authzen-delegation-pip/quickstart.md`; keep `spec.md` and `plan.md` unchanged throughout implementation; verify the API/config/deployment docs match revised API-2 ignore-unknown behavior and D-5 cooldown semantics, preserve historical test-first/scaffolding gaps and report downstream container suites only as deferred until results exist and no deferred issue or future exchange-field removal became feature code (SC-001–SC-006; Feature Scope; Principles IV, VII, XIV).
+
+---
+
+- [ ] T118 Update `ARCHITECTURE.md` §§3.2.1/3.2.3 and its glossary with Token Binding, and `internal/extproc/AGENTS.md`, `docs/api/authzen-evaluation.md` and `docs/reference/token-exchange.md` with the approved ADR-2 reuse/re-exchange behavior, scope-set/instant equality, unchanged cooldown/defaults/disabled mode, provider-session narrowing limitation and residual concurrent double-miss race. Add no configuration keys, broker token claims, dependencies, schema or UI changes; keep `spec.md`/`plan.md` unchanged during implementation and record actual approval/evidence in `specs/054-authzen-delegation-pip/quickstart.md` (FR-020; US3.11; ADR-2; Principles II, V, XIV).
 
 ---
 
@@ -346,6 +375,8 @@ All tests below use production bootstrap, Ginkgo/Gomega `Describe → Context �
 - [X] T099 Run unchanged regression journeys in `tests/e2e/token_exchange_test.go`, `grant_diagnostics_test.go`, `local_token_exchange_e2e_test.go`, `extproc_approval_journey_test.go`, `tests/e2e/extproc/opa_authorization_test.go` and `metadata_input_test.go`; record compatibility/approval/metadata evidence in `specs/054-authzen-delegation-pip/quickstart.md` (Principle XIII; SC-006; SR-006).
 - [X] T100 Run `just check`, `just test`, `just extproc-test`, `just test-e2e-backend`, non-container ExtProc/startup labels, `just test-e2e-frontend` and `just docs-build`; run every non-container recipe required by `just verify`: `just web-test`, `just cdk-test`, `just mock-sample-agent-test`, `just mock-upstream-oauth2-test`, `just test-integration`, plus workflow-prepared `bash "$SECURITY_SCAN_SCRIPT" .` instead of `just security`. Use E2E as the final local guard and record actual passed commands or specific failures in `specs/054-authzen-delegation-pip/quickstart.md`; resolve change-caused failures without weakening checks. Do not invoke container-inclusive aggregates (`just test-e2e`, `just verify`, `just test-integration-all`); defer `just test-e2e-docker`, `just test-integration-infra` and Agentgateway container cases to downstream container tests on the pushed commit, never as validated locally or sandbox blockers. Leave required non-container checks and historical compliance gaps open until satisfied (Principles VIII, XIII).
 
+- [ ] T120 Re-run all applicable Phase N checks for the ADR-2 diff rather than treating historical T074–T101 marks as current-head validation. Verify scope/approval and accepted ADR-code agreement, glossary/docs, unchanged OpenAPI/producer-consumer conformance, no schema/config/Helm/UI change, domain/ExtProc boundaries, binding log safety and standards compliance (including still-open T103), real US3.11 test-first evidence and 45-scenario traceability. Run every non-container recipe in `specs/054-authzen-delegation-pip/quickstart.md` §6, including `just check`, `just test`, `just extproc-test`, self-contained integration, web/CDK/mock/docs gates, workflow-prepared `bash "$SECURITY_SCAN_SCRIPT" .` and complete local E2E as the final guard. Record passed commands and defer US2.19/`just test-e2e-docker`, `just test-integration-infra` and Agentgateway cases to downstream tests on the pushed commit; never claim those suites passed locally or let them hold independent local work. Leave any unavailable/unapproved task open and report remaining implementation work honestly (SC-001–SC-007; Principles I–XV).
+
 **Frontend** (Principle XI - if applicable):
 
 - [X] T101 Verify the diff under `web/`, `tests/e2e/frontend/` and `tests/e2e/screenshots/` confirms no new UI work; record design-system primitives/tokens, universal Storybook components, accessibility contrast checks and new Playwright/screenshots as not applicable for this feature, retaining full-suite regression requirements (Principles XI, XIII).
@@ -362,8 +393,7 @@ Their original sequence was **not performed; covered by approved D-6**. The chec
 record this disposition, not that retrospective scaffolding or original semantic-red ordering
 occurred. The independent review and 44-scenario mapping in §11 are retained; §12 adds current
 local gates and downstream evidence on the supplied head. No runtime requirement or test is
-waived, and future corrections remain test-first. All 102 tasks are closed. The frozen-plan
-I1 wording remains disclosed in quickstart §§11–12; it does not gate completed implementation.
+waived, and future corrections remain test-first. The original 102-task inventory was closed at that historical checkpoint. Current work includes reopened T001, unresolved T103/T104 and new T108–T120; none is closed by historical D-6. The plan's complexity summary is reconciled during this design phase without altering that exception or its recorded validation.
 
 ## Coverage & Traceability
 
@@ -378,7 +408,8 @@ Each acceptance scenario maps to one eventual `It()`; the grouped ranges below a
 | US4.1–US4.4 | 4 | `tests/e2e/extproc/delegation_context_startup_test.go` | T025 | T066–T071 |
 | US4.5 | 1 | `tests/e2e/delegation_context_journey_test.go` | T024 | T068–T071 |
 | US4.6 | 1 | `tests/e2e/authzen_delegation_compat_test.go` | T026 | T014, T070–T071 |
-| **Total** | **44** | 29 broker + 11 consumer + 4 startup | T027 red evidence | T098–T100 final green |
+| US3.11 | 1 | `tests/e2e/delegation_context_journey_test.go` | T110/T113 genuine red | T114–T119 |
+| **Total** | **45** | 29 broker + 12 consumer + 4 startup | Historical T027/D-6 for 44; T110/T113 for US3.11 | Historical T098–T100; current T119/T120 |
 
 | Requirement group | Primary tasks |
 |---|---|
@@ -396,20 +427,23 @@ Each acceptance scenario maps to one eventual `It()`; the grouped ranges below a
 | SR-001–SR-002 validation/fail closed | T032, T042–T046, T049–T058, T089 |
 | SR-003–SR-004 no disclosure/ordering/audit | T022–T024, T033, T044, T047, T052, T059, T091 |
 | SR-005–SR-006 discovery/independent gates | T025, T052, T057–T058, T062–T063, T068–T069, T090, T099 |
-| SC-001–SC-006 | All 44 mapped scenarios, T098–T100; canonical UUID parity T020/T024/T060; compatibility T025/T026/T099 |
+| FR-020 permit-authoritative upstream token binding | T001, T108–T120; US3.11/Journey 5 |
+| SR-004 F4/F5/F6 review corrections | Historical T105–T107; conformance recheck T119 |
+| SR-004 remaining F2/F3 obligations | T103/T104, still open; no silent alternative |
+| SC-001–SC-007 | All 45 mapped scenarios; historical T098–T100, current T119/T120; canonical UUID parity T020/T024/T060; compatibility T025/T026/T099 |
 
 ## Task Generation Summary
 
 | Group | Task count | Acceptance scenarios |
 |---|---:|---:|
-| Shared setup, design, scaffolding, polish, compliance and correction T102 | 62 | E2E authoring T021–T026 covers all stories |
+| Shared setup, design, scaffolding, polish, compliance and corrections | 71 | Historical T021–T026; new design T108/T109, docs T118 and gate T120 |
 | US1 (T032–T041, P1) | 10 | 8 |
 | US2 (T042–T048, P1) | 7 | 20 |
-| US3 (T049–T060, P2) | 12 | 10 |
+| US3 (T049–T060, T110–T117, T119, P2) | 21 | 11 |
 | US4 (T061–T071, P2) | 11 | 6 |
-| **Total** | **102** | **44** |
+| **Total** | **120** | **45** |
 
-Every task has a checkbox, stable unique ID, repository-relative file path and requirement/scenario/binding-constraint reference. The original 101 IDs are retained; implementation added T102 for the approved validation correction. Original `[X]` marks retain their recorded history; `quickstart.md` §§11–12 records continuation completion evidence and the explicit D-6 disposition for the ten historical obligations. All 102 boxes are checked, without claiming that the original test-first/scaffolding sequence occurred. Only story-phase tasks carry `[USn]`; `[P]` tasks run only within the prerequisite waves below. No code or approval is produced in the tasks phase.
+Every task has a checkbox, stable unique ID, repository-relative file path and requirement/scenario/binding-constraint reference. T001–T107 retain their IDs and recorded history; T001 alone is reopened for ADR-2 approval, not to revoke earlier approvals. T108–T120 are new unchecked continuation tasks, ordered by the continuation dependency graph below rather than renumbering historical tasks. There are 104 historically checked and 16 unchecked tasks; generating this list certifies no new implementation or validation. `quickstart.md` §§11–12 retains the explicit D-6 disposition for ten historical obligations. Story tasks carry `[USn]`; review IDs F2–F6 are description text, not extra checklist labels. `[P]` never overrides prerequisites, red-test gates or shared-file conflicts.
 
 ## Approved review remediation (2026-11-06)
 
@@ -417,15 +451,31 @@ These tasks extend the historical 102-task inventory only for the selected items
 [the proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407).
 Historical checklist markers and validation evidence above are unchanged.
 
-- [ ] T103 [F2] Pin telemetry identifiers/kind in `internal/adapters/http/enduser/authzen_evaluation_test.go`, then rename the span/events, register namespaces in `coding-standards/OPENTELEMETRY.md`, and document operations/details and identifier migration in `docs/reference/token-exchange.md` (SR-004). Unresolved: the push allowlist rejects the required coding-standard file. The tested implementation was withdrawn before publication; no partial F2 change is included.
-- [ ] T104 [F3] Name the enabled-mode canonical permission-set field in `adrs/047-authzen-delegation-pip.md` and policy docs, and file an issue for compatibility-field removal. Unresolved: no issue-creation safe output is available; leave this item unchanged rather than apply its unchosen immediate-removal alternative.
-- [X] T105 [F4] Rename the ExtProc resolver port, define Delegation and Access Evaluation in `ARCHITECTURE.md`, and rename the permit/OPA owning-service member to `service_id` through OpenAPI, domain, typed consumer, policy fixtures, tests and docs; revise ADR 047 with supplied proposal provenance (FR-007/FR-014/FR-017).
-- [X] T106 [F5] Add nested field-set and exact denial-set conformance tests against OpenAPI in `tests/integration/delegation_contract_test.go`, keeping production APIs and ExtProc independence unchanged (SR-004).
-- [X] T107 [F6] Test and add `extproc.delegation_context.*` events for denial, unavailability and permit expiry in `internal/extproc/server/delegation.go` and its log tests (SR-004).
+- [ ] T103 F2: Pin telemetry identifiers/kind in `internal/adapters/http/enduser/authzen_evaluation_test.go`, then rename the span/events, register namespaces in `coding-standards/OPENTELEMETRY.md`, and document operations/details and identifier migration in `docs/reference/token-exchange.md` (SR-004). Unresolved: the push allowlist rejects the required coding-standard file. The tested implementation was withdrawn before publication; no partial F2 change is included.
+- [ ] T104 F3: Name the enabled-mode canonical permission-set field in `adrs/048-authzen-delegation-pip.md` and policy docs, and file an issue for compatibility-field removal. Unresolved: no issue-creation safe output is available; leave this item unchanged rather than apply its unchosen immediate-removal alternative.
+- [X] T105 F4: Rename the ExtProc resolver port, define Delegation and Access Evaluation in `ARCHITECTURE.md`, and rename the permit/OPA owning-service member to `service_id` through OpenAPI, domain, typed consumer, policy fixtures, tests and docs; revise ADR 048 with supplied proposal provenance (FR-007/FR-014/FR-017).
+- [X] T106 F5: Add nested field-set and exact denial-set conformance tests against OpenAPI in `tests/integration/delegation_contract_test.go`, keeping production APIs and ExtProc independence unchanged (SR-004).
+- [X] T107 F6: Test and add `extproc.delegation_context.*` events for denial, unavailability and permit expiry in `internal/extproc/server/delegation.go` and its log tests (SR-004).
 
 ## Dependencies & Execution Order
 
-### Phase Dependencies
+### Current continuation dependency graph
+
+```text
+T001 (explicit ADR-2 approval + record/incorporate covered draft)
+  → T108 → T109 (observability design/safety boundary)
+  → T110 || T111 || T112 (new E2E, cache and server tests)
+  → T113 (compiling semantic RED; minimal signatures only)
+  → T114 → T115 → T116 → T117 (binding types/cache/paths/safe diagnostic)
+  → T118 (architecture/operator docs) → T119 (focused GREEN + regressions)
+  → T120 (fresh complete non-container compliance/verification)
+T103/F2 and T104/F3 remain open in parallel; unavailable prerequisites
+  defer those items only, never authorize partial/noncompliant publication.
+```
+
+T111 and T112 touch separate test files and may run alongside T110's E2E file. Once tests exist, run their red commands serially to avoid shared build/evidence conflicts. T114–T117 share cache/server files and are serial; T117's new log assertions must fail before its log call is added. New tasks use existing production startup/DI rather than rebuilding historical scaffolding. Approval-incorporation work occurs only in implementation, never in this tasks session. Any additional behavior-preserving extraction required by binding belongs in its own preceding same-PR commit, with existing tests passing unchanged; no independent cleanup or separate PR.
+
+### Historical phase dependencies (retain evidence; not a scaffolding replay)
 
 1. T001 is the first implementation task: verify the supplied sign-off and record only the approvals it covers. Keep `spec.md` and `plan.md` immutable; put all handoff, red/green and validation evidence in `quickstart.md`. Missing approval or external prerequisites defer only dependent tasks, never independent approved work. Phase 1 records tooling/scope. Phase 2a–2e design work can proceed next, with T001's record of the maintainer approval and T013's final-standard verification blocking implementation. T014 depends on T013; T015 on T014; T009 uses the correct ADR identity. T010–T012 are independent documentation files and can run together.
 2. After approval and design, T003→T004→T005 isolate the resolver extraction in its own no-behavior-change commit before feature commits in this PR; T002 records that boundary. Retain the existing `b882d7b` extraction, without repeating it, creating another PR or rewriting history.
