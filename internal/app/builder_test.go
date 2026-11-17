@@ -696,6 +696,8 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NotNil(t, app.TokenExchangeService)
+		require.NotNil(t, app.EnduserHandlers.AuthZENConfiguration, "AuthZEN discovery exists whenever token exchange is configured")
+		require.NotNil(t, app.EnduserHandlers.AuthZENEvaluation, "AuthZEN evaluation exists whenever token exchange is configured")
 
 		request := httptest.NewRequest(http.MethodGet, "/api/approvals", nil)
 		request.Header.Set("Authorization", "Bearer invalid")
@@ -725,6 +727,8 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Nil(t, app.TokenExchangeService)
+		require.Nil(t, app.EnduserHandlers.AuthZENConfiguration)
+		require.Nil(t, app.EnduserHandlers.AuthZENEvaluation)
 
 		handler := httpmiddleware.RequireApprovalClientAssertion(app.ApprovalRequestAuthenticator)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
