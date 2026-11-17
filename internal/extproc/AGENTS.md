@@ -229,6 +229,8 @@ Header-only:   → DelegationResolver.Resolve → denial 403 / error 503
 
 The permit maps through the pure `contextInputFromDelegation` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets` and `granted_permission_sets_available: true`; `agent_session_id` is unchanged and the approval gate still uses the exchange identity. The permit cache is independent of the token cache: no stale-on-error, denials and errors never cached.
 
+Permit scope arrays may be empty, but each element must be a JSON string. Preserve null detection in the wire decoder: Go's `encoding/json` otherwise silently turns a null element in `[]string` into an empty string. Reject malformed permits as `invalid_response` before policy or caching.
+
 `authorization.InputBuilder.Build` selects a parser by `protocol`:
 
 ### Approval gate and cache

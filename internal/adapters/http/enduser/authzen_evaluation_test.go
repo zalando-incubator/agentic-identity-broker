@@ -227,7 +227,7 @@ func TestAuthZENEvaluation_RejectsBeforeResolution(t *testing.T) {
 		{"trailing data", func() *http.Request { return newEvaluationRequest(valid + `{}`) }, http.StatusBadRequest, ""},
 		{"array body", func() *http.Request { return newEvaluationRequest(`[]`) }, http.StatusBadRequest, ""},
 		{"oversized body", func() *http.Request {
-			return newEvaluationRequest(`{"pad":"` + strings.Repeat("x", MaxAccessEvaluationBodyBytes) + `"}`)
+			return newEvaluationRequest(strings.TrimSuffix(valid, "}") + `,"pad":"` + strings.Repeat("x", MaxAccessEvaluationBodyBytes) + `"}`)
 		}, http.StatusBadRequest, ""},
 		{"missing subject", func() *http.Request {
 			return newEvaluationRequest(`{"action":{"name":"x"},"resource":{"type":"protected_resource","id":"https://a"}}`)
@@ -243,6 +243,9 @@ func TestAuthZENEvaluation_RejectsBeforeResolution(t *testing.T) {
 		}, http.StatusBadRequest, ""},
 		{"non-object context", func() *http.Request {
 			return newEvaluationRequest(strings.TrimSuffix(valid, "}") + `,"context":"x"}`)
+		}, http.StatusBadRequest, ""},
+		{"null context", func() *http.Request {
+			return newEvaluationRequest(strings.TrimSuffix(valid, "}") + `,"context":null}`)
 		}, http.StatusBadRequest, ""},
 		{"non-string anchor", func() *http.Request {
 			return newEvaluationRequest(strings.TrimSuffix(valid, "}") + `,"context":{"agent":7}}`)
@@ -263,6 +266,84 @@ func TestAuthZENEvaluation_RejectsBeforeResolution(t *testing.T) {
 			assert.Equal(t, tt.challenge, rec.Header().Get("WWW-Authenticate"))
 			assert.NotContains(t, rec.Body.String(), evalSubjectMarker)
 			assert.NotContains(t, logs, evalSubjectMarker)
+		})
+	}
+}
+
+func TestAuthZENEvaluation_AcceptsBodyAtSizeLimit(t *testing.T) {
+	t.Parallel()
+	body := strings.TrimSuffix(validEvaluationBody(), "}") + `,"pad":""}`
+	body = strings.Replace(body, `"pad":""`, `"pad":"`+strings.Repeat("x", MaxAccessEvaluationBodyBytes-len(body))+`"`, 1)
+	require.Len(t, body, MaxAccessEvaluationBodyBytes)
+	evaluator := &stubEvaluator{decision: permitDecision()}
+	rec, _ := serveEvaluation(t, evaluator, newEvaluationRequest(body))
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, 1, evaluator.calls)
+}
+
+func TestAuthZENEvaluation_RequiredMemberTypes(t *testing.T) {
+	t.Parallel()
+	for _, path := range [][]string{{"subject"}, {"action"}, {"resource"}, {"subject", "type"}, {"subject", "id"}, {"action", "name"}, {"resource", "type"}, {"resource", "id"}} {
+		for _, value := range []string{"missing", "null", "true", "42", "[]", `"wrong-shape"`} {
+			if len(path) == 2 && value == `"wrong-shape"` {
+				continue // String value invariants belong to the domain service.
+			}
+			t.Run(strings.Join(path, ".")+"/"+value, func(t *testing.T) {
+				t.Parallel()
+				var body map[string]any
+				require.NoError(t, json.Unmarshal([]byte(validEvaluationBody()), &body))
+				members := body
+				if len(path) == 2 {
+					members = body[path[0]].(map[string]any)
+				}
+				key := path[len(path)-1]
+				if value == "missing" {
+					delete(members, key)
+				} else {
+					var invalid any
+					require.NoError(t, json.Unmarshal([]byte(value), &invalid))
+					members[key] = invalid
+				}
+				encoded, err := json.Marshal(body)
+				require.NoError(t, err)
+				evaluator := &stubEvaluator{decision: permitDecision()}
+				rec, _ := serveEvaluation(t, evaluator, newEvaluationRequest(string(encoded)))
+				assert.Equal(t, http.StatusBadRequest, rec.Code)
+				assert.Zero(t, evaluator.calls)
+				assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+				assert.Equal(t, "req-123", rec.Header().Get("X-Request-ID"))
+			})
+		}
+	}
+}
+
+func TestAuthZENEvaluation_UnknownMembersCannotChangeDomainInputs(t *testing.T) {
+	t.Parallel()
+	baseline := &stubEvaluator{decision: permitDecision()}
+	baselineResponse, _ := serveEvaluation(t, baseline, newEvaluationRequest(validEvaluationBody()))
+	for _, path := range []string{"top", "subject", "action", "resource", "context"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			var body map[string]any
+			require.NoError(t, json.Unmarshal([]byte(validEvaluationBody()), &body))
+			members := body
+			if path == "context" {
+				members = map[string]any{}
+				body[path] = members
+			} else if path != "top" {
+				members = body[path].(map[string]any)
+			}
+			members["properties"] = map[string]any{"principal": "other-user", "agent": "other-agent", "resource": "https://other.example.com"}
+			members["actor"] = map[string]any{"id": "other-actor"}
+			members["extension"] = []any{nil, true, 42}
+			encoded, err := json.Marshal(body)
+			require.NoError(t, err)
+			evaluator := &stubEvaluator{decision: permitDecision()}
+			rec, _ := serveEvaluation(t, evaluator, newEvaluationRequest(string(encoded)))
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, baseline.request, evaluator.request, "ignored members cannot reach identity resolution or caller CEL")
+			assert.Equal(t, baseline.assertion, evaluator.assertion)
+			assert.JSONEq(t, baselineResponse.Body.String(), rec.Body.String())
 		})
 	}
 }

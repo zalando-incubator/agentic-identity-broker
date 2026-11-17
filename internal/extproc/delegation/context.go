@@ -29,7 +29,7 @@ type wireResource struct {
 	ID          *string         `json:"id"`
 	CanonicalID json.RawMessage `json:"canonical_id"`
 	ResourceURI *string         `json:"resource_uri"`
-	Scopes      *[]string       `json:"scopes"`
+	Scopes      *[]*string      `json:"scopes"`
 }
 
 type wireGrant struct {
@@ -47,7 +47,7 @@ type wirePermissionSet struct {
 type wireService struct {
 	ID          *string         `json:"id"`
 	CanonicalID json.RawMessage `json:"canonical_id"`
-	Scopes      *[]string       `json:"scopes"`
+	Scopes      *[]*string      `json:"scopes"`
 }
 
 func parsePermitContext(raw json.RawMessage) (Context, error) {
@@ -76,11 +76,15 @@ func parsePermitContext(raw json.RawMessage) (Context, error) {
 		return Context{}, errInvalidContext
 	}
 	resourceURI, ok := required(wire.Resource.ResourceURI)
-	if !ok || wire.Resource.Scopes == nil {
+	if !ok {
+		return Context{}, errInvalidContext
+	}
+	resourceScopes, ok := scopeStrings(wire.Resource.Scopes)
+	if !ok {
 		return Context{}, errInvalidContext
 	}
 	result.Resource = Resource{ID: resourceRef.ID, CanonicalID: resourceRef.CanonicalID, ResourceURI: resourceURI,
-		Scopes: append([]string{}, *wire.Resource.Scopes...)}
+		Scopes: resourceScopes}
 
 	grantID, ok := required(wire.Grant.ID)
 	if !ok {
@@ -117,11 +121,29 @@ func parsePermitContext(raw json.RawMessage) (Context, error) {
 			if !ok {
 				return Context{}, errInvalidContext
 			}
-			ps.Services = append(ps.Services, Service{ID: svcRef.ID, CanonicalID: svcRef.CanonicalID, Scopes: append([]string{}, *wireSvc.Scopes...)})
+			scopes, ok := scopeStrings(wireSvc.Scopes)
+			if !ok {
+				return Context{}, errInvalidContext
+			}
+			ps.Services = append(ps.Services, Service{ID: svcRef.ID, CanonicalID: svcRef.CanonicalID, Scopes: scopes})
 		}
 		result.PermissionSets = append(result.PermissionSets, ps)
 	}
 	return result, nil
+}
+
+func scopeStrings(wire *[]*string) ([]string, bool) {
+	if wire == nil {
+		return nil, false
+	}
+	scopes := make([]string, 0, len(*wire))
+	for _, scope := range *wire {
+		if scope == nil {
+			return nil, false
+		}
+		scopes = append(scopes, *scope)
+	}
+	return scopes, true
 }
 
 func entity(idValue *string, canonicalID json.RawMessage) (EntityRef, bool) {
