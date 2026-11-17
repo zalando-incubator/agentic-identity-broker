@@ -10,7 +10,7 @@
 
 ## 🔒 Feature Scope [MANDATORY]
 
-Every task cites a requirement, scenario, research decision implementing that requirement, or binding principle. No new broker configuration, broker Helm values, persistence, UI, actor-token support, batch evaluation, resource search, or exchange-field removal is included. The three deferred findings in `research.md` are not implementation tasks. Do not file issues without affirmative maintainer approval.
+Every task cites a requirement, scenario, research decision implementing that requirement, or binding principle. No new broker configuration, broker Helm values, persistence, UI, actor-token support, batch evaluation, resource search, or exchange-field removal is included. The two deferred findings in `research.md` are not implementation tasks. Do not file issues without affirmative maintainer approval.
 
 **Execution gates**:
 
@@ -42,7 +42,7 @@ Every task cites a requirement, scenario, research decision implementing that re
 ## Phase 1: Setup (Shared Infrastructure)
 
 - [ ] T006 Confirm the Go 1.27.3 and existing toolchain commands from `justfile` (`just install-tools`, `just check`, `just test`, `just extproc-test`, E2E commands, `just docs-build`, `just verify`); record validation prerequisites in `specs/054-authzen-delegation-pip/quickstart.md`: US2.19 needs real PostgreSQL and `Label("docker")`, belongs to `just test-e2e-docker`, and is excluded from `just test-e2e-backend`; `just test-e2e` includes both. Docker-in-Docker is unavailable in this sandbox: preserve the required infrastructure gate for a capable runner and report a blocker if it cannot run, never bypass it (Constitution VIII, XIII; R18).
-- [ ] T007 Verify the existing FR/SR/API/SC-to-task and 44-scenario-to-test mapping in `specs/054-authzen-delegation-pip/tasks.md`; prepare the implementation evidence locations in `specs/054-authzen-delegation-pip/quickstart.md` for actual approval, separate-refactor handoff, red/green results and deferred-task reasons. Retain exclusions and the three deferred findings without expanding scope (Feature Scope; SC-001–SC-006).
+- [ ] T007 Verify the existing FR/SR/API/SC-to-task and 44-scenario-to-test mapping in `specs/054-authzen-delegation-pip/tasks.md`; prepare the implementation evidence locations in `specs/054-authzen-delegation-pip/quickstart.md` for actual approval, separate-refactor handoff, red/green results and deferred-task reasons. Retain exclusions and the two deferred findings without expanding scope (Feature Scope; SC-001–SC-006).
 
 ---
 
@@ -442,4 +442,4 @@ Complete design/approval gates, separately integrated Phase 0, compile-only foun
 
 ### Future Work (Non-task Notes)
 
-The three deferred findings remain in `research.md` pending the maintainer's decision whether to file issues. No issue creation is authorized by this task list. Removing `granted_permission_sets` is deferred to a separately approved `2.0.0` change one release after resolver shipment. Neither note is a current implementation task.
+The two deferred findings remain in `research.md` pending the maintainer's decision whether to file issues. No issue creation is authorized by this task list. Removing `granted_permission_sets` is deferred to a separately approved `2.0.0` change one release after resolver shipment. Neither note is a current implementation task.

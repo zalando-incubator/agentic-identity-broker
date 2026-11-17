@@ -659,6 +659,9 @@ These are actionable findings outside the feature's required work. Under the con
    (`044-client-registration-independent-of-authentication.md` and
    `044-service-specific-session-recovery-url.md`). This feature avoids the number. Renumbering
    them is a process decision for the maintainer.
-3. **Stale ARCHITECTURE §3.2.3**: The section still describes extracting the bearer token and
-   `:path` from raw headers, which contradicts accepted ADR 036. This feature updates only the
-   ExtProc sections it changes, so the stale text remains unless separately approved.
+
+**Resolved baseline note — ARCHITECTURE §3.2.3**: `ARCHITECTURE.md:1164-1176` already
+describes metadata-only `subject_token` and `resource_uri` input and explicitly rejects
+raw-header fallback, consistent with accepted ADR 036. The earlier stale-text finding is
+obsolete; no architecture correction or issue is needed for it. Only the two collision
+findings above remain deferred.
