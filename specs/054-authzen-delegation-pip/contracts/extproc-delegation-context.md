@@ -10,6 +10,13 @@ set (research R16) in the 2026-10-28 review. This contract changes ADR 028's inp
 request ordering when the feature is enabled. The input schema in §4 follows the 2026-10-28
 spec clarification (FR-017, FR-018, and research R15).
 
+**Current approval (2026-11-05)**: supplied `context.approval` records `mjungsbluth` at
+`2026-11-05T16:38:49Z` on
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255>.
+It covers API-4–API-6 and the thirteen-item decision set, including D-5's unchanged body-path
+exchange cooldown below. The Proposed wording in §3 is retained as decision history, not an
+outstanding sign-off request. Quickstart §11 records the approval and validation separately.
+
 ## 1. Configuration
 
 ```yaml

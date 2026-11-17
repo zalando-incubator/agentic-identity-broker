@@ -455,3 +455,152 @@ existing evidence alone or mark scaffolding not applicable are superseded by the
 The plan's constitutional gate now distinguishes design coverage from unresolved historical
 execution. API-003's TLS-download failure is explicitly historical; §7 retains the completed
 final-standard check and ignore-unknown-fields outcome.
+
+## 11. Approved implementation continuation (2026-11-05)
+
+### Supplied approval (T001)
+
+`context.approval` supplies `mjungsbluth`, `2026-11-05T16:38:49Z`, and
+<https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6661347255>.
+It covers the thirteen items listed by reanalysis: API-1–API-6, ADR-1 and D-1–D-6,
+matching every row of `plan.md`'s Approval Items. In particular it covers revised API-2
+(ignore unknown fields), D-5 (unchanged 5 s body-path exchange cooldown), and D-6 (the
+conditional historical sequencing exception). ADR 047's Status and Revision history record
+the supplied approval while preserving its original approval. No draft move is needed:
+ADR 047 is already in `adrs/` and is not on the default branch.
+
+D-6's original test-first/compile-only obligations were **not performed; covered by approved
+D-6**, subject to its independent review and local/downstream validation conditions. Approval
+alone does not complete T027, T029–T031, T036, T053, T065, T080, T094 or T097.
+New corrections remain test-first. No existing validation or security guarantee is waived.
+
+### Reanalysis findings I1 and I2
+
+- **I1 — frozen plan status inconsistency**: `plan.md:650-654`'s blanket “No constitution
+  violation needs justification” is obsolete. The historical VIII/XIII deviation needs the
+  approved D-6 disposition and all alternative-validation conditions in
+  `historical-validation-exception.md:49-78`. Superseding ADR 028 through ADR 047 independently
+  follows Principle II and is not a violation. This correction is recorded here rather than
+  editing `plan.md`, which the implementation phase must keep unchanged. The source wording
+  remains a documentation follow-up; this note does not claim that it was edited.
+- **I2 — historical standards-check notes**: the checklist notes now distinguish the earlier
+  TLS download failure from §7's completed final-standard verification and denial form (a).
+  Its review markers are unchanged. The current revised-contract approval is recorded above,
+  separately from research verification and historical approval.
+
+### Independent validation review and corrections (D-6 conditions 1–2)
+
+Reviewed the feature tests against FR-001–FR-019, SR-001–SR-006 and both contracts, rather
+than using a green run as evidence of historical test-first development. The review retained
+all existing exchange regression assertions. Concrete coverage and corrections:
+
+| Requirement / invariant | Test evidence (repository-relative) | Review outcome |
+|---|---|---|
+| Projection, canonical omission, grant/service ordering, effective ceiling, batched metadata and expiry | `internal/domain/tokenexchange/evaluation_test.go:173-277` | Explicit expected context, lookup counts, schema minima and controlled subsecond/expired boundary; no session dependency introduced. |
+| Token-derived agent anchor before grant reads, exact supported values, caller CEL reuse, denial/error classification | `internal/domain/tokenexchange/evaluation_test.go:279-459` | Matching/mismatched/non-UUID anchors, zero grant-read assertions, real signed credentials/CEL, allowlisted grant detail and wrong-stage rejection. |
+| JSON shape, required types, Content-Type, bounded body and ignore-unknown invariance | `internal/adapters/http/enduser/authzen_evaluation_test.go:192-364` | Added null-context and every required member's missing/null/wrong-type cases; made overflow body otherwise valid, added exact-64-KiB acceptance, and compared domain requests/assertions/responses with and without ignored fields at every level. Existing handler already satisfies these; no artificial red claim or request-behavior change. |
+| Response statuses, reasons, caching, request ID, credential-free logs/spans | `internal/adapters/http/enduser/authzen_evaluation_test.go:81-190,366-388` | Permit/deny/error assertions, challenge matrix and absent-ID behavior remain green. |
+| Shared audit/perimeter identity and trace seam | `internal/adapters/http/middleware/security_context_test.go:496`, `tests/e2e/authzen_fixture_test.go:228-271`, `tests/e2e/authzen_delegation_test.go:46`, `tests/e2e/authzen_delegation_errors_test.go:54-108` | Deferred holder plus production composed actor/peer/trace assertions on permit, policy denial and early fallback retained; §8 holds the original correction's red/green evidence. |
+| Producer/schema/consumer parity and no unknown fields reaching policy | `internal/extproc/delegation/client_test.go:90-303`, `internal/extproc/authorization/input_builder_test.go:429-460` | Expanded required-string and optional metadata matrix at every nesting level. Found and fixed null scope-element coercion; empty arrays and omitted optionals remain accepted. |
+| Single request-start deadline, fail-closed freshness, independent permit cache | `internal/extproc/delegation/client_test.go:116-173`, `internal/extproc/delegation/resolver_test.go:57-213` | Clock-read count, bad/duplicate max-age, exact-deadline misses, late response, unchanged singleflight deadline, denial/error noncaching, eviction and shutdown assertions retained. |
+| Body precedence, header-only ordering, expiry and immutable mapping | `internal/extproc/server/delegation_test.go:139-394` | Replaced the precedence sleep with completion-order channels; added deny over success/cancellation and resolution error/timeout/cancellation precedence in both orders. Added expiry while buffering, complementing exchange-wait, batch and header-only expiry tests; zero policy/re-resolution assertions. |
+| Direct typed policy input and unchanged disabled mode | `internal/extproc/authorization/input_builder_test.go:429-460`, `internal/extproc/server/delegation_test.go:139-163,299-394` | Exact enabled JSON, byte-for-byte disabled JSON, deep-copy checks, permit-derived compatibility fields and session identity preserved. |
+| Config defaults/precedence/validation and example loading | `internal/extproc/config/validate_delegation_test.go:27-119`, `internal/extproc/config/loader_test.go:85-156` | All four settings use the existing loader; enabled-only rules, origin/port and explicit path, example-file validation retained. |
+| Startup discovery, exact identifier, credential exclusion and lifecycle | `internal/extproc/delegation/discovery_test.go:15-89`, `cmd/extproc-token-exchange/root_delegation_test.go:66-133`, `tests/e2e/extproc/delegation_context_startup_test.go:34-104` | Real startup errors precede listening; discovery has no bearer credential, mismatch has zero evaluation calls, advertised endpoint and shutdown are exercised. |
+| Bounded observability and credential exclusion | `internal/extproc/delegation/telemetry_test.go:19-95`, `internal/extproc/server/delegation_telemetry_test.go:28-69` | Captured client/resolver spans and permit hit/miss/deny/error logs exclude tokens, context, principals, resource URIs and dependency causes. |
+| Deprecation without response-field removal | `internal/adapters/http/enduser/authzen_compat_test.go:14-57`, `tests/e2e/authzen_delegation_compat_test.go:26-46` | `1.2.0`, deprecated permission map shape and unchanged principal/agent fields asserted through schema and actual exchange. |
+
+**New red/green evidence (T102)**: before changing `context.go`,
+`go test ./internal/extproc/delegation -run TestClient_TypedContextValidation -count=1`
+compiled and failed exactly two assertions: `null_resource_scope_element` and
+`null_service_scope_element` expected an error but got nil. Go's `encoding/json` silently
+converted null array entries into empty strings in `[]string`. The wire decoder now uses
+string pointers and validates each entry before constructing typed scope slices. The same
+tests then passed with `-race`; the full race suites and E2E below pass. This enforces the
+already-approved string-array contract; it adds no API, dependency, configuration or decision.
+
+**US3.5 fixture correction (T024)**: the old single consumer's header-only permit had already
+cached an exchanged token before its body-path revocation, so the body exchange did not
+necessarily encounter non-consent and the test did not prove the cooldown. The revised single
+`It()` uses a separate fresh production consumer for the body half. It observes denial,
+renewed consent, immediate broker evaluation count increment, the existing 403
+`WWW-Authenticate: Bearer error="insufficient_scope"` recovery challenge during the cooldown,
+and eventual forwarding after that cooldown. Header-only forwarding and re-consultation
+remain immediate. An initial assertion incorrectly looked for this existing exchange
+challenge's URI in a flat JSON body; it was corrected to assert the documented challenge
+header, not to change or weaken production behavior. No historical or new application TDD
+claim is made for this test-only fixture correction.
+
+### Verified 44-scenario mapping (D-6 condition 2; T096)
+
+Each reference below is the `It()` line, checked against its adjacent scenario comment.
+The six files contain 44 distinct scenario blocks, with no pending/focused/skip markers.
+Fresh broker fixtures and production bootstrap are used; the consumer suite composes the
+real broker with production ExtProc; startup tests use the shared production setup with a
+counting metadata provider. No scenario or acceptance assertion was removed.
+
+| File | Scenario → `It()` line |
+|---|---|
+| `tests/e2e/authzen_delegation_test.go` | US1.1 → 34; US1.2 → 46; US1.3 → 70; US1.4 → 79; US1.5 → 89; US1.6 → 100; US1.7 → 136; US1.8 → 115 |
+| `tests/e2e/authzen_delegation_denial_test.go` | US2.1 → 24; US2.2 → 31; US2.3 → 39; US2.4 → 48; US2.5 → 56; US2.6 → 64; US2.7 → 77; US2.8 → 86; US2.9 → 98; US2.10 → 106 |
+| `tests/e2e/authzen_delegation_errors_test.go` | US2.11 → 30; US2.12 → 39; US2.13 → 46; US2.14 → 54; US2.15 → 64; US2.16 → 73; US2.17 → 99; US2.18 → 84; US2.19 → 145 (downstream, `docker`); US2.20 → 91 |
+| `tests/e2e/delegation_context_journey_test.go` | US3.1 → 106; US3.2 → 115; US3.3 → 123; US3.4 → 133; US3.5 → 144; US3.6 → 174; US3.7 → 189; US3.8 → 208; US3.9 → 230; US3.10 → 241; US4.5 → 253 |
+| `tests/e2e/extproc/delegation_context_startup_test.go` | US4.1 → 34; US4.2 → 58; US4.3 → 73; US4.4 → 91 |
+| `tests/e2e/authzen_delegation_compat_test.go` | US4.6 → 26 |
+
+The complete assertions—not just identifiers—were reviewed: ten separate grant-denial
+journeys, request/authentication/caller-policy failures, expiry and recovery, canonical-ID
+policy across two UUID sets, fresh-cache isolation, discovery mismatch and retained exchange
+fields. This establishes current acceptance coverage, not original test-first order.
+
+### Local validation (D-6 condition 3; T060/T071/T098/T100)
+
+Validated code revision: `02832f1e2a060060840c66041fdde479911b8e6d`, based on supplied
+PR head `5f1c21b81ba241b9d64affddb7d681756416985c`. The later evidence commit only updates
+feature documentation and task status. Commands below all passed in this session. E2E was
+rerun as the final local guard after the decoder correction and strengthened assertions.
+
+| Command | Observed result |
+|---|---|
+| `just check` | Formatting, vet and lint pass; 0 issues. The earlier baseline lint failure is not reproduced on this head. |
+| `just test` | Pass with the recipe's race coverage, including domain, HTTP and builder/routing regressions. |
+| `just extproc-test` | Pass with `-race`, including decoder, cache, precedence, buffering and startup tests. |
+| `bash "$SECURITY_SCAN_SCRIPT" .` | Prepared default-branch scan passes: gosec, govulncheck and manifest OSV checks; repository exceptions unchanged. No scanner rebuild or weakened rule. |
+| `just web-test` | 29 files, 261 tests pass. |
+| `just cdk-test` | Pass. |
+| `just mock-sample-agent-test` | Pass. |
+| `just mock-upstream-oauth2-test` | Pass. |
+| `just test-integration` | Self-contained suites pass. |
+| `just docs-build` | Pass. Existing build warnings remain non-fatal; no dependency-lock update retained. |
+| `just test-e2e-backend` | 985 selected scenarios pass; 12 performance/container scenarios excluded by the existing recipe. Includes unchanged exchange/diagnostics/local-exchange/approval regressions. |
+| `ginkgo -v --no-color --label-filter="authzen-delegation && !docker" ./tests/e2e/` | 28/28 pass; US2.19 remains downstream. |
+| `ginkgo -v --no-color --label-filter="delegation-context" ./tests/e2e/` | 11/11 pass, including the strengthened US3.5 and both canonical UUID fixtures. |
+| `ginkgo -v --no-color --label-filter="delegation-context-startup" ./tests/e2e/extproc/` | 4/4 pass. |
+| `ginkgo -v --no-color --procs=2 --skip="Agentgateway" ./tests/e2e/extproc/` | 102/102 non-container scenarios pass; 17 Agentgateway scenarios excluded, not validated. Includes unchanged OPA and metadata-input coverage. |
+| `just test-e2e-frontend` | 67/67 pass; no frontend code or screenshot changes retained. |
+
+The earlier broad `--focus="OPA Authorization|ExtProc Metadata Input"` selection also matched
+Agentgateway cases, which the existing harness skipped. It is not container validation. The
+explicit `--skip="Agentgateway"` final run above supplies the non-container regression record.
+No runtime or CI configuration was changed to obtain a pass.
+
+### Remaining obligations and outcome
+
+All independent local implementation and validation work is complete: 92 of 102 tasks are
+checked. No approval is missing. The following ten historical tasks remain unchecked:
+T027, T029–T031, T036, T053, T065, T080, T094 and T097. Each original sequencing obligation
+was **not performed; covered by approved D-6**, with closure still conditional on D-6's
+commit-specific downstream validation (condition 4). Local review, the 44-scenario mapping
+and passing local gates do not retrospectively establish that history or satisfy downstream
+checks. The isolated `b882d7b` refactoring and unchanged regression assertions are retained.
+
+US2.19/`just test-e2e-docker`, `just test-integration-infra` and Agentgateway container cases
+are deferred to downstream container tests on the pushed commit, never claimed as local
+validation. Their absence is not a sandbox infrastructure blocker and did not defer any
+independently runnable local task. No current-commit downstream result was supplied.
+
+The phase reports **blocked**, not feature completion: the requested I1 source edit remains
+in frozen `plan.md:652-654`, and the conditional historical-task closure remains outstanding.
+A permitted design-phase update must replace the blanket Complexity Tracking statement with
+D-6's deviation/validation disposition; the implementation phase cannot edit that plan.
+I2's historical-standards notes are corrected without changing any checklist markers.
