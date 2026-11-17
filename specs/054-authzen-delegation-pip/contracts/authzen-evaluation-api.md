@@ -1,6 +1,6 @@
-# Contract (Accepted): AuthZEN Discovery and Access Evaluation
+# Contract: AuthZEN Discovery and Access Evaluation
 
-**Status**: **Accepted** under approval items API-1–API-3 (👍 on
+**Status**: Historical baseline **Accepted** under approval items API-1–API-3 (👍 on
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>) and
 applied to `api/enduser/openapi.yaml` (`1.2.0`). The API-003 verification against the AuthZEN 1.0
 source text is recorded in [quickstart.md](../quickstart.md) §7. It found one conflict: AuthZEN
@@ -9,8 +9,10 @@ follows the AuthZEN 1.0 HTTPS binding (ADR 047 §1, research R10): unknown membe
 `properties` and `context` members other than `agent` are ignored and never influence the
 decision. Error bodies keep `ErrorResponse`. The maintainer confirmed this revision of API-2 on
 2026-10-31 and directed the artifacts to agree with it on 2026-11-05; the revised API-2 row is
-registered for sign-off in the plan's Approval Items. This document and
-`api/enduser/openapi.yaml` agree.
+registered as **Proposed** for sign-off in the plan's Approval Items. The historical approval
+must not be treated as acceptance of revised API-2. This document and
+`api/enduser/openapi.yaml` agree on request handling; implementation records any new approval
+only from the supplied `context.approval`.
 
 **Server**: End-user server (port 8000). **Availability**: only when token exchange is
 configured (the builder's `tokenExchangeEnabled`). No admin API change is made.
@@ -45,12 +47,10 @@ AuthZENConfiguration:
       example: https://broker.example.com/access/v1/evaluation
 ```
 
-**Verify (API-003)**:
-
-- Confirm the member names.
-- Confirm whether other AuthZEN endpoint members must be absent or listed. Batch
-  (`access_evaluations_endpoint`) and search endpoints are out of scope and are omitted.
-- Confirm the well-known path insertion rule for identifiers that contain a path.
+**Verified (API-003)**: `quickstart.md` §7 records final-standard evidence for the member
+names, omission of unsupported batch/search endpoints and well-known path insertion between
+host and identifier path. This is a completed standard check, not a pending choice. Preserve
+verified TLS; no new fetch is needed to regenerate tasks.
 
 ## 2. `POST /access/v1/evaluation`
 
@@ -222,12 +222,11 @@ AccessEvaluationDenial:            # proposed form (a); see Verify below
 reconciles the "nullable grant expiry" item in API-002 with the FR-008 omission convention.
 Spec Journey 1 shows `valid_until` because that grant expires.
 
-**Verify (API-003), denial envelope**: AuthZEN's informative reason examples are
-language-tagged objects. Before the contract is frozen, choose one form:
-
-- **(a)** The machine-readable form above. This is the spec's proposal and the recommendation,
-  because a policy engine consumes the code and URL directly.
-- **(b)** Language-tagged strings plus extension members, for example:
+**Verified (API-003), denial envelope**: `quickstart.md` §7 records that decision `context`
+is implementation-defined and the standard's reason examples are informative. The historical
+approved contract keeps **(a)**, the machine-readable form above, because policy consumes the
+code and URL directly. **(b)** was the main alternative, language-tagged strings plus extension
+members, for example:
 
 ```json
 {"decision": false, "context": {
@@ -237,7 +236,7 @@ language-tagged objects. Before the contract is frozen, choose one form:
 ```
 
 The ExtProc client (see [extproc-delegation-context.md](./extproc-delegation-context.md))
-parses whichever form is confirmed.
+parses the confirmed form (a); form (b) is not an implementation option.
 
 ### 2.3 Examples
 

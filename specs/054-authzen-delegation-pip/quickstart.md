@@ -46,17 +46,20 @@ resolver extraction, which proves FR-006 does not regress.
 ## 2. Broker acceptance journeys (US1, US2, US4.6)
 
 ```bash
-ginkgo -v --label-filter="authzen-delegation" ./tests/e2e/
+ginkgo -v --label-filter="authzen-delegation && !docker" ./tests/e2e/
 ```
 
-US2.19 MUST have both the shared `authzen-delegation` label and `Label("docker")`. The command above includes it and requires real PostgreSQL infrastructure. The ordinary `just test-e2e-backend` recipe excludes `docker`; it therefore covers 28 of these broker scenarios, not all 29.
+US2.19 MUST have both `authzen-delegation` and `Label("docker")`. The local command above
+and `just test-e2e-backend` exclude it: 28 broker scenarios run locally. The remaining
+broker scenario runs only downstream through `just test-e2e-docker` on the pushed commit;
+never invoke that container recipe in the sandbox. Report it as deferred until CI evidence
+exists, not locally validated or a sandbox blocker.
 
 ```bash
-just test-e2e-backend     # excludes US2.19; not the complete broker acceptance gate
-just test-e2e-docker      # includes US2.19; requires a capable container runner
+just test-e2e-backend     # 28 broker feature scenarios plus backend regressions
 ```
 
-**Expected with infrastructure available**: 29 focused specs pass:
+**Expected combined local/downstream coverage**: 29 broker scenarios:
 
 - US1.1–US1.8 (8)
 - US2.1–US2.20 (20)
@@ -87,6 +90,10 @@ composition against the real broker test server. Confirm these outcomes:
 
 - The body path forwards only after both exchange and resolution succeed.
 - The header-only path never calls exchange when policy denies.
+- US3.5 re-consults the broker immediately after renewed consent on both paths. Header-only
+  forwarding permits immediately; body-path forwarding resumes once the unchanged ADR 012
+  exchange re-consent cooldown (5 s) lapses. Assert request counts and use bounded
+  `Eventually` polling rather than fixed sleeps or a cooldown bypass (Proposed D-5).
 - After revocation, a repeat request past `max_staleness` is denied with 403 and `error_uri`
   set to the consent URL.
 - A broker outage with a still-cached exchanged token returns 503, not a stale permit.
@@ -106,7 +113,7 @@ real broker emits malformed responses.
 ## 4. ExtProc startup journeys (US4.1–US4.4)
 
 ```bash
-just test-e2e-extproc          # or: ginkgo -v --label-filter="delegation-context-startup" ./tests/e2e/extproc/
+ginkgo -v --label-filter="delegation-context-startup" ./tests/e2e/extproc/
 ```
 
 **Expected**: The disabled default makes zero discovery or evaluation requests to the mock
@@ -133,13 +140,32 @@ The mismatch case makes **zero** evaluation requests.
 
 ## 6. Full gate
 
+Run the non-container recipes of `just verify` individually, not its container-inclusive
+aggregate. Tools are preinstalled; rerun installation only for tool-version changes.
+
 ```bash
-just test-e2e           # backend + docker + ExtProc + frontend, including US2.19
-just docs-build         # docs/api/authzen-evaluation.md renders
-just verify             # full gate, E2E last
+just check
+bash "$SECURITY_SCAN_SCRIPT" .  # workflow-prepared default-branch scan; not just security
+just test
+just extproc-test
+just web-test
+just cdk-test
+just mock-sample-agent-test
+just mock-upstream-oauth2-test
+just test-integration          # self-contained only
+just docs-build
+just test-e2e-backend           # E2E is the final local guard layer
+# Also run the three focused feature labels in §§2–4 and these non-container regressions:
+ginkgo -v --focus="OPA Authorization|ExtProc Metadata Input" ./tests/e2e/extproc/
+just test-e2e-frontend
 ```
 
-**Expected**: All suites pass. The existing suites `token_exchange_test.go`,
+Defer `just test-e2e-docker`, `just test-integration-infra` and all Agentgateway container
+cases to downstream tests on the pushed commit. Do not invoke `just test-e2e`, unfiltered
+`just test-e2e-extproc`, `just test-integration-all` or `just verify` in the sandbox. Container
+absence does not block independent local tasks and is never a validation pass.
+
+**Expected**: All required local checks pass and downstream evidence is recorded separately. The existing suites `token_exchange_test.go`,
 `grant_diagnostics_test.go`, `tests/e2e/extproc/opa_authorization_test.go`, and
 `extproc_approval_journey_test.go` pass unchanged, which proves SC-006 compatibility.
 
@@ -167,10 +193,12 @@ just verify             # full gate, E2E last
 
 ### Phase 0 handoff (T002–T005)
 
-The constitution asks for the resolver extraction in a separate PR. The user running this
-session chose to keep it in this PR as its own commit:
+The historical implementation record described a separate-PR requirement. The user
+running that session kept the extraction in this PR as its own commit:
 `b882d7b refactor(tokenexchange): extract shared DelegationResolver (exchange steps 2–9a)`.
-This is a recorded deviation from the separate-PR requirement, not a maintainer-arranged handoff.
+This was recorded as a deviation at that time, not a maintainer-arranged handoff. The current
+constitution explicitly requires an isolated no-behavior-change commit ahead of feature commits
+in the same PR, not another PR. Retain the commit and its existing regression evidence.
 
 - Baseline and regression: `go test ./internal/domain/tokenexchange/` passed after the extraction.
   The only test edits are receiver changes (`svc.resolveEffectiveScopes(...)` →
@@ -385,3 +413,19 @@ records, not results from this continuation.
 
 No new frontend artifacts, dependencies, migrations, runtime configuration or API behavior were
 introduced by this continuation. The existing isolated refactor commit remains unchanged.
+
+## 9. Current task reconciliation
+
+The task-generation update retains all 101 stable task IDs and historical evidence, without
+marking any implementation work complete. Reopened tasks cover supplied approval verification
+(T001), revised API-2 request tests/decoding (T043/T046), revised US3.5 coverage and validation
+(T024/T060), and affected documentation/compliance gates. Missing historical test-first and
+compile-only sequencing remains unfinished; a retrospective stub or later green run cannot
+establish past compliance. No approval or exception is recorded by task generation.
+
+Current requirements are in `spec.md`, `plan.md` and the contracts, not stale historical
+strict-rejection descriptions or old separate-PR handoffs. API-003 verification above remains
+valid. Revised API-2 and D-5 are Proposed for sign-off; implementation must use its supplied
+`context.approval` and preserve ADR 047's existing provenance. All applicable non-container
+work continues independently of downstream container evidence. This section supersedes only
+obsolete directions in earlier entries, not their reported observations or failures.
