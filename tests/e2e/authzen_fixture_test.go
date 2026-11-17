@@ -150,6 +150,44 @@ func (f *authzenFixture) Boot(configure func(*ports.Config)) {
 	f.Logs.Reset()
 }
 
+// BootAligned starts the production broker with public_url equal to its listening origin,
+// so a gateway can discover and verify the PDP identifier.
+func (f *authzenFixture) BootAligned() {
+	f.Config = fixtures.OAuth2ConfigWithTokenExchange(f.Upstream.URL())
+	builder, err := bootstrap.NewTestServerBuilder(f.Config, f.Storage, bootstrap.NewServerFactory(f.Config, f.logger), f.logger)
+	Expect(err).NotTo(HaveOccurred())
+	f.Enduser, err = builder.Build()
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(f.Enduser.Close)
+	f.Logs.Reset()
+}
+
+// EvaluationCount reports how many access evaluations the broker answered.
+func (f *authzenFixture) EvaluationCount() int {
+	records, err := f.Logs.Records()
+	Expect(err).NotTo(HaveOccurred())
+	count := 0
+	for _, record := range records {
+		if record["token_exchange.operation"] == "access_evaluation" {
+			count++
+		}
+	}
+	return count
+}
+
+// ExchangeCount reports how many token exchanges the broker answered.
+func (f *authzenFixture) ExchangeCount() int {
+	records, err := f.Logs.Records()
+	Expect(err).NotTo(HaveOccurred())
+	count := 0
+	for _, record := range records {
+		if _, ok := record["token_exchange.exchange_kind"]; ok && record["token_exchange.operation"] == nil {
+			count++
+		}
+	}
+	return count
+}
+
 func (f *authzenFixture) SignSubject(exp time.Time) string {
 	token, err := helpers.SignTestJWT(map[string]interface{}{
 		"sub": f.Principal.String(), "azp": f.Agent.ID.String(), "iss": f.Upstream.URL(), "aud": "token-exchange-broker",

@@ -18,6 +18,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	extprocfixtures "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/fixtures"
@@ -31,19 +32,37 @@ const (
 // ExtProcEnvironment runs the production ExtProc composition against an end-user TestServer.
 type ExtProcEnvironment struct {
 	Address string
+	// PolicyDecisionPoint is the validated delegation PDP identifier when enabled.
+	PolicyDecisionPoint string
 
 	issuer     *httptest.Server
 	grpcServer *grpc.Server
 	exchanger  *extprocserver.TokenExchanger
 	authorizer authorization.Authorizer
+	resolver   *delegation.Resolver
 	syncCancel context.CancelFunc
 	syncDone   chan struct{}
 	logger     *slog.Logger
 	closeOnce  sync.Once
 }
 
+// ExtProcOptions selects optional ExtProc features for an environment.
+type ExtProcOptions struct {
+	// DelegationContext enables the delegation resolver with these settings when Enabled.
+	DelegationContext extprocconfig.DelegationContextConfig
+	// DisableToolApprovals runs OPA without the approval gate.
+	DisableToolApprovals bool
+}
+
 // NewExtProcEnvironment starts production ExtProc components wired to the supplied broker.
 func NewExtProcEnvironment(brokerBaseURL, clientAssertion, policyPath string, logger *slog.Logger) (*ExtProcEnvironment, error) {
+	return NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath, logger, ExtProcOptions{})
+}
+
+// NewExtProcEnvironmentWithOptions starts the production ExtProc composition with options.
+// The configuration passes production validation, so defaults such as the delegation PDP
+// identifier are derived exactly as at process startup.
+func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath string, logger *slog.Logger, options ExtProcOptions) (*ExtProcEnvironment, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -59,7 +78,6 @@ func NewExtProcEnvironment(brokerBaseURL, clientAssertion, policyPath string, lo
 
 	cfg := extprocfixtures.DefaultConfig()
 	cfg.GRPC.Bind = "127.0.0.1"
-	cfg.GRPC.Port = 0
 	cfg.OAuth2.TokenEndpoint = brokerBaseURL + "/oauth2/token"
 	cfg.OAuth2.Issuer = issuer.URL
 	cfg.OAuth2.ClientCredentialsEndpoint = issuer.URL + "/oauth/token"
@@ -84,6 +102,14 @@ func NewExtProcEnvironment(brokerBaseURL, clientAssertion, policyPath string, lo
 		MaxStaleness:           10 * time.Second,
 	}
 	cfg.Sessions.Extraction.HTTPHeader = "Mcp-Session-Id"
+	if options.DisableToolApprovals {
+		cfg.ToolApprovals = extprocconfig.ToolApprovalsConfig{}
+	}
+	cfg.DelegationContext = options.DelegationContext
+	if err := extprocconfig.Validate(cfg); err != nil {
+		issuer.Close()
+		return nil, fmt.Errorf("invalid ExtProc configuration: %w", err)
+	}
 
 	if cfg.GRPC.MaxConcurrentStreams < 1 || uint64(cfg.GRPC.MaxConcurrentStreams) > uint64(^uint32(0)) {
 		issuer.Close()
@@ -105,19 +131,37 @@ func NewExtProcEnvironment(brokerBaseURL, clientAssertion, policyPath string, lo
 	}
 	environment.authorizer = authorizer
 
-	approvalHTTPClient, err := httpclient.New(cfg, 0)
-	if err != nil {
-		environment.Close()
-		return nil, fmt.Errorf("initialize ExtProc approval HTTP client: %w", err)
+	var (
+		svc            *extprocserver.Server
+		approvalCache  *approval.Cache
+		approvalClient *approval.Client
+	)
+	if cfg.ToolApprovals.Enabled {
+		approvalHTTPClient, err := httpclient.New(cfg, 0)
+		if err != nil {
+			environment.Close()
+			return nil, fmt.Errorf("initialize ExtProc approval HTTP client: %w", err)
+		}
+		approvalClient, err = approval.NewClient(cfg.ToolApprovals.URL, cfg.ToolApprovals.RequestTimeout, exchanger, approvalHTTPClient)
+		if err != nil {
+			environment.Close()
+			return nil, fmt.Errorf("initialize ExtProc approval client: %w", err)
+		}
+		approvalCache = approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness)
+		svc = extprocserver.NewServerWithApprovalGate(cfg, exchanger, authorizer, approval.NewGate(approvalCache, approvalClient), logger)
+	} else {
+		svc = extprocserver.NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)
 	}
-	approvalClient, err := approval.NewClient(cfg.ToolApprovals.URL, cfg.ToolApprovals.RequestTimeout, exchanger, approvalHTTPClient)
-	if err != nil {
-		environment.Close()
-		return nil, fmt.Errorf("initialize ExtProc approval client: %w", err)
+	if cfg.DelegationContext.Enabled {
+		resolver, err := delegation.NewResolverFromConfig(context.Background(), cfg, exchanger)
+		if err != nil {
+			environment.Close()
+			return nil, err
+		}
+		environment.resolver = resolver
+		svc.WithDelegationResolver(resolver)
 	}
-	approvalCache := approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness)
-	approvalGate := approval.NewGate(approvalCache, approvalClient)
-	svc := extprocserver.NewServerWithApprovalGate(cfg, exchanger, authorizer, approvalGate, logger)
+	environment.PolicyDecisionPoint = cfg.DelegationContext.PolicyDecisionPoint
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -133,20 +177,22 @@ func NewExtProcEnvironment(brokerBaseURL, clientAssertion, policyPath string, lo
 	environment.grpcServer = grpcServer
 	environment.Address = listener.Addr().String()
 
-	syncer := approval.NewSyncer(approvalCache, approvalClient, time.Duration(cfg.ToolApprovals.LongPollTimeoutSeconds)*time.Second, logger)
-	syncContext, syncCancel := context.WithCancel(context.Background())
-	environment.syncCancel = syncCancel
-	environment.syncDone = make(chan struct{})
-	go func() {
-		defer close(environment.syncDone)
-		bootstrapContext, cancelBootstrap := context.WithTimeout(syncContext, extprocApprovalBootstrapTimeout)
-		syncer.Bootstrap(bootstrapContext)
-		cancelBootstrap()
-		if syncContext.Err() != nil {
-			return
-		}
-		syncer.Run(syncContext)
-	}()
+	if cfg.ToolApprovals.Enabled {
+		syncer := approval.NewSyncer(approvalCache, approvalClient, time.Duration(cfg.ToolApprovals.LongPollTimeoutSeconds)*time.Second, logger)
+		syncContext, syncCancel := context.WithCancel(context.Background())
+		environment.syncCancel = syncCancel
+		environment.syncDone = make(chan struct{})
+		go func() {
+			defer close(environment.syncDone)
+			bootstrapContext, cancelBootstrap := context.WithTimeout(syncContext, extprocApprovalBootstrapTimeout)
+			syncer.Bootstrap(bootstrapContext)
+			cancelBootstrap()
+			if syncContext.Err() != nil {
+				return
+			}
+			syncer.Run(syncContext)
+		}()
+	}
 
 	go func() {
 		if serveErr := grpcServer.Serve(listener); serveErr != nil && serveErr != grpc.ErrServerStopped {
@@ -171,6 +217,9 @@ func (e *ExtProcEnvironment) Close() {
 		}
 		if e.grpcServer != nil {
 			stopExtProcGRPCServer(e.grpcServer, e.logger)
+		}
+		if e.resolver != nil {
+			e.resolver.Shutdown()
 		}
 		if e.authorizer != nil {
 			e.authorizer.Stop(context.Background())

@@ -37,6 +37,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
@@ -67,6 +68,7 @@ type TestEnvironment struct {
 	approvalSyncCancel     context.CancelFunc
 	approvalSyncDone       chan struct{}
 	ownsMockApprovalBroker bool
+	delegationResolver     *delegation.Resolver
 	logger                 *slog.Logger
 	stopOnce               sync.Once
 }
@@ -131,6 +133,45 @@ func (e *TestEnvironment) Start() {
 	}
 	e.startGRPCServer(svc)
 	e.startApprovalSync()
+}
+
+// StartWithDelegationContext follows production startup order for delegation context:
+// validate configuration, build the exchanger and authorizer, then discover and verify the
+// PDP before listening. It returns the startup error instead of failing the test so
+// startup-failure scenarios can observe it; no gRPC listener exists after a failure.
+func (e *TestEnvironment) StartWithDelegationContext() error {
+	e.startMockServers()
+	if err := extprocconfig.Validate(e.Config); err != nil {
+		return err
+	}
+	exchanger, err := extprocserver.NewTokenExchanger(e.Config, e.logger)
+	if err != nil {
+		return err
+	}
+	e.exchanger = exchanger
+	var authorizer authorization.Authorizer
+	if e.Config.Authorization.Enabled {
+		if authorizer, err = NewOPAAuthorizer(e.Config, e.logger); err != nil {
+			return err
+		}
+		e.authorizer = authorizer
+	}
+	var svc *extprocserver.Server
+	if authorizer != nil {
+		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, authorizer, e.logger)
+	} else {
+		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
+	}
+	if e.Config.DelegationContext.Enabled {
+		resolver, err := delegation.NewResolverFromConfig(context.Background(), e.Config, exchanger)
+		if err != nil {
+			return err
+		}
+		e.delegationResolver = resolver
+		svc.WithDelegationResolver(resolver)
+	}
+	e.startGRPCServer(svc)
+	return nil
 }
 
 // startMockServers initializes and starts the mock OAuth2 and token exchange servers
@@ -207,6 +248,9 @@ func (e *TestEnvironment) Stop() {
 		}
 		if e.grpcServer != nil {
 			e.grpcServer.GracefulStop()
+		}
+		if e.delegationResolver != nil {
+			e.delegationResolver.Shutdown()
 		}
 		if e.exchanger != nil {
 			e.exchanger.Shutdown()
