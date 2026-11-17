@@ -217,12 +217,12 @@ func run(cmd *cobra.Command, _ []string) error {
 	}
 	// 8a. Opt-in delegation context: discover and verify the PDP before listening (ADR 045).
 	if cfg.DelegationContext.Enabled {
-		resolver, err := delegation.NewResolverFromConfig(sigCtx, cfg, exchanger)
+		resolver, err := delegation.NewPermitResolverFromConfig(sigCtx, cfg, exchanger)
 		if err != nil {
 			return err
 		}
 		defer resolver.Shutdown()
-		svc.WithDelegationResolver(resolver)
+		svc.WithPermitResolver(resolver)
 		logger.InfoContext(sigCtx, "delegation context enabled", "event", "extproc.delegation_context.enabled", "policy_decision_point", cfg.DelegationContext.PolicyDecisionPoint)
 	}
 	var stopApprovalSyncer func()

@@ -127,7 +127,7 @@ approval does not automatically cover this consequence.
 
 The permit governs local policy and token-result reuse. It does not prove provider-token scopes or the grant version read by exchange. A binding is the permit resource scope set and grant update instant that first claimed a result handle.
 
-**Binding-aware port/result**: retain disabled `Exchange` semantics. The body path's initial exchange returns the credential plus an opaque result handle (entry identity and synchronized binding cell); the enabled binding-aware call accepts that observed handle and the desired `TokenBinding`. Header-only supplies no initial handle and exchanges after allow. Both return either a validated compatible handle with original token/identities/extensions or a typed exchange/binding error. Every successful flight, including a non-cacheable success, creates one handle shared by all followers. New installations have distinct identities even for identical token bytes. Atomic `BindOnce` claims an unbound cell; subsequent callers compare, never rebind. The exchanger never parses permits. Caller/leader status confers no exclusive ownership of a shared result.
+**Binding-aware port/result**: retain disabled `Exchange` semantics. The body path's initial exchange returns the credential plus an opaque result handle (entry identity and synchronized binding cell); the enabled binding-aware call accepts that observed handle and the desired `ExchangeResultBinding`. Header-only supplies no initial handle and exchanges after allow. Both return either a validated compatible handle with original token/identities/extensions or a typed exchange/binding error. Every successful flight, including a non-cacheable success, creates one handle shared by all followers. New installations have distinct identities even for identical token bytes. Atomic `BindOnce` claims an unbound cell; subsequent callers compare, never rebind. The exchanger never parses permits. Caller/leader status confers no exclusive ownership of a shared result.
 
 | Situation (after body precedence, or header policy allow) | Behavior |
 |---|---|
@@ -149,7 +149,9 @@ Body validation precedes buffering and Authorization mutation; header validation
 The log-only Debug diagnostic remains `delegation_binding=mismatch`, without credentials, scopes or principal.
 
 Metadata validation (ADR 036), protocol checks, transport checks, the body-size limit, the
-approval gate, and policy fail-closed behavior are unchanged and still apply.
+approval controls, and policy fail-closed behavior still apply. In enabled mode, the approval
+gate principal and agent UUID come from the same permit as OPA, not from exchange-result
+identity (approved F2/P2 on [the 2026-11-09 proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)). Disabled-mode identity and session extraction are unchanged.
 
 ## 4. OPA input (`input.context`)
 

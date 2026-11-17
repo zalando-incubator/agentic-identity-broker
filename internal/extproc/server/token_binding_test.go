@@ -34,17 +34,17 @@ func bindingPortExchanger(t *testing.T, lifetime int) (*TokenExchanger, *atomic.
 	return te, calls, logs
 }
 
-func portBinding(scopes ...string) TokenBinding {
-	return TokenBinding{Scopes: scopes, GrantUpdatedAt: time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)}
+func portBinding(scopes ...string) ExchangeResultBinding {
+	return ExchangeResultBinding{Scopes: scopes, GrantUpdatedAt: time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)}
 }
-func boundPortResult(binding TokenBinding) ExchangeResult {
+func boundPortResult(binding ExchangeResultBinding) ExchangeResult {
 	return ExchangeResult{Token: "PROVIDER_SECRET", handle: &tokenResultHandle{binding: &binding}}
 }
 
 func TestBindingPortObservedAndReplacementOutcomes(t *testing.T) {
 	for _, tt := range []struct {
 		name                  string
-		observed, replacement *TokenBinding
+		observed, replacement *ExchangeResultBinding
 		wantCalls             int32
 	}{
 		{"unbound first use", nil, nil, 0}, {"matching detached", ptrBinding("read"), ptrBinding("write"), 0},
@@ -76,7 +76,7 @@ func TestBindingPortObservedAndReplacementOutcomes(t *testing.T) {
 		})
 	}
 }
-func ptrBinding(scopes ...string) *TokenBinding { b := portBinding(scopes...); return &b }
+func ptrBinding(scopes ...string) *ExchangeResultBinding { b := portBinding(scopes...); return &b }
 
 // Done is consulted by awaitResult after this caller has joined the flight.
 type joinedBindingContext struct {
@@ -141,7 +141,7 @@ func TestBindingPortSharedRetryNeverRebindsOrLoops(t *testing.T) {
 				r := <-done
 				switch outcome {
 				case "conflict":
-					assert.ErrorIs(t, r.Err, ErrTokenBindingConflict)
+					assert.ErrorIs(t, r.Err, ErrExchangeResultBindingConflict)
 					assert.Equal(t, []string{"winner"}, replacement.handle.binding.Scopes)
 					assert.Empty(t, r.Val.(ExchangeResult).Token)
 				case "failure":
@@ -158,7 +158,7 @@ func TestBindingPortSharedRetryNeverRebindsOrLoops(t *testing.T) {
 	}
 }
 
-func TestTokenBindingFormattingDoesNotExposeGrantOrScopes(t *testing.T) {
+func TestExchangeResultBindingFormattingDoesNotExposeGrantOrScopes(t *testing.T) {
 	binding := portBinding("SCOPE_SECRET")
 	for _, value := range []string{fmt.Sprint(binding), fmt.Sprintf("%#v", binding)} {
 		assert.NotContains(t, value, "SCOPE_SECRET")

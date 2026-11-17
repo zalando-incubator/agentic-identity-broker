@@ -1,12 +1,17 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -21,6 +26,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	extprochelpers "github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/extproc/helpers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
 // delegationJourney runs the real broker and the production ExtProc composition with
@@ -188,6 +194,63 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 		Expect(bodyResp).To(extprochelpers.BeForwardedRequestBody(), "the canonical policy allows only with the direct members and permit-derived permission sets")
 		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(HavePrefix("Bearer "))
 		Expect(j.broker.EvaluationCount()).To(Equal(1))
+
+		By("requiring approval under the permit identity despite a cached exchange with different identity")
+		var exchangeCalls atomic.Int32
+		withApproval := newDelegationJourneyConfigured("approval_journey.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+			options.DisableToolApprovals = false
+			target, err := url.Parse(f.Enduser.BaseURL())
+			Expect(err).NotTo(HaveOccurred())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			proxy.ModifyResponse = func(response *http.Response) error {
+				if response.StatusCode != http.StatusOK {
+					return nil
+				}
+				defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
+				var result map[string]any
+				if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+					return err
+				}
+				result["principal"] = "different-exchange-principal"
+				result["agent_id"] = "00000000-0000-0000-0000-000000000001"
+				raw, err := json.Marshal(result)
+				if err != nil {
+					return err
+				}
+				response.Body = io.NopCloser(bytes.NewReader(raw))
+				response.ContentLength = int64(len(raw))
+				response.Header.Del("Content-Length")
+				exchangeCalls.Add(1)
+				return nil
+			}
+			endpoint := httptest.NewServer(proxy)
+			DeferCleanup(endpoint.Close)
+			options.ExchangeEndpoint = endpoint.URL + "/oauth2/token"
+			options.DelegationContext.PolicyDecisionPoint = f.Enduser.BaseURL()
+		})
+		toolCall := func() *extprocv3.ProcessingResponse {
+			body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}`)
+			_, response := extprochelpers.SendHeadersAndBody(context.Background(), withApproval.client,
+				withApproval.request(http.MethodPost, false, authzenRepoResource, nil), body)
+			return response
+		}
+		first := toolCall()
+		approvalURL := approvalJourneyElicitationURL(first)
+		Expect(first).NotTo(extprochelpers.BeForwardedRequestBody())
+		snapshot := approvalJourneySync(withApproval.broker.Enduser, withApproval.broker.ClientAssertion)
+		Expect(snapshot.Data.Pairs).To(HaveLen(1))
+		pair := snapshot.Data.Pairs[0]
+		Expect(pair.Principal).To(Equal(withApproval.broker.Principal.String()))
+		Expect(pair.AgentID).To(Equal(withApproval.broker.Agent.ID.String()))
+		Expect(pair.Approvals).To(HaveLen(1))
+		pending := pair.Approvals[0]
+		Expect(approvalJourneyDetail(withApproval.broker.Enduser, pending.ID, pair.Principal).Data.ApprovalURL).To(Equal(approvalURL))
+		approved, err := postJSON(withApproval.broker.Enduser, "/api/approvals/"+pending.ID+"/approve", pair.Principal, helpers.ApproveRequest{Persistence: "permanent"})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(approved.StatusCode).To(Equal(http.StatusOK))
+		Expect(approved.Body.Close()).To(Succeed())
+		Eventually(toolCall, 3*time.Second, 50*time.Millisecond).Should(extprochelpers.BeForwardedRequestBody())
+		Expect(exchangeCalls.Load()).To(Equal(int32(1)), "the repeated approved request reuses the conflicting-identity exchange result")
 	})
 
 	// Scenario US3.2 from specs/054-authzen-delegation-pip/spec.md

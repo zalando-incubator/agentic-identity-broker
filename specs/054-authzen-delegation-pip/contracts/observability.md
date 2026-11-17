@@ -13,7 +13,7 @@
 | `extproc.delegation.resolve` span | `extproc`, Internal (current implementation's default) | `delegation.cache=hit|miss` and the resolution family below; original permit deadline is never extended by observability. |
 | `extproc.delegation.evaluate` span | `extproc`, Client | Resolution family below; no body, headers, full URL or requested resource URI. |
 | `extproc.delegation_context.denied` log event | Info, expected delegation denial | `operation=delegation_resolution`; allowlisted `delegation.code`; cache hit/miss and diagnostic stage/detail. |
-| `extproc.delegation_context.unavailable` log event | Warn, degraded dependency | Same operation/cache metadata; `delegation.error=timeout|unavailable|rejected|invalid_response`; no wrapped cause. |
+| `extproc.delegation_context.unavailable` log event | Warn, fail-closed delegation failure | `error_kind=timeout|unavailable|rejected|invalid_response`; resolution emitters also carry operation/cache metadata. Emitted for resolution failure, terminal exchange-result binding conflict, or invalid grant timestamp (see §2.1); no wrapped cause. |
 | `extproc.delegation_context.permit_expired` log event | Warn | `operation=delegation_resolution`; bounded unavailable diagnostic; no permit/context contents. |
 | Permit cache hit/miss/success diagnostics | Debug | Closed hit/miss values and success diagnostics only. Do not add principals to Debug records. |
 
@@ -41,6 +41,24 @@ Infrastructure errors set a constant status description and `error.type` from `t
 | Spans and metrics | No new span, span attribute namespace or metric instrument. Existing exchange instrumentation continues to observe a real broker re-exchange. No binding data is added to it. |
 
 This diagnostic does not rename any existing identifier and needs no new tracing namespace. It does not perform or replace F2's migration.
+
+### 2.1. Delegation-unavailable emitters (approved F5/P5)
+
+The event is `extproc.delegation_context.unavailable` with Warn level on both body-bearing
+and header-only paths. Its canonical classification key is `error_kind`, not `delegation.error`.
+
+| Emitter | `error_kind` | Additional bounded metadata / response |
+|---|---|---|
+| `resolveDelegation`: permit resolution failure | `timeout`, `unavailable`, `rejected`, or `invalid_response` (untyped errors use `unavailable`) | `operation=delegation_resolution`, `delegation.cache=hit|miss`; 503 `delegation context unavailable`. |
+| `exchangeErrorResponse`: terminal `ErrExchangeResultBindingConflict` | `unavailable` | 503 `delegation token binding unavailable`; no grant, scopes or exchange-result contents. |
+| `exchangeErrorResponse`: local `errInvalidGrantTimestamp` from `exchangeWithDelegation` | `invalid_response` | 503 `delegation context unavailable`; never export the malformed timestamp or parse cause. Arbitrary permit-client errors are not timestamp failures. |
+
+All three emitters use the bounded `delegation_unavailable` diagnostic and mark the request
+span as Error. Resolution failures use span `error.type=unavailable`, while the log carries
+the finer classification; binding conflicts use `unavailable` and timestamp failures use
+`invalid_response` on both signals. Permit expiry retains the separate
+`extproc.delegation_context.permit_expired` event. No new signal or identifier is introduced.
+Reason: [approved F5/P5](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045).
 
 ## 3. Exact registry and identifier migration (approved D-7; T103)
 

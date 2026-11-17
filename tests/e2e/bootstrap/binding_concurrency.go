@@ -71,7 +71,7 @@ func NewBindingConcurrencyExchanger(parent *ExtProcEnvironment) *BindingConcurre
 func (e *BindingConcurrencyExchanger) Exchange(ctx context.Context, s, r string) (extprocserver.ExchangeResult, error) {
 	return e.inner.Exchange(ctx, s, r)
 }
-func (e *BindingConcurrencyExchanger) ExchangeBound(ctx context.Context, s, r string, observed *extprocserver.ExchangeResult, b extprocserver.TokenBinding) (extprocserver.ExchangeResult, error) {
+func (e *BindingConcurrencyExchanger) ExchangeBound(ctx context.Context, s, r string, observed *extprocserver.ExchangeResult, b extprocserver.ExchangeResultBinding) (extprocserver.ExchangeResult, error) {
 	if observed == nil {
 		result, err := e.inner.Exchange(ctx, s, r)
 		if err != nil {

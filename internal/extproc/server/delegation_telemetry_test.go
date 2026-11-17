@@ -40,7 +40,7 @@ type permitBindingExchanger struct {
 	bindingErr error
 }
 
-func (e *permitBindingExchanger) ExchangeBound(context.Context, string, string, *ExchangeResult, TokenBinding) (ExchangeResult, error) {
+func (e *permitBindingExchanger) ExchangeBound(context.Context, string, string, *ExchangeResult, ExchangeResultBinding) (ExchangeResult, error) {
 	return ExchangeResult{Token: "exchanged-token-secret-sentinel"}, e.bindingErr
 }
 
@@ -78,7 +78,7 @@ func TestDelegationUnavailableSpansAndLogs(t *testing.T) {
 					permit.Deadline = now
 					wantEvent = "extproc.delegation_context.permit_expired"
 				case "binding conflict":
-					exchanger.bindingErr = ErrTokenBindingConflict
+					exchanger.bindingErr = ErrExchangeResultBindingConflict
 					wantBody = delegationBindingUnavailableBody
 				case "invalid grant timestamp":
 					permit.Context.Grant.UpdatedAt = "grant-timestamp-marker"
@@ -87,7 +87,7 @@ func TestDelegationUnavailableSpansAndLogs(t *testing.T) {
 				cfg := &extprocconfig.Config{}
 				cfg.Telemetry.Enabled = true
 				cfg.Telemetry.Traces.Enabled = true
-				s := NewServerWithAuthorizer(cfg, exchanger, permitAuthorizer{}, logger).WithDelegationResolver(resolver)
+				s := NewServerWithAuthorizer(cfg, exchanger, permitAuthorizer{}, logger).WithPermitResolver(resolver)
 				s.now = func() time.Time { return now }
 				method := "POST"
 				if headerOnly {
@@ -118,6 +118,10 @@ func TestDelegationUnavailableSpansAndLogs(t *testing.T) {
 				require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
 				assert.Equal(t, "WARN", record["level"])
 				assert.Equal(t, wantEvent, record["event"])
+				if failure != "permit expired" {
+					assert.Equal(t, string(wantKind), record["error_kind"])
+					assert.NotContains(t, record, "delegation.error")
+				}
 				assertSafetyTelemetry(t, recorder, reader, logs.String(), "subject-token-marker", "exchanged-token-secret-sentinel", "context-principal-marker", "dependency-cause-marker", "private-marker", "grant-timestamp-marker")
 			})
 		}

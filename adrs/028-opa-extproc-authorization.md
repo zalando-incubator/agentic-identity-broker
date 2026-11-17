@@ -1,7 +1,13 @@
 # ADR 028: OPA-Based Authorization in ExtProc via Embedded SDK
 
-**Status**: Accepted
+**Status**: Accepted (approved by mjungsbluth on 2026-11-09: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045)
 **Date**: 2026-03-15
+
+**Partial supersession**: [ADR 048](048-authzen-delegation-pip.md) §§4–5 supersedes this ADR's
+processing order and input schema only when `delegation_context.enabled` is true. Disabled-mode
+ordering and input, the OPA backends, default-off rationale and fail-closed behavior are unchanged.
+The 2026-11-09 approval records this cross-reference; the original acceptance and 2026-09-21
+amendment remain in force for the rest of this ADR.
 **Feature**: 020-extproc-opa-authorization
 
 ---

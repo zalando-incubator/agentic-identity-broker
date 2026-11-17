@@ -253,7 +253,7 @@ The cache key, TTL calculation and cooldown remain unchanged. All successful ena
 
 | Element | Definition |
 |---|---|
-| `TokenBinding` | `{Scopes: sorted, de-duplicated set of Context.Resource.Scopes; GrantUpdatedAt: time.Time parsed from Context.Grant.UpdatedAt}`. Equal when both sets and both instants match. Represents the first claiming permit, not broker exchange provenance. |
+| `ExchangeResultBinding` | `{Scopes: sorted, de-duplicated set of Context.Resource.Scopes; GrantUpdatedAt: time.Time parsed from Context.Grant.UpdatedAt}`. Equal when both sets and both instants match. Represents the first claiming permit, not broker exchange provenance. |
 | Result handle | Opaque entry identity plus a shared synchronized binding cell. One fresh identity per successful exchange/cache installation; singleflight followers and cache hits carry the same handle. Never derived from token bytes. Non-cacheable successes still share a request-result handle across followers. |
 | `cachedToken.binding` | Shared binding cell reached by the handle; initially nil/unbound. Atomic first claim sets it once; never rebound. Disabled-mode and tokenless cooldown entries have no binding. |
 | Delivered result | Original token, principal, agent ID/extensions plus the handle. Copies retain handle identity, not independent mutable binding copies. |

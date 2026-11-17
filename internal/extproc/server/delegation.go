@@ -14,9 +14,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/delegation"
 )
 
-// DelegationContextResolver is the fourth ExtProc port (ADR 047). It returns a fresh broker
+// PermitResolver is the fourth ExtProc port (ADR 048). It returns a fresh broker
 // delegation permit, a *delegation.DeniedError, or an error. hit reports a cache hit.
-type DelegationContextResolver interface {
+type PermitResolver interface {
 	Resolve(ctx context.Context, subjectToken, resourceURI string) (result delegation.Result, hit bool, err error)
 	Shutdown()
 }
@@ -24,17 +24,19 @@ type DelegationContextResolver interface {
 const delegationUnavailableBody = `{"error":"service_unavailable","error_description":"delegation context unavailable"}`
 const delegationBindingUnavailableBody = `{"error":"service_unavailable","error_description":"delegation token binding unavailable"}`
 
+var errInvalidGrantTimestamp = errors.New("delegation grant timestamp invalid")
+
 func (s *Server) exchangeWithDelegation(ctx context.Context, state *requestState, observed *ExchangeResult) (ExchangeResult, error) {
 	updatedAt, err := time.Parse(time.RFC3339Nano, state.delegation.Context.Grant.UpdatedAt)
 	if err != nil {
-		return ExchangeResult{}, &delegation.Error{Category: delegation.CategoryInvalidResponse}
+		return ExchangeResult{}, errInvalidGrantTimestamp
 	}
-	binding := TokenBinding{Scopes: copyStrings(state.delegation.Context.Resource.Scopes), GrantUpdatedAt: updatedAt}
+	binding := ExchangeResultBinding{Scopes: copyStrings(state.delegation.Context.Resource.Scopes), GrantUpdatedAt: updatedAt}
 	return s.exchanger.ExchangeBound(ctx, state.subjectToken, state.resourceURI, observed, binding)
 }
 
-// WithDelegationResolver enables delegation context. It requires an authorizer.
-func (s *Server) WithDelegationResolver(resolver DelegationContextResolver) *Server {
+// WithPermitResolver enables delegation context. It requires an authorizer.
+func (s *Server) WithPermitResolver(resolver PermitResolver) *Server {
 	s.delegationResolver = resolver
 	return s
 }

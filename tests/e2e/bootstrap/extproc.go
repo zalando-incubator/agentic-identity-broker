@@ -39,7 +39,7 @@ type ExtProcEnvironment struct {
 	grpcServer *grpc.Server
 	exchanger  *extprocserver.TokenExchanger
 	authorizer authorization.Authorizer
-	resolver   *delegation.Resolver
+	resolver   *delegation.PermitResolver
 	syncCancel context.CancelFunc
 	syncDone   chan struct{}
 	logger     *slog.Logger
@@ -162,13 +162,13 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 		svc = extprocserver.NewServerWithAuthorizer(cfg, exchangePort, authorizer, logger)
 	}
 	if cfg.DelegationContext.Enabled {
-		resolver, err := delegation.NewResolverFromConfig(context.Background(), cfg, exchanger)
+		resolver, err := delegation.NewPermitResolverFromConfig(context.Background(), cfg, exchanger)
 		if err != nil {
 			environment.Close()
 			return nil, err
 		}
 		environment.resolver = resolver
-		svc.WithDelegationResolver(resolver)
+		svc.WithPermitResolver(resolver)
 	}
 	environment.PolicyDecisionPoint = cfg.DelegationContext.PolicyDecisionPoint
 

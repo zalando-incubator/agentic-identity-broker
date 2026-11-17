@@ -20,7 +20,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 )
 
-func TestTokenBinding_ReplacementFailuresRetainExchangeErrorHandling(t *testing.T) {
+func TestExchangeResultBinding_ReplacementFailuresRetainExchangeErrorHandling(t *testing.T) {
 	tests := []struct {
 		name     string
 		status   int
@@ -122,7 +122,7 @@ func (e *sharedInitialExchange) Exchange(context.Context, string, string) (serve
 	return e.result, nil
 }
 
-func TestTokenBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
+func TestExchangeResultBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
 	for _, lifetime := range []int{3600, 0} {
 		t.Run(map[int]string{3600: "cacheable", 0: "non-cacheable"}[lifetime], func(t *testing.T) {
 			exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, call int32) {
@@ -171,7 +171,7 @@ func TestTokenBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
 	}
 }
 
-func TestTokenBinding_CanceledReplacementCannotForwardPriorResult(t *testing.T) {
+func TestExchangeResultBinding_CanceledReplacementCannotForwardPriorResult(t *testing.T) {
 	for _, headerOnly := range []bool{false, true} {
 		t.Run(map[bool]string{false: "body", true: "header-only"}[headerOnly], func(t *testing.T) {
 			started := make(chan struct{})

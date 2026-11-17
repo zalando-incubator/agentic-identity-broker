@@ -97,7 +97,7 @@ func (m *mockExchanger) Exchange(ctx context.Context, subjectToken, resourceURI 
 	return m.exchangeFunc(ctx, subjectToken, resourceURI)
 }
 
-func (m *mockExchanger) ExchangeBound(ctx context.Context, subject, resource string, observed *server.ExchangeResult, _ server.TokenBinding) (server.ExchangeResult, error) {
+func (m *mockExchanger) ExchangeBound(ctx context.Context, subject, resource string, observed *server.ExchangeResult, _ server.ExchangeResultBinding) (server.ExchangeResult, error) {
 	if observed != nil {
 		return *observed, nil
 	}

@@ -68,7 +68,7 @@ type TestEnvironment struct {
 	approvalSyncCancel     context.CancelFunc
 	approvalSyncDone       chan struct{}
 	ownsMockApprovalBroker bool
-	delegationResolver     *delegation.Resolver
+	delegationResolver     *delegation.PermitResolver
 	logger                 *slog.Logger
 	stopOnce               sync.Once
 }
@@ -163,12 +163,12 @@ func (e *TestEnvironment) StartWithDelegationContext() error {
 		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
 	}
 	if e.Config.DelegationContext.Enabled {
-		resolver, err := delegation.NewResolverFromConfig(context.Background(), e.Config, exchanger)
+		resolver, err := delegation.NewPermitResolverFromConfig(context.Background(), e.Config, exchanger)
 		if err != nil {
 			return err
 		}
 		e.delegationResolver = resolver
-		svc.WithDelegationResolver(resolver)
+		svc.WithPermitResolver(resolver)
 	}
 	e.startGRPCServer(svc)
 	return nil

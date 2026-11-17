@@ -23,10 +23,10 @@ type cacheKey struct {
 	resourceURI  string
 }
 
-// Resolver caches permits only, each until its original Deadline. Denials, errors and
+// PermitResolver caches permits only, each until its original Deadline. Denials, errors and
 // unusable responses are never cached, and an expired permit is never served (no stale
 // fallback). It is independent of the token-exchange cache (ADR 012 boundary).
-type Resolver struct {
+type PermitResolver struct {
 	evaluator Evaluator
 	now       func() time.Time
 
@@ -39,9 +39,9 @@ type Resolver struct {
 	done     chan struct{}
 }
 
-// NewResolver starts a resolver whose background sweep runs every max(maxStaleness/2, 1s).
-func NewResolver(evaluator Evaluator, maxStaleness time.Duration) *Resolver {
-	r := &Resolver{
+// NewPermitResolver starts a resolver whose background sweep runs every max(maxStaleness/2, 1s).
+func NewPermitResolver(evaluator Evaluator, maxStaleness time.Duration) *PermitResolver {
+	r := &PermitResolver{
 		evaluator: evaluator,
 		now:       time.Now,
 		entries:   make(map[cacheKey]Result),
@@ -55,7 +55,7 @@ func NewResolver(evaluator Evaluator, maxStaleness time.Duration) *Resolver {
 // Resolve returns a cached permit while now < Deadline, or evaluates once per key across
 // concurrent callers. The returned Result keeps its original Deadline; the caller must
 // check it again before every policy use. hit reports a cache hit.
-func (r *Resolver) Resolve(ctx context.Context, subjectToken, resourceURI string) (result Result, hit bool, err error) {
+func (r *PermitResolver) Resolve(ctx context.Context, subjectToken, resourceURI string) (result Result, hit bool, err error) {
 	ctx, span := otel.Tracer("extproc").Start(ctx, "extproc.delegation.resolve", trace.WithSpanKind(trace.SpanKindInternal))
 	defer func() {
 		cache := "miss"
@@ -94,12 +94,12 @@ func (r *Resolver) Resolve(ctx context.Context, subjectToken, resourceURI string
 }
 
 // Shutdown stops the sweep goroutine. It is idempotent.
-func (r *Resolver) Shutdown() {
+func (r *PermitResolver) Shutdown() {
 	r.stopOnce.Do(func() { close(r.stop) })
 	<-r.done
 }
 
-func (r *Resolver) sweepLoop(interval time.Duration) {
+func (r *PermitResolver) sweepLoop(interval time.Duration) {
 	defer close(r.done)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -113,7 +113,7 @@ func (r *Resolver) sweepLoop(interval time.Duration) {
 	}
 }
 
-func (r *Resolver) sweep() {
+func (r *PermitResolver) sweep() {
 	now := r.now()
 	r.mu.Lock()
 	defer r.mu.Unlock()

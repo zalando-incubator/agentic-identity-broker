@@ -20,7 +20,7 @@ Evaluation and RFC 8693 exchange share one authoritative resolution. Steps 2–9
 Evaluation reuses the unchanged caller CEL policy with
 `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`.
 
-The standalone ExtProc gains an opt-in `DelegationContextResolver`, its fourth port. At startup it
+The standalone ExtProc gains an opt-in `PermitResolver`, its fourth port. At startup it
 discovers and verifies the PDP. It caches only permits, until a deadline of
 `requestStart + min(max-age, max_staleness)` that is computed once. A permit without a usable
 positive `max-age` fails closed. ExtProc supplies the delegation to OPA before every policy
@@ -35,6 +35,16 @@ The `granted_permission_sets` field of the exchange response is marked deprecate
 is a later, separately approved 2.0.0 contract change.
 
 In enabled mode the permit governs result-handle reuse, not provider-token capability or exchange provenance (Proposed ADR-2 and D-8; research R19). Binding compares permit scope sets and grant-update instants. Opaque entry identities preserve same-token replacements; a synchronized binding cell shared with followers permits one atomic first claim, never rebinding. A mismatched additional-exchange delivery fails closed with Proposed API-7 503.
+
+## Clarifications — apply-review 2026-11-09
+
+Reason: [selected proposal approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6729032045) at `2026-11-09T20:20:21Z`.
+
+- F2/P2: after enabled-mode exchange/binding succeeds, set the approval state's principal and agent UUID from the request permit. OPA already uses it. Keep disabled identity and session extraction unchanged; regression tests exercise conflicting and missing exchange identities through the headers/body/approval flow.
+- F3/P3: correct the released end-user API baseline to `1.2.0` and publish `1.3.0`. Retain response fields/deprecation; revise ADR 048 §8 and register its partial supersession in ADR 028 and the architecture index. Earlier version/approval entries below are historical, not the current release contract.
+- F4/P4: return `errInvalidGrantTimestamp` from `exchangeWithDelegation` and match with `errors.Is`. Preserve ordinary exchange error mapping for unrelated `delegation.Error` values. F5/P5: document the canonical `error_kind` key and all three unavailable-event emitters in observability §2.1.
+- F6/P6: rename the local result-reuse value to `ExchangeResultBinding`, and both ExtProc resolver port and concrete cache to `PermitResolver`, including constructors, wiring and test doubles. Update ADR 048, instructions, contracts and both glossaries. Preserve existing wire text and telemetry names.
+- F1/P1 remains unresolved. Returning only exchange grant version and effective scopes does not specify how the separately fetched permission-set/context snapshot becomes consistent, or what happens when versions differ. Removing reconciliation without resolving that would replace the documented limitation with an unproven guarantee. No F1 API, ADR or broker implementation changes are included, and its alternative is not selected.
 
 ## Current task reconciliation and approval disposition
 
@@ -141,13 +151,13 @@ test-first compliance. Implementation history and remaining evidence gaps are re
 | Check | Status | Plan |
 |---|---|---|
 | Domain model | Pass | The spec defines Delegation Decision and Delegation Context. [data-model.md](./data-model.md) adds `DelegationRequest`, `Delegation`, the outcome variants, and the projection rules. No new aggregate. |
-| Domain concepts | Pass | Add **Delegation Decision**, **Delegation Context**, **Policy Decision Point (PDP) identifier**, and **Token Binding** (ADR-2) to the `ARCHITECTURE.md` glossary. Add a fourth row, "Broker delegation (AuthZEN)", to the policy-gates table. |
+| Domain concepts | Pass | Add **Delegation Decision**, **Delegation Context**, **Policy Decision Point (PDP) identifier**, and **ExchangeResultBinding** (ADR-2) to the `ARCHITECTURE.md` glossary. Add a fourth row, "Broker delegation (AuthZEN)", to the policy-gates table. |
 | Entity IDs | Not applicable | No new UUID-keyed entity. Existing typed IDs are reused. |
 | Configuration design | Pass | Broker: no new keys (FR-001). ExtProc: 4 keys with YAML in [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md) §1 and spec Journey 4. |
 | Config examples | Pass | Add `examples/config/extproc-delegation-context.yaml` and index it in `examples/config/README.md`. |
 | Helm deployment contract | Pass (boundary) | The broker chart gets no change: the broker has no new keys, and ExtProc is not deployed by `charts/agentic-identity-broker/`. ExtProc keys go to its own config path (ADR 011): `docs/configuration.md`, `configs/config.extproc.docker.yaml` (commented), and `docs/docker-compose-setup.md`. |
 | API design first | Original approval recorded; new API-7 pending | Original OpenAPI delta has approval/evidence in quickstart §§11–12. API-7 is the new ExtProc outcome contract in feature contracts §3.1; implement only after supplied sign-off. |
-| API documentation | Pass | `api/enduser/openapi.yaml` (end-user; `1.1.0` → `1.2.0` (original approved delta)) and `docs/api/authzen-evaluation.md`. No admin change. |
+| API documentation | Pass | `api/enduser/openapi.yaml` (end-user; released `1.2.0` → `1.3.0`, approved F3/P3) and `docs/api/authzen-evaluation.md`. No admin change. |
 | API changes confirmed | Pass with precondition | The maintainer endorsed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) in the 2026-10-28 review: the endpoints, denial form (a), and the deprecation marker (R12). The API-003 check against the final AuthZEN text found that the standard requires receivers to ignore unknown request fields; the maintainer confirmed that revision (2026-10-31) and directed on 2026-11-05 that R10, data model §2.5, the contract and the spec ignore unknown members, AuthZEN `properties` and `context` members other than `agent`, matching ADR 048 §1 and the OpenAPI. Original supplied API-1–API-3 approval, including revised API-2, is recorded in quickstart §11; this is not an outstanding gate. |
 | Database design | Not applicable | No schema change and no migration. |
 | E2E acceptance tests | Design covered; original D-6 disposition closed | 47 scenarios mapped below. US3.11–US3.13 are new and require test-first evidence. D-6 covers only the original 44; quickstart §§11–12 records supplied approval and completed alternative validation, not a performed original sequence. |
@@ -168,7 +178,7 @@ test-first compliance. Implementation history and remaining evidence gaps are re
 | Zalando guidelines | Pass with documented exception | The AuthZEN-mandated paths (`/access/v1/...` and `/.well-known/...`) and snake_case members are standard-defined. The ADR documents the exception (API-004). |
 | End-user docs | Pass | `docs/api/authzen-evaluation.md` with examples, plus a deprecation note in `docs/reference/token-exchange.md`. |
 | Migration testing | Not applicable | No migration. |
-| Hexagonal architecture | Pass | Domain: resolver and evaluation service in `tokenexchange`. Driving adapter: `internal/adapters/http/enduser/authzen_*.go`. Wiring: the builder. Routes: `SetupEnduserRoutes`. ExtProc: the `DelegationContextResolver` port in `server`, with its implementation in `delegation/`. |
+| Hexagonal architecture | Pass | Domain: resolver and evaluation service in `tokenexchange`. Driving adapter: `internal/adapters/http/enduser/authzen_*.go`. Wiring: the builder. Routes: `SetupEnduserRoutes`. ExtProc: the `PermitResolver` port in `server`, with its implementation in `delegation/`. |
 | Persistence patterns | Not applicable | No persistence. |
 | Configuration system | Pass | Broker: none. ExtProc: `internal/extproc/config` with file, env, and flag precedence and startup validation (Principle VII, standalone exception under ADR 011). |
 | DI via Builder | Pass | `AuthZENHandlers` are created in `builder.go` and passed through `EnduserHandlers`. Routing only registers. ExtProc wiring is in `cmd/extproc-token-exchange/root.go`, the existing composition root. |
@@ -269,7 +279,7 @@ specs/054-authzen-delegation-pip/
 ```text
 adrs/048-authzen-delegation-pip.md                       # Moved from the feature draft with the recorded approval; number rechecked; ADR-2 revision applied after approval
 
-api/enduser/openapi.yaml                                  # 2 paths, schemas, examples, deprecation, proposed 1.2.0
+api/enduser/openapi.yaml                                  # 2 paths, schemas, examples, deprecation, approved 1.3.0
 
 internal/
 ├── domain/tokenexchange/
@@ -292,7 +302,7 @@ internal/
     │   ├── client.go                                     # AuthZEN POST, typed permit decode and validation, max-age, deadline
     │   └── resolver.go                                   # permit-only cache, singleflight, eviction
     ├── authorization/input.go, input_builder.go          # ContextInput: principal, agent, resource, grant, permission_sets (R15); header-only input
-    └── server/server.go                                  # DelegationContextResolver port; contextInputFromDelegation; body concurrency; header-only ordering; deadline check; responses
+    └── server/server.go                                  # PermitResolver port; contextInputFromDelegation; body concurrency; header-only ordering; deadline check; responses
         server/exchanger.go, server/delegation.go         # ADR-2 token binding: binding-aware exchange, compare-and-delete, no stale fallback
 
 cmd/extproc-token-exchange/root.go                        # Discovery at startup; resolver wiring; shutdown
@@ -322,7 +332,7 @@ internal/extproc/config/loader_test.go                    # example ExtProc conf
 bounded context that already owns every delegation invariant (R1). A new package would be
 anemic or cyclic. The HTTP surface is a driving adapter in `internal/adapters/http/enduser/`,
 next to the token handler. The ExtProc consumer is a new leaf package,
-`internal/extproc/delegation/`, behind a `server.DelegationContextResolver` port. This preserves the
+`internal/extproc/delegation/`, behind a `server.PermitResolver` port. This preserves the
 ADR 011 isolation.
 
 ## Design and Implementation Approach
@@ -426,7 +436,7 @@ feature is enabled:
 
 After stakeholder confirmation:
 
-1. Apply the OpenAPI delta, including the `granted_permission_sets` deprecation and proposed `1.2.0` (current baseline `1.1.0`).
+1. Apply the OpenAPI delta, including the `granted_permission_sets` deprecation and approved `1.3.0` (released baseline `1.2.0`; F3/P3).
 2. Write `docs/api/authzen-evaluation.md` and rebuild the docs site.
 3. Update the token-exchange reference with the deprecation.
 4. Update `ARCHITECTURE.md` and the AGENTS guides. In `internal/extproc/AGENTS.md`, document

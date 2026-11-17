@@ -8,10 +8,10 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 )
 
-// NewResolverFromConfig discovers the configured PDP without credentials and builds the
+// NewPermitResolverFromConfig discovers the configured PDP without credentials and builds the
 // permit resolver. Any discovery failure is returned so startup stops instead of silently
 // disabling delegation context. cfg must already be validated.
-func NewResolverFromConfig(ctx context.Context, cfg *extprocconfig.Config, assertions AssertionProvider) (*Resolver, error) {
+func NewPermitResolverFromConfig(ctx context.Context, cfg *extprocconfig.Config, assertions AssertionProvider) (*PermitResolver, error) {
 	httpClient, err := httpclient.New(cfg, cfg.DelegationContext.RequestTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize delegation context HTTP client: %w", err)
@@ -24,5 +24,5 @@ func NewResolverFromConfig(ctx context.Context, cfg *extprocconfig.Config, asser
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize delegation context client: %w", err)
 	}
-	return NewResolver(client, cfg.DelegationContext.MaxStaleness), nil
+	return NewPermitResolver(client, cfg.DelegationContext.MaxStaleness), nil
 }

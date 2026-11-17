@@ -44,7 +44,7 @@ func TestResolutionTelemetry_ClassifiesWithoutCredentials(t *testing.T) {
 			if tt.assertionError != nil {
 				client.assertions = staticAssertion{err: tt.assertionError}
 			}
-			resolver := NewResolver(client, time.Minute)
+			resolver := NewPermitResolver(client, time.Minute)
 			t.Cleanup(resolver.Shutdown)
 			_, hit, err := resolver.Resolve(context.Background(), testSubject, testResource)
 			assert.False(t, hit)
