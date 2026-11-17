@@ -121,12 +121,13 @@ without `valid_until`.
 | `action.name` | yes | Exactly `urn:ietf:params:oauth:grant-type:token-exchange` |
 | `resource.type` | yes | Exactly `protected_resource` |
 | `resource.id` | yes | Absolute URI |
-| `context` | no | Object or absent |
-| `context.agent` | no | Agent UUID string. Absent means the agent comes from the token. |
-| any other member | — | Rejected with 400 (R10, pending contract review) |
+| `context` | no | Absent, or an object. Any other present value (including `null`) returns 400. |
+| `context.agent` | no | Agent UUID string; `null` or another type returns 400. Absent means the agent comes from the token. |
+| any other member | — | Ignored (AuthZEN 1.0 HTTPS binding, R10): unknown top-level and nested members, AuthZEN `properties`, and `context` members other than `agent`. Never influences the decision. |
 
 The body is limited to 64 KiB. The bearer client assertion comes from `Authorization: Bearer`,
-never from the body.
+never from the body. The delegation is always resolved from the verified subject token alone;
+`context.agent` only checks consistency with the token-derived agent.
 
 ### 2.6 Discovery metadata
 

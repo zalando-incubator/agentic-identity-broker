@@ -320,6 +320,11 @@ revision was supplied in this run. Maintainer approval coverage and the frozen-a
 inconsistency need reconciliation; this run makes no further change to that request behavior
 or to the existing exchange cooldown.
 
+The 2026-11-05 planning run reconciled these artifacts at the maintainer's direction: spec
+FR-003, research R10, data model §2.5 and the evaluation contract §2.1 now ignore unknown
+request members, matching ADR 047 §1 and the OpenAPI. The revised API-2 and the body-path
+cooldown (D-5) are registered in the plan's Approval Items for sign-off.
+
 ### New red-to-green evidence
 
 - `go test ./internal/extproc/delegation ./internal/extproc/server -run

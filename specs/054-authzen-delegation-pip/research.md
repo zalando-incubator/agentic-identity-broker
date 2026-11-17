@@ -190,7 +190,7 @@ detail strings are needed. New request-validation failures reuse `DetailRequestM
 
 | Condition | Existing detail or error | Evaluation status |
 |---|---|---|
-| Malformed JSON, oversized body, missing or unknown members, wrong member types | `request_malformed` | 400 |
+| Malformed JSON, oversized body, trailing data, missing required members, wrong member types, `context` not an object (unknown members are ignored, R10) | `request_malformed` | 400 |
 | Unsupported `subject.type` (including `identity`), `action.name`, or `resource.type` | `request_malformed` | 400 |
 | Invalid or missing `resource.id` URI | `resource_missing` or `request_malformed` | 400 |
 | Invalid or expired subject token | `subject_invalid` or `subject_expired` (invalid_grant) | 400 |
@@ -277,23 +277,45 @@ proxy must also route the standard discovery URL. The docs will state this.
   (2026-10-28 review); sign-off is approval item ADR-1 in the plan. It still needs the §3.1.4.2 documentation and T044/T047 test-first coverage;
   it is not existing functionality (HIGH I2 in [remediation.md](./remediation.md)).
 
-## R10. Request body bounds and strictness
+## R10. Request body bounds and unknown members
 
-**Decision**:
+**Decision** (revised 2026-11-05 to follow the AuthZEN 1.0 HTTPS binding; replaces the earlier
+strict-rejection rule):
 
 - The body is limited to 64 KiB with `http.MaxBytesReader`. A JWT subject token is far
-  smaller. Overflow returns 400.
-- The decoder uses `DisallowUnknownFields`. Unknown or unsupported members return 400. This
-  includes `properties`, `context.actor`, and any context member other than `agent`.
-- `context` may be absent or an object. `context.agent` may be absent or a UUID string.
+  smaller. Overflow returns 400. `Content-Type: application/json` is required, and trailing data
+  after the JSON object returns 400.
+- Receivers ignore unknown fields. Unknown top-level members, unknown members of `subject`,
+  `action` and `resource`, AuthZEN `properties`, and `context` members other than `agent`
+  (including `context.actor`) are ignored. They never influence the decision, the caller-policy
+  input, or the response.
+- The supported values stay required exactly: `subject.type` is
+  `urn:ietf:params:oauth:token-type:jwt`, `action.name` is
+  `urn:ietf:params:oauth:grant-type:token-exchange`, and `resource.type` is
+  `protected_resource`. A missing required member, a wrong JSON type, or another value returns
+  400.
+- `context` may be absent. A present `context` must be an object. `context.agent` may be absent
+  or an Agent UUID string; `null` or another type returns 400.
+- The delegation is always resolved from the verified subject token alone. The anchor only
+  checks consistency, and no ignored member can supply a principal, agent, actor, or resource.
 
-**Rationale**: Fail closed. Silently ignoring an `actor` or `properties` member could make a
-caller believe it was evaluated (SR-002).
+**Rationale**: The AuthZEN 1.0 HTTPS binding requires receivers to ignore unknown fields
+(API-003 verification, [quickstart.md](./quickstart.md) §7). Ignoring is safe here because every
+member that the broker interprets is still required and validated exactly, and resolution uses
+only the verified subject token, the resource URI and the authenticated caller. An ignored
+`actor` or `properties` member cannot widen what the broker evaluates; it can only be absent
+from the evaluation, which the documented contract states (SR-002 is preserved).
 
-**Stakeholder (contract review)**: AuthZEN permits extensible `properties`. Strict rejection is
-recorded in [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md). The
-maintainer endorsed that contract in the 2026-10-28 review, including this strictness. Sign-off is
-approval item API-2 in the plan.
+**Alternative considered**: Strict rejection with `DisallowUnknownFields`, so that unknown
+members, `properties` and other `context` members return 400. It was the earlier proposal and
+signals clearly that `actor` is unsupported, but it violates the standard and would make every
+additive AuthZEN request member a breaking change for conforming PEPs.
+
+**Stakeholder (contract review)**: Recorded in
+[contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) §2.1, ADR 047 §1
+and `api/enduser/openapi.yaml`. The maintainer confirmed this revision on 2026-10-31 and directed
+on 2026-11-05 that every artifact apply it. Sign-off is the revised approval item API-2 in the
+plan.
 
 ## R11. Denial representation
 
