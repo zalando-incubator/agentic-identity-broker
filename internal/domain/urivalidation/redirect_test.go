@@ -92,28 +92,99 @@ func TestMatchesRedirectURI(t *testing.T) {
 
 func TestIsRegisteredRedirectURI(t *testing.T) {
 	callback := "github-app://oauth/callback"
+	wildcard := "https://preview*.app-*.example.com/callback"
 	tests := []struct {
 		name     string
+		kind     RedirectURIClientKind
 		client   []string
 		agent    []string
 		incoming string
 		want     bool
 	}{
-		{"web URI comes from client list", []string{"https://agent.example.com/callback"}, nil, "https://agent.example.com/callback", true},
-		{"loopback port may vary", []string{"http://127.0.0.1/callback"}, nil, "http://127.0.0.1:53124/callback", true},
-		{"private-use in both lists", []string{callback}, []string{callback}, callback, true},
-		{"private-use only in client list", []string{callback}, nil, callback, false},
-		{"private-use only in Agent list", nil, []string{callback}, callback, false},
-		{"scheme alone cannot authorize", []string{callback}, []string{callback}, "github-app://evil/steal", false},
-		{"host alone cannot authorize", []string{callback}, []string{callback}, "github-app://oauth", false},
-		{"prefix cannot authorize", []string{callback}, []string{callback}, "github-app://oauth/callback/extra", false},
-		{"wildcard cannot authorize", []string{callback}, []string{callback}, "github-app://*/callback", false},
-		{"case variant cannot authorize", []string{callback}, []string{callback}, "GITHUB-APP://oauth/callback", false},
-		{"port cannot vary", []string{"myapp://oauth:8080/callback"}, []string{"myapp://oauth:8080/callback"}, "myapp://oauth:9090/callback", false},
+		{"web URI comes from client list", RedirectURIClientCIMD, []string{"https://agent.example.com/callback"}, nil, "https://agent.example.com/callback", true},
+		{"client-list wildcard stays exact", RedirectURIClientCIMD, []string{wildcard}, nil, "https://preview-pr-123.app-test.example.com/callback", false},
+		{"loopback port may vary", RedirectURIClientCIMD, []string{"http://127.0.0.1/callback"}, nil, "http://127.0.0.1:53124/callback", true},
+		{"private-use in both lists", RedirectURIClientCIMD, []string{callback}, []string{callback}, callback, true},
+		{"private-use only in client list", RedirectURIClientCIMD, []string{callback}, nil, callback, false},
+		{"private-use only in Agent list", RedirectURIClientCIMD, nil, []string{callback}, callback, false},
+		{"scheme alone cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://evil/steal", false},
+		{"host alone cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://oauth", false},
+		{"prefix cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://oauth/callback/extra", false},
+		{"wildcard cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "github-app://*/callback", false},
+		{"case variant cannot authorize", RedirectURIClientCIMD, []string{callback}, []string{callback}, "GITHUB-APP://oauth/callback", false},
+		{"port cannot vary", RedirectURIClientCIMD, []string{"myapp://oauth:8080/callback"}, []string{"myapp://oauth:8080/callback"}, "myapp://oauth:9090/callback", false},
+		{"opaque Agent matches wildcard registration", RedirectURIClientOpaque, nil, []string{wildcard}, "https://preview-pr-123.app-test.example.com/callback", true},
+		{"opaque Agent does not use client callback list", RedirectURIClientOpaque, []string{wildcard}, nil, "https://preview-pr-123.app-test.example.com/callback", false},
+		{"unknown client kind is rejected", RedirectURIClientUnknown, []string{callback}, []string{callback}, callback, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsRegisteredRedirectURI(tt.client, tt.agent, tt.incoming))
+			assert.Equal(t, tt.want, IsRegisteredRedirectURI(tt.kind, tt.client, tt.agent, tt.incoming))
+		})
+	}
+}
+
+func TestIsAgentRedirectURIHostPattern(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want bool
+	}{
+		{name: "exact URI", uri: "https://client.example/callback", want: false},
+		{name: "hostname wildcard", uri: "https://preview*.example.com/callback", want: true},
+		{name: "literal path star", uri: "https://client.example/callback/*", want: false},
+		{name: "literal query star", uri: "https://client.example/callback?target=*", want: false},
+		{name: "malformed wildcard URI fails closed", uri: "https://preview*.example.com:bad/callback", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, IsAgentRedirectURIHostPattern(test.uri))
+		})
+	}
+}
+
+func TestMatchesAgentRedirectURI(t *testing.T) {
+	pattern := "https://preview*.app-*.example.com/api/oidc/callback"
+	tests := []struct {
+		name       string
+		registered string
+		incoming   string
+		want       bool
+	}{
+		{"matches PR preview labels", pattern, "https://preview-pr-123.app-test.example.com/api/oidc/callback", true},
+		{"matches zero-character wildcard suffix", pattern, "https://preview.app-test.example.com/api/oidc/callback", true},
+		{"matches different wildcard labels", pattern, "https://preview.app-sandbox.example.com/api/oidc/callback", true},
+		{"matches a label with a literal suffix", "https://preview*-test.example.com/callback", "https://preview123-test.example.com/callback", true},
+		{"matches an empty wildcard before a literal suffix", "https://preview*-test.example.com/callback", "https://preview-test.example.com/callback", true},
+		{"rejects a wrong literal suffix", "https://preview*-test.example.com/callback", "https://preview123-prod.example.com/callback", false},
+		{"requires the literal suffix at the end of the label", "https://preview*-test.example.com/callback", "https://preview123-test-extra.example.com/callback", false},
+		{"matches a label with internal and suffix literals", "https://preview*-qa-*-test.example.com/callback", "https://preview123-qa-456-test.example.com/callback", true},
+		{"matches empty wildcards around an internal literal", "https://preview*-qa-*-test.example.com/callback", "https://preview-qa--test.example.com/callback", true},
+		{"rejects a missing internal literal", "https://preview*-qa-*-test.example.com/callback", "https://preview123-456-test.example.com/callback", false},
+		{"rejects a wrong internal literal", "https://preview*-qa-*-test.example.com/callback", "https://preview123-prod-456-test.example.com/callback", false},
+		{"rejects a wrong suffix after an internal literal", "https://preview*-qa-*-test.example.com/callback", "https://preview123-qa-456-prod.example.com/callback", false},
+		{"requires the suffix after an internal literal at the end of the label", "https://preview*-qa-*-test.example.com/callback", "https://preview123-qa-456-test-extra.example.com/callback", false},
+		{"does not cross a private public suffix boundary", "https://*.*.amazonaws.com/callback", "https://bucket.s3.amazonaws.com/callback", false},
+		{"does not cross hostname labels", pattern, "https://preview-pr-123.extra.app-test.example.com/api/oidc/callback", false},
+		{"does not match another domain", pattern, "https://preview-pr-123.app-test.example.net/api/oidc/callback", false},
+		{"scheme remains exact", pattern, "http://preview-pr-123.app-test.example.com/api/oidc/callback", false},
+		{"path remains exact", pattern, "https://preview-pr-123.app-test.example.com/other/callback", false},
+		{"port remains exact", "https://preview*.app-*.example.com:8443/api/oidc/callback", "https://preview-pr-123.app-test.example.com/api/oidc/callback", false},
+		{"query remains exact", "https://preview*.app-*.example.com/callback?mode=one", "https://preview-pr-123.app-test.example.com/callback?mode=two", false},
+		{"exact HTTPS URI remains exact", "https://client.example.com/callback", "https://client.example.com/callback", true},
+		{"exact HTTPS URI still rejects a different path", "https://client.example.com/callback", "https://client.example.com/other", false},
+		{"literal star in HTTPS path remains exact", "https://client.example.com/callback/*", "https://client.example.com/callback/*", true},
+		{"literal star in HTTPS query remains exact", "https://client.example.com/callback?target=*", "https://client.example.com/callback?target=*", true},
+		{"private-use URI remains exact", "com.example.app:/oauth2redirect/example-provider", "com.example.app:/oauth2redirect/example-provider", true},
+		{"loopback HTTP still ignores port", "http://localhost/callback", "http://localhost:43127/callback", true},
+		{"incoming URI cannot contain a wildcard", pattern, "https://preview-*.app-test.example.com/api/oidc/callback", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := MatchesAgentRedirectURI(test.registered, test.incoming); got != test.want {
+				t.Errorf("MatchesAgentRedirectURI(%q, %q) = %v, want %v", test.registered, test.incoming, got, test.want)
+			}
 		})
 	}
 }

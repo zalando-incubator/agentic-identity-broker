@@ -158,14 +158,13 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		return ports.ErrorDecision("unauthorized_client", fmt.Sprintf("client mode not supported in %s mode", s.config.ModeStrategy.Mode()), ""), nil
 	}
 
-	// Step 1b: Validate redirect_uri.
-	// For CIMD clients, validate against the document's redirect_uris; private-use
-	// callbacks must also be listed in the agent's redirect_uris.
-	// For opaque clients, validate against the agent's registered redirect_uris.
+	// Step 1b: Validate redirect_uri against the source appropriate for this client.
 	// Per RFC 6749 §4.1.2.1, MUST NOT redirect if redirect_uri is unverified.
 	var allowedRedirectURIs []string
+	redirectURIClientKind := urivalidation.RedirectURIClientOpaque
 	if cimdMeta != nil {
 		allowedRedirectURIs = cimdMeta.RedirectURIs
+		redirectURIClientKind = urivalidation.RedirectURIClientCIMD
 	} else {
 		allowedRedirectURIs = agent.RedirectURIs
 	}
@@ -180,7 +179,8 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	if len(allowedRedirectURIs) == 0 {
 		return ports.ErrorDecision(redirectURIErrCode, "redirect_uri not registered for this client", ""), nil
 	}
-	if !urivalidation.IsRegisteredRedirectURI(allowedRedirectURIs, agent.RedirectURIs, req.RedirectURI) {
+	registered := urivalidation.IsRegisteredRedirectURI(redirectURIClientKind, allowedRedirectURIs, agent.RedirectURIs, req.RedirectURI)
+	if !registered {
 		return ports.ErrorDecision(redirectURIErrCode, "redirect_uri not registered for this client", ""), nil
 	}
 

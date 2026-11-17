@@ -240,8 +240,22 @@ func (p *Provider) HandleAuthorize(
 	}
 	agent := h.getAgent()
 
-	// Validate redirect_uri against both client and Agent registrations.
-	if !urivalidation.IsRegisteredRedirectURI(fositeClient.GetRedirectURIs(), agent.RedirectURIs, redirectURI) {
+	// CIMD callbacks remain exact and must satisfy the Agent allowlist for private-use URIs.
+	var cimdMetadata *ports.CIMDMetadataDTO
+	if client, ok := fositeClient.(*publicClient); ok {
+		cimdMetadata = client.metadata
+	}
+	redirectURIClientKind := urivalidation.RedirectURIClientOpaque
+	if cimdMetadata != nil {
+		redirectURIClientKind = urivalidation.RedirectURIClientCIMD
+	}
+	redirectRegistered := urivalidation.IsRegisteredRedirectURI(
+		redirectURIClientKind,
+		fositeClient.GetRedirectURIs(),
+		agent.RedirectURIs,
+		redirectURI,
+	)
+	if !redirectRegistered {
 		return "", fmt.Errorf("%w: %s", ErrInvalidRedirectURI,
 			fosite.ErrInvalidRequest.WithHintf("redirect_uri %q is not registered for this client", redirectURI))
 	}

@@ -2,6 +2,14 @@
 
 The end-user API serves OAuth2 authorization, token, and metadata requests. The broker serves it on the end-user listener.
 
+## Authorization Redirect URIs
+
+For an opaque Agent, an HTTPS callback registration may use `*` within one or more subdomain labels. A wildcard matches characters in one label only; it does not match a dot. Keep the public suffix and effective registrable domain literal. The scheme, port, path, and query must match the registration.
+
+For example, an Agent may register `https://preview*.app-*.example.com/api/oidc/callback`. The request may use the concrete URI `https://preview-pr-123.app-test.example.com/api/oidc/callback`. The broker redirects only to that concrete request URI and preserves its `state`.
+
+This wildcard rule applies only to opaque Agent callbacks. CIMD document web callbacks remain exact-match-only. Private-use callbacks remain byte-for-byte exact and retain their Agent allowlist requirements. Loopback HTTP port matching is unchanged.
+
 ## CIMD Client Authentication
 
 In local or hybrid mode with CIMD enabled, a pre-registered CIMD client can authenticate at the token endpoint with `private_key_jwt`. The client signs a short-lived assertion with a key from its metadata document. The broker requires a fresh assertion for each authorization-code exchange and refresh request.
