@@ -31,7 +31,7 @@ var _ = Describe("AuthZEN delegation denials", Label("authzen-delegation"), func
 	It("denies with grant_missing after revocation of a permitted grant", func() {
 		f.Boot(nil)
 		permitContext(f.Evaluate(authzenRepoResource, nil))
-		Expect(f.Storage.UserGrants().Delete(context.Background(), f.Grant.ID)).To(Succeed())
+		f.RevokeGrant()
 		f.ExpectDenial(f.Evaluate(authzenRepoResource, nil), "grant_missing")
 	})
 

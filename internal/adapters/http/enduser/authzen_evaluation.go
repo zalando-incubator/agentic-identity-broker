@@ -19,6 +19,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 )
 
@@ -222,15 +224,18 @@ func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span,
 		attribute.String("token_exchange.recovery_action", string(diagnostic.RecoveryAction())),
 		attribute.String("token_exchange.recovery_target", string(diagnostic.RecoveryTarget())),
 	}
-	level, message := slog.LevelInfo, "access_evaluation_permitted"
+	level, event := slog.LevelInfo, "authzen.access_evaluation.permitted"
 	switch decision.Kind {
 	case tokenexchange.DecisionPermit:
 		attrs = append(attrs, attribute.String("access_evaluation.decision", "permit"), attribute.Int("access_evaluation.max_age", decision.MaxAge))
 	case tokenexchange.DecisionDeny:
-		message = "access_evaluation_denied"
+		event = "authzen.access_evaluation.denied"
 		attrs = append(attrs, attribute.String("access_evaluation.decision", "deny"))
 	default:
-		level, message = slog.LevelError, "access_evaluation_failed"
+		level, event = slog.LevelError, "authzen.access_evaluation.failed"
+		if decision.Status >= http.StatusBadRequest && decision.Status < http.StatusInternalServerError {
+			level = slog.LevelWarn
+		}
 		attrs = append(attrs, attribute.String("access_evaluation.decision", "error"), attribute.Int("http.response.status_code", decision.Status))
 		span.SetStatus(codes.Error, "access evaluation failed")
 	}
@@ -254,10 +259,15 @@ func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span,
 	}
 	span.SetAttributes(attrs...)
 	if h.Logger != nil {
-		logAttrs := make([]slog.Attr, 0, len(attrs))
+		principal := id.NewPrincipal(security.AnonymousActor)
+		if sc, ok := security.FromContext(ctx); ok {
+			principal = sc.Actor
+		}
+		logAttrs := make([]slog.Attr, 0, len(attrs)+2)
+		logAttrs = append(logAttrs, slog.String("event", event), slog.Any("principal", principal))
 		for _, attr := range attrs {
 			logAttrs = append(logAttrs, slog.Any(string(attr.Key), attr.Value.AsInterface()))
 		}
-		h.Logger.LogAttrs(ctx, level, message, logAttrs...)
+		h.Logger.LogAttrs(ctx, level, "access evaluation completed", logAttrs...)
 	}
 }

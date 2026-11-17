@@ -243,6 +243,10 @@ func (f *authzenFixture) ExpectEvaluationIdentity(resp *helpers.AuthZENResponse,
 	}).Should(Equal(2), "exactly one in-handler audit and one perimeter access log share the response trace ID")
 	for _, record := range matching {
 		Expect(record).To(HaveKeyWithValue("actor", actor))
+		if record["token_exchange.operation"] == "access_evaluation" {
+			Expect(record).To(HaveKeyWithValue("principal", actor))
+			Expect(record).To(HaveKey("event"))
+		}
 		if peer == "" {
 			Expect(record).NotTo(HaveKey("calling_peer"))
 		} else {
@@ -290,6 +294,27 @@ func (f *authzenFixture) Exchange(resource string) (int, map[string]any) {
 func (f *authzenFixture) SeedSession(service *model.ThirdpartyOAuth2ProviderEntity, scopes []string) {
 	session := fixtures.SessionForServiceWithScopes(f.Principal.String(), service.ID.String(), scopes)
 	Expect(f.Storage.UserSessions().Create(context.Background(), session)).To(Succeed())
+}
+
+func (f *authzenFixture) RevokeGrant() {
+	resp, err := f.Enduser.DirectRequest(http.MethodDelete, "/api/consent/agents/"+f.Agent.ID.String()+"/grants", f.Principal.String(), nil, nil)
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = resp.Body.Close() }()
+	Expect(resp.StatusCode).To(Equal(http.StatusNoContent))
+}
+
+func (f *authzenFixture) ConsentToRepo() {
+	body, err := json.Marshal(map[string]any{
+		"granted_permission_sets": map[string][]string{
+			f.Reader.ID.String(): {f.Repo.ID.String()},
+			f.Writer.ID.String(): {f.Repo.ID.String()},
+		},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	resp, err := f.Enduser.AuthenticatedPOST("/api/consent/agents/"+f.Agent.ID.String()+"/grants", f.Principal.String(), "application/json", strings.NewReader(string(body)))
+	Expect(err).NotTo(HaveOccurred())
+	defer func() { _ = resp.Body.Close() }()
+	Expect(resp.StatusCode).To(Equal(http.StatusCreated))
 }
 
 func (f *authzenFixture) SaveGrant() {

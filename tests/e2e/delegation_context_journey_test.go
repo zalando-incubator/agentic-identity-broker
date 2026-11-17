@@ -133,7 +133,7 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 	It("re-resolves after permit freshness lapses and denies a revoked grant despite a cached token", func() {
 		j := newDelegationJourney(2*time.Second, true)
 		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		Expect(j.broker.Storage.UserGrants().Delete(context.Background(), j.broker.Grant.ID)).To(Succeed())
+		j.broker.RevokeGrant()
 		Eventually(func() uint32 {
 			headersResp, _ := j.BodyCall(authzenRepoResource)
 			return extprochelpers.ExtractImmediateResponseStatus(headersResp)
@@ -144,9 +144,9 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 	It("re-consults after consent immediately and preserves the body exchange cooldown", func() {
 		j := newDelegationJourney(time.Second, true)
 		consentURL := j.broker.Enduser.BaseURL() + "/agents/" + j.broker.Agent.ID.String()
-		Expect(j.broker.Storage.UserGrants().Delete(context.Background(), j.broker.Grant.ID)).To(Succeed())
+		j.broker.RevokeGrant()
 		expectDelegationDenied(j.HeaderOnly(authzenRepoResource, nil), consentURL)
-		Expect(j.broker.Storage.UserGrants().Create(context.Background(), j.broker.Grant)).To(Succeed())
+		j.broker.ConsentToRepo()
 		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(j.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "),
 			"consent takes effect immediately: the denial was not cached")
 		Expect(j.broker.EvaluationCount()).To(Equal(2))
@@ -154,12 +154,12 @@ var _ = Describe("ExtProc delegation context journeys", Label("delegation-contex
 		// A separate consumer has no exchanged token from the header-only permit above.
 		bodyJourney := newDelegationJourney(time.Second, true)
 		bodyConsentURL := bodyJourney.broker.Enduser.BaseURL() + "/agents/" + bodyJourney.broker.Agent.ID.String()
-		Expect(bodyJourney.broker.Storage.UserGrants().Delete(context.Background(), bodyJourney.broker.Grant.ID)).To(Succeed())
+		bodyJourney.broker.RevokeGrant()
 		headersResp, bodyResp := bodyJourney.BodyCall(authzenRepoResource)
 		Expect(bodyResp).To(BeNil())
 		expectDelegationDenied(headersResp, bodyConsentURL)
 		Expect(bodyJourney.broker.EvaluationCount()).To(Equal(1))
-		Expect(bodyJourney.broker.Storage.UserGrants().Create(context.Background(), bodyJourney.broker.Grant)).To(Succeed())
+		bodyJourney.broker.ConsentToRepo()
 		headersResp, bodyResp = bodyJourney.BodyCall(authzenRepoResource)
 		Expect(bodyResp).To(BeNil(), "the independent exchange cooldown still blocks forwarding")
 		Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))

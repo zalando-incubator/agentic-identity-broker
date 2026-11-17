@@ -16,7 +16,9 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 )
@@ -72,10 +74,57 @@ func permitDecision() tokenexchange.DelegationDecision {
 func serveEvaluation(t *testing.T, evaluator *stubEvaluator, req *http.Request) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	var logs bytes.Buffer
-	handler := &AuthZENEvaluationHandler{Evaluator: evaluator, Logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+	handler := &AuthZENEvaluationHandler{Evaluator: evaluator, Logger: slog.New(telemetry.NewPrincipalPolicyHandler(slog.NewJSONHandler(&logs, nil)))}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec, logs.String()
+}
+
+func TestAuthZENEvaluation_AuditRecords(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name     string
+		decision tokenexchange.DelegationDecision
+		event    string
+		level    string
+	}{
+		{"permit", permitDecision(), "authzen.access_evaluation.permitted", "INFO"},
+		{"denial", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionDeny}, "authzen.access_evaluation.denied", "INFO"},
+		{"malformed", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusBadRequest}, "authzen.access_evaluation.failed", "WARN"},
+		{"unauthenticated", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusUnauthorized}, "authzen.access_evaluation.failed", "WARN"},
+		{"forbidden", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusForbidden}, "authzen.access_evaluation.failed", "WARN"},
+		{"server failure", tokenexchange.DelegationDecision{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError}, "authzen.access_evaluation.failed", "ERROR"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var logs bytes.Buffer
+			logger := slog.New(telemetry.NewPrincipalPolicyHandler(slog.NewJSONHandler(&logs, nil)))
+			handler := &AuthZENEvaluationHandler{Evaluator: &stubEvaluator{decision: tt.decision}, Logger: logger}
+			ctx := security.WithCaptureHolder(context.Background(), security.NewCaptureHolder(security.TransportCapture{}))
+			security.FinalizeCaptureHolder(ctx, id.Principal("verified-owner"), "gateway")
+			handler.ServeHTTP(httptest.NewRecorder(), newEvaluationRequest(validEvaluationBody()).WithContext(ctx))
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
+			assert.Equal(t, tt.event, record["event"])
+			assert.Equal(t, tt.level, record["level"])
+			assert.Equal(t, "verified-owner", record["principal"])
+			assert.NotContains(t, logs.String(), evalSubjectMarker)
+			assert.NotContains(t, logs.String(), evalAssertionMarker)
+		})
+	}
+}
+
+func TestAuthZENEvaluation_EarlyFailureAudit(t *testing.T) {
+	t.Parallel()
+	req := newEvaluationRequest(validEvaluationBody())
+	req.Header.Del("Authorization")
+	ctx := security.WithCaptureHolder(req.Context(), security.NewCaptureHolder(security.TransportCapture{}))
+	_, logs := serveEvaluation(t, &stubEvaluator{}, req.WithContext(ctx))
+	var record map[string]any
+	require.NoError(t, json.Unmarshal([]byte(logs), &record))
+	assert.Equal(t, "authzen.access_evaluation.failed", record["event"])
+	assert.Equal(t, "WARN", record["level"])
+	assert.Equal(t, security.AnonymousActor, record["principal"])
 }
 
 func TestAuthZENEvaluation_Permit(t *testing.T) {
