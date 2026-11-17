@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestResolutionTelemetry_ClassifiesWithoutCredentials(t *testing.T) {
@@ -75,7 +76,9 @@ func TestResolutionTelemetry_ClassifiesWithoutCredentials(t *testing.T) {
 				} else {
 					assert.NotEqual(t, codes.Error, span.Status().Code)
 				}
+				assert.Equal(t, "extproc", span.InstrumentationScope().Name)
 				if span.Name() == "extproc.delegation.resolve" {
+					assert.Equal(t, trace.SpanKindInternal, span.SpanKind())
 					cache := "miss"
 					if span == spans[len(spans)-1] && tt.outcome == "success" {
 						cache = "hit"
@@ -83,6 +86,7 @@ func TestResolutionTelemetry_ClassifiesWithoutCredentials(t *testing.T) {
 					assert.Equal(t, cache, attrs["delegation.cache"])
 				} else {
 					assert.Equal(t, "extproc.delegation.evaluate", span.Name())
+					assert.Equal(t, trace.SpanKindClient, span.SpanKind())
 				}
 				encoded, marshalErr := json.Marshal(tracetest.SpanStubFromReadOnlySpan(span))
 				require.NoError(t, marshalErr)

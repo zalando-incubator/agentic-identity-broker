@@ -2,9 +2,9 @@
 
 **Scope**: Feature 054 broker evaluation and standalone ExtProc delegation paths.
 **Binding sources**: `coding-standards/LOGGING.md`, `coding-standards/OPENTELEMETRY.md`, ADRs 027/033/048, SR-003/SR-004.
-**Status**: Baseline inventory is not compliance. Section 3 is the exact Proposed F2 migration (D-7); T103 remains required implementation work, including namespace registration through a permitted publication path. ADR-2's log-only mismatch diagnostic remains Proposed. Neither registration nor new approval is recorded here.
+**Status**: D-7 was approved by mjungsbluth on 2026-11-06 at https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728. Run 42297225880/1 implements section 3, registers both namespaces in `coding-standards/OPENTELEMETRY.md` and publishes the breaking-telemetry changelog/query migration in `docs/reference/token-exchange.md`. Section 1 preserves the pre-migration inventory, not current names. ADR-2's approved log-only mismatch diagnostic is still unimplemented.
 
-## 1. Existing signal inventory
+## 1. Historical pre-migration signal inventory
 
 | Signal | Scope / kind or level | Bounded metadata and handling |
 |---|---|---|
@@ -42,9 +42,9 @@ Infrastructure errors set a constant status description and `error.type` from `t
 
 This diagnostic does not rename any existing identifier and needs no new tracing namespace. It does not perform or replace F2's migration.
 
-## 3. Exact registry and identifier migration (Proposed D-7; required T103)
+## 3. Exact registry and identifier migration (approved D-7; T103)
 
-The baseline violates OPENTELEMETRY §§3.2, 3.3 and 4.1; historical green runs do not close this obligation. The 2026-11-06 F2 selection provenance in quickstart §13 is retained, but this concrete mapping is Proposed for current sign-off.
+The pre-migration baseline violated OPENTELEMETRY §§3.2, 3.3 and 4.1. The supplied five-item approval covers this concrete mapping. The old identifiers below are retained for query migration and historical review; production now emits only the targets. No audit record or span is dual-emitted. Query both old and new names during rolling deployment and the desired historical retention window, then retire the old query branches; attribute filters remain unchanged.
 
 | Signal | Old identifier / kind | Required target / explicit kind |
 |---|---|---|
@@ -68,7 +68,7 @@ Attribute values remain `access_evaluation.decision=permit|deny|error`, permit-o
 
 **Migration behavior**: replace broker span/event identifiers atomically; do not dual-emit audit records or duplicate spans. Preserve bounded outcomes/levels and constructor plumbing. Update queries, pinned tests and diagnostic docs to the target names. Record old→new identifiers, unchanged attribute names and rollout guidance in a dedicated breaking-telemetry changelog section of `docs/reference/token-exchange.md` and its feature-local counterpart here. No metric rename exists, so the one-release metric dual-emission rule does not apply. Main alternative: retain old identifiers under a standard exception; rejected because the existing scope/name rule can be followed without weakening it.
 
-**Permitted publication prerequisite**: the maintainer must enable the implementation worker's allowed-file configuration for `coding-standards/OPENTELEMETRY.md` (and the existing code/test/reference paths), or publish the exact namespace rows in an earlier maintainer change and supply that updated base/head to the implementation run. T103 may publish only when registration and its code changes have a permitted path. This feature-document worker does not edit the standard, CI/workflows or allowlist, and does not claim registration already happened. T103 remains in-scope required compliance; absence of this permission defers only that task, never waives the violation or allows overall implementation completion.
+**Publication prerequisite satisfied in run 42297225880/1**: the implementation workflow now allows `coding-standards/**`, and this change adds both exact namespace rows together with the code/test migration. No workflow, permission or allowlist is changed by the implementation worker. The former publication blocker is resolved; telemetry compliance does not establish completion of the independent token-binding work.
 
 ## 4. Metrics
 

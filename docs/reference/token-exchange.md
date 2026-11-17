@@ -27,6 +27,32 @@ The broker supports two RFC 8693 flows:
 
 The following sections describe the request and response contracts.
 
+## Breaking telemetry changelog
+
+### AuthZEN delegation evaluation (feature 054)
+
+The broker evaluation span and audit event identifiers change atomically:
+
+| Previous identifier | Replacement |
+|---|---|
+| `authzen.access_evaluation` | `tokenexchange.access_evaluation` |
+| `authzen.access_evaluation.permitted` | `tokenexchange.access_evaluation.permitted` |
+| `authzen.access_evaluation.denied` | `tokenexchange.access_evaluation.denied` |
+| `authzen.access_evaluation.failed` | `tokenexchange.access_evaluation.failed` |
+
+Update trace queries, event filters, alerts and dashboards to the replacement names when
+deploying this revision. During a rolling deployment, query both names with an OR filter
+(or a union) to cover older instances and retained historical records; sum each record once.
+New instances emit only the replacement names, not duplicate spans or audit events. Retire
+the old query branches after older instances and the required historical window expire.
+
+The broker scope remains `tokenexchange`; its evaluation span is explicitly Internal.
+The ExtProc scope and span names remain `extproc`, `extproc.delegation.resolve` (Internal)
+and `extproc.delegation.evaluate` (Client). Attribute names and values are unchanged:
+`access_evaluation.decision=permit|deny|error`, permit-only integer
+`access_evaluation.max_age` (0–60), and `delegation.cache=hit|miss`. Both namespaces are
+registered in the OpenTelemetry standard. No metric is renamed or dual-emitted.
+
 ## Overview
 
 - **Endpoint:** `POST /oauth2/token` (end-user server, port 8000).
