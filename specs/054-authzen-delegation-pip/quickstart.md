@@ -2,7 +2,7 @@
 
 **Feature**: `specs/054-authzen-delegation-pip` | **Plan**: [plan.md](./plan.md)
 
-**Latest outcome**: The current design adds Proposed ADR-2 and US3.11; the regenerated 120-task list retains 104 historically checked tasks and 16 unchecked tasks. T001 requires explicit ADR-2 approval; T108–T120 cover its design, genuine TDD and fresh validation. F2/F3 remain open as T103/T104. Section 12 records completion of the original 102-task inventory and approved D-6 alternative validation only; §13 records F4–F6 and partial review remediation. Historical validation is not evidence for new binding behavior. The original test-first sequence was not performed; its approved exception does not rewrite that history.
+**Latest outcome**: Document remediation reconciles all eight findings. Proposed ADR-2/API-7/D-8 define identity-safe binding reuse, terminal concurrency conflict and explicit provider/provenance limits; Proposed ADR-3 defines canonical-field guidance with present compatibility; D-7 records exact telemetry migration/registration. Current 122 tasks retain 104 historical checked and 18 unchecked markers. T103 publication permission and T104 follow-up issue remain external implementation prerequisites, not waived obligations. Original D-6 closure remains historical, not evidence for US3.11–US3.13.
 
 This guide proves the feature end to end after implementation. It is a validation guide, not an
 implementation description. The contracts are in [contracts/](./contracts/). The value objects
@@ -87,7 +87,7 @@ Spot-check these observable outcomes against spec Journeys 1–3:
 ginkgo -v --label-filter="delegation-context" ./tests/e2e/
 ```
 
-**Expected**: 12 specs pass (US3.1–US3.11 and US4.5). They run the production ExtProc
+**Expected after approved implementation**: 14 specs pass (US3.1–US3.13 and US4.5). They run the production ExtProc
 composition against the real broker test server. US3.11 is pending implementation under
 Proposed ADR-2; until then 11 specs exist. Confirm these outcomes:
 
@@ -721,7 +721,7 @@ claim the source wording was repaired. The remaining LOW wording inconsistency i
 not used to gate independently completed implementation or to conceal the original deviation.
 The current tasks-phase design edit reconciles that summary in `plan.md`'s Complexity Tracking without changing any approved requirement, runtime behavior, historical exception or validation obligation.
 
-## 13. Approved review remediation (run 42177932182/1)
+## 13. Approved review remediation (run 42177932182/1 — historical)
 
 The 2026-11-06 proposal selection by `mjungsbluth` at `2026-11-06T06:59:39Z` covers
 F2–F6: <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407>.
@@ -767,3 +767,13 @@ Thus all 43 non-container acceptance scenarios pass. US2.19, `just test-e2e-dock
 container tests on the pushed commit, not validated locally. No frontend behavior changed.
 Optional before/after implementation commit hooks were skipped; no mandatory hook applies.
 The tracked legacy `.specify/feature.json` is restored before publication and not committed.
+
+## 14. Current remediation validation design (run 42232121230/1)
+
+The revised design covers 47 scenarios: 29 broker, 14 consumer (US3.1–US3.13 and US4.5), and four startup. The local feature gate is 46 scenarios; US2.19 remains downstream container evidence. Historical §13 passing runs cover the earlier 44-scenario scope only.
+
+- T111/T112 must first fail identity-based deletion/claim/delivery tests with barriers: equal-token different-generation replacements, failed compare-and-delete with compatible/incompatible successors, immutable shared first claim, detached handles and non-cacheable shared successes. Retry conflicts produce API-7 503 without a third exchange/rebind/stale fallback; expired final forwarding uses the existing unavailable 503.
+- T110/T121/T122 each add one acceptance `It()` for US3.11/US3.12/US3.13; T113 records compiling semantic-red evidence before T114–T117. The first narrows the provider session, the second intentionally does not (same broader token under a new handle), and the third uses controlled broker barriers for differing grant reads and shared-result conflict on both paths.
+- T103 tests the exact observability §3 target mapping and explicit kinds before implementation. Namespace registration and breaking changelog/query migration must be published through a permitted path; the current standard remains unmodified here. Historical green telemetry tests are not compliance evidence.
+- T104 requires supplied ADR-3 approval and the maintainer-created issue URL before recording canonical-field ADR/docs changes. Both compatibility inputs stay unchanged today; no OPA removal/deprecation is tested or implemented here.
+- T119/T120 require fresh applicable local/race/regression/full non-container gates for all three new acceptance scenarios and the revised observability/compatibility design. Record actual commands and file:line mappings only after implementation; no new red/green or runtime completion is claimed by this document phase.

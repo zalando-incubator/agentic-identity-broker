@@ -28,66 +28,31 @@ decision: concurrently with exchange on the body path, and before policy and exc
 header-only path. Context that expires before policy use is rejected with 503. Every failure is
 closed. ExtProc decodes the permit into its own typed struct and adds `principal`, `agent`,
 `resource`, `grant`, and `permission_sets` directly to `input.context`. On both enabled paths,
-it fills the permanently retained `granted_permission_sets` and
+it fills the currently retained compatibility `granted_permission_sets` and
 `granted_permission_sets_available: true` from the permit (research R15).
 
 The `granted_permission_sets` field of the exchange response is marked deprecated. Its removal
 is a later, separately approved 2.0.0 contract change.
 
-In enabled mode the permit is also authoritative for upstream scopes (Proposed ADR-2, research
-R19). Each ADR 012 token entry is bound to the permit's `resource.scopes` set and
-`grant.updated_at` instant. A cached token whose binding differs from the current permit is not
-forwarded; ExtProc removes it and exchanges again first.
+In enabled mode the permit governs result-handle reuse, not provider-token capability or exchange provenance (Proposed ADR-2 and D-8; research R19). Binding compares permit scope sets and grant-update instants. Opaque entry identities preserve same-token replacements; a synchronized binding cell shared with followers permits one atomic first claim, never rebinding. A mismatched additional-exchange delivery fails closed with Proposed API-7 503.
 
-## Current task reconciliation
+## Current task reconciliation and approval disposition
 
-The original 102-task inventory and D-6 alternative-validation disposition are historical completion records in `quickstart.md` §§11–12, not evidence for the new permit-bound token revision. F4–F6 are recorded complete in §13; F2/F3 remain open as T103/T104. The current 120-task list reopens only T001 for explicit ADR-2 sign-off and adds unchecked T108–T120 for observability design, US3.11, binding/cache/order tests, implementation, documentation and fresh compliance gates. No new approval or implementation is recorded by this design phase. Earlier descriptions of pending API-2/D-5/D-6 sign-off and historical sequencing below describe the original design gates; recorded approval/evidence supersedes them for that original scope only. ADR-2 remains Proposed.
+The original 102-task inventory and D-6 alternative validation are historical completion records in quickstart §§11–12, not evidence for new work. Original API-2/D-5/D-6 approval is recorded on the 2026-11-05 approval comment; D-6 is closed by its completed alternative validation, not by performing the missing original sequence. F4–F6 are recorded complete in §13. T103/F2 and T104/F3 remain required open work.
 
-## Clarifications — planning direction F1 (2026-11-06)
+The current 122-task inventory retains 104 historical checked markers and 18 unchecked tasks, including T001, T103/T104 and T108–T122. It covers the Proposed binding revision, telemetry mapping, canonical-field guidance and US3.11–US3.13 with genuine test-first evidence. No new approval or implementation is recorded here.
 
-`mjungsbluth`'s planning command for this run decided F1: the permit is authoritative for
-upstream scopes. When a fresh permit's scopes or `grant.updated_at` differ from those under
-which the cached ADR 012 token was exchanged, ExtProc must not forward the cached token; it
-removes that cache entry and exchanges again before forwarding. Applied to:
+## Clarifications — analysis remediation (run 42232121230/1)
 
-- spec FR-020, US3.11, SC-007, an edge case, and Journey 5 (narrowed grant reaches upstream);
-- the Proposed [ADR 048 revision draft](./adr-048-revision-permit-bound-tokens.md) (new §10), contract §3.1,
-  data model §3.6, research R19, design §6, and the testing strategy below.
+- I1/U1: delete by result identity, never credential bytes. All cache/flight/non-cacheable results carry shared first-claim binding ownership. A failed delete preserves the replacement; inspect it once, then at most one extra exchange. Revalidate that delivery; conflict is terminal API-7 503. Main alternative: rebind/loop, rejected as unsafe. Contract §3.1 and model §3.6 are authoritative.
+- I2: FR-020 now states compatible reuse only, explicitly retaining unchanged broader provider tokens and concurrent/unbound first use without exchange grant provenance. US3.12/US3.13 and Journey 6 pin the limits. Stronger narrowing or exchange-version members are the main alternative, requiring separate expanded API/ADR scope. The recommended limited guarantee is Proposed D-8 together with ADR-2, not an unapproved assertion of upstream downscoping.
+- C1/A1: observability §3 specifies exact old→new identifiers, explicit kinds, required namespace rows and rollout/changelog behavior. D-7 is Proposed; T103 remains mandatory. The maintainer must enable a permitted standard-file publication path or supply an earlier namespace-registration change before implementation can publish it. No waiver or alternate namespace is silently selected.
+- U2: Proposed ADR-3 and contract §4.1 designate `input.context.permission_sets` canonical for new enabled policies, retaining both compatibility inputs today. Permanent retention is replaced only by a future separately approved removal boundary. T104 still requires a maintainer-created issue; current removal/deprecation is excluded. Main alternative: permanent duplication.
+- I3/I4: repair approval references and active original-scope dispositions, preserving prior approval and historical evidence. New work is not covered by D-6.
 
-Settled within existing patterns: the binding compares scope sets and timestamp instants; an
-unbound token is bound by the first permit that uses it; compare-and-delete preserves a
-concurrent request's new token; a failed re-exchange never falls back to the removed token;
-one re-exchange per request at most. Recorded limitation: the broker returns the provider
-session's token, so upstream sees narrowed provider scopes only when the session carries them.
-Residual race: a grant change between the concurrent exchange and evaluation on a double cache
-miss can bind a token to the newer version (bounded by the ADR 012 TTL). The main alternative,
-a grant version in the `/oauth2/token` response, would change the exchange contract.
-Sign-off is approval item ADR-2. This planning run records no approval.
+### Historical planning/review direction (2026-11-06)
 
-## Clarifications — approved review remediation (2026-11-06)
-
-[The proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6669627407),
-selected by `mjungsbluth` at `2026-11-06T06:59:39Z`, is the reason for these scoped changes:
-
-- **F4**: Rename only the ExtProc port to `DelegationContextResolver`; the broker domain
-  `DelegationResolver` and existing `WithDelegationResolver` composition method stay unchanged.
-  The permit and enabled OPA context expose `resource.service_id`, not `resource.id`.
-  Update OpenAPI first, then producer, typed consumer, policy fixtures, docs and glossary.
-- **F5**: Add `tests/integration/delegation_contract_test.go` to compare nested producer/wire
-  field sets and both denial-code sets to the authoritative OpenAPI declarations without
-  exposing test-only production APIs or introducing a broker dependency into ExtProc.
-- **F6**: Add bounded event identifiers to ExtProc denial, unavailability and permit-expiry
-  records and assert them in the existing credential-safe log tests.
-
-F2 remains unchanged because the publication allowlist rejects its required namespace
-registration in `coding-standards/OPENTELEMETRY.md`; its partial implementation was withdrawn
-before publication. F3 remains unchanged because this workflow cannot create the required
-follow-up issue. Its selected recommendation is not replaced with the immediate-removal alternative. F1 is not
-assigned. New tasks T103–T107 below the historical task inventory cover this run only.
-Validation: `just check`, `just test`, `just extproc-test`, `just test-integration`,
-`just test-e2e-backend` and `ginkgo -v --procs=2 --skip=Agentgateway ./tests/e2e/extproc/`.
-The unfiltered `just test-e2e-extproc` includes container scenarios; those and the other
-container suites are deferred downstream.
+F1 requested upstream scope authority; the Proposed limited interpretation and stronger alternative are now explicit in D-8. The earlier selected F2/F3 recommendations and F4–F6 provenance remain in quickstart §13 and ADR 048 Revision history. Previous failed publication of namespace registration is historical, not a standards exception or completion evidence. F3's follow-up issue remains an external prerequisite; this document worker cannot create it. No approval is inferred from this reconciliation.
 
 ## Technical Context
 
@@ -145,9 +110,9 @@ consumer. No React UI change.
 - 2 new broker routes and 0 new broker configuration keys
 - 4 new ExtProc keys
 - 1 new ExtProc package (`internal/extproc/delegation`)
-- 1 new proposed ADR
-- 45 acceptance scenarios (US1.1–US1.8, US2.1–US2.20, US3.1–US3.11, and US4.1–US4.6);
-  US3.11 is new under Proposed ADR-2 and is not covered by D-6
+- 2 Proposed feature-local ADR 048 revision drafts
+- 47 acceptance scenarios (US1.1–US1.8, US2.1–US2.20, US3.1–US3.13, and US4.1–US4.6);
+  US3.11–US3.13 are new under Proposed ADR-2/API-7/D-8 and not covered by D-6
 
 **Review decisions (2026-10-28)**: The maintainer review submitted with `/speckit-plan`
 answered I1 (an unusable `max-age` fails closed), U1 (one simple deadline with accepted skew),
@@ -155,7 +120,7 @@ and U2 (expiry before policy use returns 503). It endorsed the AuthZEN contract 
 decision set, which includes the I2 audit-seam extension. [remediation.md](./remediation.md)
 records the answers and where they apply. These answers are maintainer direction for the
 design. Formal sign-off happens through the pipeline's approval comment and covers the rows in
-[Approval Items](#approval-items). Until then the contract and the ADR draft are Proposed.
+[Approval Items](#approval-items). Original approval is now recorded in quickstart §§11–12; the new revision drafts remain Proposed.
 
 **Spec clarification (2026-10-28)**: The review also asked to extend the existing OPA context
 attributes instead of adding `input.context.delegation` and `delegation_available`. The
@@ -171,8 +136,7 @@ research R15, data model §§3.3.1 and 3.5, and ExtProc contract §4.
 
 The Pass entries below describe design coverage, not new runtime validation or historical
 test-first compliance. Implementation history and remaining evidence gaps are retained in
-`quickstart.md`; task regeneration does not close them. Current sign-off still gates revised
-API-2, D-5 and the Proposed D-6 historical-sequencing exception. Local work must not wait for container-only evidence.
+`quickstart.md`; task regeneration does not close them. Original API-2/D-5 approval and D-6 closure are recorded in quickstart §§11–12. Current sign-off gates only the new revisions (ADR-2/ADR-3/API-7/D-7/D-8). Local work must not wait for container-only evidence.
 
 | Check | Status | Plan |
 |---|---|---|
@@ -182,16 +146,16 @@ API-2, D-5 and the Proposed D-6 historical-sequencing exception. Local work must
 | Configuration design | Pass | Broker: no new keys (FR-001). ExtProc: 4 keys with YAML in [contracts/extproc-delegation-context.md](./contracts/extproc-delegation-context.md) §1 and spec Journey 4. |
 | Config examples | Pass | Add `examples/config/extproc-delegation-context.yaml` and index it in `examples/config/README.md`. |
 | Helm deployment contract | Pass (boundary) | The broker chart gets no change: the broker has no new keys, and ExtProc is not deployed by `charts/agentic-identity-broker/`. ExtProc keys go to its own config path (ADR 011): `docs/configuration.md`, `configs/config.extproc.docker.yaml` (commented), and `docs/docker-compose-setup.md`. |
-| API design first | Pass with precondition | [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) is the proposed OpenAPI delta. `api/enduser/openapi.yaml` is edited only after confirmation. |
-| API documentation | Pass | `api/enduser/openapi.yaml` (end-user; `1.1.0` → `1.2.0` (Proposed)) and `docs/api/authzen-evaluation.md`. No admin change. |
-| API changes confirmed | Pass with precondition | The maintainer endorsed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) in the 2026-10-28 review: the endpoints, denial form (a), and the deprecation marker (R12). The API-003 check against the final AuthZEN text found that the standard requires receivers to ignore unknown request fields; the maintainer confirmed that revision (2026-10-31) and directed on 2026-11-05 that R10, data model §2.5, the contract and the spec ignore unknown members, AuthZEN `properties` and `context` members other than `agent`, matching ADR 047 §1 and the OpenAPI. Sign-off is approval items API-1–API-3, with API-2 revised accordingly. |
+| API design first | Original approval recorded; new API-7 pending | Original OpenAPI delta has approval/evidence in quickstart §§11–12. API-7 is the new ExtProc outcome contract in feature contracts §3.1; implement only after supplied sign-off. |
+| API documentation | Pass | `api/enduser/openapi.yaml` (end-user; `1.1.0` → `1.2.0` (original approved delta)) and `docs/api/authzen-evaluation.md`. No admin change. |
+| API changes confirmed | Pass with precondition | The maintainer endorsed [contracts/authzen-evaluation-api.md](./contracts/authzen-evaluation-api.md) in the 2026-10-28 review: the endpoints, denial form (a), and the deprecation marker (R12). The API-003 check against the final AuthZEN text found that the standard requires receivers to ignore unknown request fields; the maintainer confirmed that revision (2026-10-31) and directed on 2026-11-05 that R10, data model §2.5, the contract and the spec ignore unknown members, AuthZEN `properties` and `context` members other than `agent`, matching ADR 048 §1 and the OpenAPI. Original supplied API-1–API-3 approval, including revised API-2, is recorded in quickstart §11; this is not an outstanding gate. |
 | Database design | Not applicable | No schema change and no migration. |
-| E2E acceptance tests | Design covered; historical sequence unresolved | 45 scenarios are mapped below. US3.11 (ADR-2) is new and must be written test-first; D-6 covers only the original 44. `quickstart.md` §7 records consumer/startup tests authored alongside implementation, not before it. Proposed D-6 documents the VIII/XIII exception and alternative validation; no exception is granted here. |
+| E2E acceptance tests | Design covered; original D-6 disposition closed | 47 scenarios mapped below. US3.11–US3.13 are new and require test-first evidence. D-6 covers only the original 44; quickstart §§11–12 records supplied approval and completed alternative validation, not a performed original sequence. |
 | E2E test mapping | Pass (design coverage) | 1:1 mapping per scenario. The denial-matrix rows are separate `It()` blocks; current mapping and passing runs do not establish original test-first order. |
-| E2E red phase | Historical compliance unresolved | The design requires concrete status/header/JSON/gRPC/count assertions. `quickstart.md` §§7–8 distinguish the historical 28-scenario broker red run and later correction evidence from missing original unit/consumer/startup red evidence. T029–T031 compile-only scaffolding was not performed. See [D-6](./historical-validation-exception.md); T027/T029–T031/T080/T097 remain unchecked. |
+| E2E red phase | Original deviation disposed of through D-6 | Concrete status/header/JSON/gRPC/count assertions remain required. Original missing sequencing was not performed; historical tasks are checked only through approved D-6 alternative validation in quickstart §12. New T110–T122 require genuine semantic-red evidence. |
 | Frontend Playwright E2E | Not applicable | No React change. Consent and revocation reuse the existing UI and APIs. |
 | Frontend screenshots | Not applicable | No UI state. |
-| Concrete example journeys (XIV) | Pass | The spec has five linked journeys with configuration, HTTP exchanges, and decoded input JWT claims, including Journey 5 for US3.11. No wireframes, because there is no UI. |
+| Concrete example journeys (XIV) | Pass | The spec has six linked journeys with configuration, HTTP exchanges, and decoded input JWT claims, including Journey 5 for US3.11. No wireframes, because there is no UI. |
 
 ### Implementation considerations
 
@@ -212,9 +176,7 @@ API-2, D-5 and the Proposed D-6 historical-sequencing exception. Local work must
 
 ### Post-design re-check
 
-The post-design **coverage** gate passes, but historical VIII/XIII execution compliance remains
-unresolved pending D-6 sign-off and its alternative validation. No full constitutional pass
-is claimed. The 2026-10-28 spec clarification settled the OPA input shape,
+The post-design **coverage** gate is distinct from runtime compliance. Original VIII/XIII deviation is disposed of through supplied D-6 approval and completed alternative validation (quickstart §12); no original sequencing is retroactively claimed. Current T103 compliance and new-work validation remain open. The 2026-10-28 spec clarification settled the OPA input shape,
 and research R15, data model §3.5, and ExtProc contract §4 now apply it. The freshness findings
 are answered and applied, as recorded in [remediation.md](./remediation.md). The open items
 in the next section are implementation-time gates. They do not block the design.
@@ -244,57 +206,41 @@ Maintainer direction from the 2026-10-28 review and clarification, applied in th
 - **AuthZEN contract**: endorsed. This covers the endpoint shapes, the error mapping (R6),
   request-member handling (R10, revised 2026-11-05 to ignore unknown members per the AuthZEN
   1.0 HTTPS binding), the plain-UUID anchor, denial form (a) (R11), and the
-  deprecation marker (R12). The review used a stale version baseline; `1.2.0` is now Proposed
-  from the existing `1.1.0` and remains subject to API-3 sign-off.
+  deprecation marker (R12). The review used a stale baseline; the corrected `1.1.0` → `1.2.0` delta has original API-3 approval recorded in quickstart §11.
 - **New ADR**: the R16 decision set is endorsed, including the I2 audit-perimeter extension,
   and recorded in [ADR 047](../../adrs/047-authzen-delegation-pip.md).
 
-Historical implementation approval is recorded in `quickstart.md` §7 and ADR 047. The table
-below remains the current sign-off inventory, including revised API-2 and D-5; historical
-approval is not automatically approval of later revisions. No approval is recorded here.
+Original implementation approvals and D-6 closure are recorded in quickstart §§11–12 and ADR 048. The table below preserves that inventory as recorded history; this phase does not grant any approval or reopen original API-2/D-5/D-6.
 
-Review direction is not sign-off. Every consequential item is registered in
-[Approval Items](#approval-items). Implementation proceeds only for the items that the
-maintainer's 👍 on the pipeline's approval comment covers.
+Still open for implementation:
 
-Still open:
-
-1. **Sign off the current [Approval Items](#approval-items)**, including revised API-2,
-   D-5, D-6 and the new ADR-2 (permit-bound exchanged tokens). D-6 proposes a narrow historical VIII/XIII sequencing exception with alternative
-   validation in [historical-validation-exception.md](./historical-validation-exception.md).
-   Historical approval provenance for the original decision set is retained in
-   `quickstart.md` §7 and ADR 047; it does not authorize later revisions automatically.
-   T001 is reopened and records only the approval supplied to implementation. ADR 047 has
-   already moved to `adrs/047-authzen-delegation-pip.md`; preserve that history rather than
-   recreating or moving it again. Any future covered feature-local draft is accepted and
-   moved only by implementation with the supplied approval.
-2. **Retain API-003 verification**: `quickstart.md` §7 records verified final-standard
-   evidence for discovery names, path insertion, denial form (a) and ignore-unknown handling.
-   The earlier planning TLS failure is historical, not an unresolved research gate. The
-   revised contract still requires sign-off; a new conflict requires a Proposed approval
-   item rather than an unapproved implementation change.
-3. **Remove `granted_permission_sets` later**: the removal needs a separately approved `2.0.0`
-   contract change, one release after the resolver ships (R12, API-006).
-4. **Decide whether to file GitHub issues** for the two deferred findings in [research.md](./research.md).
+1. Supplied approval must cover Proposed ADR-2, ADR-3, API-7, D-7 and D-8 before implementing those changes. T001 incorporates only covered drafts and preserves original ADR 048 provenance.
+2. T103 requires a permitted publication path for the exact namespace registration and migration (observability §3); no standards waiver or partial compliance claim.
+3. T104 requires a maintainer-created follow-up issue before canonical-field ADR/docs implementation. Future OPA removal and FR-019 exchange-response removal are separately approved work, not this feature.
+4. Keep final-standard API-003 verification from quickstart §7; a genuinely new conflict requires a new Proposed item, not a silent change. The two unrelated collision findings remain deferred in research.
 
 ## Approval Items
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
-| API-1 | API | Proposed: add `GET /.well-known/authzen-configuration` to the end-user API whenever token exchange is configured, publishing `policy_decision_point` (public URL) and `access_evaluation_endpoint`; no broker configuration key. Alternative: a broker `authzen.enabled` flag (rejected by FR-001). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:32-61` |
-| API-2 | API | Proposed: add `POST /access/v1/evaluation` with bearer client-assertion auth; request members follow the AuthZEN 1.0 HTTPS binding — unknown members, AuthZEN `properties` and `context` members other than `agent` are ignored and never influence the decision, while `subject.type` (JWT token-type URN), `action.name` (token-exchange grant-type URN) and `resource.type` (`protected_resource`) are required exactly and a present `context` must be an object whose optional `agent` is a plain Agent UUID string anchor; the delegation is resolved from the verified subject token alone (R10, ADR 048 §1); permit context with non-empty principal/permission sets and non-empty canonical IDs when present (optional omissions and empty scope/service arrays retained), denial form (a) `reason_admin.code`/`reason_user.consent_url`, 400/401/403/500 `ErrorResponse` mapping, fixed 60 s `max-age` cap, `no-store` otherwise, and `X-Request-ID` echo. Alternatives: strict rejection of unknown members (violates AuthZEN 1.0); language-tagged denial form (b). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:63-262` |
-| API-3 | API | Proposed: bump end-user API from the current `1.1.0` to `1.2.0` and mark `/oauth2/token` `granted_permission_sets` deprecated (still populated); removal is a later, separately approved `2.0.0` change. Alternative: intentionally reuse `1.1.0` (would not distinguish the new additive revision); immediate removal is rejected by FR-019. | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:264-277` |
-| API-4 | API | Proposed: add ExtProc keys `delegation_context.enabled` (false), `policy_decision_point` (origin of `oauth2.token_endpoint`), `request_timeout` (5s), `max_staleness` (60s), with startup validation and discovery failures. Alternative: no local staleness cap (broker `max-age` only). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:23-63` |
-| API-5 | API | Proposed: ExtProc enabled-mode client responses — 403 `access_denied` with `error_uri` consent URL for a delegation denial, and 503 `service_unavailable` `delegation context unavailable` for resolution errors or an expired permit deadline. Alternative: fall through to policy with availability `false` (rejected by FR-017). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:94-115` |
-| API-6 | API | Proposed: ExtProc OPA `input.context` gains direct `principal`, `agent`, `resource`, `grant`, `permission_sets` from a typed permit mapping; `granted_permission_sets*` are permit-derived and permanent, `true` on both enabled paths (header-only changes from `false`); disabled mode unchanged. Alternative: `delegation` wrapper and `delegation_available` flag (rejected by the 2026-10-28 clarification). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:157-237` |
-| ADR-1 | ADR | Proposed ADR 048: AuthZEN delegation PIP — information boundary, CEL reuse, freshness, fourth ExtProc port and ordering, supersession of ADR 028's enabled-mode input schema and ordering, ADR 033 deferred-finalization seam extension to evaluation, opt-in rationale, exchange-field deprecation. Alternative: amend ADR 028 in place (forbidden by Principle II). | `adrs/048-authzen-delegation-pip.md:1-197` |
-| ADR-2 | ADR | Proposed revision of ADR 048 (new §10, feature-local draft): in enabled mode the permit is authoritative for upstream scopes. Each ADR 012 token entry is bound to the permit's `resource.scopes` set and `grant.updated_at` instant; a cached token whose binding differs from the current permit is not forwarded, its entry is removed (compare-and-delete) and ExtProc exchanges again once before forwarding; a failed re-exchange uses existing exchange-error handling with no fallback to the removed token. Records the limitation that the broker returns the provider session token (narrowed provider scopes reach upstream only when the session carries them) and the residual double-miss race. D-5's re-consent cooldown is unchanged; ADR-2 revises only D-5's broader statement that the exchange cache is unchanged. Alternatives: forward until ADR 012 expiry; a grant version in the `/oauth2/token` response (exchange contract change). | `specs/054-authzen-delegation-pip/adr-048-revision-permit-bound-tokens.md:1-77` |
-| D-1 | Decision | Proposed: evaluation reuses the unchanged token-exchange caller CEL policy with `request.grant_type` set to the token-exchange URN, so a policy cannot distinguish evaluation from exchange. Alternative: an evaluation-specific grant type or discriminator. | `specs/054-authzen-delegation-pip/research.md:118-135` |
-| D-2 | Decision | Proposed: ExtProc fails closed on delegation — an unusable `max-age` (missing, zero, malformed, duplicate) or a permit deadline that passes before policy use returns 503; no stale-on-error, even with a cached exchanged token; one deadline `requestStart + min(max-age, max_staleness)` with accepted skew. Alternative: serve stale context during broker outages. | `adrs/048-authzen-delegation-pip.md:62-76` |
-| D-3 | Decision | Proposed: ExtProc delegation context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `adrs/048-authzen-delegation-pip.md:110-116` |
-| D-4 | Decision | Proposed scope: exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:734` |
-| D-5 | Decision | Proposed: on the body-bearing path, consent given after a delegation denial takes effect once the existing ADR 012 exchange re-consent cooldown (5 s) lapses, because the concurrent exchange during the denied request records that cooldown; the exchange cache is unchanged, the header-only path permits immediately, and delegation denials are never cached. Alternative: bypass the re-consent cooldown in enabled mode (changes ADR 012 exchange-cache semantics). | `adrs/048-authzen-delegation-pip.md:162-166` |
-| D-6 | Decision | Proposed: a one-time Constitution VIII/XIII exception for the original test-first/compile-only sequencing not performed for existing feature code, conditional on independent test review, all 44 scenario mappings and required local/downstream validation; retain the deviation permanently and require genuine test-first corrections. Alternative: decline the exception and retain the obligations as unresolved, without declaring completion. No existing validation failure or security guarantee is waived. | `specs/054-authzen-delegation-pip/historical-validation-exception.md:1-78` |
+| API-1 | API | Recorded original approval (quickstart §§11–12): add `GET /.well-known/authzen-configuration` to the end-user API whenever token exchange is configured, publishing `policy_decision_point` (public URL) and `access_evaluation_endpoint`; no broker configuration key. Alternative: a broker `authzen.enabled` flag (rejected by FR-001). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:32-61` |
+| API-2 | API | Recorded original approval (quickstart §§11–12): add `POST /access/v1/evaluation` with bearer client-assertion auth; request members follow the AuthZEN 1.0 HTTPS binding — unknown members, AuthZEN `properties` and `context` members other than `agent` are ignored and never influence the decision, while `subject.type` (JWT token-type URN), `action.name` (token-exchange grant-type URN) and `resource.type` (`protected_resource`) are required exactly and a present `context` must be an object whose optional `agent` is a plain Agent UUID string anchor; the delegation is resolved from the verified subject token alone (R10, ADR 048 §1); permit context with non-empty principal/permission sets and non-empty canonical IDs when present (optional omissions and empty scope/service arrays retained), denial form (a) `reason_admin.code`/`reason_user.consent_url`, 400/401/403/500 `ErrorResponse` mapping, fixed 60 s `max-age` cap, `no-store` otherwise, and `X-Request-ID` echo. Alternatives: strict rejection of unknown members (violates AuthZEN 1.0); language-tagged denial form (b). | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:63-262` |
+| API-3 | API | Recorded original approval (quickstart §§11–12): bump end-user API from the current `1.1.0` to `1.2.0` and mark `/oauth2/token` `granted_permission_sets` deprecated (still populated); removal is a later, separately approved `2.0.0` change. Alternative: intentionally reuse `1.1.0` (would not distinguish the new additive revision); immediate removal is rejected by FR-019. | `specs/054-authzen-delegation-pip/contracts/authzen-evaluation-api.md:264-277` |
+| API-4 | API | Recorded original approval (quickstart §§11–12): add ExtProc keys `delegation_context.enabled` (false), `policy_decision_point` (origin of `oauth2.token_endpoint`), `request_timeout` (5s), `max_staleness` (60s), with startup validation and discovery failures. Alternative: no local staleness cap (broker `max-age` only). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:22-62` |
+| API-5 | API | Recorded original approval (quickstart §§11–12): ExtProc enabled-mode client responses — 403 `access_denied` with `error_uri` consent URL for a delegation denial, and 503 `service_unavailable` `delegation context unavailable` for resolution errors or an expired permit deadline. Alternative: fall through to policy with availability `false` (rejected by FR-017). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:93-114` |
+| API-6 | API | Recorded original approval (quickstart §§11–12): ExtProc OPA `input.context` gains direct `principal`, `agent`, `resource`, `grant`, `permission_sets` from a typed permit mapping; `granted_permission_sets*` are permit-derived and retained today; the original permanent-retention commitment is separately revised by Proposed ADR-3, `true` on both enabled paths (header-only changes from `false`); disabled mode unchanged. Alternative: `delegation` wrapper and `delegation_available` flag (rejected by the 2026-10-28 clarification). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:154-213` |
+| ADR-1 | ADR | Recorded original ADR 048 approval (quickstart §§11–12): AuthZEN delegation PIP — information boundary, CEL reuse, freshness, fourth ExtProc port and ordering, supersession of ADR 028's enabled-mode input schema and ordering, ADR 033 deferred-finalization seam extension to evaluation, opt-in rationale, exchange-field deprecation. Alternative: amend ADR 028 in place (forbidden by Principle II). | `adrs/048-authzen-delegation-pip.md:1-197` |
+| ADR-2 | ADR | Proposed ADR 048 §10 revision: opaque result identities, atomic shared first-claim bindings, identity-based compare-and-delete, one additional exchange and terminal conflict without stale fallback. Governs compatible reuse, not provider downscoping or exchange provenance; D-5 cooldown unchanged. Main alternative: verified exchange-version fields or provider downscoping (separate API/scope). | `specs/054-authzen-delegation-pip/adr-048-revision-permit-bound-tokens.md:31-104` |
+| D-1 | Decision | Recorded original approval (quickstart §§11–12): evaluation reuses the unchanged token-exchange caller CEL policy with `request.grant_type` set to the token-exchange URN, so a policy cannot distinguish evaluation from exchange. Alternative: an evaluation-specific grant type or discriminator. | `specs/054-authzen-delegation-pip/research.md:118-135` |
+| D-2 | Decision | Recorded original approval (quickstart §§11–12): ExtProc fails closed on delegation — an unusable `max-age` (missing, zero, malformed, duplicate) or a permit deadline that passes before policy use returns 503; no stale-on-error, even with a cached exchanged token; one deadline `requestStart + min(max-age, max_staleness)` with accepted skew. Alternative: serve stale context during broker outages. | `adrs/048-authzen-delegation-pip.md:62-76` |
+| D-3 | Decision | Recorded original approval (quickstart §§11–12): ExtProc delegation context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `adrs/048-authzen-delegation-pip.md:110-116` |
+| D-4 | Decision | Recorded original scope approval (quickstart §§11–12): exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:768-774` |
+| D-5 | Decision | Recorded original approval (quickstart §§11–12): on the body-bearing path, consent given after a delegation denial takes effect once the existing ADR 012 exchange re-consent cooldown (5 s) lapses, because the concurrent exchange during the denied request records that cooldown; the exchange cache is unchanged, the header-only path permits immediately, and delegation denials are never cached. Alternative: bypass the re-consent cooldown in enabled mode (changes ADR 012 exchange-cache semantics). | `adrs/048-authzen-delegation-pip.md:162-166` |
+| D-6 | Decision | Recorded original approval (quickstart §§11–12): a one-time Constitution VIII/XIII exception for the original test-first/compile-only sequencing not performed for existing feature code, conditional on independent test review, all 44 scenario mappings and required local/downstream validation; retain the deviation permanently and require genuine test-first corrections. Alternative: decline the exception and retain the obligations as unresolved, without declaring completion. No existing validation failure or security guarantee is waived. | `specs/054-authzen-delegation-pip/historical-validation-exception.md:1-78` |
+| API-7 | API | Proposed: enabled ExtProc returns 503 `service_unavailable` / `delegation token binding unavailable` after a mismatched additional-exchange delivery; permit expiry before final forwarding also returns the existing delegation-unavailable 503. Main alternative: rebind or forward an incompatible/expired result (rejected fail-open). | `specs/054-authzen-delegation-pip/contracts/extproc-delegation-context.md:128-149` |
+| ADR-3 | ADR | Proposed ADR 048 §5 revision: canonical `input.context.permission_sets` guidance while preserving current compatibility; replace permanent retention only with future separately approved removal and a required follow-up issue. Alternative: permanent duplicate representations. | `specs/054-authzen-delegation-pip/adr-048-revision-canonical-permission-sets.md:13-34` |
+| D-7 | Decision | Proposed: breaking broker span/event rename to `tokenexchange.access_evaluation*`, explicit broker/resolver kinds and required `access_evaluation`/`delegation` namespace registration with atomic migration and changelog guidance. Alternative: retain old identifiers through a standards exception (rejected). | `specs/054-authzen-delegation-pip/contracts/observability.md:45-71` |
+| D-8 | Decision | Proposed: limit F1 to compatible result reuse; unchanged broader provider tokens and unbound/concurrent first use without exchange provenance remain possible. US3.12/US3.13 expose those limits and fail-closed conflict. Main alternative: expand scope to provider downscoping or exchange-version attestation. | `specs/054-authzen-delegation-pip/adr-048-revision-permit-bound-tokens.md:70-81` |
 
 ## Project Structure
 
@@ -304,17 +250,18 @@ Still open:
 specs/054-authzen-delegation-pip/
 ├── spec.md
 ├── plan.md                                  # this file
-├── research.md                              # R1–R19, deferred findings
+├── research.md                              # R1–R20, deferred findings
 ├── data-model.md                            # value objects, projection, cache, OPA input
 ├── quickstart.md                            # validation guide
 ├── contracts/
-│   ├── authzen-evaluation-api.md            # proposed end-user OpenAPI delta (pending confirmation)
+│   ├── authzen-evaluation-api.md            # original approved end-user OpenAPI delta
 │   ├── extproc-delegation-context.md        # ExtProc config, broker calls, outcomes, OPA input
 │   └── observability.md                    # signal inventory, ADR-2 diagnostic, unresolved F2 gate
-├── adr-048-revision-permit-bound-tokens.md # Proposed ADR 048 revision (ADR-2)
+├── adr-048-revision-permit-bound-tokens.md # Proposed reuse revision (ADR-2)
+├── adr-048-revision-canonical-permission-sets.md # Proposed compatibility revision (ADR-3)
 ├── remediation.md                           # analysis findings and the 2026-10-28 decisions
 ├── checklists/requirements.md
-└── tasks.md                                 # 120 stable tasks; ADR-2 continuation is unchecked
+└── tasks.md                                 # 122 stable tasks; ADR-2 continuation is unchecked
 ```
 
 ### Source code and documentation affected
@@ -334,7 +281,7 @@ internal/
 │   ├── enduser/authzen_configuration.go                  # New: discovery handler
 │   ├── enduser/authzen_evaluation.go                     # New: evaluation handler (decode, bearer, serialize, X-Request-ID)
 │   ├── routing/enduser.go                                # Register both routes; reserve /access
-│   └── middleware/security_context.go                    # Evaluation deferred-finalization extension, pending approval
+│   └── middleware/security_context.go                    # approved evaluation deferred-finalization extension
 ├── app/
 │   ├── handlers.go                                       # EnduserHandlers.AuthZENConfiguration / AuthZENEvaluation
 │   └── builder.go                                        # Construct resolver, evaluation service, handlers when tokenExchangeEnabled
@@ -361,7 +308,7 @@ tests/
 │   ├── authzen_delegation_denial_test.go                 # US2.1–US2.10
 │   ├── authzen_delegation_errors_test.go                 # US2.11–US2.20
 │   ├── authzen_delegation_compat_test.go                 # US4.6
-│   ├── delegation_context_journey_test.go                # US3.1–US3.11, US4.5 (real broker + ExtProc)
+│   ├── delegation_context_journey_test.go                # US3.1–US3.13, US4.5 (real broker + ExtProc)
 │   ├── helpers/authzen.go                                # evaluation/discovery request helpers
 │   ├── bootstrap/extproc.go                              # delegation_context option for ExtProcEnvironment
 │   └── fixtures/policies/delegation_canonical.rego       # canonical-ID policy (no UUIDs)
@@ -467,16 +414,11 @@ feature is enabled:
     `BuildOPAInputHeadersOnly` accepts the `ContextInput` for this path.
   - No `delegation` wrapper, `subject` member, or `delegation_available` flag is emitted.
 - Token binding (Proposed ADR-2, research R19, data model §3.6, contract §3.1):
-  - `cachedToken` gains an optional `TokenBinding` (scope set and `grant.updated_at` instant).
-    The server derives it from the validated permit; the exchanger never parses permits.
-  - The `Exchanger` port gains a binding-aware call that returns a cached token only when its
-    binding equals or is unset (then binds it), and otherwise compare-and-deletes the entry,
-    exchanges once through the existing singleflight and circuit breaker, and stores the new
-    token with the binding. It never serves the removed token through stale-on-error.
-  - Body path: after both concurrent calls and the existing precedence, the server applies the
-    binding before buffering the body. Header-only path: the exchange after policy allow is
-    the binding-aware call with the evaluated permit.
-  - A mismatch writes a Debug record with `delegation_binding=mismatch` and no credentials.
+  - Every successful result carries an opaque entry identity and synchronized binding cell shared with cache/flight followers, including non-cacheable results. Scope sets/instants derive from validated permits, never credential bytes or broker provenance.
+  - First claim is atomic; all later deliveries compare the cell, never rebind, including the exchange leader. Compare-and-delete targets only observed identity; same-token replacement survives. Read a replacement once and use only if compatible; otherwise perform at most one extra exchange through existing singleflight/breaker.
+  - Revalidate retry delivery: conflict returns terminal API-7 503, no loop, competing deletion or stale fallback. Contract §3.1 defines the binding-aware port/results and full outcome table.
+  - Body validation follows concurrency/precedence and precedes buffering/mutation; header exchange uses the evaluated permit. Deadline checks also precede final forwarding, including header exchange/retry expiry.
+  - Mismatch Debug diagnostic stays log-only; no credentials/scopes/principal. D-8 explicitly limits guarantees to compatible result reuse, not provider downscoping or the grant read by exchange.
 - Disabled mode keeps the existing code path, and its OPA input is byte-for-byte unchanged.
 - The approval gate keeps using the exchange-derived `principal` and `agent_id`.
 
@@ -528,7 +470,7 @@ The current continuation adds **2g Observability Design** (T108/T109): inventory
     the ADR 047 draft and move it to `adrs/` at the next unused number (done:
     [adrs/047-authzen-delegation-pip.md](../../adrs/047-authzen-delegation-pip.md)). The draft already records the R16 decision set, the
     freshness decisions, and the clarified R15 shape: direct members, a typed mapping,
-    permanent permit-derived `granted_permission_sets*`, and no wrapper or flag.
+    currently retained permit-derived compatibility `granted_permission_sets*`, and no wrapper or flag.
   - After approval of ADR-2, apply [adr-048-revision-permit-bound-tokens.md](./adr-048-revision-permit-bound-tokens.md)
     to `adrs/048-authzen-delegation-pip.md`, record the approval in its Status and Revision
     history, and remove the draft.
@@ -545,7 +487,7 @@ The current continuation adds **2g Observability Design** (T108/T109): inventory
   - Write `docs/api/authzen-evaluation.md` and rebuild the docs site.
 - **2d Database design**: none. Record "no schema change".
 - **2e Frontend review**: none. Record "no UI change".
-- **2f E2E acceptance test design**: write all 45 `It()` blocks (US3.11 test-first, red before the ADR-2 binding exists). Compile them against the
+- **2f E2E acceptance test design**: write all 47 `It()` blocks (US3.11–US3.13 test-first, red before binding exists). Compile them against the
   Phase 2.5 scaffolding and confirm a semantic red run.
 
 ### Phase 2.5: Foundational scaffolding
@@ -578,7 +520,7 @@ Add compile-only scaffolding so the tests fail semantically:
   - body-path concurrency and precedence
   - header-only ordering
   - the typed permit decoding and validation, the direct `input.context` members, and the
-    permanently retained permit-derived `granted_permission_sets*`
+    currently retained permit-derived compatibility `granted_permission_sets*`
   - the canonical-ID policy fixture on both paths
 - **US4**:
   - config defaults and validation
@@ -601,7 +543,7 @@ Verify each of these:
 - Container-inclusive aggregates (`just verify`, `just test-e2e`) are not invoked in the
   sandbox. US2.19, infra integration and Agentgateway container suites run downstream on
   the pushed commit; record them as deferred until results exist.
-- All 45 acceptance scenarios have evidence, separating the 44 local scenarios from
+- All 47 acceptance scenarios require evidence, separating the 46 local scenarios from
   US2.19's downstream result. Historical test-first/scaffolding gaps remain explicitly
   unfinished; later green runs do not establish past sequencing.
 
@@ -617,7 +559,7 @@ and a counting `MockAuthZENBroker`. Each test gets fresh storage, servers, and k
 **Labels**:
 
 - `Label("authzen-delegation")`: 29 broker specs
-- `Label("delegation-context")`: 12 consumer specs
+- `Label("delegation-context")`: 14 consumer specs
 - `Label("delegation-context-startup")`: 4 ExtProc-suite specs
 
 US2.19 also carries `Label("docker")` and uses real PostgreSQL. `just test-e2e-backend` excludes that label, so it covers only 28 of the 29 broker scenarios; `just test-e2e-docker` supplies the infrastructure gate, and `just test-e2e` includes both recipes. The unfiltered `authzen-delegation` label covers all 29 only with infrastructure available; `quickstart.md` uses the non-container local filter. Container suites run only downstream on the pushed commit; their absence in the sandbox is not a blocker for non-container work and never permission to skip US2.19, remove its label or claim local validation. The local focused broker filter is `authzen-delegation && !docker` (28 scenarios).
@@ -680,6 +622,8 @@ US2.19 also carries `Label("docker")` and uses real PostgreSQL. `just test-e2e-b
 | US3.9 | `tests/e2e/delegation_context_journey_test.go` | `It("denies a header-only request by policy without calling exchange")` |
 | US3.10 | `tests/e2e/delegation_context_journey_test.go` | `It("blocks forwarding when exchange fails despite a permitted delegation")` |
 | US3.11 | `tests/e2e/delegation_context_journey_test.go` | `It("re-exchanges before forwarding when a fresh permit narrows the grant and forwards the narrowed-scope token upstream")` |
+| US3.12 | `tests/e2e/delegation_context_journey_test.go` | One `It()` for unchanged provider-session capability and new compatible result identity on both paths. |
+| US3.13 | `tests/e2e/delegation_context_journey_test.go` | One `It()` for barrier-driven concurrent live permit ownership, identical-token replacement preservation and terminal API-7 503 on retry conflict. |
 | US4.1 | `tests/e2e/extproc/delegation_context_startup_test.go` | `It("makes no discovery or evaluation requests when disabled by default")` |
 | US4.2 | `tests/e2e/extproc/delegation_context_startup_test.go` | `It("fails startup when delegation context is enabled without authorization")` |
 | US4.3 | `tests/e2e/extproc/delegation_context_startup_test.go` | `It("fails startup when discovery is unavailable or invalid")` |
@@ -714,7 +658,7 @@ because the stub handlers return 501 and the stub resolver returns an error. No 
 | `internal/extproc/config` | Defaults, env and flag precedence, each validation rule and message, the origin derivation, and that disabled mode skips validation. |
 | `internal/extproc/delegation` | Discovery: exact PDP match, path-preserving mismatch, invalid endpoint, http without `allow_http`, and no credentials sent. Client: request body, bearer assertion, decision parsing, deny parsing and code allowlist, non-200 and timeout errors. Typed context: unknown members at every level are dropped. Every data model §3.3.1 violation (missing member, wrong type, empty `permission_sets`, bad timestamp, and `null` or `""` optional members) is `invalid_response` and is not cached. Absent optional members stay absent. `max-age` handling: missing, `0`, malformed, duplicate, and non-integer values are errors and not usable; positive values; values above 60 and above `max_staleness`; `Deadline = requestStart + min(max-age, max_staleness)` taken from the clock read before the send, so a delayed response does not extend it. Resolver: cache until `Deadline`, hits and singleflight followers get the original deadline, no hit at or after the deadline, no denial or error caching, no stale use, key isolation, eviction, and shutdown. Run with `-race`. |
 | `internal/extproc/authorization` | Golden JSON for the disabled-mode body and header-only inputs, unchanged from today. In enabled mode, the five members are serialized with the documented names. `canonical_id` and `valid_until` are omitted, never `null`. `scopes` serializes `[]`. No `delegation`, `delegation_available`, or `subject` key appears. The header-only builder carries the supplied `ContextInput`. |
-| `internal/extproc/server` | Body path: both calls complete before the response. The precedence matrix covers deny, error, exchange error, and success in both completion orders. Header-only path: resolve, then policy, then exchange; no exchange on policy deny. Deadline check: the deadline passes while ExtProc waits for exchange, while it buffers the body, and between batch decisions, and the header-only path is covered too. Each case returns 503 with no policy call and no forwarding. The tests use synchronization barriers and an unexported clock that `export_test.go` sets, as in R5. Disabled mode makes no resolver calls. The response bodies are covered. `contextInputFromDelegation`: `principal` comes from `subject.id`, `granted_permission_sets` comes from the permit and not from the exchange result, availability is `true`, the slices are deep-copied (mutating one input leaves the cached `Result` intact), and `agent_session_id` is preserved. The body, batch, and header-only paths receive the same members. Token binding (ADR-2): equal binding reuses the cached token with no broker call; reordered scopes and an equal instant in another RFC 3339 form count as equal; a scope or `grant.updated_at` difference compare-and-deletes and exchanges once before forwarding on both paths; a concurrent request's new token is not removed; a failed re-exchange returns the existing exchange error without the removed token, including within its stale window; unbound tokens bind to the first permit; disabled mode and cooldown entries are unaffected. Run with `-race`. |
+| `internal/extproc/server` | Body path: both calls complete before the response. The precedence matrix covers deny, error, exchange error, and success in both completion orders. Header-only path: resolve, then policy, then exchange; no exchange on policy deny. Deadline check: the deadline passes while ExtProc waits for exchange, while it buffers the body, and between batch decisions, and the header-only path is covered too. Each case returns 503 with no policy call and no forwarding. The tests use synchronization barriers and an unexported clock that `export_test.go` sets, as in R5. Disabled mode makes no resolver calls. The response bodies are covered. `contextInputFromDelegation`: `principal` comes from `subject.id`, `granted_permission_sets` comes from the permit and not from the exchange result, availability is `true`, the slices are deep-copied (mutating one input leaves the cached `Result` intact), and `agent_session_id` is preserved. The body, batch, and header-only paths receive the same members. Token binding (ADR-2): contract §3.1 outcomes, opaque identities and atomic shared binding cells, identical-token concurrent replacement preservation, retry-delivery terminal API-7 503, unchanged broader provider capability and differing concurrent grant reads; equal binding reuses the cached token with no broker call; reordered scopes and an equal instant in another RFC 3339 form count as equal; a scope or `grant.updated_at` difference compare-and-deletes and exchanges once before forwarding on both paths; a concurrent entry with identical token bytes and different identity/binding is not removed; a failed re-exchange returns the existing exchange error without the removed token, including within its stale window; unbound tokens bind to the first permit; disabled mode and cooldown entries are unaffected. Run with `-race`. |
 
 ### Integration tests
 
@@ -730,4 +674,4 @@ ExtProc precedence branch, and 100% of the acceptance scenarios (Principle XIII)
 
 ## Complexity Tracking
 
-The historical original test-first/compile-only sequencing deviation requires the explicitly recorded D-6 exception and alternative validation in `historical-validation-exception.md` and `quickstart.md` §§11–12. Those records do not certify the missing sequence or waive tests for new work. US3.11 and ADR-2 require genuine test-first development and fresh validation. ADR 048's partial supersession of merged ADR 028 separately follows Principle II; its Proposed ADR-2 same-PR revision is applied only after supplied approval. F2's remaining observability registration/migration obligation remains open as T103, not a constitutional exception.
+The historical original test-first/compile-only sequencing deviation requires the explicitly recorded D-6 exception and alternative validation in `historical-validation-exception.md` and `quickstart.md` §§11–12. Those records do not certify the missing sequence or waive tests for new work. US3.11–US3.13 and ADR-2 require genuine test-first development and fresh validation. ADR 048's partial supersession of merged ADR 028 separately follows Principle II; its Proposed ADR-2 same-PR revision is applied only after supplied approval. F2's remaining observability registration/migration obligation remains open as T103, not a constitutional exception.

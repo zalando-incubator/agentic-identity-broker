@@ -522,14 +522,14 @@ existing pattern in which the server builds `ContextInput` from the exchange res
 function copies every slice, so a cached `Result` that singleflight followers share is never
 aliased into a policy input.
 
-**Retained permission-set inputs (permanent)**: In enabled mode, on both the body and the
+**Retained permission-set inputs (original commitment; Proposed ADR-3 revises future removal only)**: In enabled mode, on both the body and the
 header-only paths, the same mapping sets:
 
 - `granted_permission_sets = {ps.id: [ps.services[].id …]}` in permit order. A permission set
   whose `services` is empty maps to `[]`. Exchange extensions are never used.
 - `granted_permission_sets_available = true`.
 
-These OPA members stay permanently. FR-019's deprecation applies only to the exchange
+These OPA members stay in this increment; R20/Proposed ADR-3 requires separately approved future removal. FR-019's deprecation applies only to the exchange
 *response* field, which ExtProc keeps parsing for disabled mode.
 
 **Availability signal**: `granted_permission_sets_available` is the only signal. In enabled
@@ -591,7 +591,7 @@ revisions. The ADR records these decisions:
   context expires before policy use (U2);
 - the ExtProc `DelegationContextResolver` as a fourth port, with concurrent body-path ordering (R14);
 - the superseded parts of ADR 028: the input schema (R15: the five direct `input.context`
-  members, the typed permit mapping, the permanent permit-derived `granted_permission_sets*`
+  members, the typed permit mapping, the currently retained permit-derived compatibility `granted_permission_sets*`
   inputs, and `true` availability on both enabled paths) and the header-only and body-bearing
   ordering when enabled. The rest of ADR 028 stays in force;
 - the relation to ADR 012: a separate permit cache, with the exchange cache's stale fallback
@@ -654,7 +654,7 @@ built and before the gRPC server listens. Any error stops startup (US4.3–US4.5
   `services.go`, and `protected_resource.go`.
 - **US2.19** reuses the grant-repository outage technique from `impersonation_test.go`
   (renaming `user_grants` on the PostgreSQL test database).
-- **Consumer journeys** (US3.1–US3.11 and US4.5) also go in the backend suite. They run the
+- **Consumer journeys** (US3.1–US3.13 and US4.5) also go in the backend suite. They run the
   production ExtProc composition against the real broker through `tests/e2e/bootstrap/extproc.go`.
   That file is extended with a delegation-context option. Revocation uses the real consent API.
   Freshness scenarios use a short `delegation_context.max_staleness` (for example, `2s`), not
@@ -695,40 +695,21 @@ own expiry, up to `cache.max_ttl`. After a grant narrowed, policy saw the narrow
 `resource.scopes` while upstream could still receive the token exchanged under the broader
 grant.
 
-**Decision**: Each ADR 012 token entry records a token binding: the set of the permit's
-`resource.scopes` and the instant of `grant.updated_at`. In enabled mode ExtProc forwards a
-cached token only when its binding equals the current request's permit. On a difference it
-removes the entry (compare-and-delete on the same token), exchanges again once, binds the new
-token, and forwards that token. A failed re-exchange uses existing exchange-error handling and
-never falls back to the removed token. Unbound entries are bound by the first permit that uses
-them. Disabled mode, the cache key, TTLs, and the D-5 cooldown are unchanged. The design and
-rules are in the [ADR 048 revision draft](./adr-048-revision-permit-bound-tokens.md), contract §3.1, and data model §3.6.
+**Decision (Proposed ADR-2/API-7/D-8)**: permit bindings govern result reuse, not upstream provider capability or actual exchange grant provenance. Bindings compare scope sets and grant-update instants. Every successful result carries an opaque generation/entry identity and a synchronized first-claim binding cell shared by cache hits and singleflight followers, including non-cacheable successes. New installations get new identities even if provider token bytes are identical. Compare-and-delete uses identity, never token bytes.
 
-**Rationale**:
+Contract §3.1 defines the port and all outcomes. First claim is atomic and irreversible; even the exchange leader must compare an already bound delivered result. On initial mismatch preserve a competing replacement, inspect it once and use it only if compatible; otherwise exchange at most once more. Revalidate the shared retry result; a remaining mismatch deterministically returns API-7 503, never rebinding, looping or stale fallback. Disabled keys/TTLs/cooldown and exchange identities/extensions remain unchanged.
 
-- The decision follows the maintainer's direction and closes the gap between policy freshness
-  and forwarded-token freshness without a broker contract change.
-- Comparison uses permit members that ExtProc already validates (data model §3.3.1). Comparing
-  sets and instants avoids re-exchanges caused by ordering or timestamp formatting.
-- Compare-and-delete keeps a concurrent request's freshly bound token in the cache.
-- The cost is at most one extra broker exchange per grant change and cache key.
+**Rationale**: synchronization prevents two live permits from assigning incompatible bindings to one result; identity preserves same-token concurrent replacements. Bounded retry protects latency and fail-closed ownership. Cost is at most one additional exchange per request; concurrency can require more than one exchange per grant change/key and can deny some requests.
 
-**Limitation**: The broker returns the provider session's current access token. Its scopes
-come from provider authorization (the service's configured scopes), not from the grant. So a
-narrowed grant alone does not narrow the provider token: the re-exchange re-validates the
-current grant and session but may return the same token. Upstream receives narrowed scopes when
-the provider session carries them, as Journey 5 shows after Alice re-authorizes the service.
-Narrowing provider tokens in the broker is out of scope; approval item ADR-2 records this limitation.
+**Limitations (D-8 Proposed)**: the provider session determines token scopes. A narrowed grant with an unchanged provider session can still produce identical broader token bytes under a new compatible handle. Exchange checks its own then-current grant/session, but evaluation and exchange may read different versions on a double miss; unbound first use does not establish exchange provenance. Permit freshness bounds policy snapshot age; token TTL bounds retention, not proof of matching broker reads. Journey 5 demonstrates upstream narrowing only with re-authorization. Controlled tests must also pin unchanged-session identical tokens, unbound claims and concurrent differing grant reads.
 
-**Alternatives**:
+**Main alternatives**: stronger broker/provider downscoping or verified exchange grant-version/effective-scope response fields would change approved scope/contracts and need separate API/ADR sign-off. Retrying until compatible is rejected as unbounded; comparing token strings or overwriting shared bindings is rejected as unsafe. Bypassing the cache changes ADR 012 latency; binding-keyed caches would leave old-version selections live. The recommended limited reuse guarantee is recorded explicitly, not represented as fulfilling stronger downscoping.
 
-- *Forward the cached token until ADR 012 expiry*: rejected by the maintainer's direction.
-- *Return a grant version from `/oauth2/token` and bind to it*: it closes the residual body-path
-  race (ADR 048 revision draft), but it changes the exchange contract. Rejected for this increment.
-- *Bypass the token cache in enabled mode*: it adds one broker exchange to every request and
-  changes ADR 012's latency goal. Rejected.
-- *Key the token cache by the binding*: it leaves earlier-version tokens in the map until
-  eviction and lets an older permit still select them. Rejected.
+## R20. Canonical permission-set guidance (Proposed ADR-3)
+
+Designate `input.context.permission_sets` as canonical for new enabled-mode policies, because it carries typed canonical IDs and nested service contributions. Keep both legacy OPA inputs byte-for-byte and permit-derived today; disabled mode and FR-019 exchange-response deprecation are unchanged. Contract §4.1 defines the boundary. Replace permanent retention only with the possibility of a future separately approved removal, not a scheduled removal in this feature.
+
+This preserves the selected F3 recommendation in the 2026-11-06 proposal without claiming additional approval. The main alternative is permanent duplication; immediate removal was not selected and is forbidden here. A maintainer-created follow-up issue is an external prerequisite to T104's ADR/docs implementation, covering migration, availability, disabled behavior and versioned OPA contract sign-off. This worker cannot create that issue; the feature-local design can nevertheless be completed now.
 
 ## Deferred findings (not tasks of this feature)
 

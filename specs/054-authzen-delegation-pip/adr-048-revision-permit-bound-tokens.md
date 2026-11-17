@@ -1,4 +1,4 @@
-# ADR 048 revision draft: Permit-bound exchanged tokens (F1)
+# ADR 048 revision draft: Permit-bound token reuse (F1)
 
 **Status**: Proposed (approval item ADR-2 in [plan.md](./plan.md#approval-items))
 **Revises**: [ADR 048](../../adrs/048-authzen-delegation-pip.md), same PR before merge
@@ -6,72 +6,101 @@
 **Extends**: ADR 012 (enabled-mode reuse of cached exchanged tokens)
 **Date**: 2026-11-06
 
-`mjungsbluth` directed in the planning command for F1 that the permit is authoritative for
-upstream scopes. This draft records that direction. It records no approval. After the
-maintainer approves ADR-2, implementation applies the changes below to
-`adrs/048-authzen-delegation-pip.md`, records the approval in its Status and Revision history,
-and removes this draft.
+## Context
 
-## Changes to apply to ADR 048
+The maintainer's F1 direction asks that fresh permit scopes govern upstream token reuse.
+A permit is not exchange provenance: the broker returns its stored provider-session token,
+without an exchange grant version. This revision therefore guarantees binding-compatible
+reuse, not provider-token narrowing or proof of the grant read by exchange. The narrowed
+interpretation and terminal concurrency response are Proposed (ADR-2, D-8 and API-7).
+No previous approval is extended to this draft.
 
-1. Header: change `ADR 012 (separate cache)` in **Extends** to
+## Changes to apply to ADR 048 after supplied approval
+
+1. Change `ADR 012 (separate cache)` in **Extends** to
    `ADR 012 (separate cache; permit-bound token reuse in §10)`.
-2. Decision: add §10 after §9, with the text in the next section.
-3. Alternatives considered: add the two entries in the Alternatives section below.
-4. Consequences: in the re-consent bullet, replace "The exchange cache is unchanged by this
-   ADR" with "This ADR does not change that cooldown", and add the Consequences entry below.
-5. Revision history: add an entry for this revision with the supplied approval.
+2. Add §10 below, including the concurrency and limitation text.
+3. Add the Alternatives and Consequences entries below.
+4. Replace "The exchange cache is unchanged by this ADR" in the re-consent consequence
+   with "This ADR does not change that cooldown".
+5. Record the supplied maintainer approval in Status and Revision history, then remove this
+   incorporated draft. Preserve previous approval provenance.
 
 ## Decision text
 
-### New §10. The permit is authoritative for upstream scopes
+### New §10. The permit governs enabled-mode token reuse
 
-In enabled mode, an exchanged token from the ADR 012 cache is reused only under the grant
-version for which it was exchanged. The fresh permit decides that version.
+- A **Token Binding** is the sorted, de-duplicated set of permit `resource.scopes` and the
+  instant parsed from `grant.updated_at`. Equality compares both sets and both instants.
+  It records the permit that first claimed an exchange result, not the grant under which
+  the broker actually minted or obtained the credential.
+- Every successful exchange result carries an opaque **entry identity** and a shared,
+  synchronized binding cell, also for non-cacheable successes. Cache hits and singleflight
+  followers carry that same handle and the unchanged exchange identities/extensions.
+  Every new cache installation has a fresh identity even when provider token bytes repeat.
+  Credential bytes are never an identity, comparison key or exported diagnostic.
+- Under synchronization, the first permit may claim an unbound result exactly once; an
+  already bound result can only be compared, never rebound. Request ownership, leader
+  status or "new exchange" status confers no right to overwrite a binding.
+- Before forwarding, validate the delivered result handle against this request's permit.
+  A matching binding is usable, including a detached result whose cache entry was replaced.
+  An unbound result is usable only after an atomic successful claim. A mismatched result
+  is never forwarded, regardless of which request performed the exchange.
+- On mismatch, compare-and-delete only the observed entry identity under the cache lock.
+  If a concurrent replacement exists, preserve it even if it holds the identical token
+  string. Re-read that replacement once: compare/claim its handle as above. If compatible,
+  use it without another broker call; otherwise perform at most one additional exchange
+  through existing per-key singleflight and circuit-breaker handling. A failed delete is
+  not an exchange error and does not authorize deletion of the replacement.
+- After that one additional exchange, compare/claim the delivered handle again. If it is
+  already bound to another live permit, return the terminal API-7 503
+  `service_unavailable` / `delegation token binding unavailable`. Do not rebind, loop,
+  delete the competing result, forward either incompatible result or use stale fallback.
+  An exchange failure retains existing `exchangeErrorResponse` handling, with no removed
+  or mismatched token fallback. Detailed outcomes are in contract §3.1.
+- Body path validation follows completion of both concurrent calls and unchanged precedence
+  (delegation denial, resolution error, exchange error), before buffering or Authorization
+  mutation. Header-only binding uses the permit evaluated by policy after allow. Existing
+  deadline checks apply immediately before every policy decision. An expired permit before
+  forwarding is rejected with the existing delegation-unavailable 503, not re-resolved.
+- Disabled mode, cache key, per-key singleflight key, TTL calculations, `cache.max_ttl`,
+  and five-second re-consent cooldown are unchanged. Cooldown entries carry no token binding.
+  This revision adds no broker response member, configuration key, schema or dependency.
 
-- Each cached token entry records a **token binding**: the set of the permit's
-  `resource.scopes` and the instant of its `grant.updated_at`. Scope order and duplicates do
-  not matter. A token exchanged by a request is bound to that request's permit. A token that
-  no permit has bound yet is bound by the first permit that uses it.
-- Before ExtProc forwards a cached token, it compares the binding with the permit that the
-  current request uses. If the scopes or `grant.updated_at` differ, ExtProc must not forward
-  the cached token. It removes that cache entry, but only if the entry still holds the same
-  token, and exchanges again. Then it binds the new token to the current permit and forwards
-  it. Each request exchanges again at most once.
-- On the body path, the comparison runs after both concurrent calls complete and after the
-  existing precedence (delegation denial, resolution error, exchange error). On the header-only
-  path, the exchange that follows a policy allow uses the binding of the permit that policy
-  evaluated.
-- A failed re-exchange uses the existing exchange-error handling. The removed entry is never
-  used as a stale-on-error fallback, so no token minted under another grant version is
-  forwarded.
-- Disabled mode, the cache key, the cache TTL, `cache.max_ttl`, and the 5 s re-consent cooldown
-  are unchanged. A cooldown entry holds no token, so it has no binding.
-- The broker contract does not change. The binding uses only permit members.
+**Provider limitation**: Narrowing a grant alone does not narrow the provider-session token.
+A re-exchange independently checks the broker's then-current grant and session but may return
+identical broader token bytes; a new handle can legitimately bind those bytes to the new
+permit. Narrowed provider scopes reach upstream only when the session carries them, such as
+Journey 5's re-authorization. OPA effective scopes govern local policy, not provider capability.
 
-**Limitation**: The broker exchanges the stored provider session, whose scopes the provider
-granted at session authorization. A narrowed grant alone does not narrow that provider token.
-Exchanging again guarantees that the broker re-validates the forwarded token against the
-current grant and session. Upstream receives narrowed provider scopes only when the provider
-session carries them, for example after the user re-authorizes the service. Broker-side
-narrowing of provider tokens is out of scope.
-
-**Residual race**: On a body-path miss of both caches, exchange and evaluation read the grant
-concurrently. A grant change between those two reads can bind a token to the newer version.
-The existing ADR 012 TTL bounds that window, which is no wider than today's behavior.
+**Provenance limitation**: On double cache miss, evaluation and exchange can read different
+grant versions concurrently; unbound first use can associate an exchange result with a
+permit without evidence that exchange read that version. First-claim serialization prevents
+conflicting bindings to one handle, not conflicting broker reads. The permit deadline bounds
+policy snapshot age and ADR 012 TTL bounds token retention; neither proves exchange provenance
+or provides a stronger race bound. This residual limitation is explicitly Proposed in D-8.
 
 ## Alternatives
 
-- **Forward cached tokens until ADR 012 expiry after a grant change (§10)**: rejected by the
-  maintainer's F1 direction; a token exchanged under a broader grant could reach upstream for up
-  to `cache.max_ttl` after narrowing.
-- **A grant version in the exchange response to bind tokens (§10)**: rejected for this
-  increment; it closes the residual race but changes the `/oauth2/token` contract.
+- **Keep forwarding an older bound result until ADR 012 expiry**: contrary to F1; leaves
+  policy context and recorded token-reuse binding divergent.
+- **Return verified exchange grant version and effective scopes from `/oauth2/token`**:
+  stronger provenance, but a new externally visible exchange contract. Not selected for this
+  increment; would require its own API/ADR approval and broker implementation.
+- **Broker/provider token downscoping**: stronger upstream capability guarantee, but changes
+  provider-session behavior and possibly provider requirements. Not selected; separately
+  proposed scope is required before implementation.
+- **Compare credential bytes, rebind a shared result, or retry until compatible**: rejected;
+  loses same-token concurrent replacements, violates ownership, or permits unbounded work.
 
 ## Consequences
 
-- After a grant changes, the first enabled-mode request with a fresh permit exchanges again
-  instead of forwarding a token bound to the earlier grant version. This adds at most one broker
-  exchange per grant change and cache key.
-- The D-5 re-consent cooldown is unchanged. ADR-2 revises only D-5's broader statement that the
-  exchange cache is unchanged.
+- A request with a new permit cannot forward an old, differently bound result handle.
+  Compatible concurrent replacements avoid unnecessary exchange; other mismatches cost at
+  most one extra exchange per request, not necessarily one per grant change/cache key.
+- Concurrent live permits may deterministically receive API-7 503 after a conflicting
+  singleflight result; availability is traded for binding-consistent fail-closed forwarding.
+- New-generation identical provider tokens and unbound first use remain permitted under the
+  explicit provider/provenance limitations. These do not claim upstream downscoping.
+- D-5's five-second cooldown remains unchanged; only its broader cache-unchanged statement
+  is revised. All new corrections require genuine test-first evidence outside historical D-6.

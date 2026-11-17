@@ -114,3 +114,24 @@ All three requested document remediations are applied. The underlying historical
 remains disclosed, not erased: D-6 is Proposed for explicit maintainer sign-off and requires
 alternative validation before implementation may record a disposition. Existing approval of
 API/ADR items does not approve D-6, and no validation or implementation completion is claimed.
+This paragraph is the historical remediation outcome; supplied later approval and completed
+alternative validation in quickstart §§11–12 close D-6's original disposition, not its missing sequence.
+
+## Analysis run 42232121230/1 — document remediation
+
+| Finding (original severity retained) | Resolution in feature documents | Remaining implementation boundary |
+|---|---|---|
+| CRITICAL C1 — telemetry standard violations | observability §3 now supplies exact namespace rows, explicit kinds and required compliant mapping, not an inventory-as-compliance claim. | T103 stays mandatory. Maintainer must permit publication of the standard path or supply prior namespace registration; no waiver or runtime compliance claimed. |
+| HIGH I1 — credential bytes cannot identify a replaced cache entry | ADR-2, model §3.6, R19 and contract §3.1 compare opaque result identity; same-token replacements survive. T111/T115 explicitly pin it. | Genuine barrier-driven red/green tests and implementation remain unchecked. |
+| HIGH U1 — shared-result ownership/retry terminal outcome | Every result carries a shared first-claim cell; leaders/followers cannot rebind. Failed-delete/replacement/retry outcomes are enumerated. One incompatible retry returns API-7 503. | ADR-2/API-7 require supplied approval; T111/T112/T122 cover every branch. |
+| HIGH I2 — unsupported upstream scope/provenance claim | FR-020/SC-007 and ADR-2 define compatible handle reuse only. Unchanged broader provider tokens and concurrent/unbound first use are explicit; US3.12/US3.13 and Journey 6 expose them. | D-8 proposes the limited guarantee; stronger provider downscoping or exchange-version attestation requires new scope/API/ADR approval. |
+| MEDIUM A1 — missing exact telemetry migration/sign-off | observability §3 specifies old→new identifiers, unchanged attributes, explicit kinds, namespace rows and atomic rollout/changelog. Plan D-7 registers it. | T103 remains in-scope; previous selection provenance is retained without asserting current approval. |
+| MEDIUM U2 — canonical-field/future-removal design missing | contract §4.1, R20 and Proposed ADR-3 designate `input.context.permission_sets` canonical; preserve both current compatibility members and require separately approved future removal. | T104 requires supplied ADR-3 approval and a maintainer-created follow-up issue; immediate removal/deprecation excluded. |
+| MEDIUM I3 — blank D-4 reference | Approval Items points to actual consolidated scope exclusions, with FR-019's separate removal boundary retained. | Verify references after any later document edit. |
+| LOW I4 — obsolete active sign-off/sequencing gates | Active plan/spec/quickstart dispositions now retain original API-2/D-5 approval and D-6 closure; new Proposed revisions are separate. | Historical checks never satisfy new TDD/compliance validation. |
+
+This phase completes document reconciliation only. No application code, standard registration,
+current runtime validation, issue creation or new ADR acceptance is recorded. There are 47
+acceptance scenarios and 122 unique tasks, with 104 historical checked and 18 unchecked tasks.
+Current sign-off items are ADR-2, ADR-3, API-7, D-7 and D-8; implementation prerequisites do not
+prevent preparing this consistent Proposed design.
