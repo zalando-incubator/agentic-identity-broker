@@ -1,6 +1,6 @@
 # Implementation Plan: AuthZEN Delegation Policy Information Point
 
-**Branch**: `speckit/issue-289` | **Date**: 2026-10-27 (revised 2026-10-28) | **Spec**: [spec.md](./spec.md)
+**Branch**: `speckit/issue-289` | **Date**: 2026-10-27 (revised 2026-10-29) | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `specs/054-authzen-delegation-pip/spec.md`
 
