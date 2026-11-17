@@ -950,3 +950,80 @@ the sample-agent finding before the required full security gate can pass.
 No new approval is requested for the telemetry migration. The follow-up issue tracks future
 compatibility removal only; creating it grants no removal/deprecation approval. Checklists
 remain read-only and unchanged. This phase is **blocked**, not feature completion.
+
+## 17. Test-first continuation (run 42350955442/1)
+
+### Outcome and supplied approval
+
+Partial implementation: T104, T110 and T121 are complete; T111 is partially authored.
+There are 112 checked tasks and 11 unchecked tasks. Token-binding runtime implementation
+has not started; its complete test-first prerequisite remains unfinished. This is a blocked
+phase, not feature completion, and the new failing tests remain enabled.
+
+The supplied approval by `mjungsbluth` at `2026-11-06T15:30:38Z` on
+https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728
+covers ADR-2, API-7, ADR-3, D-7 and D-8. The maintainer supplied
+https://github.com/zalando-incubator/agentic-identity-broker/issues/441 for T104. ADR 048 §5
+and Revision history now record ADR-3 incorporation and that issue. New enabled policies
+use canonical `input.context.permission_sets` and the effective ceiling in `resource.scopes`.
+Both compatibility inputs retain their current values and disabled serialization; no OPA
+field is removed or deprecated, and no future removal is approved. Policy guidance is in
+`docs/api/authzen-evaluation.md`, `docs/reference/token-exchange.md` and
+`internal/extproc/AGENTS.md`. The incorporated revision draft was removed. `spec.md` and
+`plan.md` are unchanged.
+
+### New test-first evidence
+
+The test-harness extraction is a separate behavior-preserving commit. Before adding binding
+unit tests, `go test ./internal/extproc/server -run '^TestDelegation_' -count=1` passed with
+all existing assertions unchanged. The helper can now use the production TokenExchanger.
+No production binding signatures, stubs or behavior were added.
+
+| Scenario / test | Location | Observed semantic red |
+|---|---|---|
+| US3.11 (T110) | `tests/e2e/delegation_context_journey_test.go:329` | The first target request after permit expiry leaves broker exchange count at 1, expected 2. Broad warmup, real consent narrowing and provider re-authorization complete successfully; the stored session has only `read:repo`. |
+| US3.12 (T121) | `tests/e2e/delegation_context_journey_test.go:365` | Without re-authorization, the count again stays 1 instead of 2. The expected identical broad token is explicitly retained under the provider-capability limitation. |
+| Scope-set / grant-instant reuse (partial T111) | `internal/extproc/server/exchanger_binding_test.go:63` | Changed scopes alone, changed grant instant alone and empty scopes forward `SYNTHETIC_OLD_RESULT` instead of `SYNTHETIC_NEW_RESULT`, and make 1 broker call instead of 2, on both paths. Equal/reordered/duplicate scope sets and equal timestamp instants remain passing controls. |
+| Failed replacement (partial T111/T112 coverage) | `internal/extproc/server/exchanger_binding_test.go:113` | Both paths return Authorization-bearing request headers instead of an immediate failure after the permit changes and the replacement broker response would fail. |
+| Disabled Exchange control | `internal/extproc/server/exchanger_binding_test.go:137` | Passes: 1 broker call with unchanged token, identities and permission-set extensions. |
+
+US3.11 and US3.12 each have exactly one `It()` and independent body/header consumer
+fixtures. US3.11 includes both successful and failed replacement variants; US3.12 checks
+an unchanged broad provider session. Their policy fixture checks exact permit scopes and
+the new grant instant. Expiry polling issues no requests, so the count measures one target
+request rather than retries. The current semantic failures occur in the first body variant;
+later variants remain authored but not green-validated.
+
+Commands and current results:
+
+- `ginkgo -v --label-filter='delegation-context' --focus='forwards the reauthorized reader|re-exchanges after narrowing' ./tests/e2e/`: compiled, 2 semantic failures, no pending specs.
+- `go test ./internal/extproc/server -run '^TestTokenBinding_' -count=1`: compiled, 8 failing subtests across 2 new test functions; equality and disabled controls pass.
+- `just extproc-test`: expected semantic red in those same new tests, all other ExtProc packages pass; no race-detector warning.
+- `just test`: expected semantic red in those same new tests; no other test failures reported.
+- `ginkgo --no-color --succinct --label-filter='delegation-context' ./tests/e2e/`: 13 scenarios executed, 11 existing scenarios pass and 2 new scenarios fail, no pending specs. US3.13 is not authored yet; this is not the required 14-scenario green gate.
+
+### Passing checks and remaining work
+
+- `just check` passed after the test changes.
+- `just web-build`, `just test-integration` (including delegation-contract conformance) and
+  `just docs-build` passed. The site build reports its existing CSS-minimizer warning.
+- `bash "$SECURITY_SCAN_SCRIPT" .` passed on this run before the test additions. §16's
+  sample-agent finding no longer blocks that command: the workflow-prepared default-branch
+  scan applies its existing scoped advisory exception. This phase made no dependency,
+  scanner, exception or security-control change and did not verify an exploit.
+- The requirements checklist has 16 checked items and no unchecked items; it is unchanged.
+
+| Remaining task | Why it remains unchecked |
+|---|---|
+| T111 | The initial black-box tests are written and semantically red. Identity-safe compare/delete, competing first claims, same-token replacements, singleflight and non-cacheable retry delivery, TTL/cooldown, timeout/cancellation/breaker and terminal-conflict permutations still need complete test coverage. |
+| T112 | Complete binding-aware server stubs and precedence, retry/expiry and API-7 terminal-response assertions are not authored yet. The shared harness supports real-exchanger tests but does not complete this task. |
+| T122 | The barrier-controlled US3.13 complete journey for both paths is not authored yet. |
+| T113 | The full unit/concurrency/E2E semantic-red prerequisite is incomplete; the evidence above closes no missing assertion. |
+| T114–T117 | Binding types/port, result identities, atomic first claim, compare/delete/retry, server integration, API-7 mapping and safe mismatch diagnostic are not implemented. They remain behind T113; existing forwarding-expiry behavior is preserved. |
+| T118 | Complete binding architecture/glossary/operator guidance is not yet updated; T104 changes only canonical policy guidance. |
+| T119–T120 | New binding tests remain red; full acceptance, compliance and final non-container verification are not complete. Current checks are not substituted for these gates. |
+
+No additional maintainer decision is needed: continuation uses the existing supplied approval.
+Resume from the unfinished test-authoring tasks before runtime implementation. Container-backed
+US2.19, `just test-e2e-docker`, `just test-integration-infra` and Agentgateway cases remain
+**deferred to downstream container tests**, not locally validated and not a blocker here.

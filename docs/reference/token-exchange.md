@@ -181,6 +181,13 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. Deprecated in end-user API `1.2.0` in favor of the AuthZEN Delegation Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)); still populated. Removal is scheduled for one release after the ExtProc delegation resolver ships and requires end-user API `2.0.0`. `principal` and `agent_id` are not deprecated. |
 
+New enabled ExtProc policies should use canonical `input.context.permission_sets` and the
+effective ceiling in `input.context.resource.scopes`. The OPA compatibility fields
+`granted_permission_sets` and `granted_permission_sets_available` remain unchanged in this
+increment, including disabled-mode serialization. Their possible removal is separate from
+response-field deprecation and requires a separately approved, versioned policy-input contract
+and migration, tracked in [issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441).
+
 Token exchange returns a still-valid stored access token immediately. If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token, the broker submits background refresh work. The exchange does not wait for that work. A failed or dropped background refresh does not change the response. The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
 
 After the stored access token expires, the broker waits for an on-demand refresh using the stored refresh token. Concurrent refreshes for the same principal and service share work in one process. Across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.

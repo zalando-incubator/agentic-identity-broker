@@ -138,6 +138,15 @@ expired permit returns 503. ExtProc rechecks the original deadline before final 
 `grant` and `permission_sets` and can key on canonical IDs, for example
 `input.context.permission_sets[_].canonical_id == "repo-reader"`.
 
+For new enabled-mode policies, `input.context.permission_sets` is canonical. Its service scopes
+are raw contributions; use `input.context.resource.scopes` for the effective resource ceiling.
+Both `granted_permission_sets` and `granted_permission_sets_available` remain available with
+permit-derived values on both enabled paths. Neither OPA field is removed or deprecated here;
+disabled-mode serialization is unchanged. [Issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441)
+tracks a future separately approved, versioned policy-input contract, availability replacement
+and migration. It does not authorize removal, and is separate from the exchange-response
+field deprecation below.
+
 ### Resolution observability
 
 ExtProc emits `extproc.delegation.resolve` for each resolution and

@@ -2,7 +2,7 @@
 
 **Status**: Accepted (approved by mjungsbluth on 2026-11-06: https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728)
 
-Approval scope: ADR-2 permit-bound result reuse, API-7 terminal conflict and forwarding expiry, and D-8 provider/provenance limitations. Earlier approvals remain in Revision history. ADR-3 is approved but its issue-dependent incorporation remains deferred.
+Approval scope: ADR-2 permit-bound result reuse, API-7 terminal conflict and forwarding expiry, and D-8 provider/provenance limitations. Earlier approvals remain in Revision history. ADR-3 canonical policy-input guidance is incorporated with the maintainer-supplied follow-up issue #441.
 **Date**: 2026-10-29 (accepted 2026-10-30)
 **Scope**: End-user API AuthZEN discovery and Access Evaluation; ExtProc delegation context;
 `/oauth2/token` `granted_permission_sets` deprecation
@@ -96,7 +96,16 @@ ExtProc decodes the permit into its own typed struct and adds five members direc
 permit members never reach policy. There is no `delegation` wrapper, `subject` member, or
 `delegation_available` flag. On both enabled paths `granted_permission_sets` is derived from the
 permit and `granted_permission_sets_available` is `true`; both OPA members are retained
-permanently. Disabled mode is unchanged byte-for-byte. All other parts of ADR 028 stay in force.
+in this increment. `input.context.permission_sets` is canonical for new enabled-mode policies;
+its typed IDs, optional canonical IDs and included-service contributions do not replace the
+effective resource ceiling in `input.context.resource.scopes`. No OPA member is removed or
+deprecated here. Future removal requires a separately approved, versioned policy-input contract
+and migration. Disabled mode is unchanged byte-for-byte. All other parts of ADR 028 stay in force.
+
+**Future Work**: [Issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441)
+tracks both compatibility fields, availability replacement, migration guidance, enabled/disabled
+behavior and versioned contract approval. Creating that issue does not approve removal. The
+separate exchange-response deprecation in §8 remains unchanged.
 
 ### 6. Audit identity — extends ADR 033's deferred-finalization seam
 
@@ -249,6 +258,8 @@ or provides a stronger race bound. This residual limitation is explicitly approv
   the standard's source text before the OpenAPI was frozen.
 
 ## Revision history
+
+- **2026-11-07 (same PR, before merge)**: Incorporated ADR-3 into §5 using the supplied approval by `mjungsbluth` on 2026-11-06 at [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728). The maintainer supplied [issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441) in this run, satisfying T104's prerequisite. Canonical guidance changes; current compatibility values, serialization and response deprecation do not.
 
 - **2026-11-06 (same PR, before merge)**: `mjungsbluth` approved ADR-2, API-7, ADR-3, D-7 and D-8 at `2026-11-06T15:30:38Z` on [the pipeline approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728). §10 incorporates ADR-2 and its API-7/D-8 constraints. ADR-3 incorporation remains pending the required maintainer-created follow-up issue. D-7 telemetry migration is implemented in run 42297225880/1 after the publication path became available: the broker span/events use `tokenexchange.access_evaluation*`, both required namespaces are registered, span kinds are explicit, and the breaking-telemetry changelog/query migration is published. Test-first and current validation evidence are in quickstart §16.
 
