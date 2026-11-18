@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -227,8 +230,14 @@ func (r *GrantResolver) Resolve(ctx context.Context, req GrantResolutionRequest)
 	}
 	// T061-T065: Delegate grant verification to ConsentService using internal agent UUID
 	stage = StageGrantAuthorization
-	grantCtx, grantSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.verify_agent_access")
+	grantCtx, grantSpan := otel.Tracer("tokenexchange").Start(ctx, "tokenexchange.verify_agent_access",
+		trace.WithSpanKind(trace.SpanKindInternal))
 	grant, err = r.consentService.VerifyAgentAccess(grantCtx, principal, agent.ID)
+	if err != nil && !errors.Is(err, consent.ErrAgentAccessDenied) && !errors.Is(err, consent.ErrGrantExpired) &&
+		(ctx.Err() == nil || !errors.Is(err, ctx.Err())) {
+		grantSpan.SetAttributes(attribute.String("error.type", string(DetailGrantRepositoryUnavailable)))
+		grantSpan.SetStatus(codes.Error, "grant verification failed")
+	}
 	grantSpan.End()
 	if err != nil {
 		if errors.Is(err, consent.ErrAgentAccessDenied) {
