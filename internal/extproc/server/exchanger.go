@@ -286,8 +286,12 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 			}
 
 			if window.lifetime <= 0 {
+				// A fresh success entry can exist here only when a binding retry bypassed it;
+				// that competing result must survive (ADR 048 §10).
 				te.cacheMu.Lock()
-				delete(te.cache, key)
+				if entry := te.cache[key]; entry == nil || entry.reAuthErr != nil || entry.isExpired() {
+					delete(te.cache, key)
+				}
 				te.cacheMu.Unlock()
 				return result, nil
 			}

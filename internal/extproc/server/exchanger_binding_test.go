@@ -291,6 +291,45 @@ func TestExchangeResultBinding_NonCacheableSuccessPreservesZeroLifetimeAndExchan
 	}
 }
 
+func TestExchangeResultBinding_NonCacheableRetryPreservesCompetingReplacement(t *testing.T) {
+	exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, call int32) {
+		switch call {
+		case 1:
+			bindingSuccess(w, "SYNTHETIC_DETACHED_RESULT", 0)
+		case 2:
+			bindingSuccess(w, "SYNTHETIC_COMPETING_REPLACEMENT", 3600)
+		default:
+			bindingSuccess(w, "SYNTHETIC_NONCACHEABLE_RETRY", 0)
+		}
+	})
+	ctx := context.Background()
+	const subject, resource = "subject", "https://api.example.com/repos"
+	permit := func(updatedAt time.Time) server.ExchangeResultBinding {
+		return server.ExchangeResultBinding{Principal: "alice@example.com", AgentID: "agent-uuid", Scopes: []string{"read:repo"}, GrantUpdatedAt: updatedAt}
+	}
+	bound := permit(time.Date(2026, 10, 26, 9, 59, 0, 0, time.UTC))
+	other := permit(time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC))
+
+	detached, err := exchanger.Exchange(ctx, subject, resource)
+	require.NoError(t, err)
+	_, err = exchanger.ExchangeBound(ctx, subject, resource, &detached, bound)
+	require.NoError(t, err)
+	replacement, err := exchanger.Exchange(ctx, subject, resource)
+	require.NoError(t, err)
+	_, err = exchanger.ExchangeBound(ctx, subject, resource, &replacement, bound)
+	require.NoError(t, err)
+
+	retried, err := exchanger.ExchangeBound(ctx, subject, resource, &detached, other)
+	require.NoError(t, err)
+	assert.Equal(t, "SYNTHETIC_NONCACHEABLE_RETRY", retried.Token)
+	require.Equal(t, int32(3), calls.Load())
+
+	reused, err := exchanger.Exchange(ctx, subject, resource)
+	require.NoError(t, err)
+	assert.Equal(t, "SYNTHETIC_COMPETING_REPLACEMENT", reused.Token, "a non-cacheable retry must not delete the preserved replacement")
+	assert.Equal(t, int32(3), calls.Load())
+}
+
 func TestExchangeResultBinding_DisabledExchangeRetainsCacheSemantics(t *testing.T) {
 	exchanger, calls := bindingExchanger(t, func(w http.ResponseWriter, _ int32) { bindingSuccess(w, "SYNTHETIC_OLD_RESULT", 3600) }, false)
 	first, err := exchanger.Exchange(context.Background(), "subject", "https://api.example.com/repos")
