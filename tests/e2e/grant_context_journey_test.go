@@ -547,11 +547,16 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 		// Scenario US3.4 from specs/054-authzen-delegation-pip/spec.md
 		It("re-resolves after permit freshness lapses and denies a revoked grant despite a cached token", func() {
 			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			evaluationsBeforeRevocation := j.broker.EvaluationCount()
 			j.broker.RevokeGrant()
+			var headersResp, bodyResp *extprocv3.ProcessingResponse
 			Eventually(func() uint32 {
-				headersResp, _ := j.BodyCall(authzenRepoResource)
+				headersResp, bodyResp = j.BodyCall(authzenRepoResource)
 				return extprochelpers.ExtractImmediateResponseStatus(headersResp)
 			}, 5*time.Second, 200*time.Millisecond).Should(Equal(uint32(http.StatusForbidden)))
+			Expect(bodyResp).To(BeNil())
+			expectGrantContextDenied(headersResp, j.broker.Enduser.BaseURL()+"/agents/"+j.broker.Agent.ID.String())
+			Expect(j.broker.EvaluationCount()).To(BeNumerically(">", evaluationsBeforeRevocation), "the denial comes from a new broker evaluation after the revocation")
 		})
 
 		// Scenario US3.7 from specs/054-authzen-delegation-pip/spec.md
