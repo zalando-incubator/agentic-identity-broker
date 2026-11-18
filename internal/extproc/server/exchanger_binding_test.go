@@ -52,21 +52,63 @@ func bindingSuccess(w http.ResponseWriter, token string, expiry int) {
 	})
 }
 
+type bindingCall struct {
+	headers, body *extprocv3.ProcessingResponse
+	err           error
+}
+
+// callBindingHarness makes no assertions, so a worker goroutine can run it and hand the result to the test goroutine.
+func callBindingHarness(h *grantContextHarness, headerOnly bool) bindingCall {
+	method := "POST"
+	if headerOnly {
+		method = "GET"
+	}
+	stream, err := h.client.Process(context.Background())
+	if err != nil {
+		return bindingCall{err: err}
+	}
+	if err := stream.Send(&extprocv3.ProcessingRequest{
+		MetadataContext: validTokenExchangeMetadata("mcp"),
+		Request:         &extprocv3.ProcessingRequest_RequestHeaders{RequestHeaders: extProcHeaders(map[string]string{":method": method}, headerOnly)},
+	}); err != nil {
+		return bindingCall{err: err}
+	}
+	if headerOnly {
+		_ = stream.CloseSend()
+	}
+	headers, err := stream.Recv()
+	if err != nil || headerOnly || headers.GetImmediateResponse() != nil {
+		_ = stream.CloseSend()
+		return bindingCall{headers: headers, err: err}
+	}
+	if err := stream.Send(&extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestBody{RequestBody: &extprocv3.HttpBody{Body: mcpCall, EndOfStream: true}},
+	}); err != nil {
+		return bindingCall{headers: headers, err: err}
+	}
+	_ = stream.CloseSend()
+	body, err := stream.Recv()
+	return bindingCall{headers: headers, body: body, err: err}
+}
+
+func requireBindingCall(t *testing.T, call bindingCall, headerOnly bool) *extprocv3.ProcessingResponse {
+	t.Helper()
+	require.NoError(t, call.err)
+	if headerOnly {
+		return call.headers
+	}
+	if call.headers.GetImmediateResponse() == nil {
+		require.NotNil(t, call.body)
+		require.NotNil(t, call.body.GetRequestBody())
+	} else {
+		require.Nil(t, call.body)
+	}
+	return call.headers
+}
+
 func bindingHarnessCall(t *testing.T, h *grantContextHarness, headerOnly bool) *extprocv3.ProcessingResponse {
 	t.Helper()
-	if headerOnly {
-		response, err := sendRequestHeadersWithMetadata(t, h.client, map[string]string{":method": "GET"}, validTokenExchangeMetadata("mcp"), true)
-		require.NoError(t, err)
-		return response
-	}
-	headers, body := sendHeadersThenBodyWithMetadata(t, h.client, map[string]string{":method": "POST"}, validTokenExchangeMetadata("mcp"), mcpCall)
-	if headers.GetImmediateResponse() == nil {
-		require.NotNil(t, body)
-		require.NotNil(t, body.GetRequestBody())
-	} else {
-		require.Nil(t, body)
-	}
-	return headers
+	return requireBindingCall(t, callBindingHarness(h, headerOnly), headerOnly)
 }
 
 func TestExchangeResultBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing.T) {
@@ -111,7 +153,7 @@ func TestExchangeResultBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing
 				}
 				assert.Equal(t, token, requireAuthorizationMutation(t, response))
 				assert.Equal(t, tt.wantCalls, calls.Load(), "equal bindings reuse; different bindings exchange exactly once more")
-				assert.Equal(t, int32(2), h.policies.Load())
+				require.Equal(t, int32(2), h.policies.Load())
 				assert.Equal(t, int32(2), h.resolver.calls.Load())
 				assert.Contains(t, h.lastInput.Load().(string), tt.updatedAt)
 			})
@@ -238,8 +280,8 @@ func TestExchangeResultBinding_PreservesIdenticalTokenReplacementAndDetachedDeli
 				return waitingPermit, nil
 			}, observed)
 			t.Cleanup(unblock)
-			response := make(chan *extprocv3.ProcessingResponse, 1)
-			go func() { response <- bindingHarnessCall(t, waiting, false) }()
+			response := make(chan bindingCall, 1)
+			go func() { response <- callBindingHarness(waiting, false) }()
 			awaitBindingBarrier(t, resolved)
 			awaitBindingBarrier(t, observed.delivered)
 
@@ -251,13 +293,13 @@ func TestExchangeResultBinding_PreservesIdenticalTokenReplacementAndDetachedDeli
 			unblock()
 			select {
 			case result := <-response:
-				assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, result))
+				assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, requireBindingCall(t, result, false)))
 			case <-time.After(5 * time.Second):
 				t.Fatal("request holding the detached result did not complete")
 			}
 			assert.Equal(t, tt.wantCalls, calls.Load(), "compare-and-delete must preserve the replacement identity")
 			assert.Equal(t, int32(1), waiting.resolver.calls.Load())
-			assert.Equal(t, int32(1), waiting.policies.Load())
+			require.Equal(t, int32(1), waiting.policies.Load())
 			assert.Contains(t, waiting.lastInput.Load().(string), tt.updatedAt)
 			assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, successor, true)))
 			wantAfterSuccessor := tt.wantCalls
@@ -336,9 +378,11 @@ func TestExchangeResultBinding_DisabledExchangeRetainsCacheSemantics(t *testing.
 	require.NoError(t, err)
 	second, err := exchanger.Exchange(context.Background(), "subject", "https://api.example.com/repos")
 	require.NoError(t, err)
-	assert.Equal(t, first.Token, second.Token)
-	assert.Equal(t, first.Principal, second.Principal)
-	assert.Equal(t, first.AgentID, second.AgentID)
-	assert.Equal(t, first.GrantedPermissionSets, second.GrantedPermissionSets)
+	for _, result := range []server.ExchangeResult{first, second} {
+		assert.Equal(t, "SYNTHETIC_OLD_RESULT", result.Token)
+		assert.Equal(t, "alice@example.com", result.Principal, "the broker fixture's principal survives exchange and cache hit")
+		assert.Equal(t, "agent-uuid", result.AgentID, "the broker fixture's agent ID survives exchange and cache hit")
+		assert.Equal(t, map[string][]string{"from-exchange": {"x"}}, result.GrantedPermissionSets)
+	}
 	assert.Equal(t, int32(1), calls.Load())
 }

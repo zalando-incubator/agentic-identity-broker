@@ -75,6 +75,31 @@ type grantContextHarness struct {
 	lastInput  atomic.Value
 	exchangeFn func() (server.ExchangeResult, error)
 	policyFn   func(input authorization.OPAInput) (*authorization.OPADecision, error)
+
+	// Server-side record of every response the handler tried to send, including sends a canceled stream drops.
+	sentMu         sync.Mutex
+	sent           []*extprocv3.ProcessingResponse
+	activeHandlers atomic.Int32
+}
+
+type recordingServerStream struct {
+	grpc.ServerStream
+	h *grantContextHarness
+}
+
+func (s *recordingServerStream) SendMsg(m any) error {
+	if response, ok := m.(*extprocv3.ProcessingResponse); ok {
+		s.h.sentMu.Lock()
+		s.h.sent = append(s.h.sent, response)
+		s.h.sentMu.Unlock()
+	}
+	return s.ServerStream.SendMsg(m)
+}
+
+func (h *grantContextHarness) sentResponses() []*extprocv3.ProcessingResponse {
+	h.sentMu.Lock()
+	defer h.sentMu.Unlock()
+	return append([]*extprocv3.ProcessingResponse(nil), h.sent...)
 }
 
 func newGrantContextHarness(t *testing.T, resolve func() (grantcontext.Result, error), loggers ...*slog.Logger) *grantContextHarness {
@@ -125,7 +150,11 @@ func newGrantContextHarnessWithExchanger(t *testing.T, resolve func() (grantcont
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		h.activeHandlers.Add(1)
+		defer h.activeHandlers.Add(-1)
+		return handler(srv, &recordingServerStream{ServerStream: ss, h: h})
+	}))
 	extprocv3.RegisterExternalProcessorServer(grpcSrv, srv)
 	go func() { _ = grpcSrv.Serve(listener) }()
 	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))

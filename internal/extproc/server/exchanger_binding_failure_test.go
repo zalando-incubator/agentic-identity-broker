@@ -143,13 +143,13 @@ func TestExchangeResultBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
 				samplePermit(time.Unix(1_000, 0).Add(time.Minute)),
 			}
 			permits[1].Context.Resource.Scopes = []string{"read:repo", "write:repo"}
-			responses := make(chan *extprocv3.ProcessingResponse, 2)
+			responses := make(chan bindingCall, 2)
 			for _, permit := range permits {
 				h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) {
 					<-release
 					return permit, nil
 				}, shared)
-				go func() { responses <- bindingHarnessCall(t, h, false) }()
+				go func() { responses <- callBindingHarness(h, false) }()
 			}
 			t.Cleanup(unblock)
 			awaitBindingBarrier(t, shared.delivered)
@@ -158,8 +158,8 @@ func TestExchangeResultBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
 			tokens := make([]string, 0, 2)
 			for range 2 {
 				select {
-				case response := <-responses:
-					tokens = append(tokens, requireAuthorizationMutation(t, response))
+				case call := <-responses:
+					tokens = append(tokens, requireAuthorizationMutation(t, requireBindingCall(t, call, false)))
 				case <-time.After(5 * time.Second):
 					t.Fatal("competing first-use requests did not complete")
 				}
@@ -194,6 +194,7 @@ func TestExchangeResultBinding_CanceledReplacementCannotForwardPriorResult(t *te
 			h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 			t.Cleanup(unblock)
 			require.Equal(t, "Bearer SYNTHETIC_PRIOR_RESULT", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
+			primed := len(h.sentResponses())
 			permit.Context.Grant.UpdatedAt = "2026-10-26T10:00:00Z"
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -234,6 +235,13 @@ func TestExchangeResultBinding_CanceledReplacementCannotForwardPriorResult(t *te
 				t.Fatal("canceled request did not finish")
 			}
 			unblock()
+			// A canceled stream can drop a send, so check what the handler tried to send once it has returned.
+			require.Eventually(t, func() bool { return h.activeHandlers.Load() == 0 }, 5*time.Second, time.Millisecond,
+				"the canceled handler did not finish")
+			for _, sent := range h.sentResponses()[primed:] {
+				assert.Nil(t, sent.GetRequestHeaders(), "the canceled handler must not attempt an Authorization mutation")
+				assert.NotContains(t, sent.String(), "SYNTHETIC_PRIOR_RESULT")
+			}
 			assert.Equal(t, int32(2), calls.Load())
 		})
 	}
