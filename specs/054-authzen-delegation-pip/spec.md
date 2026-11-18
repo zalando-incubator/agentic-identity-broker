@@ -6,6 +6,8 @@
 
 **Status**: Original API/ADR decisions and D-6 disposition have recorded approval in quickstart §§11–12; they are not reopened. Current remediation proposes ADR-2, ADR-3, API-7, D-7 and D-8 through the plan's [Approval Items](./plan.md#approval-items). No new approval or application implementation is recorded. FR-020 specifies compatible token-result reuse with provider/provenance limitations; US3.11–US3.13 and Journeys 5–6 cover the new work.
 
+**Current status**: ADR 048 records the 2026-11-06 approval of ADR-2, ADR-3, API-7, D-7 and D-8 and the later remediation approvals in its [revision history](../../adrs/048-authzen-delegation-pip.md#revision-history). This PR implements them, and all tasks in [tasks.md](./tasks.md) are checked. Container-backed US2.19 runs in downstream container tests, not locally. The Status line above is the planning-time record.
+
 **Input**: The title and body supplied for [issue #289](https://github.com/zalando-incubator/agentic-identity-broker/issues/289): “Broker AuthZEN Access Evaluation endpoint as Delegation Policy Information Point”. No issue comments were used.
 
 ## Clarifications
@@ -131,7 +133,7 @@ direction below later resolves it.
   grant within `min(max-age, max_staleness)` while upstream could receive a token exchanged
   under the broader grant until `cache.max_ttl`. Main alternative: forward the cached token
   until its ADR 012 expiry. Added FR-020, US3.11, SC-007, an edge case, and Journey 5.
-  **Approval item** ADR-2 in the plan ([ADR 048 revision draft](./adr-048-revision-permit-bound-tokens.md), contract §3.1).
+  **Approval item** ADR-2 in the plan ([ADR 048 §10](../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse), contract §3.1).
 - Limitation recorded with the decision: the broker exchanges the provider session's current
   token, whose scopes come from provider authorization, not from the grant. Upstream receives
   narrowed scopes when the provider session carries them (Journey 5: Alice re-authorizes the
@@ -215,7 +217,7 @@ As an operator who enables grant context, I want both request paths to evaluate 
 2. **US3.2 — Header-only permit**: **Given** the same delegation, **When** a supported header-only request reaches ExtProc, **Then** it resolves delegation before policy evaluation, policy sees the same documented direct `input.context` members and permit-derived `granted_permission_sets` with `granted_permission_sets_available: true` as the body path, and exchange occurs only after policy allows.
 3. **US3.3 — Delegation denial**: **Given** the broker returns `decision: false` with Alice's consent URL, **When** ExtProc handles the request, **Then** it returns HTTP 403 `access_denied` with that recovery URL before policy evaluation or downstream forwarding; a concurrent successful exchange cannot override the denial.
 4. **US3.4 — Independent freshness**: **Given** a permit cached at 10:00:00 for 60 seconds and an exchanged token usable until 11:00:00, **When** Alice revokes her grant at 10:00:10 and repeats her request at 10:01:00, **Then** ExtProc resolves again and denies instead of feeding the hour-old permission snapshot to policy.
-5. **US3.5 — Denials not cached**: **Given** a denied request and subsequent valid user consent, **When** Alice repeats the request immediately, **Then** ExtProc consults the broker again without waiting for a delegation negative-cache lifetime: a header-only request permits immediately, and a body-bearing request permits once the existing ADR 012 exchange re-consent cooldown (5 s), recorded by the concurrent exchange during the denied request, lapses.
+5. **US3.5 — Denials not cached**: **Given** a denied request and subsequent valid user consent, **When** Alice repeats the request immediately, **Then** ExtProc consults the broker again without waiting for a delegation negative-cache lifetime: a header-only request permits immediately, and a body-bearing request permits once the existing ADR 012 exchange re-consent cooldown (5 s), recorded by the concurrent exchange during the denied request, lapses. The cooldown is keyed by subject token and resource, not by request path, so a header-only request for that pair on the same ExtProc instance also waits for it.
 6. **US3.6 — No stale-on-error**: **Given** an expired delegation permit but a still-cached exchanged token, **When** resolution times out or the broker is unavailable, **Then** ExtProc returns 503 before policy and does not substitute stale delegation, exchange-response permission sets, or `granted_permission_sets_available: false` that policy could allow.
 7. **US3.7 — Cache isolation and local cap**: **Given** two different subject tokens or resource URIs, and `max_staleness: 20s`, **When** a 60-second permit is cached for one pair, **Then** another pair cannot use it and the original pair requires revalidation after at most 20 seconds.
 8. **US3.8 — Canonical policy and compatibility projection**: **Given** a valid permit and a policy keyed on `input.context.agent.canonical_id`, `input.context.resource.canonical_id`, and `input.context.permission_sets[].canonical_id` rather than deployment UUIDs, **When** equivalent configured entities use different UUIDs, **Then** policy makes the same decision on both request paths, the documented direct context members retain the corresponding permit values through the typed mapping, and currently retained compatibility `granted_permission_sets` and `granted_permission_sets_available: true` are derived from the permit, not the exchange response. Unknown permit fields never become policy inputs.
@@ -437,6 +439,59 @@ Cache-Control: private, max-age=60
 }
 ```
 
+**Step 3b — Scope ceiling and equivalent URI variant: 10:00:02 (US1.4, US1.5)**
+
+In an otherwise identical fixture, the reader permission set contributes `read:repo` and `write:repo` for Repository API, but the agent's service requirement permits only `read:repo`. The gateway sends step 3's request with `X-Request-ID: delegation-ceiling-001` and the equivalent URI `https://api.example.com/repos/`:
+
+```http
+POST /access/v1/evaluation HTTP/1.1
+Host: broker.example.com
+Authorization: Bearer SYNTHETIC_CLIENT_ASSERTION_JWT
+Content-Type: application/json
+X-Request-ID: delegation-ceiling-001
+
+{
+  "subject": {"type": "urn:ietf:params:oauth:token-type:jwt", "id": "SYNTHETIC_SUBJECT_JWT"},
+  "action": {"name": "urn:ietf:params:oauth:grant-type:token-exchange"},
+  "resource": {"type": "protected_resource", "id": "https://api.example.com/repos/"}
+}
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+X-Request-ID: delegation-ceiling-001
+Cache-Control: private, max-age=60
+
+{
+  "decision": true,
+  "context": {
+    "subject": {"id": "alice@example.com"},
+    "agent": {"id": "550e8400-e29b-41d4-a716-446655440000", "canonical_id": "data-assistant"},
+    "resource": {
+      "service_id": "880e8400-e29b-41d4-a716-446655440010",
+      "canonical_id": "repo-api",
+      "resource_uri": "https://api.example.com/repos",
+      "scopes": ["read:repo"]
+    },
+    "grant": {
+      "id": "990e8400-e29b-41d4-a716-446655440020",
+      "updated_at": "2026-10-26T09:59:00Z",
+      "valid_until": "2026-10-26T10:30:00Z"
+    },
+    "permission_sets": [{
+      "id": "770e8400-e29b-41d4-a716-446655440001",
+      "canonical_id": "repo-reader",
+      "services": [{
+        "id": "880e8400-e29b-41d4-a716-446655440010",
+        "canonical_id": "repo-api",
+        "scopes": ["read:repo", "write:repo"]
+      }]
+    }]
+  }
+}
+```
+
+Token-exchange normalization removes the trailing slash, so the request resolves to the same `service_id` and normalized `resource_uri` as step 3. `resource.scopes` is the effective set after the agent ceiling; the permission-set entry keeps its raw contribution. An exchange for the same resource applies the same ceiling.
+
 **Step 4 — Expiry variant: 10:29:45**
 
 The same valid delegation returns the same entities with `Cache-Control: private, max-age=15`. At 10:30:00, evaluation returns `decision: false` with `grant_expired`. With no provider session, step 3 still permits; a subsequent `/oauth2/token` exchange fails with its existing session-recovery error instead of returning a provider credential.
@@ -476,7 +531,7 @@ Every other denial-matrix condition substitutes its listed reason without changi
 
 **Step 4 — Alice grants access again, then immediately repeats the request**
 
-Because delegation denials are not cached, the gateway consults the broker and can obtain Journey 1's permit again. No delegation negative-cache wait is imposed. The header-only path can forward immediately after policy and exchange allow. On the body path, a concurrent exchange during the earlier denied request may have recorded the existing ADR 012 exchange re-consent cooldown (5 s); body-path forwarding resumes once that cooldown lapses. This does not delay broker re-consultation or cache a delegation denial (US3.5; Proposed D-5).
+Because delegation denials are not cached, the gateway consults the broker and can obtain Journey 1's permit again. No delegation negative-cache wait is imposed. The header-only path can forward immediately after policy and exchange allow. On the body path, a concurrent exchange during the earlier denied request may have recorded the existing ADR 012 exchange re-consent cooldown (5 s); body-path forwarding resumes once that cooldown lapses. The cooldown follows the subject token and resource, not the request path, so a header-only retry of the same pair on the same ExtProc instance also waits for it. A header-only denial alone records no cooldown, because header-only requests exchange only after policy allows. This does not delay broker re-consultation or cache a delegation denial (US3.5; D-5).
 
 **Observable result**: Revocation stops supplying delegation to policy by 10:01:00 despite a usable cached provider token; restored consent is recognized on the next evaluation, with immediate header-only forwarding and body-path forwarding after any existing exchange cooldown.
 
@@ -831,4 +886,4 @@ Implementation documentation must update `docs/configuration.md`, the appropriat
 
 ### Clarification handoff
 
-The original clarified contract and D-6 exception disposition have supplied approval and historical evidence in quickstart §§11–12. The missing original sequence is not retroactively performed. Current remediation resolves the document findings with Proposed ADR-2/ADR-3/API-7/D-7/D-8, 47 acceptance scenarios and consistent supporting artifacts. New token binding guarantees compatible handle reuse only; provider downscoping and exchange provenance remain explicit limitations. T103/T104 retain their publication-permission and follow-up-issue prerequisites, and new tests/implementation/validation remain unchecked. No further clarification questions remain. Document readiness does not grant approval or certify runtime compliance.
+The original clarified contract and D-6 exception disposition have supplied approval and historical evidence in quickstart §§11–12. The missing original sequence is not retroactively performed. Current remediation resolves the document findings with Proposed ADR-2/ADR-3/API-7/D-7/D-8, 47 acceptance scenarios and consistent supporting artifacts. New token binding guarantees compatible handle reuse only; provider downscoping and exchange provenance remain explicit limitations. T103/T104 were completed after D-7 registration and issue #441; the tasks record in [tasks.md](./tasks.md) is current. No further clarification questions remain. Document readiness does not grant approval or certify runtime compliance.

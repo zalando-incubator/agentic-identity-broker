@@ -144,10 +144,21 @@ The mismatch case makes **zero** evaluation requests.
 
 ## 5. Manual smoke test (optional, local compose)
 
-1. Start the stack with `just compose-extproc-up`.
-2. Add to `configs/config.extproc.docker.yaml`:
+1. Before starting ExtProc, add to `configs/config.extproc.docker.yaml`:
    `grant_context: {enabled: true}` and `authorization.enabled: true`. Use a policy that
-   keys on canonical IDs.
+   keys on canonical IDs. ExtProc reads this file only at startup, so restart it after any
+   later edit.
+2. Set the broker's `server.enduser.public_url` to `http://identity-broker:8000`, the
+   identifier ExtProc expects by default (the origin of its `oauth2.token_endpoint`) and a base
+   the ExtProc container can reach. The stock Compose value `http://localhost:3000` does not
+   match, so ExtProc refuses to start. The broker also uses this base for consent links and
+   OAuth2 callbacks, so the browser must reach it too; the stock Compose stack does not provide
+   a name that both resolve. See the
+   [Compose grant-context prerequisites](../../docs/docker-compose-setup.md#configsconfigextprocdockeryaml-extproc).
+   Start the broker, check that
+   `curl http://localhost:8000/.well-known/authzen-configuration` returns
+   `"policy_decision_point":"http://identity-broker:8000"`, then start ExtProc with
+   `just compose-extproc-up` and confirm that its log shows no discovery error.
 3. Configure canonical IDs `data-assistant`, `repo-reader`, and `repo-api` through the admin API.
    Grant consent in the SPA.
 4. Send an MCP `tools/call` through agentgateway. **Expected**: The request is allowed.

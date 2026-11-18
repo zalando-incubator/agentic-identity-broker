@@ -4,7 +4,7 @@
 namespace and is **not** part of the broker Helm chart. **Status**: Accepted under approval items
 API-4–API-6 and ADR-1 (👍 on
 <https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6504077937>);
-implemented in `internal/extproc/{config,delegation,server,authorization}` and
+implemented in `internal/extproc/{config,grantcontext,server,authorization}` and
 [ADR 048](../../../adrs/048-authzen-delegation-pip.md). The maintainer endorsed the new ADR decision
 set (research R16) in the 2026-10-28 review. This contract changes ADR 028's input schema and
 request ordering when the feature is enabled. The input schema in §4 follows the 2026-10-28
@@ -17,7 +17,7 @@ It covers API-4–API-6 and the thirteen-item decision set, including D-5's unch
 exchange cooldown below. The Proposed wording in §3 is retained as decision history, not an
 outstanding sign-off request. Quickstart §11 records the approval and validation separately.
 
-**Proposed revisions (ADR-2, API-7, D-8 and ADR-3)**: §3.1 defines binding-consistent token reuse, not provider downscoping or exchange provenance; §4.1 designates the canonical field while preserving compatibility today. No approval above covers these revisions.
+**Approved revisions (ADR-2, API-7, D-8 and ADR-3)**: `mjungsbluth` approved them on 2026-11-06 ([ADR 048 revision history](../../../adrs/048-authzen-delegation-pip.md#revision-history)), and they are binding. §3.1 defines binding-consistent token reuse, not provider downscoping or exchange provenance; §4.1 designates the canonical field while preserving compatibility today. [Issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441) is the completed ADR-3 tracking prerequisite; future OPA removal remains separately approved work.
 
 ## 1. Configuration
 
@@ -66,10 +66,15 @@ or requests appear (US4.1).
 | Call | Method and URL | Credentials | Timeout |
 |---|---|---|---|
 | Discovery (once, at startup) | `GET <expected PDP>/.well-known/authzen-configuration` (path insertion per API-003) | **None** | `request_timeout` |
-| Evaluation (per cache miss) | `POST <access_evaluation_endpoint>` | `Authorization: Bearer <client assertion>` from the existing assertion provider | `request_timeout` |
+| Evaluation (per cache miss) | `POST <access_evaluation_endpoint>` | `Authorization: Bearer <client assertion>` from the existing assertion provider; the broker rejects an assertion without a non-blank `sub` with 401 | `request_timeout` |
 
-The evaluation body is `{subject:{type:jwt,id:<subject token>}, action:{name:token-exchange URN}, resource:{type:protected_resource,id:<resource uri>}}`.
-`context` is omitted.
+The evaluation body is this JSON, with `context` omitted:
+
+```json
+{"subject":{"type":"urn:ietf:params:oauth:token-type:jwt","id":"<subject token>"},
+ "action":{"name":"urn:ietf:params:oauth:grant-type:token-exchange"},
+ "resource":{"type":"protected_resource","id":"<resource uri>"}}
+```
 
 The client uses the existing traced HTTP client (`internal/extproc/httpclient`) with the
 `oauth2.tls` trust settings. No new TLS settings are added.
@@ -113,17 +118,20 @@ Immediately before every OPA evaluation that receives delegation input, ExtProc 
 `now < Deadline`. A permit that expires while ExtProc waits for the concurrent exchange,
 buffers the body, or works through a batch therefore never reaches policy.
 
-**Re-consent after a delegation denial (Proposed D-5)**: The resolver never caches a denial,
+**Re-consent after a delegation denial (D-5)**: The resolver never caches a denial,
 so both paths consult the broker again immediately after consent. Header-only requests can
 permit immediately. The body path concurrently attempts exchange during the denied request;
 that exchange can record the existing ADR 012 re-consent cooldown (5 s). Body-path forwarding
-then resumes once that cooldown lapses, without changing exchange-cache semantics. This is
+then resumes once that cooldown lapses, without changing exchange-cache semantics. The cooldown
+entry follows the exchange cache key (subject token and resource), not the request path: on the
+same ExtProc instance, a header-only request for that pair gets a fresh permit but then receives
+the cached exchange error after policy allows, until the cooldown lapses. A header-only denial
+alone creates no cooldown, because header-only requests exchange only after allow. This is
 not a delegation negative cache. Rationale: preserve the existing exchange cache while
 bounding delegation freshness independently. Alternative: bypass the exchange cooldown in
-enabled mode, which changes ADR 012 semantics. Sign-off is D-5 in the plan; prior contract
-approval does not automatically cover this consequence.
+enabled mode, which changes ADR 012 semantics. D-5 records the approval (2026-11-05).
 
-### 3.1 Permit-bound exchanged tokens (Proposed, [ADR 048 §10](../../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse))
+### 3.1 Permit-bound exchanged tokens (ADR-2, [ADR 048 §10](../../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse))
 
 The permit governs local policy and token-result reuse. It does not prove provider-token scopes or the grant version read by exchange. A binding is the permit principal, agent UUID, resource scope set and grant update instant that first claimed a result handle. Exchange response identities must match the permit before any claim; mismatch or absence returns terminal API-7 503 without an identity-repair retry.
 
@@ -138,14 +146,14 @@ The permit governs local policy and token-result reuse. It does not prove provid
 | Delete succeeds or observed entry is absent | Perform at most one additional exchange, with stale-on-error forbidden for removed/mismatched results. |
 | Delete fails because a replacement exists | Preserve and read the replacement once. Compare/claim its handle; use it if compatible, otherwise perform the one additional exchange. Never delete by token bytes, including equal-token/different-binding replacements. |
 | Concurrent permits share the additional exchange | All receive the same handle. First atomic claim wins; equal-binding followers may use it. Different-binding followers take the terminal conflict row, not another exchange. |
-| Additional exchange delivers a mismatched handle, including one bound by another live permit | **API-7 Proposed**: return `503`, `{"error":"service_unavailable","error_description":"exchange result binding unavailable"}`. Nothing forwarded; no further retry, rebind, competing-entry deletion or fallback. |
+| Additional exchange delivers a mismatched handle, including one bound by another live permit | **API-7**: return `503`, `{"error":"service_unavailable","error_description":"exchange result binding unavailable"}`. Nothing forwarded; no further retry, rebind, competing-entry deletion or fallback. |
 | Additional exchange fails (timeout, cancellation, broker error or breaker rejection) | Existing `exchangeErrorResponse`; nothing forwarded, no removed/mismatched stale fallback. |
 | Permit expires before policy use or final forwarding | Existing `503 service_unavailable` / `grant context unavailable`; no expired-context forwarding or re-resolution. |
 | Cooldown entry (no token) | Unchanged D-5; no binding. |
 
 Body validation precedes buffering and Authorization mutation; header validation uses the exact permit policy evaluated. Check deadlines immediately before every policy decision and final forwarding, including expiry during header exchange or retry. Each request has at most one additional exchange; revalidating its result cannot restart the loop. Disabled cache keys, TTLs, singleflight and cooldown remain unchanged. Successful non-cacheable results follow identical claim/compare and terminal rules.
 
-**Guarantee and limitations (D-8 Proposed)**: a request never forwards a handle bound to a different permit scope set/grant instant. It may forward identical broader provider token bytes under a new handle when the provider session is unchanged. First use does not attest exchange provenance; concurrent grant reads can differ. Only provider-session re-authorization in Journey 5 demonstrates upstream narrowing. Stronger broker downscoping or exchange-version response members require separately approved API/ADR scope.
+**Guarantee and limitations (D-8)**: a request never forwards a handle bound to a different permit scope set/grant instant. It may forward identical broader provider token bytes under a new handle when the provider session is unchanged. First use does not attest exchange provenance; concurrent grant reads can differ. Only provider-session re-authorization in Journey 5 demonstrates upstream narrowing. Stronger broker downscoping or exchange-version response members require separately approved API/ADR scope.
 
 The log-only Debug diagnostic remains `grant_context_binding=mismatch`, without credentials, scopes or principal.
 
@@ -202,8 +210,8 @@ step 3:
 | `agent`, `resource`, `grant`, `permission_sets` | The documented fields of the corresponding permit members, with the received values. Timestamps are the received RFC 3339 strings. |
 | `canonical_id` (all levels), `grant.valid_until` | **Omitted** when the permit omits them, never `null` |
 | `scopes` (all levels) | Always an array; `[]` when empty |
-| `granted_permission_sets` | `{permission_sets[].id: [permission_sets[].services[].id]}`, derived from the permit. Never taken from exchange extensions in enabled mode. Retained in this increment; see Proposed §4.1. |
-| `granted_permission_sets_available` | Always `true` in enabled mode. This is the only availability signal, and it guarantees that the five members above are present. Retained in this increment; see Proposed §4.1. |
+| `granted_permission_sets` | `{permission_sets[].id: [permission_sets[].services[].id]}`, derived from the permit. Never taken from exchange extensions in enabled mode. Retained in this increment; see §4.1. |
+| `granted_permission_sets_available` | Always `true` in enabled mode. This is the only availability signal, and it guarantees that the five members above are present. Retained in this increment; see §4.1. |
 | `agent_session_id` | Unchanged existing behavior (omitted when absent) |
 
 A denial (403), a resolution error (503), or an expired deadline (503) returns before policy
@@ -215,11 +223,11 @@ runs. Enabled mode therefore never produces `granted_permission_sets_available: 
 path, and `false` without permission sets on the header-only path. The serialized input is
 byte-for-byte unchanged.
 
-### 4.1 Canonical permission-set field and compatibility boundary (Proposed ADR-3)
+### 4.1 Canonical permission-set field and compatibility boundary (ADR-3)
 
 `input.context.permission_sets` is the canonical enabled-mode permission-set field for new policies. It carries typed IDs, canonical IDs and included-service contributions; `resource.scopes` remains the effective scope ceiling. `granted_permission_sets` and `granted_permission_sets_available` remain permit-derived compatibility inputs on both enabled paths, with exactly today's shape and values. This designation changes guidance, not serialization, availability, disabled behavior or policy execution.
 
-The previous permanent-retention commitment is revised only to allow a future, separately approved removal; this feature does not remove or deprecate either OPA member. ADR-3 records the rationale and alternative. T104 requires a maintainer-created follow-up issue before its implementation revision is recorded; issue creation is an external prerequisite, not permission to implement removal here. The issue must cover OPA policy migration, enabled/disabled behavior, availability replacement and versioned contract approval. FR-019's separate exchange-response deprecation is unchanged; ExtProc still reads that response in disabled mode until its separately approved removal.
+The previous permanent-retention commitment is revised only to allow a future, separately approved removal; this feature does not remove or deprecate either OPA member. ADR-3 records the rationale and alternative. The maintainer-created [issue #441](https://github.com/zalando-incubator/agentic-identity-broker/issues/441) satisfied T104's prerequisite; it does not permit removal here. The issue covers OPA policy migration, enabled/disabled behavior, availability replacement and versioned contract approval. FR-019's separate exchange-response deprecation is unchanged; ExtProc still reads that response in disabled mode until its separately approved removal.
 
 **Example canonical-ID policy** (`tests/e2e/fixtures/policies/grant_context_canonical.rego`, illustrative):
 
