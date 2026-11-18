@@ -22,14 +22,18 @@ import (
 )
 
 type stubCanonicalIDs struct {
-	ids   map[id.ServiceID]string
-	err   error
-	calls int
-	asked []id.ServiceID
+	ids    map[id.ServiceID]string
+	err    error
+	calls  int
+	asked  []id.ServiceID
+	onCall func()
 }
 
 func (s *stubCanonicalIDs) CanonicalIDs(_ context.Context, ids []id.ServiceID) (map[id.ServiceID]string, error) {
 	s.calls++
+	if s.onCall != nil {
+		s.onCall()
+	}
 	s.asked = append([]id.ServiceID(nil), ids...)
 	return s.ids, s.err
 }
@@ -287,6 +291,43 @@ func TestAccessEvaluation_MaxAgeBoundedByGrantExpiry(t *testing.T) {
 			if tt.remaining != nil {
 				assert.Equal(t, validUntil.UTC().Format(time.RFC3339), decision.Context.Grant.ValidUntil)
 			}
+		})
+	}
+}
+
+func TestAccessEvaluation_MaxAgeRecheckedAfterCanonicalLookup(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		remaining time.Duration
+		maxAge    int
+		denied    bool
+	}{
+		{name: "grant expires during the lookup", remaining: -100 * time.Millisecond, denied: true},
+		{name: "lookup consumes part of the remaining lifetime", remaining: 1500 * time.Millisecond, maxAge: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEvaluationFixture(t)
+			validUntil := time.Now().Add(time.Hour)
+			f.grant.ValidUntil = &validUntil
+			f.now = validUntil.Add(-2400 * time.Millisecond)
+			svc := f.newService(t)
+			f.canonical.onCall = func() { f.now = validUntil.Add(-tt.remaining) }
+
+			decision := svc.Evaluate(context.Background(), f.request(t), f.token(t, nil))
+
+			if tt.denied {
+				require.Equal(t, DecisionDeny, decision.Kind)
+				assert.Equal(t, DetailGrantExpired, decision.Detail)
+				assert.Nil(t, decision.Context)
+				assert.Equal(t, "https://broker.example.com/agents/"+f.agent.ID.String(), decision.ConsentURL)
+				assert.Equal(t, f.grant.ID, decision.Authorization.GrantID)
+				return
+			}
+			require.Equal(t, DecisionPermit, decision.Kind)
+			assert.Equal(t, tt.maxAge, decision.MaxAge)
 		})
 	}
 }

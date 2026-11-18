@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
 // AuthZEN Access Evaluation request values this broker accepts.
@@ -164,18 +165,10 @@ func (s *AccessEvaluationService) Evaluate(ctx context.Context, req AccessEvalua
 		return s.classify(err)
 	}
 
-	now := s.now()
 	grantRef := authorizationRef(resolved.Principal, resolved.Agent.ID, resolved.Grant)
 	serviceRef := ServiceRef{ID: resolved.Service.ID}
-	maxAge := MaxGrantContextAgeSeconds
-	if resolved.Grant.ValidUntil != nil {
-		remaining := resolved.Grant.ValidUntil.Sub(now)
-		if remaining <= 0 {
-			return s.classify(NewAccessDeniedError("user grant has expired").
-				WithErrorURI(s.resolver.ConsentURL(resolved.Agent.ID)).
-				WithObservation(NewDiagnostic(StageGrantAuthorization, DetailGrantExpired), serviceRef, grantRef))
-		}
-		maxAge = min(int(remaining/time.Second), MaxGrantContextAgeSeconds)
+	if _, expired := s.maxAge(resolved.Grant); expired {
+		return s.grantExpired(resolved, serviceRef, grantRef)
 	}
 
 	grantContextContext, err := s.project(ctx, resolved)
@@ -187,6 +180,12 @@ func (s *AccessEvaluationService) Evaluate(ctx context.Context, req AccessEvalua
 		return s.classify(NewServerErrorWithCause("failed to load canonical service identifiers", err).
 			WithObservation(NewDiagnostic(StageResourceResolution, DetailResourceRepositoryUnavailable), serviceRef, grantRef))
 	}
+	// The canonical-ID lookup takes time; freshness is computed after it so a permit
+	// never outlives the grant.
+	maxAge, expired := s.maxAge(resolved.Grant)
+	if expired {
+		return s.grantExpired(resolved, serviceRef, grantRef)
+	}
 	return GrantDecision{
 		Kind:          DecisionPermit,
 		Context:       grantContextContext,
@@ -195,6 +194,25 @@ func (s *AccessEvaluationService) Evaluate(ctx context.Context, req AccessEvalua
 		Service:       serviceRef,
 		Authorization: grantRef,
 	}
+}
+
+// maxAge returns the permit freshness bound, min(60, whole seconds until grant expiry),
+// and whether the grant has already expired.
+func (s *AccessEvaluationService) maxAge(grant *storage.UserGrant) (int, bool) {
+	if grant.ValidUntil == nil {
+		return MaxGrantContextAgeSeconds, false
+	}
+	remaining := grant.ValidUntil.Sub(s.now())
+	if remaining <= 0 {
+		return 0, true
+	}
+	return min(int(remaining/time.Second), MaxGrantContextAgeSeconds), false
+}
+
+func (s *AccessEvaluationService) grantExpired(resolved *ResolvedGrant, serviceRef ServiceRef, grantRef AuthorizationRef) GrantDecision {
+	return s.classify(NewAccessDeniedError("user grant has expired").
+		WithErrorURI(s.resolver.ConsentURL(resolved.Agent.ID)).
+		WithObservation(NewDiagnostic(StageGrantAuthorization, DetailGrantExpired), serviceRef, grantRef))
 }
 
 func validateEvaluationRequest(req AccessEvaluationRequest) (*id.AgentID, error) {
