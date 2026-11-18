@@ -102,6 +102,7 @@ func NewGrantResolver(
 // failing stage's diagnostic and the service and authorization references observed so far.
 func (r *GrantResolver) Resolve(ctx context.Context, req GrantResolutionRequest) (_ *ResolvedGrant, err error) {
 	var serviceRef ServiceRef
+	var resolvedPrincipal id.Principal
 	var registeredAgentID id.AgentID
 	var grant *storage.UserGrant
 	stage := StageSubjectValidation
@@ -120,7 +121,7 @@ func (r *GrantResolver) Resolve(ctx context.Context, req GrantResolutionRequest)
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			diagnostic = NewDiagnostic(diagnostic.Stage(), DetailCallerCanceled)
 		}
-		err = tokenErr.WithObservation(diagnostic, serviceRef, authorizationRef(registeredAgentID, grant))
+		err = tokenErr.WithObservation(diagnostic, serviceRef, authorizationRef(resolvedPrincipal, registeredAgentID, grant))
 	}()
 
 	// Step 2: Validate subject_token JWT
@@ -148,6 +149,7 @@ func (r *GrantResolver) Resolve(ctx context.Context, req GrantResolutionRequest)
 	// the authorization decision guarantees a denied exchange still carries
 	// actor/calling_peer on the security-sensitive failure audit path.
 	if principal != "" {
+		resolvedPrincipal = principal
 		callingPeer, _ := clientAssertionJWT.Subject()
 		_, _ = security.FinalizeCaptureHolder(ctx, principal, callingPeer)
 	}
@@ -266,8 +268,8 @@ func (r *GrantResolver) agentConsentURL(agentID id.AgentID) string {
 	return strings.TrimRight(r.consentBaseURL, "/") + "/agents/" + agentID.String()
 }
 
-func authorizationRef(agentID id.AgentID, grant *storage.UserGrant) AuthorizationRef {
-	ref := AuthorizationRef{AgentID: agentID}
+func authorizationRef(principal id.Principal, agentID id.AgentID, grant *storage.UserGrant) AuthorizationRef {
+	ref := AuthorizationRef{Principal: principal, AgentID: agentID}
 	if grant == nil {
 		return ref
 	}

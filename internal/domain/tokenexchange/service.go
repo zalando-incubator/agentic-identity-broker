@@ -232,7 +232,7 @@ func (s *TokenExchangeService) Exchange(ctx context.Context, req *TokenExchangeR
 	}
 	principal, agent, service, grant := resolved.Principal, resolved.Agent, resolved.Service, resolved.Grant
 	serviceRef = ServiceRef{ID: service.ID}
-	authRef = authorizationRef(agent.ID, grant)
+	authRef = authorizationRef(principal, agent.ID, grant)
 	serviceScopes := resolved.EffectiveScopes
 
 	// Step 10: Get valid access token with session metadata (with transparent refresh if needed)

@@ -259,9 +259,12 @@ func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span,
 	}
 	span.SetAttributes(attrs...)
 	if h.Logger != nil {
-		principal := id.NewPrincipal(security.AnonymousActor)
-		if sc, ok := security.FromContext(ctx); ok {
-			principal = sc.Actor
+		principal := authorization.Principal
+		if principal == "" {
+			principal = id.NewPrincipal(security.AnonymousActor)
+			if sc, ok := security.FromContext(ctx); ok {
+				principal = sc.Actor
+			}
 		}
 		logAttrs := make([]slog.Attr, 0, len(attrs)+2)
 		logAttrs = append(logAttrs, slog.String("event", event), slog.Any("principal", principal))

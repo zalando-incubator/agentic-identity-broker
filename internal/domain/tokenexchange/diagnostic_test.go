@@ -173,7 +173,7 @@ func TestSharedExchangeErrorEnrichmentIsImmutable(t *testing.T) {
 			uri := fmt.Sprintf("https://broker.example/agents/%d", i)
 			validUntil := time.Date(2026, time.February, i+1, 3, 4, 5, i, time.UTC)
 			grant := &storage.UserGrant{ID: id.NewGrantID(), UpdatedAt: validUntil.Add(-time.Hour), ValidUntil: &validUntil}
-			authorization := authorizationRef(id.NewAgentID(), grant)
+			authorization := authorizationRef(id.Principal("alice@example.com"), id.NewAgentID(), grant)
 			diagnostic := NewDiagnostic(StageRefresh, DetailCallerCanceled)
 			observed := original.WithObservation(diagnostic, service, authorization)
 			*grant.ValidUntil = grant.ValidUntil.Add(time.Hour)

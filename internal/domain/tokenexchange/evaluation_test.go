@@ -472,3 +472,39 @@ func TestAccessEvaluation_CallerCancellationIsNotConsentDenial(t *testing.T) {
 	assert.Equal(t, DecisionRequestFailure, decision.Kind)
 	assert.Equal(t, 500, decision.Status)
 }
+
+func TestAccessEvaluation_DecisionCarriesResolvedPrincipal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		setup     func(*evaluationFixture)
+		assertion func(*testing.T, *evaluationFixture) string
+		kind      DecisionKind
+		principal id.Principal
+	}{
+		{name: "permit", kind: DecisionPermit, principal: "alice@example.com"},
+		{name: "consent denial", setup: func(f *evaluationFixture) { f.grantRepo.grant = nil },
+			kind: DecisionDeny, principal: "alice@example.com"},
+		{name: "caller policy denial", setup: func(f *evaluationFixture) { f.celExpr = "false" },
+			kind: DecisionRequestFailure, principal: "alice@example.com"},
+		{name: "invalid assertion before the subject is resolved",
+			assertion: func(*testing.T, *evaluationFixture) string { return "not-a-jwt" },
+			kind:      DecisionRequestFailure, principal: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEvaluationFixture(t)
+			if tt.setup != nil {
+				tt.setup(f)
+			}
+			assertion := f.token(t, nil)
+			if tt.assertion != nil {
+				assertion = tt.assertion(t, f)
+			}
+			decision := f.newService(t).Evaluate(context.Background(), f.request(t), assertion)
+			require.Equal(t, tt.kind, decision.Kind)
+			assert.Equal(t, tt.principal, decision.Authorization.Principal)
+		})
+	}
+}

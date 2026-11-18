@@ -115,6 +115,18 @@ func TestAuthZENEvaluation_AuditRecords(t *testing.T) {
 	}
 }
 
+func TestAuthZENEvaluation_AuditPrincipalComesFromTheDecision(t *testing.T) {
+	t.Parallel()
+	decision := permitDecision()
+	decision.Authorization.Principal = id.Principal("alice@example.com")
+	ctx := security.WithCaptureHolder(context.Background(), security.NewCaptureHolder(security.TransportCapture{}))
+	security.FinalizeCaptureHolder(ctx, id.Principal("request-principal"), "gateway")
+	_, logs := serveEvaluation(t, &stubEvaluator{decision: decision}, newEvaluationRequest(validEvaluationBody()).WithContext(ctx))
+	var record map[string]any
+	require.NoError(t, json.Unmarshal([]byte(logs), &record))
+	assert.Equal(t, "alice@example.com", record["principal"])
+}
+
 func TestAuthZENEvaluation_EarlyFailureAudit(t *testing.T) {
 	t.Parallel()
 	req := newEvaluationRequest(validEvaluationBody())

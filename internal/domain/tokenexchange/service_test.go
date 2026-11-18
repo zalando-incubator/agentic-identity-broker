@@ -1873,6 +1873,7 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
 			assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
 			assert.Equal(t, AuthorizationRef{
+				Principal:          id.Principal("user@example.com"),
 				AgentID:            fixture.agentID,
 				GrantID:            fixture.grant.ID,
 				GrantUpdatedAt:     fixture.grant.UpdatedAt,
@@ -2041,6 +2042,7 @@ func TestExchange_PermissionSetRepositoryFailureBeforeSessionLookup(t *testing.T
 	assert.Equal(t, DetailGrantRepositoryUnavailable, tokenErr.Diagnostic().Detail())
 	assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
 	assert.Equal(t, AuthorizationRef{
+		Principal:          id.Principal("user@example.com"),
 		AgentID:            fixture.agentID,
 		GrantID:            fixture.grant.ID,
 		GrantUpdatedAt:     fixture.grant.UpdatedAt,
@@ -2545,7 +2547,7 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(fixture, sessionRepo)
 			}
-			wantAuthorization := AuthorizationRef{AgentID: fixture.agentID}
+			wantAuthorization := AuthorizationRef{Principal: id.Principal("user@example.com"), AgentID: fixture.agentID}
 			if tc.wantGrant {
 				wantAuthorization.GrantID = fixture.grant.ID
 				wantAuthorization.GrantUpdatedAt = fixture.grant.UpdatedAt
@@ -2636,7 +2638,7 @@ func TestExchange_UnresolvedAgentDoesNotExportCandidateIdentity(t *testing.T) {
 			assert.Equal(t, tc.wantDetail, tokenErr.Diagnostic().Detail())
 			assert.Equal(t, "server_error", tokenErr.Code())
 			assert.Equal(t, http.StatusInternalServerError, tokenErr.HTTPStatus())
-			assert.Equal(t, AuthorizationRef{}, tokenErr.Authorization())
+			assert.Equal(t, AuthorizationRef{Principal: id.Principal("user@example.com")}, tokenErr.Authorization())
 			wantService := ServiceRef{}
 			if tc.wantService {
 				wantService.ID = fixture.serviceID
@@ -2669,6 +2671,7 @@ func TestExchange_CancellationPreservesOnlyResolvedAuthorizationContext(t *testi
 			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: sessionRepo, encryption: &MockEncryption{}})
 			wantService := ServiceRef{ID: fixture.serviceID}
 			wantAuthorization := AuthorizationRef{
+				Principal:          id.Principal("user@example.com"),
 				AgentID:            fixture.agentID,
 				GrantID:            fixture.grant.ID,
 				GrantUpdatedAt:     fixture.grant.UpdatedAt,

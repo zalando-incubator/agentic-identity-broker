@@ -165,7 +165,7 @@ func (s *AccessEvaluationService) Evaluate(ctx context.Context, req AccessEvalua
 	}
 
 	now := s.now()
-	grantRef := authorizationRef(resolved.Agent.ID, resolved.Grant)
+	grantRef := authorizationRef(resolved.Principal, resolved.Agent.ID, resolved.Grant)
 	serviceRef := ServiceRef{ID: resolved.Service.ID}
 	maxAge := MaxGrantContextAgeSeconds
 	if resolved.Grant.ValidUntil != nil {
