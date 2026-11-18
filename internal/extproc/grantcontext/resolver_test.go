@@ -2,6 +2,7 @@ package grantcontext
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -204,10 +205,100 @@ func TestResolver_SweepEvictsExpiredEntriesAndShutdownIsIdempotent(t *testing.T)
 func TestResolver_DoesNotForwardCallerCancellationToSharedEvaluation(t *testing.T) {
 	t.Parallel()
 	clock := &fakeClock{now: time.Unix(1_000, 0)}
+	var evaluationCtxErr atomic.Value
 	evaluator := &scriptedEvaluator{respond: func(string, string) (Result, error) { return permitUntil(clock.Now().Add(time.Minute), "alice"), nil }}
-	r := newTestResolver(t, evaluator, clock)
+	r := newTestResolver(t, evaluatorFunc(func(ctx context.Context, subject, resource string) (Result, error) {
+		evaluationCtxErr.Store(fmt.Sprint(ctx.Err()))
+		return evaluator.Evaluate(ctx, subject, resource)
+	}), clock)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+
 	_, _, err := r.Resolve(ctx, "s", "https://a")
-	require.NoError(t, err)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.Eventually(t, func() bool {
+		_, hit, err := r.Resolve(context.Background(), "s", "https://a")
+		return err == nil && hit
+	}, time.Second, time.Millisecond, "the shared evaluation completes and caches the permit")
+	assert.Equal(t, "<nil>", evaluationCtxErr.Load())
+	assert.Equal(t, int32(1), evaluator.calls.Load())
+}
+
+type evaluatorFunc func(ctx context.Context, subject, resource string) (Result, error)
+
+func (f evaluatorFunc) Evaluate(ctx context.Context, subject, resource string) (Result, error) {
+	return f(ctx, subject, resource)
+}
+
+func TestResolver_CallerStopsWaitingWhileOthersReceiveSharedResult(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: time.Unix(1_000, 0)}
+	deadline := clock.Now().Add(time.Minute)
+	evaluator := &scriptedEvaluator{release: make(chan struct{}), respond: func(string, string) (Result, error) {
+		return permitUntil(deadline, "alice"), nil
+	}}
+	r := newTestResolver(t, evaluator, clock)
+	defer func() {
+		select {
+		case <-evaluator.release:
+		default:
+			close(evaluator.release)
+		}
+	}()
+
+	waiting := make(chan error, 1)
+	go func() {
+		_, _, err := r.Resolve(context.Background(), "s", "https://a")
+		waiting <- err
+	}()
+	require.Eventually(t, func() bool { return evaluator.calls.Load() == 1 }, time.Second, time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	canceled := make(chan error, 1)
+	go func() {
+		_, _, err := r.Resolve(ctx, "s", "https://a")
+		canceled <- err
+	}()
+	cancel()
+	select {
+	case err := <-canceled:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a canceled caller must stop waiting for the shared evaluation")
+	}
+
+	close(evaluator.release)
+	require.NoError(t, <-waiting, "an active caller still receives the shared result")
+	assert.Equal(t, int32(1), evaluator.calls.Load())
+}
+
+func TestResolver_RechecksCacheBeforeEvaluating(t *testing.T) {
+	t.Parallel()
+	clock := &fakeClock{now: time.Unix(1_000, 0)}
+	evaluator := &scriptedEvaluator{respond: func(string, string) (Result, error) {
+		return Result{}, newError(CategoryUnavailable, nil)
+	}}
+	r := newTestResolver(t, evaluator, clock)
+	key := cacheKey{subjectToken: "s", resourceURI: "https://a"}
+	fresh := permitUntil(clock.Now().Add(time.Minute), "alice")
+	r.entries[key] = permitUntil(clock.Now(), "alice")
+	var refilled atomic.Bool
+	// The first clock read happens after the stale entry was observed: another caller's
+	// evaluation stores a fresh permit before this caller starts its own evaluation.
+	r.now = func() time.Time {
+		if refilled.CompareAndSwap(false, true) {
+			r.mu.Lock()
+			r.entries[key] = fresh
+			r.mu.Unlock()
+		}
+		return clock.Now()
+	}
+
+	result, hit, err := r.Resolve(context.Background(), "s", "https://a")
+
+	require.NoError(t, err, "a live permit stored by another caller is reused instead of a failing evaluation")
+	assert.True(t, hit)
+	assert.Equal(t, fresh, result)
+	assert.Zero(t, evaluator.calls.Load())
 }

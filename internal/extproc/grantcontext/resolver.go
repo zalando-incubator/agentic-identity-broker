@@ -67,30 +67,56 @@ func (r *PermitResolver) Resolve(ctx context.Context, subjectToken, resourceURI 
 		span.End()
 	}()
 	key := cacheKey{subjectToken: subjectToken, resourceURI: resourceURI}
-	r.mu.RLock()
-	cached, ok := r.entries[key]
-	r.mu.RUnlock()
-	if ok && r.now().Before(cached.Deadline) {
+	if cached, ok := r.live(key); ok {
 		return cached, true, nil
 	}
 
+	type resolved struct {
+		result Result
+		hit    bool
+	}
 	flightKey := strconv.Itoa(len(subjectToken)) + ":" + subjectToken + resourceURI
-	value, err, _ := r.group.Do(flightKey, func() (any, error) {
+	// The evaluation is detached from any one caller; each caller stops waiting on its own
+	// cancellation while the others still receive the shared result.
+	flight := r.group.DoChan(flightKey, func() (any, error) {
+		if cached, ok := r.live(key); ok {
+			return resolved{result: cached, hit: true}, nil
+		}
 		evaluated, evalErr := r.evaluator.Evaluate(context.WithoutCancel(ctx), subjectToken, resourceURI)
 		if evalErr != nil {
-			return Result{}, evalErr
+			return resolved{}, evalErr
 		}
 		if r.now().Before(evaluated.Deadline) {
 			r.mu.Lock()
 			r.entries[key] = evaluated
 			r.mu.Unlock()
 		}
-		return evaluated, nil
+		return resolved{result: evaluated}, nil
 	})
-	if err != nil {
-		return Result{}, false, err
+	select {
+	case <-ctx.Done():
+		return Result{}, false, transportError(ctx.Err(), CategoryUnavailable)
+	case res := <-flight:
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Result{}, false, transportError(ctxErr, CategoryUnavailable)
+		}
+		if res.Err != nil {
+			return Result{}, false, res.Err
+		}
+		value := res.Val.(resolved)
+		return value.result, value.hit, nil
 	}
-	return value.(Result), false, nil
+}
+
+// live returns the cached permit for key while now < Deadline.
+func (r *PermitResolver) live(key cacheKey) (Result, bool) {
+	r.mu.RLock()
+	cached, ok := r.entries[key]
+	r.mu.RUnlock()
+	if ok && r.now().Before(cached.Deadline) {
+		return cached, true
+	}
+	return Result{}, false
 }
 
 // Shutdown stops the sweep goroutine. It is idempotent.
