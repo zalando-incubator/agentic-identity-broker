@@ -166,15 +166,19 @@ func TestResolver_SingleflightSharesOneEvaluationAndDeadline(t *testing.T) {
 		release()
 		wg.Wait()
 	})
+	joined := make(chan struct{}, callers)
 	for range callers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			result, _, err := r.Resolve(context.Background(), "s", "https://a")
-			if err == nil {
+			result, hit, err := r.Resolve(newWaitSignalContext(context.Background(), joined), "s", "https://a")
+			if err == nil && !hit {
 				results <- result
 			}
 		}()
+	}
+	for range callers {
+		awaitSignal(t, joined, "every caller waits on the shared flight before the evaluation is released")
 	}
 	require.Eventually(t, func() bool { return evaluator.calls.Load() == 1 }, time.Second, time.Millisecond)
 	clock.Advance(10 * time.Second)
@@ -186,8 +190,34 @@ func TestResolver_SingleflightSharesOneEvaluationAndDeadline(t *testing.T) {
 		count++
 		assert.Equal(t, deadline, result.Deadline, "followers receive the original deadline")
 	}
-	assert.Equal(t, callers, count)
+	assert.Equal(t, callers, count, "every caller receives the shared evaluation, not a later cache hit")
 	assert.Equal(t, int32(1), evaluator.calls.Load())
+}
+
+// waitSignalContext reports the first Done call, which Resolve makes only once it waits on
+// the shared flight after joining it.
+type waitSignalContext struct {
+	context.Context
+	once    sync.Once
+	waiting chan<- struct{}
+}
+
+func newWaitSignalContext(parent context.Context, waiting chan<- struct{}) *waitSignalContext {
+	return &waitSignalContext{Context: parent, waiting: waiting}
+}
+
+func (c *waitSignalContext) Done() <-chan struct{} {
+	c.once.Do(func() { c.waiting <- struct{}{} })
+	return c.Context.Done()
+}
+
+func awaitSignal(t *testing.T, signal <-chan struct{}, msg string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(5 * time.Second):
+		t.Fatal(msg)
+	}
 }
 
 func TestResolver_SweepEvictsExpiredEntriesAndShutdownIsIdempotent(t *testing.T) {
@@ -263,11 +293,14 @@ func TestResolver_CallerStopsWaitingWhileOthersReceiveSharedResult(t *testing.T)
 	require.Eventually(t, func() bool { return evaluator.calls.Load() == 1 }, time.Second, time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	followerWaiting := make(chan struct{}, 1)
 	canceled := make(chan error, 1)
 	go func() {
-		_, _, err := r.Resolve(ctx, "s", "https://a")
+		_, _, err := r.Resolve(newWaitSignalContext(ctx, followerWaiting), "s", "https://a")
 		canceled <- err
 	}()
+	awaitSignal(t, followerWaiting, "the follower must wait on the active flight")
 	cancel()
 	select {
 	case err := <-canceled:
