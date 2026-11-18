@@ -122,6 +122,22 @@ func TestRun_GrantContextLifecycleEvent(t *testing.T) {
 	enableGrantContextRun(t)
 	t.Setenv("EXTPROC_LOG_FORMAT", "json")
 
+	records, err := runCapturingJSONLogs(t)
+	require.ErrorContains(t, err, "failed to listen")
+
+	found := false
+	for _, record := range records {
+		if record["event"] == "extproc.grant_context.enabled" {
+			found = true
+			assert.Equal(t, "INFO", record["level"])
+		}
+	}
+	assert.True(t, found, "successful delegation discovery must emit a lifecycle event")
+}
+
+// runCapturingJSONLogs runs the command and returns the JSON log records it wrote to stdout.
+func runCapturingJSONLogs(t *testing.T) ([]map[string]any, error) {
+	t.Helper()
 	reader, writer, err := os.Pipe()
 	require.NoError(t, err)
 	originalStdout := os.Stdout
@@ -133,26 +149,22 @@ func TestRun_GrantContextLifecycleEvent(t *testing.T) {
 		_, err := io.Copy(&logs, reader)
 		done <- err
 	}()
-	err = run(rootCmd, nil)
+	runErr := run(rootCmd, nil)
 	os.Stdout = originalStdout
 	require.NoError(t, writer.Close())
 	require.NoError(t, <-done)
 	require.NoError(t, reader.Close())
-	require.ErrorContains(t, err, "failed to listen")
 
-	found := false
+	var records []map[string]any
 	for _, line := range bytes.Split(logs.Bytes(), []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal(line, &record))
-		if record["event"] == "extproc.grant_context.enabled" {
-			found = true
-			assert.Equal(t, "INFO", record["level"])
-		}
+		records = append(records, record)
 	}
-	assert.True(t, found, "successful delegation discovery must emit a lifecycle event")
+	return records, runErr
 }
 
 func TestRun_GrantContextRequiresAuthorization(t *testing.T) {
@@ -213,8 +225,17 @@ func TestRun_SignalDuringGrantContextDiscoveryIsNormalShutdown(t *testing.T) {
 	configureExtProcRun(t, srv.URL, availableExtProcPort(t), "secret")
 	enableGrantContextRun(t)
 	t.Setenv("EXTPROC_GRANT_CONTEXT_REQUEST_TIMEOUT", "30s")
+	t.Setenv("EXTPROC_LOG_FORMAT", "json")
 
-	err = run(rootCmd, nil)
+	records, err := runCapturingJSONLogs(t)
 
 	require.NoError(t, err, "a shutdown signal during discovery is a normal shutdown")
+	found := false
+	for _, record := range records {
+		if record["event"] == "extproc.grant_context.discovery_interrupted" {
+			found = true
+			assert.Equal(t, "INFO", record["level"])
+		}
+	}
+	assert.True(t, found, "an interrupted delegation discovery must emit a lifecycle event")
 }

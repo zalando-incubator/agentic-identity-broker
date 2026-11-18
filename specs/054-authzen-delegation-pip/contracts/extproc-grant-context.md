@@ -269,4 +269,6 @@ Security records carry `event=extproc.grant_context.denied` for a delegation den
 `event=extproc.grant_context.unavailable` for resolution failure, and
 `event=extproc.grant_context.permit_expired` when the permit expires before policy use.
 The last two retain the `grant_context_unavailable` detail. These identifiers follow the
-`extproc.grant_context.enabled` lifecycle family (F6, approved remediation proposal).
+`extproc.grant_context.enabled` lifecycle family (F6, approved remediation proposal). A
+shutdown signal during startup discovery logs the Info lifecycle record
+`event=extproc.grant_context.discovery_interrupted`.
