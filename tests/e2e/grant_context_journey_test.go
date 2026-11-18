@@ -624,22 +624,36 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 				"consent takes effect immediately: the denial was not cached")
 			Expect(j.broker.EvaluationCount()).To(Equal(2))
 
-			// A separate consumer has no exchanged token from the header-only permit above.
-			bodyJourney := newGrantContextJourney(time.Second, true)
-			bodyConsentURL := bodyJourney.broker.Enduser.BaseURL() + "/agents/" + bodyJourney.broker.Agent.ID.String()
-			bodyJourney.broker.RevokeGrant()
-			headersResp, bodyResp := bodyJourney.BodyCall(authzenRepoResource)
-			Expect(bodyResp).To(BeNil())
-			expectGrantContextDenied(headersResp, bodyConsentURL)
-			Expect(bodyJourney.broker.EvaluationCount()).To(Equal(1))
-			bodyJourney.broker.ConsentToRepo()
-			headersResp, bodyResp = bodyJourney.BodyCall(authzenRepoResource)
-			Expect(bodyResp).To(BeNil(), "the independent exchange cooldown still blocks forwarding")
-			Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
-			challenge := extprochelpers.ExtractImmediateResponseHeader(headersResp, "www-authenticate")
-			Expect(challenge).To(HavePrefix(`Bearer error="insufficient_scope"`))
-			Expect(challenge).To(ContainSubstring(`error_uri="` + bodyConsentURL + `"`))
-			Expect(bodyJourney.broker.EvaluationCount()).To(Equal(2), "the delegation denial was not cached")
+			// A separate consumer has no exchanged token from the header-only permit above. The
+			// cooldown starts during the denied request, so a retry that completes within the
+			// cooldown of that request's start must still be blocked; a slower sequence is
+			// repeated with a fresh consumer because its cooldown may have lapsed.
+			const exchangeReconsentCooldown = 5 * time.Second
+			var bodyJourney *grantContextJourney
+			retriedInsideCooldown := false
+			for attempt := 0; attempt < 3 && !retriedInsideCooldown; attempt++ {
+				bodyJourney = newGrantContextJourney(time.Second, true)
+				bodyConsentURL := bodyJourney.broker.Enduser.BaseURL() + "/agents/" + bodyJourney.broker.Agent.ID.String()
+				bodyJourney.broker.RevokeGrant()
+				deniedStart := time.Now()
+				headersResp, bodyResp := bodyJourney.BodyCall(authzenRepoResource)
+				Expect(bodyResp).To(BeNil())
+				expectGrantContextDenied(headersResp, bodyConsentURL)
+				Expect(bodyJourney.broker.EvaluationCount()).To(Equal(1))
+				bodyJourney.broker.ConsentToRepo()
+				headersResp, bodyResp = bodyJourney.BodyCall(authzenRepoResource)
+				if time.Since(deniedStart) >= exchangeReconsentCooldown {
+					continue
+				}
+				retriedInsideCooldown = true
+				Expect(bodyResp).To(BeNil(), "the independent exchange cooldown still blocks forwarding")
+				Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
+				challenge := extprochelpers.ExtractImmediateResponseHeader(headersResp, "www-authenticate")
+				Expect(challenge).To(HavePrefix(`Bearer error="insufficient_scope"`))
+				Expect(challenge).To(ContainSubstring(`error_uri="` + bodyConsentURL + `"`))
+				Expect(bodyJourney.broker.EvaluationCount()).To(Equal(2), "the delegation denial was not cached")
+			}
+			Expect(retriedInsideCooldown).To(BeTrue(), "the denied request and its retry completed within the exchange cooldown in one of three attempts")
 			Eventually(func() bool { return forwarded(bodyJourney.BodyCall(authzenRepoResource)) }, 8*time.Second, 250*time.Millisecond).Should(BeTrue())
 		})
 
