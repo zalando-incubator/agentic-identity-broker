@@ -14,12 +14,13 @@ result := {"action": "deny", "reasons": ["unexpected delegation wrapper"]} if {
 } else := {"action": "deny", "reasons": ["unexpected subject member"]} if {
 	"subject" in object.keys(input.context)
 } else := {"action": "deny", "reasons": ["permission sets unavailable"]} if {
-	input.context.granted_permission_sets_available != true
+	object.get(input.context, "granted_permission_sets_available", false) != true
 } else := {"action": "deny", "reasons": ["header requested a policy denial"]} if {
 	input.attributes.request.http.headers["x-policy-deny"] == "true"
 } else := {"action": "allow"} if {
 	c := input.context
 	c.principal != ""
+	expected_grant(c.grant, input.attributes.request.http.headers)
 	c.agent.canonical_id == "data-assistant"
 	c.resource.canonical_id == "repo-api"
 	some ps in c.permission_sets
@@ -27,4 +28,16 @@ result := {"action": "deny", "reasons": ["unexpected delegation wrapper"]} if {
 	some svc in ps.services
 	svc.id == c.resource.service_id
 	{id | some id in c.granted_permission_sets[ps.id]} == {s.id | some s in ps.services}
+}
+
+# The grant is a direct member on every journey; a journey that names the expected grant
+# through headers also requires its ID and update instant.
+expected_grant(grant, headers) if {
+	is_string(grant.id)
+	grant.id != ""
+	time.parse_rfc3339_ns(grant.updated_at)
+	not headers["x-expected-grant-id"]
+} else := true if {
+	grant.id == headers["x-expected-grant-id"]
+	time.parse_rfc3339_ns(grant.updated_at) == time.parse_rfc3339_ns(headers["x-expected-grant-update"])
 }

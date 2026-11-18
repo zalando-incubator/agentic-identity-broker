@@ -37,7 +37,8 @@ var _ = Describe("ExtProc grant context startup", Label("grant-context-startup")
 		env := bootstrap.NewTestEnvironment(cfg, opaLogger)
 		DeferCleanup(env.Stop)
 		Expect(env.StartWithGrantContext()).To(Succeed())
-		env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
+		env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken).
+			WithGrantedPermissionSets(map[string][]string{"repo-reader": {"11111111-1111-1111-1111-111111111111"}})
 		client, conn := env.NewExtProcClient()
 		DeferCleanup(conn.Close)
 
@@ -50,7 +51,7 @@ var _ = Describe("ExtProc grant context startup", Label("grant-context-startup")
 			[]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_files"}}`))
 
 		Expect(helpers.ExtractMutatedAuthorizationHeader(headersResp)).To(Equal("Bearer " + fixtures.FreshExchangedToken))
-		Expect(bodyResp).To(helpers.BeForwardedRequestBody(), "disabled-mode policy input omits every delegation member")
+		Expect(bodyResp).To(helpers.BeForwardedRequestBody(), "disabled-mode policy input keeps the exchange snapshot and omits every delegation member")
 		Expect(env.MockTokenExchange.UnroutedRequestCount()).To(BeZero(), "no AuthZEN request reaches the default PDP origin")
 	})
 
