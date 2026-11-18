@@ -30,6 +30,9 @@ func TestExchange_StaleFallbackIsCapturedWithTheFailedFlight(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"server_error"}`))
 	}))
 	t.Cleanup(broker.Close)
+	var releaseOnce sync.Once
+	releaseBroker := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(releaseBroker)
 	bodyClosed := make(chan struct{})
 	client := broker.Client()
 	client.Transport = closeSignalingTransport{next: client.Transport, closed: bodyClosed}
@@ -51,11 +54,17 @@ func TestExchange_StaleFallbackIsCapturedWithTheFailedFlight(t *testing.T) {
 		result, err := te.Exchange(context.Background(), subject, resource)
 		done <- outcome{result, err}
 	}()
-	<-entered
+	select {
+	case <-entered:
+	case got := <-done:
+		t.Fatalf("Exchange returned before calling the broker: token=%q err=%v", got.result.Token, got.err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the exchanger did not call the broker")
+	}
 
 	// Hold the cache so no fallback read can complete, then let the broker fail.
 	te.cacheMu.Lock()
-	close(release)
+	releaseBroker()
 	select {
 	case <-bodyClosed:
 	case <-time.After(5 * time.Second):
