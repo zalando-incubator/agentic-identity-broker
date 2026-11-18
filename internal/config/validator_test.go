@@ -267,13 +267,13 @@ func TestValidateEndUserPublicURLAsAuthZENBase(t *testing.T) {
 				t.Errorf("Validate() error field = %q, want server.enduser.public_url", configErr.Field)
 			}
 			if strings.Contains(err.Error(), "s3cret-marker") || strings.Contains(err.Error(), "operator@") {
-				t.Errorf("Validate() error exposes URL credentials: %v", err)
+				t.Errorf("Validate() error echoes the rejected URL: %v", err)
 			}
 		})
 	}
 }
 
-func TestValidatePublicURLErrorNeverExposesUserinfo(t *testing.T) {
+func TestValidatePublicURLErrorNeverEchoesURL(t *testing.T) {
 	tests := []struct {
 		name          string
 		server        string
@@ -291,6 +291,10 @@ func TestValidatePublicURLErrorNeverExposesUserinfo(t *testing.T) {
 		{name: "end-user triple-slash authority", server: "enduser", publicURL: "https:///operator:s3cret-marker@broker.example.com"},
 		{name: "admin single-slash authority", server: "admin", publicURL: "https:/operator:s3cret-marker@admin.example.com"},
 		{name: "admin triple-slash authority", server: "admin", publicURL: "https:///operator:s3cret-marker@admin.example.com"},
+		{name: "end-user encoded delimiter", server: "enduser", publicURL: "https:/operator:s3cret-marker%40broker.example.com"},
+		{name: "end-user query secret with token exchange", server: "enduser", publicURL: "https://broker.example.com?access_token=s3cret-marker", tokenExchange: true},
+		{name: "end-user fragment secret with token exchange", server: "enduser", publicURL: "https://broker.example.com#access_token=s3cret-marker", tokenExchange: true},
+		{name: "admin encoded delimiter", server: "admin", publicURL: "https:/operator:s3cret-marker%40admin.example.com"},
 		{name: "admin unparseable", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com/%zz"},
 		{name: "admin userinfo", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com"},
 	}
@@ -318,7 +322,7 @@ func TestValidatePublicURLErrorNeverExposesUserinfo(t *testing.T) {
 				t.Errorf("Validate() error field = %q, want %s", configErr.Field, want)
 			}
 			if strings.Contains(err.Error(), "s3cret-marker") || strings.Contains(err.Error(), "operator") {
-				t.Errorf("Validate() error exposes URL credentials: %v", err)
+				t.Errorf("Validate() error echoes the rejected URL: %v", err)
 			}
 		})
 	}

@@ -212,7 +212,7 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.HasSuffix(u.Host, ":") {
 			return formatValidationError(
 				prefix+".public_url",
-				urlWithoutUserinfo(sic.PublicURL),
+				redactedPublicURL,
 				"valid HTTP/HTTPS URL with hostname, no userinfo, and no empty explicit port",
 				nil,
 			)
@@ -220,7 +220,7 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 	} else if !isValidURL(sic.PublicURL) {
 		return formatValidationError(
 			prefix+".public_url",
-			urlWithoutUserinfo(sic.PublicURL),
+			redactedPublicURL,
 			"valid HTTP/HTTPS URL",
 			nil,
 		)
@@ -239,15 +239,19 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 	return nil
 }
 
+// redactedPublicURL replaces a rejected public URL in configuration errors. A malformed URL can
+// carry a credential in its userinfo, path or query, so the value is never echoed.
+const redactedPublicURL = "[redacted]"
+
 // validateAuthZENPublicBase rejects userinfo, a query or a fragment, because the public URL
 // is published unauthenticated as the AuthZEN identifier and the evaluation endpoint is
-// advertised by appending its path. The error never echoes userinfo.
+// advertised by appending its path.
 func validateAuthZENPublicBase(publicURL string) error {
 	u, err := url.Parse(publicURL)
 	if err != nil || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(publicURL, "#") {
 		return formatValidationError(
 			"server.enduser.public_url",
-			urlWithoutUserinfo(publicURL),
+			redactedPublicURL,
 			"HTTP/HTTPS URL without userinfo, query or fragment when token exchange is configured (AuthZEN policy decision point)",
 			nil,
 		)
@@ -1001,22 +1005,6 @@ func validateOTLPEndpoint(endpoint, protocol string) error {
 }
 
 // isValidURL checks if a string is a valid HTTP or HTTPS URL.
-// urlWithoutUserinfo returns rawURL for a configuration error with any userinfo removed, so a
-// password in a URL never reaches the error. Malformed URLs can carry credentials outside the
-// userinfo, as in "https:user:pass@host" or "https:/user:pass@host", so any value that still
-// contains "@" is withheld entirely.
-func urlWithoutUserinfo(rawURL string) string {
-	shown := rawURL
-	if u, err := url.Parse(rawURL); err == nil {
-		u.User = nil
-		shown = u.String()
-	}
-	if strings.Contains(shown, "@") {
-		return "[redacted]"
-	}
-	return shown
-}
-
 func isValidURL(urlStr string) bool {
 	if urlStr == "" {
 		return false
