@@ -16,6 +16,18 @@ import (
 
 // OAuth2AuditMiddleware creates audit logging middleware for OAuth2 endpoints
 func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return oauth2Audit(logger, false)
+}
+
+// FinalizedIdentityAuditMiddleware is OAuth2AuditMiddleware for a deferred-finalization
+// route whose handler finalizes the request security context (ADR 048 §6). The record names
+// the finalized Actor, so it agrees with the handler's own audit record; the handler's
+// request-principal or anonymous finalization covers early failures.
+func FinalizedIdentityAuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return oauth2Audit(logger, true)
+}
+
+func oauth2Audit(logger *slog.Logger, useFinalizedActor bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.Header.Get("X-Request-ID")
@@ -41,6 +53,12 @@ func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler 
 
 			// Call next handler with updated context
 			next.ServeHTTP(wrapped, r.WithContext(ctx))
+
+			if useFinalizedActor {
+				if sc, ok := security.FromContext(ctx); ok {
+					principalValue = sc.Actor
+				}
+			}
 
 			// Log audit information
 			duration := time.Since(startTime).Milliseconds()

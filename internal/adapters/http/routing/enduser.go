@@ -191,7 +191,7 @@ func SetupEnduserRoutes(r chi.Router, h *app.EnduserHandlers, cfg EnduserRouteCo
 	// namespace is always reserved so a disabled deployment returns 404 instead of the SPA.
 	r.Route("/access", func(accessRouter chi.Router) {
 		if h.AuthZENEvaluation != nil {
-			accessRouter.With(middleware.OAuth2AuditMiddleware(cfg.Logger)).Post("/v1/evaluation", h.AuthZENEvaluation.ServeHTTP)
+			accessRouter.With(middleware.FinalizedIdentityAuditMiddleware(cfg.Logger)).Post("/v1/evaluation", h.AuthZENEvaluation.ServeHTTP)
 		}
 	})
 

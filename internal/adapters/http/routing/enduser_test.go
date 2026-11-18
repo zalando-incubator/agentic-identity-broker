@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
@@ -20,7 +21,10 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	domainstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
@@ -305,4 +309,55 @@ func TestSetupEnduserRoutes_RegistersAuthZENRoutesOnlyWithHandlers(t *testing.T)
 	wrongMethod := httptest.NewRecorder()
 	router.ServeHTTP(wrongMethod, httptest.NewRequest(http.MethodGet, "/access/v1/evaluation", nil))
 	require.Equal(t, http.StatusMethodNotAllowed, wrongMethod.Code)
+}
+
+// finalizingEvaluator finalizes the verified subject as the shared resolver does.
+type finalizingEvaluator struct{}
+
+func (finalizingEvaluator) Evaluate(ctx context.Context, _ tokenexchange.AccessEvaluationRequest, _ string) tokenexchange.GrantDecision {
+	security.FinalizeCaptureHolder(ctx, id.Principal("alice@example.com"), "gateway")
+	return tokenexchange.GrantDecision{Kind: tokenexchange.DecisionDeny, Detail: tokenexchange.DetailGrantMissing,
+		Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing)}
+}
+
+func TestSetupEnduserRoutes_AuthZENRouteAuditUsesFinalizedIdentity(t *testing.T) {
+	t.Parallel()
+	body := `{"subject":{"type":"urn:ietf:params:oauth:token-type:jwt","id":"s"},
+		"action":{"name":"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"resource":{"type":"protected_resource","id":"https://api.example.com/repos"}}`
+	for _, tt := range []struct {
+		name             string
+		requestPrincipal id.Principal
+		bearer           bool
+		want             string
+	}{
+		{name: "verified subject replaces the request principal", requestPrincipal: "bob@example.com", bearer: true, want: "alice@example.com"},
+		{name: "early failure keeps the request principal", requestPrincipal: "bob@example.com", want: "bob@example.com"},
+		{name: "early failure without a request principal is anonymous", want: security.AnonymousActor},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var logs bytes.Buffer
+			router := chi.NewRouter()
+			routing.SetupEnduserRoutes(router, &app.EnduserHandlers{
+				AuthZENEvaluation: &enduserhttp.AuthZENEvaluationHandler{Evaluator: finalizingEvaluator{}},
+			}, routing.EnduserRouteConfig{Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
+			req := httptest.NewRequest(http.MethodPost, "/access/v1/evaluation", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			if tt.bearer {
+				req.Header.Set("Authorization", "Bearer assertion")
+			}
+			ctx := security.WithCaptureHolder(req.Context(), security.NewCaptureHolder(security.TransportCapture{}))
+			if tt.requestPrincipal != "" {
+				ctx = principal.WithPrincipal(ctx, tt.requestPrincipal)
+			}
+
+			router.ServeHTTP(httptest.NewRecorder(), req.WithContext(ctx))
+
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
+			require.Equal(t, "oauth2 authorization request", record["msg"])
+			require.Equal(t, tt.want, record["principal"], "the route audit must name the finalized resource owner")
+		})
+	}
 }
