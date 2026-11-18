@@ -81,7 +81,7 @@ func Discover(ctx context.Context, client *http.Client, expectedPDP string, allo
 			expectedPDP, boundedValue(*document.PolicyDecisionPoint))
 	}
 	endpoint, err := url.Parse(*document.AccessEvaluationEndpoint)
-	if err != nil || !endpoint.IsAbs() || endpoint.Host == "" || endpoint.User != nil || endpoint.Fragment != "" ||
+	if err != nil || !endpoint.IsAbs() || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.Fragment != "" ||
 		(endpoint.Scheme != "https" && (endpoint.Scheme != "http" || !allowHTTP)) {
 		return nil, errors.New("grant context discovery: invalid access_evaluation_endpoint")
 	}

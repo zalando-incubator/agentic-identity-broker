@@ -64,6 +64,9 @@ func TestDiscover(t *testing.T) {
 		{name: "relative endpoint", status: 200, allowHTTP: true, body: func() string {
 			return `{"policy_decision_point":"` + srvURL + `","access_evaluation_endpoint":"/access/v1/evaluation"}`
 		}, errText: "invalid access_evaluation_endpoint"},
+		{name: "port-only endpoint authority", status: 200, allowHTTP: true, body: func() string {
+			return `{"policy_decision_point":"` + srvURL + `","access_evaluation_endpoint":"https://:8443/access/v1/evaluation"}`
+		}, errText: "invalid access_evaluation_endpoint"},
 		{name: "userinfo endpoint", status: 200, allowHTTP: true, body: func() string {
 			return `{"policy_decision_point":"` + srvURL + `","access_evaluation_endpoint":"http://u:p@127.0.0.1/x"}`
 		}, errText: "invalid access_evaluation_endpoint"},
