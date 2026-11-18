@@ -286,6 +286,11 @@ func TestValidatePublicURLErrorNeverExposesUserinfo(t *testing.T) {
 		{name: "end-user opaque", server: "enduser", publicURL: "https:operator:s3cret-marker@broker.example.com"},
 		{name: "end-user opaque with token exchange", server: "enduser", publicURL: "https:operator:s3cret-marker@broker.example.com", tokenExchange: true},
 		{name: "admin opaque", server: "admin", publicURL: "https:operator:s3cret-marker@admin.example.com"},
+		{name: "end-user single-slash authority", server: "enduser", publicURL: "https:/operator:s3cret-marker@broker.example.com"},
+		{name: "end-user single-slash authority with token exchange", server: "enduser", publicURL: "https:/operator:s3cret-marker@broker.example.com", tokenExchange: true},
+		{name: "end-user triple-slash authority", server: "enduser", publicURL: "https:///operator:s3cret-marker@broker.example.com"},
+		{name: "admin single-slash authority", server: "admin", publicURL: "https:/operator:s3cret-marker@admin.example.com"},
+		{name: "admin triple-slash authority", server: "admin", publicURL: "https:///operator:s3cret-marker@admin.example.com"},
 		{name: "admin unparseable", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com/%zz"},
 		{name: "admin userinfo", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com"},
 	}
