@@ -273,6 +273,49 @@ func TestValidateEndUserPublicURLAsAuthZENBase(t *testing.T) {
 	}
 }
 
+func TestValidatePublicURLErrorNeverExposesUserinfo(t *testing.T) {
+	tests := []struct {
+		name          string
+		server        string
+		publicURL     string
+		tokenExchange bool
+	}{
+		{name: "end-user unparseable", server: "enduser", publicURL: "https://operator:s3cret-marker@broker.example.com/%zz"},
+		{name: "end-user unparseable with token exchange", server: "enduser", publicURL: "https://operator:s3cret-marker@broker.example.com/%zz", tokenExchange: true},
+		{name: "end-user unsupported scheme", server: "enduser", publicURL: "ftp://operator:s3cret-marker@broker.example.com"},
+		{name: "admin unparseable", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com/%zz"},
+		{name: "admin userinfo", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			if tt.server == "admin" {
+				cfg.Server.Admin.PublicURL = tt.publicURL
+			} else {
+				cfg.Server.EndUser.PublicURL = tt.publicURL
+			}
+			if tt.tokenExchange {
+				cfg.TokenExchange.ClaimExtraction.PrincipalExpression = "subject_token.sub"
+				cfg.TokenExchange.Authorization.CEL.Expression = "true"
+			}
+
+			err := Validate(cfg)
+
+			var configErr *config.ConfigError
+			if !errors.As(err, &configErr) {
+				t.Fatalf("Validate() error = %v, want *config.ConfigError", err)
+			}
+			if want := "server." + tt.server + ".public_url"; configErr.Field != want {
+				t.Errorf("Validate() error field = %q, want %s", configErr.Field, want)
+			}
+			if strings.Contains(err.Error(), "s3cret-marker") || strings.Contains(err.Error(), "operator") {
+				t.Errorf("Validate() error exposes URL credentials: %v", err)
+			}
+		})
+	}
+}
+
 func TestValidateAdminPublicURL(t *testing.T) {
 	tests := []struct {
 		name      string
