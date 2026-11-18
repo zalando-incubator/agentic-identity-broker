@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -206,6 +207,38 @@ func TestAuthZENEvaluation_SpansExcludeCredentialsAndContext(t *testing.T) {
 		assert.Equal(t, trace.SpanKindInternal, span.SpanKind())
 		assert.Equal(t, "tokenexchange", span.InstrumentationScope().Name)
 	}
+}
+
+func TestAuthZENEvaluation_CallerCancellationLeavesSpanStatusUnset(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
+	for _, decision := range []tokenexchange.GrantDecision{
+		{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError,
+			Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageResourceResolution, tokenexchange.DetailCallerCanceled)},
+		{Kind: tokenexchange.DecisionRequestFailure, Status: http.StatusInternalServerError,
+			Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageResourceResolution, tokenexchange.DetailResourceRepositoryUnavailable)},
+	} {
+		serveEvaluation(t, &stubEvaluator{decision: decision}, newEvaluationRequest(validEvaluationBody()))
+	}
+	spans := recorder.Ended()
+	require.Len(t, spans, 2)
+	outcome := func(span sdktrace.ReadOnlySpan) any {
+		for _, attr := range span.Attributes() {
+			if attr.Key == "token_exchange.outcome" {
+				return attr.Value.AsInterface()
+			}
+		}
+		return nil
+	}
+	assert.Equal(t, "canceled", outcome(spans[0]))
+	assert.Equal(t, codes.Unset, spans[0].Status().Code, "caller cancellation is an outcome, not an error")
+	assert.Equal(t, codes.Error, spans[1].Status().Code)
 }
 
 func TestAuthZENEvaluation_Denial(t *testing.T) {

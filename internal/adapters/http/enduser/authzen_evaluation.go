@@ -262,7 +262,9 @@ func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span,
 			level = slog.LevelWarn
 		}
 		attrs = append(attrs, attribute.String("access_evaluation.decision", "error"), attribute.Int("http.response.status_code", decision.Status))
-		span.SetStatus(codes.Error, "access evaluation failed")
+		if diagnostic.Outcome() != tokenexchange.OutcomeCanceled {
+			span.SetStatus(codes.Error, "access evaluation failed")
+		}
 	}
 	if decision.Kind != tokenexchange.DecisionPermit {
 		attrs = append(attrs,
