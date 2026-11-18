@@ -2742,6 +2742,11 @@ paths:
               schema:
                 type: string
                 example: "max-age=3600"
+            Vary:
+              description: Always `X-Request-ID`, because the response echoes the supplied request identifier.
+              schema:
+                type: string
+                example: X-Request-ID
             X-Request-ID:
               $ref: "#/components/headers/AuthZENRequestId"
           content:

@@ -536,3 +536,19 @@ func TestAuthZENEvaluation_MembersMatchByExactName(t *testing.T) {
 		assert.Zero(t, evaluator.calls)
 	})
 }
+
+func TestAuthZENConfiguration_VariesByRequestID(t *testing.T) {
+	t.Parallel()
+	for _, requestID := range []string{"disc-1", ""} {
+		req := httptest.NewRequest(http.MethodGet, "/.well-known/authzen-configuration", nil)
+		if requestID != "" {
+			req.Header.Set("X-Request-ID", requestID)
+		}
+		rec := httptest.NewRecorder()
+
+		NewAuthZENConfigurationHandler("https://broker.example.com").ServeHTTP(rec, req)
+
+		assert.Equal(t, "X-Request-ID", rec.Header().Get("Vary"), "a cache must not replay another request's echoed ID")
+		assert.Equal(t, requestID, rec.Header().Get("X-Request-ID"))
+	}
+}

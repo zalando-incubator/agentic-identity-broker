@@ -33,6 +33,8 @@ func NewAuthZENConfigurationHandler(publicURL string) *AuthZENConfigurationHandl
 func (h *AuthZENConfigurationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	echoRequestID(w, r)
 	w.Header().Set("Content-Type", "application/json")
+	// The response echoes X-Request-ID, so a cache must key it by that header.
+	w.Header().Set("Vary", "X-Request-ID")
 	w.Header().Set("Cache-Control", "max-age=3600")
 	_ = json.NewEncoder(w).Encode(h.configuration)
 }
