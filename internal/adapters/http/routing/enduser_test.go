@@ -374,12 +374,15 @@ func TestSetupEnduserRoutes_AuthZENRouteAuditUsesFinalizedIdentity(t *testing.T)
 				ctx = principal.WithPrincipal(ctx, tt.requestPrincipal)
 			}
 
-			router.ServeHTTP(httptest.NewRecorder(), req.WithContext(ctx))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req.WithContext(ctx))
 
 			var record map[string]any
 			require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
-			require.Equal(t, "oauth2 authorization request", record["msg"])
 			require.Equal(t, "tokenexchange.access_evaluation_request.completed", record["event"])
+			require.Equal(t, http.MethodPost, record["method"])
+			require.Equal(t, "/access/v1/evaluation", record["path"])
+			require.EqualValues(t, rec.Code, record["status"])
 			require.Equal(t, tt.want, record["principal"], "the route audit must name the finalized resource owner")
 		})
 	}
