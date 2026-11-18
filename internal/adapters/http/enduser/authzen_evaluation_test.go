@@ -456,3 +456,49 @@ func TestAuthZENConfiguration_PublishesMetadataFromPublicURL(t *testing.T) {
 	assert.JSONEq(t, `{"policy_decision_point":"https://broker.example.com",
 		"access_evaluation_endpoint":"https://broker.example.com/access/v1/evaluation"}`, rec.Body.String())
 }
+
+func TestAuthZENEvaluation_MembersMatchByExactName(t *testing.T) {
+	t.Parallel()
+	baseline := &stubEvaluator{decision: permitDecision()}
+	serveEvaluation(t, baseline, newEvaluationRequest(validEvaluationBody()))
+	const (
+		subject  = `"subject":{"type":"urn:ietf:params:oauth:token-type:jwt","id":"` + evalSubjectMarker + `"}`
+		action   = `"action":{"name":"urn:ietf:params:oauth:grant-type:token-exchange"}`
+		resource = `"resource":{"type":"protected_resource","id":"https://api.example.com/repos"}`
+	)
+	// Each case variant follows the canonical member, so a case-insensitive decoder would
+	// let it overwrite the canonical value.
+	for name, body := range map[string]string{
+		"Subject":       `{` + subject + `,` + action + `,` + resource + `,"Subject":{"type":"identity","id":"other-subject"}}`,
+		"ACTION":        `{` + subject + `,` + action + `,` + resource + `,"ACTION":{"name":"other-action"}}`,
+		"Resource":      `{` + subject + `,` + action + `,` + resource + `,"Resource":{"type":"other","id":"https://other.example.com"}}`,
+		"Context":       `{` + subject + `,` + action + `,` + resource + `,"Context":{"agent":"not-a-uuid"}}`,
+		"context.Agent": `{` + subject + `,` + action + `,` + resource + `,"context":{"Agent":"not-a-uuid"}}`,
+		"subject.ID": `{"subject":{"type":"urn:ietf:params:oauth:token-type:jwt","id":"` + evalSubjectMarker + `","ID":"other-subject"},` +
+			action + `,` + resource + `}`,
+		"subject.Type": `{"subject":{"type":"urn:ietf:params:oauth:token-type:jwt","id":"` + evalSubjectMarker + `","Type":"identity"},` +
+			action + `,` + resource + `}`,
+		"action.Name": `{` + subject + `,"action":{"name":"urn:ietf:params:oauth:grant-type:token-exchange","Name":"other-action"},` +
+			resource + `}`,
+		"resource.Type": `{` + subject + `,` + action +
+			`,"resource":{"type":"protected_resource","id":"https://api.example.com/repos","Type":"other"}}`,
+		"resource.Id": `{` + subject + `,` + action +
+			`,"resource":{"type":"protected_resource","id":"https://api.example.com/repos","Id":"https://other.example.com"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			evaluator := &stubEvaluator{decision: permitDecision()}
+			rec, _ := serveEvaluation(t, evaluator, newEvaluationRequest(body))
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, baseline.request, evaluator.request, "a case variant is an unknown member and is ignored")
+		})
+	}
+	t.Run("case variant alone does not satisfy a required member", func(t *testing.T) {
+		t.Parallel()
+		body := strings.Replace(validEvaluationBody(), `"action"`, `"Action"`, 1)
+		evaluator := &stubEvaluator{decision: permitDecision()}
+		rec, _ := serveEvaluation(t, evaluator, newEvaluationRequest(body))
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+		assert.Zero(t, evaluator.calls)
+	})
+}

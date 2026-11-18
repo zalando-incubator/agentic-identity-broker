@@ -63,23 +63,6 @@ type evaluationDenialReason struct {
 	} `json:"reason_user"`
 }
 
-// Unknown members are ignored at every level (AuthZEN 1.0 HTTPS JSON binding); required
-// members must be present with the documented JSON types.
-type wireEvaluationRequest struct {
-	Subject *struct {
-		Type *string `json:"type"`
-		ID   *string `json:"id"`
-	} `json:"subject"`
-	Action *struct {
-		Name *string `json:"name"`
-	} `json:"action"`
-	Resource *struct {
-		Type *string `json:"type"`
-		ID   *string `json:"id"`
-	} `json:"resource"`
-	Context json.RawMessage `json:"context"`
-}
-
 var errMalformedEvaluation = errors.New("malformed access evaluation request")
 
 func (h *AuthZENEvaluationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -134,45 +117,87 @@ func bearerCredential(r *http.Request) (string, bool) {
 	return credential, credential != ""
 }
 
+// decodeEvaluationRequest reads members by exact name. Unknown members, including case
+// variants of supported names, are ignored at every level (AuthZEN 1.0 HTTPS JSON binding)
+// and cannot replace a supported member; required members must be present with the
+// documented JSON types.
 func decodeEvaluationRequest(body io.Reader) (tokenexchange.AccessEvaluationRequest, error) {
-	var wire wireEvaluationRequest
+	var raw json.RawMessage
 	decoder := json.NewDecoder(body)
-	if err := decoder.Decode(&wire); err != nil {
+	if err := decoder.Decode(&raw); err != nil {
 		return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 		return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
 	}
-	if wire.Subject == nil || wire.Subject.Type == nil || wire.Subject.ID == nil ||
-		wire.Action == nil || wire.Action.Name == nil ||
-		wire.Resource == nil || wire.Resource.Type == nil || wire.Resource.ID == nil {
+	top, ok := jsonObject(raw)
+	if !ok {
 		return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
 	}
-	req := tokenexchange.AccessEvaluationRequest{
-		SubjectType:  *wire.Subject.Type,
-		SubjectID:    *wire.Subject.ID,
-		ActionName:   *wire.Action.Name,
-		ResourceType: *wire.Resource.Type,
-		ResourceID:   *wire.Resource.ID,
+	subject, subjectOK := jsonObject(top["subject"])
+	action, actionOK := jsonObject(top["action"])
+	resource, resourceOK := jsonObject(top["resource"])
+	if !subjectOK || !actionOK || !resourceOK {
+		return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
 	}
-	if len(wire.Context) == 0 {
+	var req tokenexchange.AccessEvaluationRequest
+	for _, member := range []struct {
+		object map[string]json.RawMessage
+		name   string
+		target *string
+	}{
+		{subject, "type", &req.SubjectType},
+		{subject, "id", &req.SubjectID},
+		{action, "name", &req.ActionName},
+		{resource, "type", &req.ResourceType},
+		{resource, "id", &req.ResourceID},
+	} {
+		value, ok := jsonString(member.object[member.name])
+		if !ok {
+			return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
+		}
+		*member.target = value
+	}
+	rawContext, present := top["context"]
+	if !present {
 		return req, nil
 	}
-	if !bytes.HasPrefix(bytes.TrimSpace(wire.Context), []byte("{")) {
+	members, ok := jsonObject(rawContext)
+	if !ok {
 		return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
 	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(wire.Context, &members); err != nil {
-		return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
-	}
-	if raw, ok := members["agent"]; ok {
-		var anchor string
-		if err := json.Unmarshal(raw, &anchor); err != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+	if rawAnchor, present := members["agent"]; present {
+		anchor, ok := jsonString(rawAnchor)
+		if !ok {
 			return tokenexchange.AccessEvaluationRequest{}, errMalformedEvaluation
 		}
 		req.AgentAnchor = &anchor
 	}
 	return req, nil
+}
+
+// jsonObject decodes a JSON object into its members; null and other types are rejected.
+func jsonObject(raw json.RawMessage) (map[string]json.RawMessage, bool) {
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) {
+		return nil, false
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return nil, false
+	}
+	return members, true
+}
+
+// jsonString decodes a JSON string; null and other types are rejected.
+func jsonString(raw json.RawMessage) (string, bool) {
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte(`"`)) {
+		return "", false
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return value, true
 }
 
 func (h *AuthZENEvaluationHandler) writeEarlyFailure(ctx context.Context, span trace.Span, w http.ResponseWriter, status int, detail tokenexchange.FailureDetail, challenge string) {
