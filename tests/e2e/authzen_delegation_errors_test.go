@@ -120,6 +120,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 		var (
 			f        *authzenFixture
 			postgres *bootstrap.PostgresFixture
+			db       *sql.DB
 		)
 
 		BeforeEach(func() {
@@ -141,15 +142,17 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 			f = newAuthZENData(storage)
 			f.Boot(func(cfg *ports.Config) { cfg.Storage = storageConfig })
 
-			db, err := sql.Open("pgx", postgres.ConnectionURL)
+			db, err = sql.Open("pgx", postgres.ConnectionURL)
 			Expect(err).NotTo(HaveOccurred())
-			defer func() { Expect(db.Close()).To(Succeed()) }()
-			_, err = db.ExecContext(ctx, "ALTER TABLE user_grants RENAME TO user_grants_unavailable")
-			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { Expect(db.Close()).To(Succeed()) })
 		})
 
 		// Scenario US2.19 from specs/054-authzen-delegation-pip/spec.md
 		It("returns 500 during a grant-repository outage", func() {
+			permitContext(f.Evaluate(authzenRepoResource, nil))
+			_, err := db.ExecContext(context.Background(), "ALTER TABLE user_grants RENAME TO user_grants_unavailable")
+			Expect(err).NotTo(HaveOccurred())
+
 			resp := f.Evaluate(authzenRepoResource, nil)
 			expectAuthZENError(resp, http.StatusInternalServerError, "server_error")
 			Expect(resp.Raw).NotTo(ContainSubstring("consent_url"))

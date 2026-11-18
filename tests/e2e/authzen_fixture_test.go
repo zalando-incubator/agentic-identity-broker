@@ -256,24 +256,38 @@ func (f *authzenFixture) ExpectEvaluationIdentity(resp *helpers.AuthZENResponse,
 	parts := strings.Split(resp.Header.Get("traceresponse"), "-")
 	Expect(parts).To(HaveLen(4))
 	traceID := parts[1]
-	var matching []map[string]any
-	Eventually(func() int {
+	var handlerAudits, routeAudits, perimeterLogs []map[string]any
+	Eventually(func(g Gomega) {
 		records, err := f.Logs.Records()
-		Expect(err).NotTo(HaveOccurred())
-		matching = nil
+		g.Expect(err).NotTo(HaveOccurred())
+		handlerAudits, routeAudits, perimeterLogs = nil, nil, nil
 		for _, record := range records {
-			if record["trace_id"] == traceID && (record["token_exchange.operation"] == "access_evaluation" || record["msg"] == "http request") {
-				matching = append(matching, record)
+			if record["trace_id"] != traceID {
+				continue
+			}
+			_, hasEvent := record["event"]
+			_, hasClientIP := record["client_ip"]
+			switch {
+			case record["token_exchange.operation"] == "access_evaluation":
+				handlerAudits = append(handlerAudits, record)
+			case record["event"] == "tokenexchange.access_evaluation_request.completed":
+				routeAudits = append(routeAudits, record)
+			case !hasEvent && hasClientIP:
+				perimeterLogs = append(perimeterLogs, record)
 			}
 		}
-		return len(matching)
-	}).Should(Equal(2), "exactly one in-handler audit and one perimeter access log share the response trace ID")
-	for _, record := range matching {
+		g.Expect(handlerAudits).To(HaveLen(1), "exactly one in-handler audit shares the response trace ID")
+		g.Expect(routeAudits).To(HaveLen(1), "exactly one route audit shares the response trace ID")
+		g.Expect(perimeterLogs).To(HaveLen(1), "exactly one perimeter access log shares the response trace ID")
+	}).Should(Succeed())
+	Expect(handlerAudits[0]).To(HaveKey("event"))
+	for _, audit := range []map[string]any{handlerAudits[0], routeAudits[0]} {
+		Expect(audit).To(HaveKeyWithValue("principal", actor), "audits name the finalized Actor")
+	}
+	Expect(routeAudits[0]).To(HaveKeyWithValue("path", "/access/v1/evaluation"))
+	Expect(perimeterLogs[0]).To(HaveKeyWithValue("path", "/access/v1/evaluation"))
+	for _, record := range []map[string]any{handlerAudits[0], routeAudits[0], perimeterLogs[0]} {
 		Expect(record).To(HaveKeyWithValue("actor", actor))
-		if record["token_exchange.operation"] == "access_evaluation" {
-			Expect(record).To(HaveKeyWithValue("principal", actor))
-			Expect(record).To(HaveKey("event"))
-		}
 		if peer == "" {
 			Expect(record).NotTo(HaveKey("calling_peer"))
 		} else {
