@@ -104,7 +104,11 @@ func newGrantContextHarnessWithExchanger(t *testing.T, resolve func() (grantcont
 	authorizer := &mockAuthorizer{evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
 		h.policies.Add(1)
 		raw, err := json.Marshal(input["context"])
-		require.NoError(t, err)
+		if err != nil {
+			// The gRPC handler goroutine runs this callback, so report without FailNow and fail closed.
+			t.Errorf("marshal policy context: %v", err)
+			return nil, err
+		}
 		h.lastInput.Store(string(raw))
 		return h.policyFn(input)
 	}}
@@ -307,9 +311,17 @@ func TestGrantContext_BodyPathPrecedence(t *testing.T) {
 				resolverDone := make(chan struct{})
 				exchangeDone := make(chan struct{})
 				var h *grantContextHarness
+				// Bounded so a server that serializes the calls in the other order fails instead of hanging.
+				await := func(done <-chan struct{}, what string) {
+					select {
+					case <-done:
+					case <-time.After(5 * time.Second):
+						t.Errorf("timed out waiting for %s; the body path must run exchange and resolution concurrently", what)
+					}
+				}
 				h = newGrantContextHarness(t, func() (grantcontext.Result, error) {
 					if !resolverFirst {
-						<-exchangeDone
+						await(exchangeDone, "exchange")
 					}
 					defer close(resolverDone)
 					if tt.resolveErr != nil {
@@ -319,7 +331,7 @@ func TestGrantContext_BodyPathPrecedence(t *testing.T) {
 				})
 				h.exchangeFn = func() (server.ExchangeResult, error) {
 					if resolverFirst {
-						<-resolverDone
+						await(resolverDone, "resolution")
 					}
 					defer close(exchangeDone)
 					return server.ExchangeResult{}, tt.exchangeErr
@@ -496,15 +508,19 @@ func TestGrantContext_HeaderOnlyChecksDeadlineImmediatelyBeforePolicy(t *testing
 func TestGrantContext_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
 	for _, path := range []string{"body", "batch", "header-only"} {
 		t.Run(path, func(t *testing.T) {
+			const providerToken = "expired-permit-provider-token"
 			logger, logs := newJSONTestLogger()
 			var h *grantContextHarness
 			h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return h.permitFor(time.Second)() }, logger)
 			if path == "header-only" {
 				h.exchangeFn = func() (server.ExchangeResult, error) {
 					h.clock.Advance(time.Second)
-					return server.ExchangeResult{Token: "expired-permit-provider-token"}, nil
+					return server.ExchangeResult{Token: providerToken}, nil
 				}
 			} else {
+				h.exchangeFn = func() (server.ExchangeResult, error) {
+					return server.ExchangeResult{Token: providerToken, Principal: "alice@example.com", AgentID: "agent-uuid"}, nil
+				}
 				h.policyFn = func(authorization.OPAInput) (*authorization.OPADecision, error) {
 					h.clock.Advance(time.Second)
 					return &authorization.OPADecision{Action: authorization.ActionAllow}, nil
@@ -529,13 +545,13 @@ func TestGrantContext_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
 			assert.Equal(t, int32(1), h.policies.Load())
 			assert.Equal(t, int32(1), h.exchanges.Load())
 			assert.Equal(t, int32(1), h.resolver.calls.Load(), "the expired permit is never re-resolved")
-			assert.NotContains(t, response.String(), "expired-permit-provider-token")
+			assert.NotContains(t, response.String(), providerToken)
 			assert.NotContains(t, response.String(), testSubjectToken)
 			records := logs.records(t)
 			raw, err := json.Marshal(records)
 			require.NoError(t, err)
 			assert.NotContains(t, string(raw), testSubjectToken)
-			assert.NotContains(t, string(raw), "expired-permit-provider-token")
+			assert.NotContains(t, string(raw), providerToken)
 			assert.NotContains(t, string(raw), "2026-10-26T09:59:00Z")
 			assert.NotContains(t, string(raw), "read:repo")
 			found := false
