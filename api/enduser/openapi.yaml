@@ -2727,7 +2727,8 @@ paths:
         `server.enduser.public_url` without a trailing slash; consumers must compare it exactly
         with their expected identifier before sending credentials. Batch and search endpoints
         are not supported and are therefore omitted. Available only when token exchange is
-        configured; otherwise this path returns 404. A supplied `X-Request-ID` is echoed.
+        configured; otherwise this path returns 404. A supplied `X-Request-ID` is echoed on the
+        200 response; the routing 404 does not echo it.
       operationId: getAuthZENConfiguration
       tags:
         - AuthZEN
@@ -2769,9 +2770,11 @@ paths:
         token covers one protected resource. The evaluation uses the same authoritative resolution
         as RFC 8693 token exchange (subject and caller validation, the unchanged
         `token_exchange.authorization.cel.expression` with
-        `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`, resource
-        normalization and grant authorization) but never reads or refreshes a provider session
-        and never returns a credential.
+        `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange` and an empty
+        `request.scope`, resource normalization and grant authorization) but never reads or
+        refreshes a provider session and never returns a credential. The caller-policy result
+        therefore equals that of an exchange without `scope`; a policy that conditions on
+        `request.scope` must treat the empty scope deliberately (ADR 048 §2).
 
         - A permit returns `decision: true` with a Grant Context and
           `Cache-Control: private, max-age=<0..60>`, bounded by the grant expiry.
@@ -2781,8 +2784,10 @@ paths:
 
         Unknown request members, including AuthZEN `properties` and other `context` members, are
         ignored as required by the AuthZEN 1.0 HTTPS binding; the supported values below are
-        required exactly. The body is limited to 64 KiB. Every non-permit response is
-        `Cache-Control: no-store`. A supplied `X-Request-ID` is echoed on every response.
+        required exactly. The body is limited to 64 KiB. Every non-permit response from the
+        evaluation handler is `Cache-Control: no-store`, and a supplied `X-Request-ID` is echoed
+        on every handler response. The 404 returned when token exchange is not configured comes
+        from routing and carries neither header.
       operationId: evaluateAccess
       tags:
         - AuthZEN
@@ -2969,7 +2974,9 @@ paths:
                     error: forbidden
                     message: caller is not authorized for access evaluation
         "404":
-          description: Token exchange is not configured.
+          description: |
+            Token exchange is not configured. Returned by routing, so it carries neither
+            `Cache-Control: no-store` nor the echoed `X-Request-ID`.
         "500":
           description: Configuration or dependency failure. Never a decision.
           headers:
