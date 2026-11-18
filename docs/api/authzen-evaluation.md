@@ -94,7 +94,9 @@ X-Request-ID: delegation-001
   grant-included services, `[]` when it defines none.
 - Optional `canonical_id` members and `grant.valid_until` are omitted when unset, never null. `grant.updated_at` preserves the stored RFC 3339 instant, including fractional seconds, so updates within one second remain distinct.
 - Freshness: `max-age` is `floor(seconds until grant expiry)` capped at 60, or 60 without an
-  expiry. The broker re-checks expiry before permitting, so a permit never outlives its grant.
+  expiry. The broker re-checks expiry before permitting. A consumer must measure `max-age` from
+  the moment it sent the evaluation request, not from receipt of the response, so that network
+  delay cannot extend a permit past its grant. ExtProc does this.
 - Evaluation reads no provider session and never refreshes or returns a credential. A permit
   means the delegation covers the resource, not that a provider session exists.
 
