@@ -74,7 +74,7 @@ The evaluation body is `{subject:{type:jwt,id:<subject token>}, action:{name:tok
 The client uses the existing traced HTTP client (`internal/extproc/httpclient`) with the
 `oauth2.tls` trust settings. No new TLS settings are added.
 
-**Freshness** (maintainer decisions of 2026-10-28, HIGH I1/U1 in [remediation.md](../remediation.md)):
+**Freshness** (maintainer decisions of 2026-10-28, HIGH I1/U1 in the [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903)):
 The client reads `requestStart` just before it sends the POST. A permit's deadline is
 `requestStart + min(max-age, max_staleness)`, computed once. The cache, the singleflight
 followers, and the request state carry this deadline unchanged. ExtProc does no `Age` or

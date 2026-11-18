@@ -28,10 +28,10 @@ Every task cites a requirement, scenario, research decision implementing that re
 
 ## Historical VIII/XIII disposition prerequisite (D-6)
 
-[historical-validation-exception.md](./historical-validation-exception.md) is the authoritative
+Plan item D-6 and [implementation-log.md](./implementation-log.md) §10 are the authoritative
 approved exception and alternative validation for T027, T029–T031, T036, T053, T065, T080,
-T094 and T097. Supplied approval and completed validation are recorded in `quickstart.md`
-§§11–12; approval alone completes no task. For the existing behavior,
+T094 and T097. Supplied approval and completed validation are recorded in
+[implementation-log.md](./implementation-log.md) §§11–12; approval alone completes no task. For the existing behavior,
 references below to tests-before-implementation and compile-only scaffolding describe the
 original obligation, not a claim it occurred or instructions to recreate it retrospectively.
 

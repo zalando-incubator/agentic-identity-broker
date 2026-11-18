@@ -269,9 +269,9 @@ obsolete directions in earlier entries, not their reported observations or failu
 ## 10. Proposed historical sequencing disposition (D-6)
 
 Analysis run `42039632078/1` identified the unresolved historical VIII/XIII deviation.
-[historical-validation-exception.md](./historical-validation-exception.md) now records the
-specific admitted sequencing failure, its scope, rationale, residual risk, main alternative
-and conditional validation proposal under “When Constraints Cannot Be Met”. Plan approval
+This section summarizes the
+specific admitted sequencing failure, its scope, main alternative and conditional
+validation proposal under “When Constraints Cannot Be Met”. Plan approval
 item D-6 requests a one-time exception for that history only; no approval is recorded here.
 
 The recommended alternative validation is independent review of existing tests against the
@@ -315,7 +315,7 @@ New corrections remain test-first. No existing validation or security guarantee 
 - **I1 — frozen plan status inconsistency**: `plan.md:650-654`'s blanket “No constitution
   violation needs justification” is obsolete. The historical VIII/XIII deviation needs the
   approved D-6 disposition and all alternative-validation conditions in
-  `historical-validation-exception.md:49-78`. Superseding ADR 028 through ADR 048 independently
+  §10 of this log. Superseding ADR 028 through ADR 048 independently
   follows Principle II and is not a violation. This correction is recorded here rather than
   editing `plan.md`, which the implementation phase must keep unchanged. The source wording
   remains a documentation follow-up; this note does not claim that it was edited.

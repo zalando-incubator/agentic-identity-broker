@@ -144,7 +144,7 @@ consumer. No React UI change.
 **Review decisions (2026-10-28)**: The maintainer review submitted with `/speckit-plan`
 answered I1 (an unusable `max-age` fails closed), U1 (one simple deadline with accepted skew),
 and U2 (expiry before policy use returns 503). It endorsed the AuthZEN contract and the R16 ADR
-decision set, which includes the I2 audit-seam extension. [remediation.md](./remediation.md)
+decision set, which includes the I2 audit-seam extension. The [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903)
 records the answers and where they apply. These answers are maintainer direction for the
 design. Formal sign-off happens through the pipeline's approval comment and covers the rows in
 [Approval Items](#approval-items). Original approval is now recorded in quickstart §§11–12; the new revision drafts remain Proposed.
@@ -205,7 +205,7 @@ test-first compliance. Implementation history and remaining evidence gaps are re
 
 The post-design **coverage** gate is distinct from runtime compliance. Original VIII/XIII deviation is disposed of through supplied D-6 approval and completed alternative validation (quickstart §12); no original sequencing is retroactively claimed. Current T103 compliance and new-work validation remain open. The 2026-10-28 spec clarification settled the OPA input shape,
 and research R15, data model §3.5, and ExtProc contract §4 now apply it. The freshness findings
-are answered and applied, as recorded in [remediation.md](./remediation.md). The open items
+are answered and applied, as recorded in the [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903). The open items
 in the next section are implementation-time gates. They do not block the design.
 
 - The OPA input change is additive. The five new members use `omitempty` and appear only in
@@ -228,7 +228,7 @@ in the next section are implementation-time gates. They do not block the design.
 
 Maintainer direction from the 2026-10-28 review and clarification, applied in the artifacts:
 
-- **Freshness** (I1/U1/U2): see [remediation.md](./remediation.md).
+- **Freshness** (I1/U1/U2): see the [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903).
 - **OPA input shape**: the spec clarification of 2026-10-28, applied in research R15.
 - **AuthZEN contract**: endorsed. This covers the endpoint shapes, the error mapping (R6),
   request-member handling (R10, revised 2026-11-05 to ignore unknown members per the AuthZEN
@@ -263,7 +263,7 @@ Still open for implementation:
 | D-3 | Decision | Recorded original approval (quickstart §§11–12): ExtProc grant context ships disabled by default (Principle I exception, reconciled as in ADR 028); the broker endpoint has no opt-out. Alternative: enabled by default. | `adrs/048-authzen-delegation-pip.md:110-116` |
 | D-4 | Decision | Recorded original scope approval (quickstart §§11–12): exchange-field removal, configurable broker cap, batch evaluation, Resource Search, actor tokens, UI, and schema changes are excluded from this feature. Alternative: include the removal now as a breaking change. | `specs/054-authzen-delegation-pip/spec.md:768-774` |
 | D-5 | Decision | Recorded original approval (quickstart §§11–12): on the body-bearing path, consent given after a delegation denial takes effect once the existing ADR 012 exchange re-consent cooldown (5 s) lapses, because the concurrent exchange during the denied request records that cooldown; the exchange cache is unchanged, the header-only path permits immediately, and delegation denials are never cached. Alternative: bypass the re-consent cooldown in enabled mode (changes ADR 012 exchange-cache semantics). | `adrs/048-authzen-delegation-pip.md:162-166` |
-| D-6 | Decision | Recorded original approval (quickstart §§11–12): a one-time Constitution VIII/XIII exception for the original test-first/compile-only sequencing not performed for existing feature code, conditional on independent test review, all 44 scenario mappings and required local/downstream validation; retain the deviation permanently and require genuine test-first corrections. Alternative: decline the exception and retain the obligations as unresolved, without declaring completion. No existing validation failure or security guarantee is waived. | `specs/054-authzen-delegation-pip/historical-validation-exception.md:1-78` |
+| D-6 | Decision | Recorded original approval (quickstart §§11–12): a one-time Constitution VIII/XIII exception for the original test-first/compile-only sequencing not performed for existing feature code, conditional on independent test review, all 44 scenario mappings and required local/downstream validation; retain the deviation permanently and require genuine test-first corrections. Alternative: decline the exception and retain the obligations as unresolved, without declaring completion. No existing validation failure or security guarantee is waived. | `specs/054-authzen-delegation-pip/implementation-log.md` §§10–12 |
 | API-7 | API | Proposed: enabled ExtProc returns 503 `service_unavailable` / `exchange result binding unavailable` after a mismatched additional-exchange delivery; permit expiry before final forwarding also returns the existing delegation-unavailable 503. Main alternative: rebind or forward an incompatible/expired result (rejected fail-open). | `specs/054-authzen-delegation-pip/contracts/extproc-grant-context.md:128-149` |
 | ADR-3 | ADR | Proposed ADR 048 §5 revision: canonical `input.context.permission_sets` guidance while preserving current compatibility; replace permanent retention only with future separately approved removal and a required follow-up issue. Alternative: permanent duplicate representations. | `specs/054-authzen-delegation-pip/adr-048-revision-canonical-permission-sets.md:13-34` |
 | D-7 | Decision | Proposed: breaking broker span/event rename to `tokenexchange.access_evaluation*`, explicit broker/resolver kinds and required `access_evaluation`/`delegation` namespace registration with atomic migration and changelog guidance. Alternative: retain old identifiers through a standards exception (rejected). | `specs/054-authzen-delegation-pip/contracts/observability.md:45-71` |
@@ -286,7 +286,6 @@ specs/054-authzen-delegation-pip/
 │   └── observability.md                    # signal inventory, ADR-2 diagnostic, unresolved F2 gate
 ├── adr-048-revision-permit-bound-tokens.md # Proposed reuse revision (ADR-2)
 ├── adr-048-revision-canonical-permission-sets.md # Proposed compatibility revision (ADR-3)
-├── remediation.md                           # analysis findings and the 2026-10-28 decisions
 ├── checklists/requirements.md
 └── tasks.md                                 # 122 stable tasks; ADR-2 continuation is unchecked
 ```
@@ -417,7 +416,7 @@ feature is enabled:
 ### 6. ExtProc request path
 
 - Implement the R14 ordering in `processRequestHeadersOPA` and `processHeadersOnlyOPA`.
-- Freshness follows the decisions in [remediation.md](./remediation.md):
+- Freshness follows the decisions in the [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903):
   - The client rejects a permit with a missing, zero, malformed, or duplicate `max-age` (503,
     not used, not cached).
   - The client computes `Deadline = requestStart + min(max-age, max_staleness)` once.
@@ -701,4 +700,4 @@ ExtProc precedence branch, and 100% of the acceptance scenarios (Principle XIII)
 
 ## Complexity Tracking
 
-The historical original test-first/compile-only sequencing deviation requires the explicitly recorded D-6 exception and alternative validation in `historical-validation-exception.md` and `quickstart.md` §§11–12. Those records do not certify the missing sequence or waive tests for new work. US3.11–US3.13 and ADR-2 require genuine test-first development and fresh validation. ADR 048's partial supersession of merged ADR 028 separately follows Principle II; its Proposed ADR-2 same-PR revision is applied only after supplied approval. F2's remaining observability registration/migration obligation remains open as T103, not a constitutional exception.
+The historical original test-first/compile-only sequencing deviation requires the explicitly recorded D-6 exception and alternative validation in [implementation-log.md](./implementation-log.md) §§10–12. Those records do not certify the missing sequence or waive tests for new work. US3.11–US3.13 and ADR-2 require genuine test-first development and fresh validation. ADR 048's partial supersession of merged ADR 028 separately follows Principle II; its Proposed ADR-2 same-PR revision is applied only after supplied approval. F2's remaining observability registration/migration obligation remains open as T103, not a constitutional exception.

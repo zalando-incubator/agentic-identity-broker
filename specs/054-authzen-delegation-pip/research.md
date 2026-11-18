@@ -278,7 +278,7 @@ proxy must also route the standard discovery URL. The docs will state this.
   idempotent helper; the perimeter net remains a last resort. Preserve ordinary-request and
   token-route behavior. The maintainer endorsed this extension with the R16 decision set
   (2026-10-28 review); sign-off is approval item ADR-1 in the plan. It still needs the §3.1.4.2 documentation and T044/T047 test-first coverage;
-  it is not existing functionality (HIGH I2 in [remediation.md](./remediation.md)).
+  it is not existing functionality (HIGH I2, [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903)).
 
 ## R10. Request body bounds and unknown members
 
@@ -366,7 +366,7 @@ correction. Removal itself still needs a separately confirmed `2.0.0` change in 
 
 ## R13. ExtProc resolver boundary
 
-**Freshness decisions (2026-10-28, maintainer review on HIGH I1/U1 in [remediation.md](./remediation.md))**:
+**Freshness decisions (2026-10-28, HIGH I1/U1 in the [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903))**:
 
 - **Fail closed on unusable freshness (I1)**: A permit needs exactly one positive integer
   `max-age` directive. A missing, zero, malformed, duplicate, or non-integer value is an
@@ -419,7 +419,7 @@ and `ApprovalGate`.
 
 ## R14. ExtProc request-path ordering
 
-**Expiry before policy use (2026-10-28, maintainer review on HIGH U2 in [remediation.md](./remediation.md))**:
+**Expiry before policy use (2026-10-28, HIGH U2 in the [2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903))**:
 Reject with 503. `requestState` stores the permit's `Deadline` together with the context.
 Immediately before every OPA evaluation that receives delegation input, ExtProc checks
 `now < Deadline`. This covers the header-only policy call, the body policy call, and each

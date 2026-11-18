@@ -138,8 +138,8 @@ never from the body. The delegation is always resolved from the verified subject
 
 ## 3. ExtProc value objects (`internal/extproc/grantcontext`, no broker imports)
 
-The freshness rules below apply the maintainer decisions of 2026-10-28 (HIGH I1/U1/U2 in
-[remediation.md](./remediation.md)). §3.5 applies the 2026-10-28 spec clarification of the OPA
+The freshness rules below apply the maintainer decisions of 2026-10-28 (HIGH I1/U1/U2 in the
+[2026-10-28 maintainer review on #292](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#pullrequestreview-5688019903)). §3.5 applies the 2026-10-28 spec clarification of the OPA
 input shape (FR-017, FR-018, and research R15).
 
 ### 3.1 `GrantContextConfig` (`internal/extproc/config`)
