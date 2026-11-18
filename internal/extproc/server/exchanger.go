@@ -249,17 +249,11 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 	// Use DoChan to allow each caller to respect their own cancellation,
 	// not just block on the first caller's context.
 	sfKey := subjectToken + "\x00" + resourceURI
-	resChan := te.sfGroup.DoChan(sfKey, func() (any, error) {
+	flight := func() (any, error) {
 		// Re-check cache inside singleflight to handle races.
-		te.cacheMu.RLock()
-		if entry, ok := te.cache[key]; ok && !entry.isExpired() && !te.isAssertionExpired() && (allowStale || entry.reAuthErr != nil) {
-			te.cacheMu.RUnlock()
-			if entry.reAuthErr != nil {
-				return ExchangeResult{}, entry.reAuthErr
-			}
-			return entry.result(), nil
+		if value, hit, err := te.cachedFlightOutcome(key, allowStale); hit {
+			return value, err
 		}
-		te.cacheMu.RUnlock()
 
 		// Detach from the leader's cancellation so a cancelled leader does not abort
 		// the shared exchange for concurrent followers. Per-caller cancellation is
@@ -331,14 +325,28 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 			return ExchangeResult{}, execErr
 		}
 		return result, nil
-	})
+	}
 
 	// Wait for result while respecting this caller's context cancellation.
 	// This allows each caller to abandon long-running singleflight groups
 	// if their own deadline is exceeded, even if other callers are still waiting.
-	res, err := awaitResult(ctx, resChan)
-	if err != nil {
-		return ExchangeResult{}, NewOperationError(NewErrorMetadata(OperationExchange, KindCallerCanceled, DependencyLocal, 0, ""), err)
+	// A caller without stale reuse (the binding retry) needs a broker exchange, so it does not
+	// accept a joined flight that only read a cached success and waits for the next flight.
+	var res singleflight.Result
+	for {
+		var err error
+		res, err = awaitResult(ctx, te.sfGroup.DoChan(sfKey, flight))
+		if err != nil {
+			return ExchangeResult{}, NewOperationError(NewErrorMetadata(OperationExchange, KindCallerCanceled, DependencyLocal, 0, ""), err)
+		}
+		cached, cacheOnly := res.Val.(cachedSuccess)
+		if !cacheOnly {
+			break
+		}
+		res.Val = cached.result
+		if allowStale {
+			break
+		}
 	}
 	if res.Err != nil && allowStale && isTransientBrokerError(res.Err) && !te.isAssertionExpired() {
 		te.cacheMu.RLock()
@@ -360,6 +368,25 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 		return ExchangeResult{}, res.Err
 	}
 	return res.Val.(ExchangeResult), nil
+}
+
+// cachedSuccess marks a flight result read from the cache rather than exchanged.
+type cachedSuccess struct {
+	result ExchangeResult
+}
+
+// cachedFlightOutcome returns the cached outcome a flight delivers without a broker call.
+func (te *TokenExchanger) cachedFlightOutcome(key tokenCacheKey, allowStale bool) (any, bool, error) {
+	te.cacheMu.RLock()
+	defer te.cacheMu.RUnlock()
+	entry, ok := te.cache[key]
+	if !ok || entry.isExpired() || te.isAssertionExpired() || (!allowStale && entry.reAuthErr == nil) {
+		return nil, false, nil
+	}
+	if entry.reAuthErr != nil {
+		return ExchangeResult{}, true, entry.reAuthErr
+	}
+	return cachedSuccess{result: entry.result()}, true, nil
 }
 
 // isTransientBrokerError reports whether err represents a transient infrastructure

@@ -176,6 +176,49 @@ func TestBindingPortSharedRetryNeverRebindsOrLoops(t *testing.T) {
 	}
 }
 
+func TestBindingPortRetryIsNotSatisfiedByCacheOnlyFlight(t *testing.T) {
+	te, calls, _ := bindingPortExchanger(t, 3600)
+	key := tokenCacheKey{"SUBJECT_SECRET", "https://resource.example"}
+	competing := &tokenResultHandle{binding: ptrBinding("winner")}
+	te.cache[key] = &cachedToken{accessToken: "PROVIDER_SECRET", principal: "PRINCIPAL_SECRET", agentID: "agent", handle: competing, expiresAt: time.Now().Add(time.Minute)}
+	initial := boundPortResult(portBinding("old"))
+
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	entered := make(chan struct{})
+	leader := te.sfGroup.DoChan(key.subjectToken+"\x00"+key.resourceURI, func() (any, error) {
+		close(entered)
+		<-release
+		value, _, err := te.cachedFlightOutcome(key, true)
+		return value, err
+	})
+	<-entered
+	ctx := &joinedBindingContext{Context: context.Background(), joined: make(chan struct{})}
+	done := make(chan singleflight.Result, 1)
+	go func() {
+		r, e := te.ExchangeBound(ctx, key.subjectToken, key.resourceURI, &initial, portBinding("read"))
+		done <- singleflight.Result{Val: r, Err: e}
+	}()
+	select {
+	case <-ctx.joined:
+	case <-time.After(time.Second):
+		t.Fatal("retry did not join the cache-only flight")
+	}
+	unblock()
+	<-leader
+	r := <-done
+
+	require.NoError(t, r.Err, "a cache-only delivery must not consume the one additional exchange")
+	result := r.Val.(ExchangeResult)
+	assert.NotSame(t, competing, result.handle)
+	require.NotNil(t, result.handle.binding)
+	assert.Equal(t, []string{"read"}, result.handle.binding.Scopes)
+	assert.Equal(t, []string{"winner"}, competing.binding.Scopes)
+	assert.Equal(t, int32(1), calls.Load(), "exactly one additional broker exchange")
+}
+
 func TestExchangeResultBindingFormattingDoesNotExposeGrantOrScopes(t *testing.T) {
 	binding := portBinding("SCOPE_SECRET")
 	for _, value := range []string{fmt.Sprint(binding), fmt.Sprintf("%#v", binding)} {
