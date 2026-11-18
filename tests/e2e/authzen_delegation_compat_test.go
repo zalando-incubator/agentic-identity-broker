@@ -3,8 +3,6 @@ package e2e_test
 import (
 	"net/http"
 	"os"
-	"path/filepath"
-	"runtime"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -12,9 +10,8 @@ import (
 )
 
 func enduserOpenAPI() map[string]any {
-	_, thisFile, _, ok := runtime.Caller(0)
-	Expect(ok).To(BeTrue())
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(thisFile), "..", "..", "api", "enduser", "openapi.yaml"))
+	// Relative to the package directory, which the test binary uses as its working directory.
+	raw, err := os.ReadFile("../../api/enduser/openapi.yaml")
 	Expect(err).NotTo(HaveOccurred())
 	var document map[string]any
 	Expect(yaml.Unmarshal(raw, &document)).To(Succeed())

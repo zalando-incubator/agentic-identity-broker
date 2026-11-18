@@ -2,8 +2,6 @@ package enduser
 
 import (
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -12,12 +10,18 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// readEnduserContract reads the contract relative to the package directory, which go test uses as
+// the working directory, so -trimpath builds find it too.
+func readEnduserContract(t *testing.T) []byte {
+	t.Helper()
+	raw, err := os.ReadFile("../../../../api/enduser/openapi.yaml")
+	require.NoError(t, err)
+	return raw
+}
+
 func TestAuthZENContract_RetainsExchangeFieldsDuringDeprecation(t *testing.T) {
 	t.Parallel()
-	_, source, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../../api/enduser/openapi.yaml"))
-	require.NoError(t, err)
+	raw := readEnduserContract(t)
 	var contract struct {
 		Info struct {
 			Version string `yaml:"version"`
@@ -59,10 +63,7 @@ func TestAuthZENContract_RetainsExchangeFieldsDuringDeprecation(t *testing.T) {
 
 func TestAuthZENContract_EvaluationErrorsDeclareNoStore(t *testing.T) {
 	t.Parallel()
-	_, source, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../../api/enduser/openapi.yaml"))
-	require.NoError(t, err)
+	raw := readEnduserContract(t)
 	type header struct {
 		Ref    string `yaml:"$ref"`
 		Schema struct {
