@@ -7,7 +7,10 @@
 //
 // It exits with status 1 when it cannot follow a span name, a metric name,
 // an attribute, or a call that changes a span, passes a span or records a
-// measurement, and lists each place on standard error.
+// measurement, and lists each place on standard error. It also exits with
+// status 1 when a span or an attribute key has no description in
+// docs/reference/telemetry-descriptions.yaml, or the file describes one that
+// the code does not have.
 package main
 
 import (
@@ -15,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // patterns are the packages that the reference covers.
@@ -40,8 +44,18 @@ func run(dir string) error {
 		}
 		return fmt.Errorf("cannot follow %d places (coding-standards/OPENTELEMETRY.md section 10)", len(gaps))
 	}
+	d, err := LoadDescriptions(filepath.Join(dir, descriptionsPath))
+	if err != nil {
+		return err
+	}
+	if problems := checkDescriptions(ref, d); len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", descriptionsPath, p)
+		}
+		return fmt.Errorf("%d problems with the descriptions (coding-standards/OPENTELEMETRY.md section 10)", len(problems))
+	}
 	var buf bytes.Buffer
-	if err := Write(&buf, ref); err != nil {
+	if err := Write(&buf, ref, d); err != nil {
 		return err
 	}
 	_, err = os.Stdout.Write(buf.Bytes())

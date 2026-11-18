@@ -7,8 +7,9 @@ description: Spans, metrics and attributes that the broker and ExtProc emit thro
 
 This page lists every span, metric and attribute that the broker and ExtProc create through
 the OpenTelemetry API. `tools/telemetrydoc` generates it from the source code, and a test
-fails when the page is out of date. Do not edit it by hand. After you change a span or a
-metric, run `just telemetry-doc`.
+fails when the page is out of date. Do not edit it by hand. The span and attribute
+descriptions are in `docs/reference/telemetry-descriptions.yaml`. After you change a span,
+a metric or an attribute, run `just telemetry-doc`.
 
 The page does not list:
 
@@ -27,10 +28,10 @@ adding telemetry are in `coding-standards/OPENTELEMETRY.md`.
 
 Error status: whether the span can end with status `Error`.
 
-| Span | Kind | Scope | Error status | Started in |
+| Span | Kind | Scope | Error status | Description |
 |---|---|---|---|---|
 {{range $name, $s := .Spans -}}
-| [`{{$name}}`](#{{anchor $name}}) | {{or $s.Kind "Internal"}} | `{{$s.Scope}}` | {{if $s.ErrorStatus}}Yes{{else}}No{{end}} | {{if $s.RenamedFrom}}Renamed from `{{$s.RenamedFrom}}`{{else}}{{codes $s.Files}}{{end}} |
+| [`{{$name}}`](#{{anchor $name}}) | {{or $s.Kind "Internal"}} | `{{$s.Scope}}` | {{if $s.ErrorStatus}}Yes{{else}}No{{end}} | {{text (index $.SpanDescriptions $name)}} |
 {{end}}
 ## Metrics
 
@@ -43,10 +44,14 @@ Error status: whether the span can end with status `Error`.
 {{range $name, $s := .Spans}}
 ### {{$name}}
 
+{{text (index $.SpanDescriptions $name)}}
+
 {{if $s.RenamedFrom -}}
 The `{{$s.RenamedFrom}}` span, renamed while it runs. It has the same attributes.
+{{- else -}}
+Started in {{codes $s.Files}}.
+{{- end}}
 
-{{end -}}
 {{template "attrs" $s.Attrs}}
 {{- end}}
 ## Metric attributes
@@ -57,6 +62,13 @@ Created in `{{$m.File}}`.
 
 {{template "attrs" $m.Attrs}}
 {{- end}}
+## Attributes
+
+| Attribute | Description |
+|---|---|
+{{range $key, $desc := .Attributes -}}
+| `{{$key}}` | {{text $desc}} |
+{{end}}
 ## Attribute values
 {{range $name, $values := .Enums}}
 ### {{$name}}

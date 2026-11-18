@@ -21,8 +21,8 @@ var page = template.Must(template.New("page").Funcs(template.FuncMap{
 	"values":     values,
 }).Parse(pageTemplate))
 
-// Write renders ref as the telemetry reference page.
-func Write(w io.Writer, ref *Reference) error {
+// Write renders ref with the descriptions d as the telemetry reference page.
+func Write(w io.Writer, ref *Reference, d *Descriptions) error {
 	enums := map[string][]EnumValue{}
 	collect := func(attrs map[string]*Attr) {
 		for _, a := range attrs {
@@ -37,12 +37,18 @@ func Write(w io.Writer, ref *Reference) error {
 	for _, m := range ref.Metrics {
 		collect(m.Attrs)
 	}
+	attrs := map[string]string{}
+	for k := range allAttrKeys(ref) {
+		attrs[k] = d.Attributes[k]
+	}
 	var b strings.Builder
 	err := page.Execute(&b, struct {
-		Spans   map[string]*Span
-		Metrics map[string]*Metric
-		Enums   map[string][]EnumValue
-	}{ref.Spans, ref.Metrics, enums})
+		Spans            map[string]*Span
+		SpanDescriptions map[string]string
+		Metrics          map[string]*Metric
+		Attributes       map[string]string
+		Enums            map[string][]EnumValue
+	}{ref.Spans, d.Spans, ref.Metrics, attrs, enums})
 	if err != nil {
 		return err
 	}

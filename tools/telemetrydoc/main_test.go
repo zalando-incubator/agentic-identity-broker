@@ -30,8 +30,15 @@ func TestReferenceIsCurrent(t *testing.T) {
 		t.Fatalf("telemetrydoc cannot follow these places (coding-standards/OPENTELEMETRY.md section 10):\n%s",
 			strings.Join(lines, "\n"))
 	}
+	d, err := LoadDescriptions(filepath.Join(repoRoot, descriptionsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := checkDescriptions(ref, d); len(problems) > 0 {
+		t.Fatalf("%s (coding-standards/OPENTELEMETRY.md section 10):\n%s", descriptionsPath, strings.Join(problems, "\n"))
+	}
 	var got bytes.Buffer
-	if err := Write(&got, ref); err != nil {
+	if err := Write(&got, ref, d); err != nil {
 		t.Fatal(err)
 	}
 	want, err := os.ReadFile(filepath.Join(repoRoot, referencePath))
@@ -199,6 +206,51 @@ func TestExtractReportsGaps(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("gaps =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestDescriptions(t *testing.T) {
+	ref := extractFixture(t, "fixture")
+	d := &Descriptions{Spans: map[string]string{}, Attributes: map[string]string{}}
+	for n := range ref.Spans {
+		d.Spans[n] = "Span " + n + "."
+	}
+	for k := range allAttrKeys(ref) {
+		d.Attributes[k] = "Key " + k + "."
+	}
+	if problems := checkDescriptions(ref, d); len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+
+	var page bytes.Buffer
+	if err := Write(&page, ref, d); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"| [`fixture.fetch`](#fixturefetch) | Client | `fixture` | Yes | Span fixture.fetch. |\n",
+		"\n### fixture.fetch\n\nSpan fixture.fetch.\n\nStarted in `tools/telemetrydoc/testdata/fixture/fixture.go`.\n",
+		"\n## Attributes\n\n| Attribute | Description |\n|---|---|\n| `db.system` | Key db.system. |\n",
+		"| `queue` | Key queue. |\n",
+	} {
+		if !strings.Contains(page.String(), want) {
+			t.Errorf("page does not contain %q", want)
+		}
+	}
+
+	delete(d.Spans, "fixture.fetch")
+	delete(d.Attributes, "queue")
+	d.Spans["fixture.gone"] = "Removed span."
+	d.Attributes["fixture.gone"] = "Removed key."
+	d.Spans["fixture.held"] = ""
+	want := []string{
+		"attribute fixture.gone is described, but the code does not set it",
+		"attribute queue has no description",
+		"span fixture.fetch has no description",
+		"span fixture.gone is described, but the code does not create it",
+		"span fixture.held has no description",
+	}
+	if got := checkDescriptions(ref, d); !reflect.DeepEqual(got, want) {
+		t.Fatalf("problems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
 
