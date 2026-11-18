@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -26,8 +28,11 @@ import (
 const advertisedEvaluationPath = "/pdp/v2/evaluate"
 
 type grantContextBrokerStub struct {
-	discoveryBody       func(baseURL string) string
-	discoveryCode       int
+	discoveryBody func(baseURL string) string
+	discoveryCode int
+	// transientFailures makes the first discoveries fail, alternating 503 and invalid JSON.
+	transientFailures   int32
+	onDiscovery         func()
 	discoveries         atomic.Int32
 	evaluations         atomic.Int32
 	advertisedEvaluated atomic.Int32
@@ -46,9 +51,20 @@ func (b *grantContextBrokerStub) start(t *testing.T) *httptest.Server {
 		case "/oauth/token":
 			_, _ = io.WriteString(w, `{"access_token":"a","id_token":"assertion","token_type":"Bearer","expires_in":3600}`)
 		case "/.well-known/authzen-configuration":
-			b.discoveries.Add(1)
-			w.WriteHeader(b.discoveryCode)
-			_, _ = io.WriteString(w, b.discoveryBody(srv.URL))
+			n := b.discoveries.Add(1)
+			if b.onDiscovery != nil {
+				b.onDiscovery()
+			}
+			switch {
+			case n <= b.transientFailures && n%2 == 1:
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{}`)
+			case n <= b.transientFailures:
+				_, _ = io.WriteString(w, `{"policy_decision_point":`)
+			default:
+				w.WriteHeader(b.discoveryCode)
+				_, _ = io.WriteString(w, b.discoveryBody(srv.URL))
+			}
 		case "/access/v1/evaluation":
 			b.evaluations.Add(1)
 			w.WriteHeader(http.StatusInternalServerError)
@@ -80,11 +96,12 @@ func TestRun_GrantContextStartupFailures(t *testing.T) {
 		body    func(string) string
 		errText string
 	}{
-		{"discovery unavailable", http.StatusServiceUnavailable, func(string) string { return `{}` }, "grant context discovery failed"},
-		{"discovery invalid", http.StatusOK, func(string) string { return `{"policy_decision_point":` }, "grant context discovery failed"},
 		{"PDP mismatch", http.StatusOK, func(string) string {
 			return `{"policy_decision_point":"https://other.example.com","access_evaluation_endpoint":"https://other.example.com/access/v1/evaluation"}`
 		}, "policy_decision_point mismatch"},
+		{"invalid advertised endpoint", http.StatusOK, func(base string) string {
+			return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"/access/v1/evaluation"}`
+		}, "invalid access_evaluation_endpoint"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,6 +125,44 @@ func TestRun_GrantContextStartupFailures(t *testing.T) {
 			assert.Zero(t, broker.authorizations.Load(), "no credential is sent to discovery or a mismatched PDP")
 		})
 	}
+}
+
+func TestRun_GrantContextDiscoveryRetriesUntilTheBrokerRecovers(t *testing.T) {
+	broker := &grantContextBrokerStub{transientFailures: 2, discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
+		return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"` + base + `/access/v1/evaluation"}`
+	}}
+	srv := broker.start(t)
+	// Occupy the gRPC port: reaching the listener proves discovery eventually succeeded.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+	configureExtProcRun(t, srv.URL, listener.Addr().(*net.TCPAddr).Port, "secret")
+	enableGrantContextRun(t)
+	t.Setenv("EXTPROC_LOG_FORMAT", "json")
+
+	records, err := runCapturingJSONLogs(t)
+
+	require.ErrorContains(t, err, "failed to listen", "a transient discovery failure retries instead of stopping startup")
+	assert.Equal(t, int32(3), broker.discoveries.Load())
+	assert.Zero(t, broker.authorizations.Load(), "discovery retries send no credential")
+	var retries []map[string]any
+	enabled := false
+	for _, record := range records {
+		switch record["event"] {
+		case "extproc.grant_context.discovery_failed":
+			retries = append(retries, record)
+		case "extproc.grant_context.enabled":
+			enabled = true
+		}
+	}
+	require.Len(t, retries, 2, "each failed attempt logs one retry record")
+	for _, record := range retries {
+		assert.Equal(t, "WARN", record["level"])
+		assert.Contains(t, record["error"], "grant context discovery failed")
+		assert.Contains(t, record, "retry_after")
+	}
+	assert.NotEqual(t, retries[0]["retry_after"], retries[1]["retry_after"], "the retry delay backs off")
+	assert.True(t, enabled, "the recovered discovery emits the lifecycle event")
 }
 
 func TestRun_GrantContextLifecycleEvent(t *testing.T) {
@@ -189,7 +244,7 @@ func TestNewPermitResolverFromConfig_UsesAdvertisedEndpointAndShutsDown(t *testi
 		GrantContext: extprocconfig.GrantContextConfig{Enabled: true, PolicyDecisionPoint: srv.URL, RequestTimeout: time.Second, MaxStaleness: time.Minute},
 	}
 
-	resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), cfg, staticAssertionProvider("assertion"))
+	resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), cfg, staticAssertionProvider("assertion"), slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(resolver.Shutdown)
 	_, _, resolveErr := resolver.Resolve(context.Background(), "subject", "https://api.example.com")
@@ -242,4 +297,50 @@ func TestRun_SignalDuringGrantContextDiscoveryIsNormalShutdown(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "an interrupted delegation discovery must emit a lifecycle event")
+}
+
+func TestRun_SignalDuringGrantContextDiscoveryRetryIsNormalShutdown(t *testing.T) {
+	process, err := os.FindProcess(os.Getpid())
+	require.NoError(t, err)
+	// Hold a second SIGTERM registration until run exits so the signal cannot end the test process.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGTERM)
+	t.Cleanup(func() { signal.Stop(guard) })
+	// Signal after the failed response has been handled, so the run is waiting to retry; a run
+	// that stopped on the first failure has already returned an error by then.
+	signalled := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-signalled:
+		case <-time.After(5 * time.Second):
+		}
+	})
+	var once sync.Once
+	broker := &grantContextBrokerStub{transientFailures: 1 << 30, onDiscovery: func() {
+		once.Do(func() {
+			time.AfterFunc(300*time.Millisecond, func() {
+				_ = process.Signal(syscall.SIGTERM)
+				close(signalled)
+			})
+		})
+	}}
+	srv := broker.start(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+	configureExtProcRun(t, srv.URL, listener.Addr().(*net.TCPAddr).Port, "secret")
+	enableGrantContextRun(t)
+	t.Setenv("EXTPROC_LOG_FORMAT", "json")
+
+	records, err := runCapturingJSONLogs(t)
+
+	require.NoError(t, err, "a shutdown signal while waiting to retry discovery is a normal shutdown")
+	assert.Equal(t, int32(1), broker.discoveries.Load(), "the signal ends the retry wait")
+	found := false
+	for _, record := range records {
+		if record["event"] == "extproc.grant_context.discovery_interrupted" {
+			found = true
+		}
+	}
+	assert.True(t, found, "an interrupted discovery retry emits the lifecycle event")
 }

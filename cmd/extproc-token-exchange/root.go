@@ -215,9 +215,10 @@ func run(cmd *cobra.Command, _ []string) error {
 	default:
 		svc = extprocserver.NewServer(cfg, exchanger, logger)
 	}
-	// 8a. Opt-in grant context: discover and verify the PDP before listening (ADR 048).
+	// 8a. Opt-in grant context: discover and verify the PDP before listening (ADR 048). A failed
+	// discovery retries, so the gRPC port stays closed and the pod unready during a broker outage.
 	if cfg.GrantContext.Enabled {
-		resolver, err := grantcontext.NewPermitResolverFromConfig(sigCtx, cfg, exchanger)
+		resolver, err := grantcontext.NewPermitResolverFromConfig(sigCtx, cfg, exchanger, logger)
 		if err != nil {
 			if isSignalCancellation(sigCtx, err) {
 				logger.InfoContext(sigCtx, "grant context discovery interrupted by signal, shutting down",

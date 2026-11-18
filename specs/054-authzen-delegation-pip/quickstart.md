@@ -137,8 +137,10 @@ broker. Each of these conditions stops startup with the error substring from
 [contracts/extproc-grant-context.md](./contracts/extproc-grant-context.md) §1:
 
 - `authorization.enabled: false`
-- discovery failure
 - an identifier mismatch
+
+Unavailable, invalid or incomplete discovery metadata is retried instead: ExtProc opens its
+gRPC port only after a later discovery succeeds.
 
 The mismatch case makes **zero** evaluation requests.
 

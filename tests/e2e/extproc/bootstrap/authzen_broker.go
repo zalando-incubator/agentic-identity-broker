@@ -21,6 +21,9 @@ type MockAuthZENBroker struct {
 	DiscoveryStatus int
 	// DiscoveryBody overrides the discovery body when non-empty.
 	DiscoveryBody string
+	// TransientDiscoveryFailures makes the first discoveries fail before any override applies,
+	// alternating 503, invalid JSON and missing members.
+	TransientDiscoveryFailures int
 
 	requests        atomic.Int32
 	discoveries     atomic.Int32
@@ -42,7 +45,17 @@ func (m *MockAuthZENBroker) handle(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.URL.Path {
 	case "/.well-known/authzen-configuration":
-		m.discoveries.Add(1)
+		if n := int(m.discoveries.Add(1)); n <= m.TransientDiscoveryFailures {
+			switch n % 3 {
+			case 1:
+				w.WriteHeader(http.StatusServiceUnavailable)
+			case 2:
+				_, _ = w.Write([]byte(`{"policy_decision_point":`))
+			default:
+				_, _ = w.Write([]byte(`{"policy_decision_point":"` + m.server.URL + `"}`))
+			}
+			return
+		}
 		if m.DiscoveryStatus != 0 {
 			w.WriteHeader(m.DiscoveryStatus)
 		}

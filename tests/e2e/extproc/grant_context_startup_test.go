@@ -2,7 +2,6 @@ package extproc_test
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -71,21 +70,17 @@ var _ = Describe("ExtProc grant context startup", Label("grant-context-startup")
 	})
 
 	// Scenario US4.3 from specs/054-authzen-delegation-pip/spec.md
-	It("fails startup when discovery is unavailable or invalid", func() {
-		for _, configure := range []func(){
-			func() { broker.DiscoveryStatus = http.StatusServiceUnavailable },
-			func() { broker.DiscoveryStatus = 0; broker.DiscoveryBody = `{"policy_decision_point":` },
-			func() { broker.DiscoveryBody = `{"policy_decision_point":"` + broker.URL() + `"}` },
-		} {
-			configure()
-			env := bootstrap.NewTestEnvironment(grantContextStartupConfig(broker), opaLogger)
-			err := env.StartWithGrantContext()
-			env.Stop()
-			Expect(err).To(MatchError(ContainSubstring("grant context discovery failed")))
-			Expect(env.GRPCAddress()).To(BeEmpty(), "no listener after a failed discovery")
-		}
-		Expect(broker.DiscoveryCount()).To(Equal(3))
+	It("retries unavailable or invalid discovery without listening, then serves once discovery succeeds", func() {
+		broker.TransientDiscoveryFailures = 3
+		env := bootstrap.NewTestEnvironment(grantContextStartupConfig(broker), opaLogger)
+		DeferCleanup(env.Stop)
+
+		Expect(env.StartWithGrantContext()).To(Succeed(), "unavailable, invalid and incomplete metadata are retried, not fatal")
+
+		Expect(broker.DiscoveryCount()).To(Equal(4), "one attempt per failure, then the successful discovery")
+		Expect(env.GRPCAddress()).NotTo(BeEmpty(), "the listener opens only after discovery succeeds")
 		Expect(broker.EvaluationCount()).To(BeZero())
+		Expect(broker.CredentialCallCount()).To(BeZero(), "discovery retries send no credential")
 	})
 
 	// Scenario US4.4 from specs/054-authzen-delegation-pip/spec.md

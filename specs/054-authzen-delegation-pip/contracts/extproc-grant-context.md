@@ -54,7 +54,7 @@ Messages are credential-free and name the key.
 | `http` scheme without `oauth2.tls.allow_http` | `grant_context.policy_decision_point must use https` |
 | `request_timeout <= 0` | `grant_context.request_timeout must be positive` |
 | `max_staleness <= 0` | `grant_context.max_staleness must be positive` |
-| Discovery transport error, non-200, invalid JSON, or missing members | `grant context discovery failed` |
+| Discovery transport error, non-200, invalid JSON, or missing members | Not fatal: retried with a backoff that starts at 1 s and doubles to a 10 s cap while the gRPC port stays closed. Each failure logs Warn `event=extproc.grant_context.discovery_failed` with `grant context discovery failed` and `retry_after` |
 | `policy_decision_point` mismatch | `grant context discovery: policy_decision_point mismatch (expected <expected>, advertised <advertised>)`; the advertised value is truncated to 256 bytes and its control characters are escaped |
 | `access_evaluation_endpoint` is not an absolute URL, or uses http without `allow_http` | `grant context discovery: invalid access_evaluation_endpoint` |
 
@@ -65,7 +65,7 @@ or requests appear (US4.1).
 
 | Call | Method and URL | Credentials | Timeout |
 |---|---|---|---|
-| Discovery (once, at startup) | `GET <expected PDP>/.well-known/authzen-configuration` (path insertion per API-003) | **None** | `request_timeout` |
+| Discovery (at startup, retried until it succeeds) | `GET <expected PDP>/.well-known/authzen-configuration` (path insertion per API-003) | **None** | `request_timeout` |
 | Evaluation (per cache miss) | `POST <access_evaluation_endpoint>` | `Authorization: Bearer <client assertion>` from the existing assertion provider; the broker rejects an assertion without a non-blank `sub` with 401 | `request_timeout` |
 
 The evaluation body is this JSON, with `context` omitted:
@@ -270,5 +270,7 @@ Security records carry `event=extproc.grant_context.denied` for a delegation den
 `event=extproc.grant_context.permit_expired` when the permit expires before policy use.
 The last two retain the `grant_context_unavailable` detail. These identifiers follow the
 `extproc.grant_context.enabled` lifecycle family (F6, approved remediation proposal). A
-shutdown signal during startup discovery logs the Info lifecycle record
+failed startup discovery that will be retried logs the Warn record
+`event=extproc.grant_context.discovery_failed`, and a shutdown signal during startup discovery
+or its retry wait logs the Info lifecycle record
 `event=extproc.grant_context.discovery_interrupted`.

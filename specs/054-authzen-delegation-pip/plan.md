@@ -410,8 +410,9 @@ Add `GrantContextConfig`, its defaults, flags, and validation (R17). In `root.go
 feature is enabled:
 
 1. Derive or read the expected PDP.
-2. Run `grantcontext.Discover` with the `oauth2.tls` HTTP client and `request_timeout`. On any
-   error, exit before listening (US4.3 and US4.4).
+2. Run `grantcontext.Discover` with the `oauth2.tls` HTTP client and `request_timeout`. Retry a
+   failed discovery with a capped backoff before listening (US4.3); exit on a mismatch or an
+   invalid advertised endpoint (US4.4).
 3. Build the `Client` with the exchanger as the `AssertionProvider` and build the `Resolver`.
 4. Pass the resolver to a new server constructor option.
 5. Chain `Resolver.Shutdown`.
@@ -655,7 +656,7 @@ US2.19 also carries `Label("docker")` and uses real PostgreSQL. `just test-e2e-b
 | US3.13 | `tests/e2e/grant_context_journey_test.go` | One `It()` for barrier-driven concurrent live permit ownership, identical-token replacement preservation and terminal API-7 503 on retry conflict. |
 | US4.1 | `tests/e2e/extproc/grant_context_startup_test.go` | `It("makes no discovery or evaluation requests when disabled by default")` |
 | US4.2 | `tests/e2e/extproc/grant_context_startup_test.go` | `It("fails startup when grant context is enabled without authorization")` |
-| US4.3 | `tests/e2e/extproc/grant_context_startup_test.go` | `It("fails startup when discovery is unavailable or invalid")` |
+| US4.3 | `tests/e2e/extproc/grant_context_startup_test.go` | `It("retries unavailable or invalid discovery without listening, then serves once discovery succeeds")` |
 | US4.4 | `tests/e2e/extproc/grant_context_startup_test.go` | `It("fails startup on a PDP identifier mismatch without sending evaluation credentials")` |
 | US4.5 | `tests/e2e/grant_context_journey_test.go` | `It("discovers from the token endpoint origin by default and uses the advertised endpoint")` |
 | US4.6 | `tests/e2e/authzen_delegation_compat_test.go` | `It("keeps principal, agent_id, and deprecated granted_permission_sets on exchange")` |

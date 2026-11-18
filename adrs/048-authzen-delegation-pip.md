@@ -86,8 +86,13 @@ on `request.scope` must treat the empty scope deliberately, because evaluation a
 - `server.PermitResolver` joins `Exchanger`, `Authorizer`, and `ApprovalGate`. Its
   implementation lives in `internal/extproc/grantcontext` and imports no broker package (ADR 011).
 - At startup ExtProc discovers the metadata from the expected PDP identifier (default: the origin
-  of `oauth2.token_endpoint`), compares `policy_decision_point` by exact string, and refuses to
-  start on any discovery error or mismatch. Discovery sends no credentials.
+  of `oauth2.token_endpoint`), compares `policy_decision_point` by exact string, and does not
+  listen until discovery succeeds. A failed discovery (transport error, non-200, invalid or
+  incomplete metadata) is retried with a backoff that starts at 1 s and doubles to a 10 s cap,
+  so a broker outage leaves the pod unready instead of crash-looping. A `policy_decision_point`
+  mismatch or an invalid advertised `access_evaluation_endpoint` is a configuration error and
+  stops startup. ExtProc never guesses an endpoint or silently disables grant context.
+  Discovery sends no credentials.
 - Body-bearing path: exchange and resolution run concurrently during request headers; both
   complete before a result is chosen. Precedence: delegation denial (403 `access_denied` with the
   consent URL), resolution error (503), exchange error (existing handling), then proceed.
@@ -297,6 +302,10 @@ not authorize that redesign or provider downscoping in this PR.
 
 ## Revision history
 
+- **2026-11-18 (same PR, before merge)**: `mjungsbluth` approved, after `x418` showed that a
+  rollout during a broker outage replaced every working ExtProc pod with crash-looping ones,
+  that §4 retries a failed discovery with a capped backoff and keeps the gRPC port closed,
+  instead of exiting. A mismatch or an invalid advertised endpoint still stops startup.
 - **2026-11-18 (same PR, before merge)**: `mjungsbluth` approved, while triaging the
   CodeRabbit review of #495, that §10 forwards an approval-gate grant even if the permit
   expires during the gate's broker call, instead of returning 503 and losing a consumed

@@ -181,7 +181,7 @@ func (e *TestEnvironment) StartWithGrantContext() (err error) {
 	}
 	svc := e.newServer(exchanger, authorizer, approvalGate)
 	if e.Config.GrantContext.Enabled {
-		resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), e.Config, exchanger)
+		resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), e.Config, exchanger, e.logger)
 		if err != nil {
 			return err
 		}

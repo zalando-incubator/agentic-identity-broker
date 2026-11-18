@@ -162,7 +162,7 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 		svc = extprocserver.NewServerWithAuthorizer(cfg, exchangePort, authorizer, logger)
 	}
 	if cfg.GrantContext.Enabled {
-		resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), cfg, exchanger)
+		resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), cfg, exchanger, logger)
 		if err != nil {
 			environment.Close()
 			return nil, err
