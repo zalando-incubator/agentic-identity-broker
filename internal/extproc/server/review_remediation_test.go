@@ -160,3 +160,37 @@ func TestApprovalGateIsNotConsultedForPermitExpiredDuringPolicy(t *testing.T) {
 	assert.JSONEq(t, grantContextUnavailableBody, string(response.GetImmediateResponse().Body))
 	assert.Empty(t, gate.invocations, "an expired permit must not consume a one-time approval")
 }
+
+type expiringConsumeGate struct {
+	advance func()
+	calls   int
+}
+
+func (g *expiringConsumeGate) Evaluate(context.Context, approval.Invocation) approval.Outcome {
+	g.calls++
+	g.advance()
+	return approval.Outcome{Proceed: true}
+}
+
+func TestGrantedApprovalForwardsWhenPermitExpiresDuringGate(t *testing.T) {
+	now := time.Unix(1_000, 0)
+	permit := grantcontext.Result{Deadline: now.Add(2 * time.Second), Context: grantcontext.Context{
+		Principal: "permit-principal", Agent: grantcontext.EntityRef{ID: "permit-agent"},
+		Grant: grantcontext.Grant{UpdatedAt: "2026-10-26T09:59:00Z"},
+	}}
+	exchanger := identityExchanger{result: ExchangeResult{Token: "provider-token-marker", Principal: "permit-principal", AgentID: "permit-agent"}}
+	gate := &expiringConsumeGate{advance: func() { now = now.Add(5 * time.Second) }}
+	authorizer := expiringApprovalAuthorizer{advance: func() {}}
+	s := NewServerWithApprovalGate(&extprocconfig.Config{}, exchanger, authorizer, gate, slog.New(slog.DiscardHandler)).WithPermitResolver(observedGrantResolver{result: &permit})
+	s.SetClock(func() time.Time { return now })
+	headers := &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{{Key: ":method", RawValue: []byte("POST")}, {Key: "mcp-session-id", RawValue: []byte("mcp-session")}}}}
+	_, state := s.processRequestHeadersOPA(context.Background(), false, safetyRequest("subject-token-marker", "https://resource.example", headers), headers)
+	require.NotNil(t, state)
+
+	body := &extprocv3.HttpBody{Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_files"}}`), EndOfStream: true}
+	response := s.processRequestBody(context.Background(), state, body)
+
+	require.Equal(t, 1, gate.calls)
+	require.Nil(t, response.GetImmediateResponse(), "a granted, possibly consumed approval must not be lost to a permit that expired during the gate")
+	require.NotNil(t, response.GetRequestBody())
+}

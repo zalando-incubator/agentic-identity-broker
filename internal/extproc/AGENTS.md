@@ -242,7 +242,7 @@ Header-only:   → PermitResolver.Resolve → denial 403 / error 503
 - Disabled mode, cache key/TTL and five-second cooldown remain unchanged. Compatibility reuse does not attest broker grant reads or downscope provider credentials; concurrent unbound first use may join different grant reads.
 - Keep the permit cache independent of the token cache. Never cache denials or errors, and never fall back to a stale permit.
 - Retain the original permit in header-only request state. Check its deadline after exchange, before Authorization mutation.
-- Check that same deadline again before final body forwarding on body, batch, and approval-authorized body paths. Expiry returns the existing delegation-unavailable 503 without re-resolution.
+- Check that same deadline again before final body forwarding on body and batch paths, and before the approval gate. Expiry returns the existing delegation-unavailable 503 without re-resolution. A body the gate grants is forwarded without a further check, so a consumed one-time approval is never lost (ADR 048 §10).
 - Permit scope arrays may be empty, but each element must be a JSON string.
   Preserve null detection in the wire decoder: Go's `encoding/json` otherwise turns a null `[]string` element into an empty string.
   Reject malformed permits as `invalid_response` before policy or caching.

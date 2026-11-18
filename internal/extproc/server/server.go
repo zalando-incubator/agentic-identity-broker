@@ -651,7 +651,10 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
-			return s.forwardRequestBody(ctx, logger, state, body)
+			// The permit deadline was checked immediately before the gate. A granted
+			// approval may already be consumed, so expiry during the gate's broker call
+			// does not discard it (ADR 048 §10).
+			return echoRequestBody(body)
 		}
 		if outcome.URL != "" {
 			return urlElicitationResponse(outcome.URL, "approval required", rawID)

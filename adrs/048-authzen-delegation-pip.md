@@ -36,7 +36,9 @@ Authorization API 1.0 Access Evaluation endpoint, and ExtProc to consume it with
 - `policy_decision_point` is `server.enduser.public_url` without a trailing slash, the same base
   as consent links and RFC 8414 metadata. When token exchange is configured, startup validation
   rejects a public URL with a query or fragment, because the evaluation endpoint is advertised by
-  appending its path. HTTP is accepted, as for the other end-user URLs.
+  appending its path. AuthZEN 1.0 expects an HTTPS identifier: production deployments must use
+  an HTTPS public URL. HTTP is accepted only for local development, as for the other end-user
+  URLs; ExtProc requires HTTPS unless `oauth2.tls.allow_http` is set.
 - Evaluation and exchange share one `tokenexchange.GrantResolver` that holds exchange steps
   2–9a unchanged. Evaluation never reaches session retrieval, decryption, or refresh, so it never
   touches provider credentials (FR-013).
@@ -59,8 +61,9 @@ Evaluation authenticates the gateway with a bearer client assertion (ADR 029 tru
 calls the existing caller CEL policy with
 `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`, the raw resource, and an
 empty scope. A policy cannot distinguish evaluation from an exchange without `scope`; an
-exchange with `scope` passes it to the policy. This is intentional:
-evaluation is never more permissive than exchange, and it issues no token.
+exchange with `scope` passes it to the policy. This is intentional: evaluation is never more
+permissive than an exchange without `scope`, and it issues no token. A policy that conditions
+on `request.scope` must treat the empty scope deliberately, because evaluation always presents it.
 
 ### 3. Freshness
 
@@ -114,8 +117,10 @@ separate exchange-response deprecation in §8 remains unchanged.
 
 The shared deferred-route matcher in `SecurityContextMiddleware` extends from `POST /oauth2/token`
 to `POST /access/v1/evaluation`. The shared resolver finalizes the verified Actor and the distinct
-CallingPeer before caller authorization, so permits and caller-policy denials carry both.
-Evaluation rejects a client assertion without a non-blank `sub` with 401 before finalization. The
+CallingPeer before caller authorization, so the audit records of permits and caller-policy
+denials carry both the actor and, when distinct (ADR 033), the calling peer. Evaluation rejects a
+client assertion without a non-blank `sub` with 401 before finalization, because RFC 7523 §3
+requires `sub` in a JWT client assertion. Token exchange keeps its existing assertion handling. The
 evaluation route's audit middleware logs the finalized Actor. Early
 decode or authentication failures use the existing idempotent request-principal/anonymous
 finalization before in-handler audit; the perimeter fallback remains. Ordinary-request and
@@ -197,8 +202,11 @@ unchanged; this ADR does not supersede ADR 036.
 - Body path validation follows completion of both concurrent calls and unchanged precedence
   (delegation denial, resolution error, exchange error), before buffering or Authorization
   mutation. Header-only binding uses the permit evaluated by policy after allow. Existing
-  deadline checks apply immediately before every policy decision. An expired permit before
-  forwarding is rejected with the existing delegation-unavailable 503, not re-resolved.
+  deadline checks apply immediately before every policy decision and before the approval gate.
+  An expired permit before forwarding is rejected with the existing delegation-unavailable 503,
+  not re-resolved. An approval the gate grants is honoured: the body is forwarded even if the
+  permit expires during the gate's broker call, so a consumed one-time approval is never lost.
+  The window is at most one approval round-trip after a deadline check.
 - Disabled mode, cache key, per-key singleflight key, TTL calculations, `cache.max_ttl`,
   and five-second re-consent cooldown are unchanged. Cooldown entries carry no token binding.
   This revision adds no broker response member, configuration key, schema or dependency.
@@ -287,6 +295,13 @@ not authorize that redesign or provider downscoping in this PR.
   the standard's source text before the OpenAPI was frozen.
 
 ## Revision history
+
+- **2026-11-18 (same PR, before merge)**: `mjungsbluth` approved, while triaging the
+  CodeRabbit review of #495, that §10 forwards an approval-gate grant even if the permit
+  expires during the gate's broker call, instead of returning 503 and losing a consumed
+  one-time approval. §6 justifies the evaluation `sub` requirement with RFC 7523 §3, §2
+  qualifies the caller-policy equivalence to exchanges without `scope`, and §1 states that
+  HTTP public URLs are for development only.
 
 - **2026-11-13 (same PR, before merge)**: `mjungsbluth` approved F1/P1 at
   `2026-11-13T08:20:44Z` on [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6805417890).

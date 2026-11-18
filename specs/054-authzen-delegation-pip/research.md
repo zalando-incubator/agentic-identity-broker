@@ -135,7 +135,8 @@ evaluation.
 **Consequence documented in the ADR**: A policy cannot distinguish evaluation from an exchange
 without `scope`. An exchange with `scope` passes it as `request.scope`, so a scope-based policy
 can treat that exchange differently.
-This is intentional. Evaluation is never more permissive than exchange, and it issues no token.
+This is intentional. Evaluation is never more permissive than an exchange without `scope`, and it
+issues no token. A policy that conditions on `request.scope` must treat the empty scope deliberately.
 
 ## R4. Grant Context projection
 

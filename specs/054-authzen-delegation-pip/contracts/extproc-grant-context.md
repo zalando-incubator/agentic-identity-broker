@@ -55,7 +55,7 @@ Messages are credential-free and name the key.
 | `request_timeout <= 0` | `grant_context.request_timeout must be positive` |
 | `max_staleness <= 0` | `grant_context.max_staleness must be positive` |
 | Discovery transport error, non-200, invalid JSON, or missing members | `grant context discovery failed` |
-| `policy_decision_point` mismatch | `grant context discovery: policy_decision_point mismatch (expected <expected>, advertised <advertised>)` |
+| `policy_decision_point` mismatch | `grant context discovery: policy_decision_point mismatch (expected <expected>, advertised <advertised>)`; the advertised value is truncated to 256 bytes and its control characters are escaped |
 | `access_evaluation_endpoint` is not an absolute URL, or uses http without `allow_http` | `grant context discovery: invalid access_evaluation_endpoint` |
 
 When the feature is disabled, no discovery runs, no resolver is created, and no new log lines
@@ -151,7 +151,7 @@ The permit governs local policy and token-result reuse. It does not prove provid
 | Permit expires before policy use or final forwarding | Existing `503 service_unavailable` / `grant context unavailable`; no expired-context forwarding or re-resolution. |
 | Cooldown entry (no token) | Unchanged D-5; no binding. |
 
-Body validation precedes buffering and Authorization mutation; header validation uses the exact permit policy evaluated. Check deadlines immediately before every policy decision and final forwarding, including expiry during header exchange or retry. Each request has at most one additional exchange; revalidating its result cannot restart the loop. Disabled cache keys, TTLs, singleflight and cooldown remain unchanged. Successful non-cacheable results follow identical claim/compare and terminal rules.
+Body validation precedes buffering and Authorization mutation; header validation uses the exact permit policy evaluated. Check deadlines immediately before every policy decision, the approval gate and final forwarding, including expiry during header exchange or retry. A body the approval gate grants is forwarded without a further deadline check (ADR 048 §10). Each request has at most one additional exchange; revalidating its result cannot restart the loop. Disabled cache keys, TTLs, singleflight and cooldown remain unchanged. Successful non-cacheable results follow identical claim/compare and terminal rules.
 
 **Guarantee and limitations (D-8)**: a request never forwards a handle bound to a different permit scope set/grant instant. It may forward identical broader provider token bytes under a new handle when the provider session is unchanged. First use does not attest exchange provenance; concurrent grant reads can differ. Only provider-session re-authorization in Journey 5 demonstrates upstream narrowing. Stronger broker downscoping or exchange-version response members require separately approved API/ADR scope.
 
