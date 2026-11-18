@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -96,10 +97,14 @@ func discoveryTransportError(err error) error {
 	return fmt.Errorf("%w: transport error", ErrDiscoveryFailed)
 }
 
+// boundedValue truncates a remote value and escapes control characters, so a hostile
+// discovery document cannot inject log lines through the startup error.
 func boundedValue(value string) string {
 	const limit = 256
+	suffix := ""
 	if len(value) > limit {
-		return value[:limit] + "…"
+		value, suffix = value[:limit], "…"
 	}
-	return value
+	quoted := strconv.Quote(value)
+	return quoted[1:len(quoted)-1] + suffix
 }

@@ -55,6 +55,9 @@ func TestDiscover(t *testing.T) {
 		{name: "PDP mismatch", status: 200, allowHTTP: true, body: func() string {
 			return `{"policy_decision_point":"https://evil.example.com","access_evaluation_endpoint":"https://evil.example.com/access/v1/evaluation"}`
 		}, errText: "policy_decision_point mismatch (expected " + "SRV" + ", advertised https://evil.example.com)"},
+		{name: "PDP mismatch escapes control characters", status: 200, allowHTTP: true, body: func() string {
+			return `{"policy_decision_point":"https://evil.example.com\nlevel=ERROR msg=forged","access_evaluation_endpoint":"https://evil.example.com/access/v1/evaluation"}`
+		}, errText: `advertised https://evil.example.com\nlevel=ERROR msg=forged)`},
 		{name: "PDP path differs", status: 200, allowHTTP: true, body: func() string {
 			return `{"policy_decision_point":"` + srvURL + `/","access_evaluation_endpoint":"` + srvURL + `/access/v1/evaluation"}`
 		}, errText: "policy_decision_point mismatch"},
