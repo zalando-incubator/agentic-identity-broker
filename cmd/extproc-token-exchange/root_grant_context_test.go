@@ -191,11 +191,11 @@ func TestNewPermitResolverFromConfig_UsesAdvertisedEndpointAndShutsDown(t *testi
 
 	resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), cfg, staticAssertionProvider("assertion"))
 	require.NoError(t, err)
+	t.Cleanup(resolver.Shutdown)
 	_, _, resolveErr := resolver.Resolve(context.Background(), "subject", "https://api.example.com")
 	require.Error(t, resolveErr, "the stub endpoint rejects evaluation, which must fail closed")
 	assert.Equal(t, int32(1), broker.advertisedEvaluated.Load(), "evaluation must use the advertised endpoint")
 	assert.Zero(t, broker.evaluations.Load(), "evaluation must not fall back to the default path")
-	resolver.Shutdown()
 }
 
 type staticAssertionProvider string
@@ -222,7 +222,11 @@ func TestRun_SignalDuringGrantContextDiscoveryIsNormalShutdown(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	configureExtProcRun(t, srv.URL, availableExtProcPort(t), "secret")
+	// Occupy the gRPC port so a run that skipped discovery fails to listen instead of serving until a signal.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+	configureExtProcRun(t, srv.URL, listener.Addr().(*net.TCPAddr).Port, "secret")
 	enableGrantContextRun(t)
 	t.Setenv("EXTPROC_GRANT_CONTEXT_REQUEST_TIMEOUT", "30s")
 	t.Setenv("EXTPROC_LOG_FORMAT", "json")
