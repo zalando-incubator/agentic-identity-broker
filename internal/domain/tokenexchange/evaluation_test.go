@@ -332,6 +332,41 @@ func TestAccessEvaluation_MaxAgeRecheckedAfterCanonicalLookup(t *testing.T) {
 	}
 }
 
+func TestAccessEvaluation_ResolvedServiceKeepsOneCanonicalID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		resolved *string
+		want     string
+	}{
+		{name: "resolved canonical ID wins over a later rename", resolved: ptr.To("repo-api"), want: "repo-api"},
+		{name: "unset resolved canonical ID stays unset", resolved: nil, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			f := newEvaluationFixture(t)
+			f.service.CanonicalID = tt.resolved
+			f.canonical.ids = map[id.ServiceID]string{f.service.ID: "renamed-api", f.otherSvcID: "other-api"}
+
+			decision := f.newService(t).Evaluate(context.Background(), f.request(t), f.token(t, nil))
+
+			require.Equal(t, DecisionPermit, decision.Kind)
+			assert.Equal(t, tt.want, decision.Context.Resource.CanonicalID)
+			for _, ps := range decision.Context.PermissionSets {
+				for _, svc := range ps.Services {
+					switch svc.ID {
+					case f.service.ID.String():
+						assert.Equal(t, tt.want, svc.CanonicalID, "one permit must name a service UUID consistently")
+					case f.otherSvcID.String():
+						assert.Equal(t, "other-api", svc.CanonicalID)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestAccessEvaluation_AgentAnchor(t *testing.T) {
 	t.Parallel()
 

@@ -302,6 +302,14 @@ func (s *AccessEvaluationService) project(ctx context.Context, d *ResolvedGrant)
 	if err != nil {
 		return nil, err
 	}
+	// The resolved service keeps the canonical ID read during resolution, even when unset,
+	// so a concurrent rename cannot give one UUID two names in the same permit.
+	canonicalID := func(svcID id.ServiceID) string {
+		if svcID == d.Service.ID {
+			return deref(d.Service.CanonicalID)
+		}
+		return canonicalIDs[svcID]
+	}
 
 	result := &GrantContext{
 		Subject: GrantSubject{ID: string(d.Principal)},
@@ -337,7 +345,7 @@ func (s *AccessEvaluationService) project(ctx context.Context, d *ResolvedGrant)
 		for _, svcID := range entry.IncludedServiceIDs {
 			projected.Services = append(projected.Services, GrantService{
 				ID:          svcID.String(),
-				CanonicalID: canonicalIDs[svcID],
+				CanonicalID: canonicalID(svcID),
 				Scopes:      sortedCopy(contributions[svcID]),
 			})
 		}
