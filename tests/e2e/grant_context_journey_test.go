@@ -672,167 +672,234 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 		})
 	})
 
-	// Scenario US3.10 from specs/054-authzen-delegation-pip/spec.md
-	It("blocks forwarding when exchange fails despite a permitted delegation", func() {
-		j := newGrantContextJourney(time.Minute, false)
-		headersResp, bodyResp := j.BodyCall(authzenRepoResource)
-		Expect(bodyResp).To(BeNil())
-		expectSessionRecovery(j, headersResp)
-		Expect(j.broker.EvaluationCount()).To(Equal(1), "the delegation permitted; exchange failure decided")
+	Context("without a provider session", func() {
+		var j *grantContextJourney
+
+		BeforeEach(func() {
+			j = newGrantContextJourney(time.Minute, false)
+		})
+
+		// Scenario US3.10 from specs/054-authzen-delegation-pip/spec.md
+		It("blocks forwarding when exchange fails despite a permitted delegation", func() {
+			headersResp, bodyResp := j.BodyCall(authzenRepoResource)
+			Expect(bodyResp).To(BeNil())
+			expectSessionRecovery(j, headersResp)
+			Expect(j.broker.EvaluationCount()).To(Equal(1), "the delegation permitted; exchange failure decided")
+		})
 	})
 
-	// Scenario US3.11 from specs/054-authzen-delegation-pip/spec.md
-	It("forwards the reauthorized reader token on the first request after permit expiry", func() {
-		for _, headerOnly := range []bool{false, true} {
-			for _, failExchange := range []bool{false, true} {
-				j := newGrantContextJourneyWithPolicy("grant_context_binding.rego", 2*time.Second, false, broadGrantContext)
-				headers, body := j.bindingCall(headerOnly, "read:repo write:repo", "")
-				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
-				if !headerOnly {
-					Expect(body).To(extprochelpers.BeForwardedRequestBody())
+	Context("with a broad provider session bound to a two-second permit", func() {
+		type bindingVariant struct {
+			headerOnly, failExchange bool
+			journey                  *grantContextJourney
+		}
+		newBindingVariant := func(headerOnly, failExchange bool) bindingVariant {
+			return bindingVariant{headerOnly, failExchange,
+				newGrantContextJourneyWithPolicy("grant_context_binding.rego", 2*time.Second, false, broadGrantContext)}
+		}
+
+		Context("when the provider session is reauthorized as reader", func() {
+			var reauthorized []bindingVariant
+
+			BeforeEach(func() {
+				reauthorized = nil
+				for _, headerOnly := range []bool{false, true} {
+					for _, failExchange := range []bool{false, true} {
+						reauthorized = append(reauthorized, newBindingVariant(headerOnly, failExchange))
+					}
 				}
-				warmedAt := time.Now()
-				grant := j.narrowConsent()
-				j.reauthorizeReader()
-				if failExchange {
+			})
+
+			// Scenario US3.11 from specs/054-authzen-delegation-pip/spec.md
+			It("forwards the reauthorized reader token on the first request after permit expiry", func() {
+				for _, variant := range reauthorized {
+					j, headerOnly := variant.journey, variant.headerOnly
+					headers, body := j.bindingCall(headerOnly, "read:repo write:repo", "")
+					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+					if !headerOnly {
+						Expect(body).To(extprochelpers.BeForwardedRequestBody())
+					}
+					warmedAt := time.Now()
+					grant := j.narrowConsent()
+					j.reauthorizeReader()
+					if variant.failExchange {
+						session, err := j.broker.Storage.UserSessions().FindByPrincipalAndService(context.Background(), j.broker.Principal, j.broker.Repo.ID)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(j.broker.Storage.UserSessions().Delete(context.Background(), session.ID)).To(Succeed())
+					}
+					awaitBindingPermitExpiry(warmedAt)
+					before := j.broker.ExchangeCount()
+					headers, body = j.bindingCall(headerOnly, "read:repo", grant.UpdatedAt.Format(time.RFC3339Nano))
+					Expect(j.broker.ExchangeCount()).To(Equal(before+1), "one target request makes exactly one additional broker exchange")
+					if variant.failExchange {
+						expectSessionRecovery(j, headers)
+						Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(BeEmpty())
+						Expect(body).To(BeNil())
+					} else {
+						Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_R"))
+						if !headerOnly {
+							Expect(body).To(extprochelpers.BeForwardedRequestBody(), "policy must see reader scopes and the new grant instant")
+						}
+					}
+				}
+			})
+		})
+
+		Context("when the provider session stays broad", func() {
+			var unchanged []bindingVariant
+
+			BeforeEach(func() {
+				unchanged = nil
+				for _, headerOnly := range []bool{false, true} {
+					unchanged = append(unchanged, newBindingVariant(headerOnly, false))
+				}
+			})
+
+			// Scenario US3.12 from specs/054-authzen-delegation-pip/spec.md
+			It("re-exchanges after narrowing without claiming provider downscoping", func() {
+				for _, variant := range unchanged {
+					j, headerOnly := variant.journey, variant.headerOnly
+					headers, body := j.bindingCall(headerOnly, "read:repo write:repo", "")
+					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+					if !headerOnly {
+						Expect(body).To(extprochelpers.BeForwardedRequestBody())
+					}
+					warmedAt := time.Now()
+					grant := j.narrowConsent()
+					awaitBindingPermitExpiry(warmedAt)
+					before := j.broker.ExchangeCount()
+					headers, body = j.bindingCall(headerOnly, "read:repo", grant.UpdatedAt.Format(time.RFC3339Nano))
+					Expect(j.broker.ExchangeCount()).To(Equal(before+1), "the old binding is not reused even when token bytes repeat")
+					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"), "an unchanged provider session remains broad")
+					if !headerOnly {
+						Expect(body).To(extprochelpers.BeForwardedRequestBody())
+					}
 					session, err := j.broker.Storage.UserSessions().FindByPrincipalAndService(context.Background(), j.broker.Principal, j.broker.Repo.ID)
 					Expect(err).NotTo(HaveOccurred())
-					Expect(j.broker.Storage.UserSessions().Delete(context.Background(), session.ID)).To(Succeed())
+					Expect(session.Scope).To(ConsistOf("read:repo", "write:repo"))
 				}
-				awaitBindingPermitExpiry(warmedAt)
-				before := j.broker.ExchangeCount()
-				headers, body = j.bindingCall(headerOnly, "read:repo", grant.UpdatedAt.Format(time.RFC3339Nano))
-				Expect(j.broker.ExchangeCount()).To(Equal(before+1), "one target request makes exactly one additional broker exchange")
-				if failExchange {
-					expectSessionRecovery(j, headers)
-					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(BeEmpty())
-					Expect(body).To(BeNil())
-				} else {
-					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_R"))
-					if !headerOnly {
-						Expect(body).To(extprochelpers.BeForwardedRequestBody(), "policy must see reader scopes and the new grant instant")
-					}
-				}
-			}
-		}
+			})
+		})
 	})
 
-	// Scenario US3.12 from specs/054-authzen-delegation-pip/spec.md
-	It("re-exchanges after narrowing without claiming provider downscoping", func() {
-		for _, headerOnly := range []bool{false, true} {
-			j := newGrantContextJourneyWithPolicy("grant_context_binding.rego", 2*time.Second, false, broadGrantContext)
-			headers, body := j.bindingCall(headerOnly, "read:repo write:repo", "")
-			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
-			if !headerOnly {
-				Expect(body).To(extprochelpers.BeForwardedRequestBody())
-			}
-			warmedAt := time.Now()
-			grant := j.narrowConsent()
-			awaitBindingPermitExpiry(warmedAt)
-			before := j.broker.ExchangeCount()
-			headers, body = j.bindingCall(headerOnly, "read:repo", grant.UpdatedAt.Format(time.RFC3339Nano))
-			Expect(j.broker.ExchangeCount()).To(Equal(before+1), "the old binding is not reused even when token bytes repeat")
-			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"), "an unchanged provider session remains broad")
-			if !headerOnly {
-				Expect(body).To(extprochelpers.BeForwardedRequestBody())
-			}
-			session, err := j.broker.Storage.UserSessions().FindByPrincipalAndService(context.Background(), j.broker.Principal, j.broker.Repo.ID)
-			Expect(err).NotTo(HaveOccurred())
-			Expect(session.Scope).To(ConsistOf("read:repo", "write:repo"))
+	Context("with two peers sharing a barrier-controlled exchanger", func() {
+		type bindingRace struct {
+			headerOnly bool
+			journey    *grantContextJourney
+			barrier    *bootstrap.BindingConcurrencyBroker
+			shared     *bootstrap.BindingConcurrencyExchanger
+			peers      []*grantContextJourney
 		}
-	})
+		var races []*bindingRace
 
-	// Scenario US3.13 from specs/054-authzen-delegation-pip/spec.md
-	It("fails closed on a shared retry claimed by another live permit", func() {
-		for _, headerOnly := range []bool{false, true} {
-			var barrier *bootstrap.BindingConcurrencyBroker
-			j := newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, false, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
-				barrier = bootstrap.NewBindingConcurrencyBroker(f.Enduser.BaseURL())
-				DeferCleanup(barrier.Close)
-				options.ExchangeEndpoint = barrier.Server.URL
-				options.GrantContext.PolicyDecisionPoint = f.Enduser.BaseURL()
-			}, broadGrantContext)
-			seed := j.HeaderOnly(authzenRepoResource, nil)
-			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(seed)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
-			shared := bootstrap.NewBindingConcurrencyExchanger(j.env)
-			DeferCleanup(shared.Release)
+		BeforeEach(func() {
+			races = nil
 			policy, err := filepath.Abs("fixtures/policies/grant_context_canonical.rego")
 			Expect(err).NotTo(HaveOccurred())
-			peers := make([]*grantContextJourney, 2)
-			for i := range peers {
-				env, err := bootstrap.NewExtProcEnvironmentWithOptions(j.broker.Enduser.BaseURL(), j.broker.ClientAssertion, policy, bootstrap.TestLogger(0), bootstrap.ExtProcOptions{DisableToolApprovals: true, Exchanger: shared, GrantContext: extprocconfig.GrantContextConfig{Enabled: true, RequestTimeout: 2 * time.Second, MaxStaleness: time.Minute}})
-				Expect(err).NotTo(HaveOccurred())
-				DeferCleanup(env.Close)
-				client, conn := extprochelpers.ConnectToExtProc(env.Address)
-				DeferCleanup(func() { _ = conn.Close() })
-				peers[i] = &grantContextJourney{broker: j.broker, env: env, client: client}
-			}
-			j.narrowConsent()
-			type result struct {
-				index         int
-				headers, body *extprocv3.ProcessingResponse
-			}
-			results := make(chan result, 2)
-			call := func(index int) {
-				defer GinkgoRecover()
-				headers, body := peers[index].bindingCall(headerOnly, "", "")
-				results <- result{index, headers, body}
-			}
-			go call(0)
-			Eventually(shared.Ready, 5*time.Second).Should(Receive())
-			grantBody, err := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{j.broker.Reader.ID.String(): {j.broker.Repo.ID.String()}, j.broker.Agent.PermissionSets[1].PermissionSetID.String(): {j.broker.Repo.ID.String()}}})
-			Expect(err).NotTo(HaveOccurred())
-			resp, err := j.broker.Enduser.AuthenticatedPOST("/api/consent/agents/"+j.broker.Agent.ID.String()+"/grants", j.broker.Principal.String(), "application/json", strings.NewReader(string(grantBody)))
-			Expect(err).NotTo(HaveOccurred())
-			DeferCleanup(func() { _ = resp.Body.Close() })
-			Expect(resp.StatusCode).To(Equal(http.StatusCreated))
-			Expect(resp.Body.Close()).To(Succeed())
-			go call(1)
-			Eventually(shared.Ready, 5*time.Second).Should(Receive())
-			shared.Release()
-			Eventually(shared.RetryJoined, 5*time.Second).Should(Receive())
-			Eventually(shared.RetryJoined, 5*time.Second).Should(Receive())
-			barrier.Release()
-			var winner int
-			statuses := make([]uint32, 0, 2)
-			for range 2 {
-				var r result
-				Eventually(results, 5*time.Second).Should(Receive(&r))
-				status := extprochelpers.ExtractImmediateResponseStatus(r.headers)
-				statuses = append(statuses, status)
-				if status == 0 {
-					winner = r.index
-					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(r.headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
-					if !headerOnly {
-						Expect(r.body).To(extprochelpers.BeForwardedRequestBody())
-					}
-				} else {
-					_, body := immediateJSON(r.headers)
-					Expect(body).To(Equal(map[string]string{"error": "service_unavailable", "error_description": "exchange result binding unavailable"}))
-					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(r.headers)).To(BeEmpty())
-					Expect(r.body).To(BeNil())
+			for _, headerOnly := range []bool{false, true} {
+				race := &bindingRace{headerOnly: headerOnly}
+				race.journey = newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, false, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+					race.barrier = bootstrap.NewBindingConcurrencyBroker(f.Enduser.BaseURL())
+					DeferCleanup(race.barrier.Close)
+					options.ExchangeEndpoint = race.barrier.Server.URL
+					options.GrantContext.PolicyDecisionPoint = f.Enduser.BaseURL()
+				}, broadGrantContext)
+				race.shared = bootstrap.NewBindingConcurrencyExchanger(race.journey.env)
+				DeferCleanup(race.shared.Release)
+				for range 2 {
+					env, err := bootstrap.NewExtProcEnvironmentWithOptions(race.journey.broker.Enduser.BaseURL(), race.journey.broker.ClientAssertion, policy, bootstrap.TestLogger(0), bootstrap.ExtProcOptions{DisableToolApprovals: true, Exchanger: race.shared, GrantContext: extprocconfig.GrantContextConfig{Enabled: true, RequestTimeout: 2 * time.Second, MaxStaleness: time.Minute}})
+					Expect(err).NotTo(HaveOccurred())
+					DeferCleanup(env.Close)
+					client, conn := extprochelpers.ConnectToExtProc(env.Address)
+					DeferCleanup(func() { _ = conn.Close() })
+					race.peers = append(race.peers, &grantContextJourney{broker: race.journey.broker, env: env, client: client})
 				}
+				races = append(races, race)
 			}
-			Expect(statuses).To(ConsistOf(uint32(0), uint32(http.StatusServiceUnavailable)))
-			Expect(barrier.Calls.Load()).To(Equal(int32(2)), "one shared additional flight and no third exchange")
-			winnerResponse := peers[winner].HeaderOnly(authzenRepoResource, nil)
-			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(winnerResponse)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
-			Expect(barrier.Calls.Load()).To(Equal(int32(2)), "the compatible same-token replacement survives")
-		}
+		})
+
+		// Scenario US3.13 from specs/054-authzen-delegation-pip/spec.md
+		It("fails closed on a shared retry claimed by another live permit", func() {
+			for _, race := range races {
+				j, headerOnly, barrier, shared, peers := race.journey, race.headerOnly, race.barrier, race.shared, race.peers
+				seed := j.HeaderOnly(authzenRepoResource, nil)
+				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(seed)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+				j.narrowConsent()
+				type result struct {
+					index         int
+					headers, body *extprocv3.ProcessingResponse
+				}
+				results := make(chan result, 2)
+				call := func(index int) {
+					defer GinkgoRecover()
+					headers, body := peers[index].bindingCall(headerOnly, "", "")
+					results <- result{index, headers, body}
+				}
+				go call(0)
+				Eventually(shared.Ready, 5*time.Second).Should(Receive())
+				grantBody, err := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{j.broker.Reader.ID.String(): {j.broker.Repo.ID.String()}, j.broker.Agent.PermissionSets[1].PermissionSetID.String(): {j.broker.Repo.ID.String()}}})
+				Expect(err).NotTo(HaveOccurred())
+				resp, err := j.broker.Enduser.AuthenticatedPOST("/api/consent/agents/"+j.broker.Agent.ID.String()+"/grants", j.broker.Principal.String(), "application/json", strings.NewReader(string(grantBody)))
+				Expect(err).NotTo(HaveOccurred())
+				DeferCleanup(func() { _ = resp.Body.Close() })
+				Expect(resp.StatusCode).To(Equal(http.StatusCreated))
+				Expect(resp.Body.Close()).To(Succeed())
+				go call(1)
+				Eventually(shared.Ready, 5*time.Second).Should(Receive())
+				shared.Release()
+				Eventually(shared.RetryJoined, 5*time.Second).Should(Receive())
+				Eventually(shared.RetryJoined, 5*time.Second).Should(Receive())
+				barrier.Release()
+				var winner int
+				statuses := make([]uint32, 0, 2)
+				for range 2 {
+					var r result
+					Eventually(results, 5*time.Second).Should(Receive(&r))
+					status := extprochelpers.ExtractImmediateResponseStatus(r.headers)
+					statuses = append(statuses, status)
+					if status == 0 {
+						winner = r.index
+						Expect(extprochelpers.ExtractMutatedAuthorizationHeader(r.headers)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+						if !headerOnly {
+							Expect(r.body).To(extprochelpers.BeForwardedRequestBody())
+						}
+					} else {
+						_, body := immediateJSON(r.headers)
+						Expect(body).To(Equal(map[string]string{"error": "service_unavailable", "error_description": "exchange result binding unavailable"}))
+						Expect(extprochelpers.ExtractMutatedAuthorizationHeader(r.headers)).To(BeEmpty())
+						Expect(r.body).To(BeNil())
+					}
+				}
+				Expect(statuses).To(ConsistOf(uint32(0), uint32(http.StatusServiceUnavailable)))
+				Expect(barrier.Calls.Load()).To(Equal(int32(2)), "one shared additional flight and no third exchange")
+				winnerResponse := peers[winner].HeaderOnly(authzenRepoResource, nil)
+				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(winnerResponse)).To(Equal("Bearer SYNTHETIC_PROVIDER_TOKEN_RW"))
+				Expect(barrier.Calls.Load()).To(Equal(int32(2)), "the compatible same-token replacement survives")
+			}
+		})
 	})
 
-	// Scenario US4.5 from specs/054-authzen-delegation-pip/spec.md
-	It("discovers from the token endpoint origin by default and uses the advertised endpoint", func() {
-		var pdp *advertisedEndpointPDP
-		j := newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
-			pdp = newAdvertisedEndpointPDP(f.Enduser.BaseURL())
-			options.ExchangeEndpoint = pdp.server.URL + "/oauth2/token"
+	Context("with a PDP that advertises a non-default evaluation endpoint", func() {
+		var (
+			j   *grantContextJourney
+			pdp *advertisedEndpointPDP
+		)
+
+		BeforeEach(func() {
+			j = newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+				pdp = newAdvertisedEndpointPDP(f.Enduser.BaseURL())
+				options.ExchangeEndpoint = pdp.server.URL + "/oauth2/token"
+			})
 		})
-		Expect(j.env.PolicyDecisionPoint).To(Equal(pdp.server.URL), "the default PDP is the token endpoint origin")
-		Expect(strings.HasSuffix(j.broker.Config.Server.EndUser.PublicURL, "/")).To(BeFalse())
-		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		Expect(j.broker.EvaluationCount()).To(Equal(1))
-		Expect(pdp.advertised.Load()).To(Equal(int32(1)), "evaluation uses the advertised endpoint")
-		Expect(pdp.defaultPath.Load()).To(BeZero(), "evaluation never falls back to the default path")
+
+		// Scenario US4.5 from specs/054-authzen-delegation-pip/spec.md
+		It("discovers from the token endpoint origin by default and uses the advertised endpoint", func() {
+			Expect(j.env.PolicyDecisionPoint).To(Equal(pdp.server.URL), "the default PDP is the token endpoint origin")
+			Expect(strings.HasSuffix(j.broker.Config.Server.EndUser.PublicURL, "/")).To(BeFalse())
+			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			Expect(j.broker.EvaluationCount()).To(Equal(1))
+			Expect(pdp.advertised.Load()).To(Equal(int32(1)), "evaluation uses the advertised endpoint")
+			Expect(pdp.defaultPath.Load()).To(BeZero(), "evaluation never falls back to the default path")
+		})
 	})
 })
