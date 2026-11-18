@@ -65,9 +65,9 @@ Reason: [selected proposal approved by mjungsbluth](https://github.com/zalando-i
 
 ## Current task reconciliation and approval disposition
 
-The original 102-task inventory and D-6 alternative validation are historical completion records in quickstart §§11–12, not evidence for new work. Original API-2/D-5/D-6 approval is recorded on the 2026-11-05 approval comment; D-6 is closed by its completed alternative validation, not by performing the missing original sequence. F4–F6 are recorded complete in §13. T103/F2 and T104/F3 remain required open work.
+The original 102-task inventory and D-6 alternative validation are historical completion records in quickstart §§11–12, not evidence for new work. Original API-2/D-5/D-6 approval is recorded on the 2026-11-05 approval comment; D-6 is closed by its completed alternative validation, not by performing the missing original sequence. F4–F6 are recorded complete in §13. T103/F2 and T104/F3 are complete; see `tasks.md` and the ADR 048 revision history.
 
-The current 122-task inventory retains 104 historical checked markers and 18 unchecked tasks, including T001, T103/T104 and T108–T122. It covers the Proposed binding revision, telemetry mapping, canonical-field guidance and US3.11–US3.13 with genuine test-first evidence. No new approval or implementation is recorded here.
+Historical (before T123–T136; all 136 tasks are now checked): the 122-task inventory retained 104 historical checked markers and 18 unchecked tasks, including T001, T103/T104 and T108–T122. It covers the Proposed binding revision, telemetry mapping, canonical-field guidance and US3.11–US3.13 with genuine test-first evidence. No new approval or implementation is recorded here.
 
 ## Clarifications — analysis remediation (run 42232121230/1)
 
@@ -190,12 +190,12 @@ test-first compliance. Implementation history and remaining evidence gaps are re
 |---|---|---|
 | Security-first | Pass with rationale | Broker evaluation is on whenever exchange is on, and it is always authenticated and authorized. ExtProc's opt-in default follows ADR 028's Security-First reconciliation: an additive consumer whose absence leaves today's controls in force. The ADR records this (R16). Every enabled-mode failure is closed. |
 | Architecture docs | Pass | Update `ARCHITECTURE.md` §3.1.4 (routes), §3.2.1 (resolver port and permit cache), §3.2.3 (enabled-mode ordering), the policy-gates table, the glossary, and the ADR index. Update `internal/extproc/AGENTS.md`, `internal/AGENTS.md` (tokenexchange description), and the root `AGENTS.md` ADR table. |
-| ADRs | Pass with precondition | The maintainer endorsed the R16 decision set in the 2026-10-28 review. ADR 048 ([adrs/048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md)) supersedes ADR 028's input schema and enabled-mode ordering, and extends ADR 033's seam. It records the clarified R15 shape. Sign-off is approval item ADR-1; implementation recorded that approval in the Status line and moved the draft to `adrs/`. Its same-PR revisions (§1 request-member handling, the body-path cooldown consequence) are registered as the revised API-2 and D-5 (Principle II allows same-PR revision before merge). The permit-bound token revision (new §10) is a Proposed feature-local draft, [adr-048-revision-permit-bound-tokens.md](./adr-048-revision-permit-bound-tokens.md), registered as ADR-2; implementation applies it to `adrs/` only after approval. |
+| ADRs | Pass with precondition | The maintainer endorsed the R16 decision set in the 2026-10-28 review. ADR 048 ([adrs/048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md)) supersedes ADR 028's input schema and enabled-mode ordering, and extends ADR 033's seam. It records the clarified R15 shape. Sign-off is approval item ADR-1; implementation recorded that approval in the Status line and moved the draft to `adrs/`. Its same-PR revisions (§1 request-member handling, the body-path cooldown consequence) are registered as the revised API-2 and D-5 (Principle II allows same-PR revision before merge). The permit-bound token revision (new §10) was a feature-local draft registered as ADR-2; after approval it was applied as [ADR 048 §10](../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse) and the draft was removed. |
 | Library-first security | Pass | No new cryptography. JWTs are verified by the existing jwx-based `JWTValidator`. TLS uses the existing ExtProc HTTP client. |
 | Zalando guidelines | Pass with documented exception | The AuthZEN-mandated paths (`/access/v1/...` and `/.well-known/...`) and snake_case members are standard-defined. The ADR documents the exception (API-004). |
 | End-user docs | Pass | `docs/api/authzen-evaluation.md` with examples, plus a deprecation note in `docs/reference/token-exchange.md`. |
 | Migration testing | Not applicable | No migration. |
-| Hexagonal architecture | Pass | Domain: resolver and evaluation service in `tokenexchange`. Driving adapter: `internal/adapters/http/enduser/authzen_*.go`. Wiring: the builder. Routes: `SetupEnduserRoutes`. ExtProc: the `PermitResolver` port in `server`, with its implementation in `delegation/`. |
+| Hexagonal architecture | Pass | Domain: resolver and evaluation service in `tokenexchange`. Driving adapter: `internal/adapters/http/enduser/authzen_*.go`. Wiring: the builder. Routes: `SetupEnduserRoutes`. ExtProc: the `PermitResolver` port in `server`, with its implementation in `grantcontext/`. |
 | Persistence patterns | Not applicable | No persistence. |
 | Configuration system | Pass | Broker: none. ExtProc: `internal/extproc/config` with file, env, and flag precedence and startup validation (Principle VII, standalone exception under ADR 011). |
 | DI via Builder | Pass | `AuthZENHandlers` are created in `builder.go` and passed through `EnduserHandlers`. Routing only registers. ExtProc wiring is in `cmd/extproc-token-exchange/root.go`, the existing composition root. |
@@ -239,7 +239,7 @@ Maintainer direction from the 2026-10-28 review and clarification, applied in th
 
 Original implementation approvals and D-6 closure are recorded in quickstart §§11–12 and ADR 048. The table below preserves that inventory as recorded history; this phase does not grant any approval or reopen original API-2/D-5/D-6.
 
-Still open for implementation:
+Planning-time gates (historical; items 1–3 are satisfied). ADR 048's [revision history](../../adrs/048-authzen-delegation-pip.md#revision-history) records the 2026-11-06 approval of ADR-2, ADR-3, API-7, D-7 and D-8, the D-7 namespace registration and migration (run 42297225880/1) and issue #441 for ADR-3 (2026-11-07). The exchange-provenance redesign (issue #462) and future OPA removal stay out of scope.
 
 1. Supplied approval must cover Proposed ADR-2, ADR-3, API-7, D-7 and D-8 before implementing those changes. T001 incorporates only covered drafts and preserves original ADR 048 provenance.
 2. T103 requires a permitted publication path for the exact namespace registration and migration (observability §3); no standards waiver or partial compliance claim.
@@ -313,10 +313,13 @@ internal/
 │   └── builder.go                                        # Construct resolver, evaluation service, handlers when tokenExchangeEnabled
 └── extproc/
     ├── config/{config.go,loader.go,validate.go}          # GrantContextConfig, defaults, flags, validation
-    ├── delegation/                                       # New package (no broker imports)
+    ├── grantcontext/                                     # New package (no broker imports)
     │   ├── discovery.go                                  # Discover + PDP verification
     │   ├── client.go                                     # AuthZEN POST, typed permit decode and validation, max-age, deadline
-    │   └── resolver.go                                   # permit-only cache, singleflight, eviction
+    │   ├── context.go                                    # typed permit context validation
+    │   ├── resolver.go                                   # permit-only cache, singleflight, eviction
+    │   ├── telemetry.go                                  # bounded resolution outcomes
+    │   └── setup.go                                      # NewPermitResolverFromConfig, shared by root.go and E2E
     ├── authorization/input.go, input_builder.go          # ContextInput: principal, agent, resource, grant, permission_sets (R15); header-only input
     └── server/server.go                                  # PermitResolver port; contextInputFromGrantContext; body concurrency; header-only ordering; deadline check; responses
         server/exchanger.go, server/grant_context.go         # ADR-2 token binding: binding-aware exchange, compare-and-delete, no stale fallback
@@ -426,7 +429,7 @@ feature is enabled:
     `service_unavailable` with no policy call, no forwarding, and no re-resolution.
   - T049/T050/T052/T057/T058 cover these rules test-first.
 - Policy input (R15, data model §3.5, and contract §4):
-  - The `delegation` client decodes the permit's `context` into its own wire struct, ignoring
+  - The `grantcontext` client decodes the permit's `context` into its own wire struct, ignoring
     unknown members. It validates the documented shape (data model §3.3.1) and returns a typed
     `grantcontext.Context`. A violation is `invalid_response` and returns 503 (uncached).
   - `authorization.ContextInput` gains `principal`, `agent`, `resource`, `grant`, and
@@ -497,7 +500,7 @@ The current continuation adds **2g Observability Design** (T108/T109): inventory
     [adrs/048-authzen-delegation-pip.md](../../adrs/048-authzen-delegation-pip.md)). The draft already records the R16 decision set, the
     freshness decisions, and the clarified R15 shape: direct members, a typed mapping,
     currently retained permit-derived compatibility `granted_permission_sets*`, and no wrapper or flag.
-  - After approval of ADR-2, apply [adr-048-revision-permit-bound-tokens.md](./adr-048-revision-permit-bound-tokens.md)
+  - After approval of ADR-2, apply `adr-048-revision-permit-bound-tokens.md` (done: [ADR 048 §10](../../adrs/048-authzen-delegation-pip.md#10-the-permit-governs-enabled-mode-token-reuse))
     to `adrs/048-authzen-delegation-pip.md`, record the approval in its Status and Revision
     history, and remove the draft.
   - Add the glossary entries and the policy-gates row to `ARCHITECTURE.md`.

@@ -244,7 +244,7 @@ All tests below use production bootstrap, Ginkgo/Gomega `Describe → Context �
 - [X] T059 [US3] Add credential-free operation/outcome/cache-hit attributes in `internal/extproc/grantcontext/client.go`, `resolver.go` and `internal/extproc/server/server.go` using existing logging/tracing vocabulary; test captured output in their `_test.go` files contains no tokens/assertions/context (SR-003–SR-004; ExtProc contract §5).
 - [X] T060 [US3] After US4 startup wiring (T066–T069), run `just check`, `just extproc-test` with race coverage and `just test-e2e-backend` plus non-container US3.1–US3.10 in `tests/e2e/grant_context_journey_test.go`; verify revised US3.5 broker re-consultation, immediate header-only permit and body-path permit after the unchanged 5 s exchange cooldown separately (D-5), and the canonical policy across two UUID sets and revocation/outage despite cached exchanged tokens, then record green evidence in `specs/054-authzen-delegation-pip/quickstart.md` (SC-002–SC-005).
 
-### ADR-2 continuation: permit-bound exchanged tokens (Proposed; genuine TDD)
+### ADR-2 continuation: permit-bound exchanged tokens (approved 2026-11-06; genuine TDD)
 
 - [X] T121 [US3] Write one US3.12 `It()` in `tests/e2e/grant_context_journey_test.go` through real broker/production ExtProc: narrow consent after warm broad binding without provider re-authorization; on both isolated paths await permit expiry with bounded `Eventually`, assert new policy scopes, identity-safe additional exchange and identical broad provider token forwarding under a new handle. Pin the provider-capability limitation and keep fixtures synthetic (FR-020; SC-007; D-8; Principles VIII, XIII).
 - [X] T122 [US3] Write one US3.13 `It()` in `tests/e2e/grant_context_journey_test.go` using production ExtProc and a barrier-controlled broker fixture in `tests/e2e/bootstrap/`: deliver two live different permits around controlled grant reads, share unbound result/first claim and the mismatched retry, and assert API-7 503, no loser Authorization mutation/rebind/third exchange, compatible winner success and same-token replacement survival on both paths. Keep barriers/helpers test-only; drive red before T114–T116 (FR-020; SC-007; ADR-2/API-7/D-8; Principles VIII, XIII).
@@ -352,7 +352,7 @@ These new tasks depend on explicit ADR-2 approval through T001 and the Phase 2g 
 
 **Database & Persistence** (Principle IX):
 
-- [X] T088 Verify no new migrations, persistence entities or repository APIs in `migrations/`, `internal/ports/storage.go` and `internal/adapters/storage/`; new migration numbering/apply/rollback/data-integrity tests are not applicable, existing PostgreSQL repository coverage remains intact and US2.19 passed with real PostgreSQL (Principle IX).
+- [X] T088 Verify no new migrations, persistence entities or repository APIs in `migrations/`, `internal/ports/storage.go` and `internal/adapters/storage/`; new migration numbering/apply/rollback/data-integrity tests are not applicable, existing PostgreSQL repository coverage remains intact. US2.19 passed on real PostgreSQL in the historical downstream run recorded in `implementation-log.md` §12; for the current head it is deferred to downstream container tests on the pushed commit, not validated locally (Principle IX).
 
 **Security** (Principles I, III):
 
@@ -392,7 +392,7 @@ These new tasks depend on explicit ADR-2 approval through T001 and the Phase 2g 
 
 - [X] T124 [US3] Preserve the actual RFC 3339 grant-update instant, including fractional seconds, in `internal/domain/tokenexchange/evaluation.go` so same-scope updates within one second produce distinct permit bindings. First add `TestAccessEvaluation_GrantBindingPreservesUpdateInstant` in `evaluation_test.go`, observe loss of precision semantically, then use RFC3339Nano without a new field/claim/config key. Retain the published date-time schema and unchanged whole-second values; verify broker/ExtProc producer-consumer parity, both narrowing journeys and the live-grant concurrency journey. Record red/green evidence in `implementation-log.md` §20 (FR-020; data-model §3.6; approved ADR-2/API-7; Principles VIII/XIII).
 
-Current inventory: 124 tasks, 124 checked and none unchecked. The current five-item approval is recorded in ADR 048 and implementation-log §20. T103/T104 retain telemetry and issue-backed canonical-guidance completion. T111–T120/T122 now have binding runtime, genuine red/green unit and E2E evidence and complete non-container validation. Container-backed US2.19, infra integration and Agentgateway suites are deferred to downstream container tests on the pushed commit, not claimed validated locally. Original D-6 completion markers remain historical dispositions, not historical TDD claims.
+Current inventory: 136 tasks (T001–T136), all checked. This note first recorded 124 tasks; T125–T136 were added and completed by the approved remediations below. The current five-item approval is recorded in ADR 048 and implementation-log §20. T103/T104 retain telemetry and issue-backed canonical-guidance completion. T111–T120/T122 now have binding runtime, genuine red/green unit and E2E evidence and complete non-container validation. Container-backed US2.19, infra integration and Agentgateway suites are deferred to downstream container tests on the pushed commit, not claimed validated locally. Original D-6 completion markers remain historical dispositions, not historical TDD claims.
 
 The continuation notes below retain earlier partial-run outcomes as history; current evidence supersedes their unfinished-work lists.
 
@@ -475,6 +475,8 @@ Each acceptance scenario maps to one eventual `It()`; the grouped ranges below a
 
 ## Task Generation Summary
 
+Historical: this summary describes the 122-task list at generation time. The current inventory is in the continuation note above.
+
 | Group | Task count | Acceptance scenarios |
 |---|---:|---:|
 | Shared setup, design, scaffolding, polish, compliance and corrections | 71 | Historical T021–T026; new design T108/T109, docs T118 and gate T120 |
@@ -504,8 +506,8 @@ Approval: [mjungsbluth's selected proposal](https://github.com/zalando-incubator
 
 - [X] T125 F2/P2: Make enabled-mode approval identity use the request permit's principal and agent UUID in `internal/extproc/server/server.go`; retain disabled-mode exchange identity and session extraction. Test conflicting and absent exchange identities through headers, OPA, body and approval forwarding in `review_remediation_test.go`. Extend US3.1 in `tests/e2e/grant_context_journey_test.go` through real broker approval creation, user approval and forwarding with conflicting cached exchange identity; observe semantic red without the fix and green with it. Record the authorized revision in ADR 048 §9.1 and spec/plan Clarifications.
 - [X] T126 F3/P3: Publish the additive AuthZEN contract as end-user API `1.3.0` over released `1.2.0`; update the version assertion, compatibility acceptance test, API contract/docs and ADR 048 §8. Record ADR 048's existing partial supersession in ADR 028 and `ARCHITECTURE.md` §10.
-- [X] T127 F4/P4: Return a local `errInvalidGrantTimestamp` sentinel and match it with `errors.Is`; regression-test that unrelated wrapped permit-client error categories retain generic exchange handling, while existing timestamp telemetry tests retain the 503 classification.
-- [X] T128 F5/P5: Correct `contracts/observability.md` to specify `error_kind` and list resolution, terminal binding-conflict and local grant-timestamp emitters, their levels, bounded classifications, response and span handling.
+- [X] T127 F4/P4: Return a local `errInvalidGrantTimestamp` sentinel and match it with `errors.Is`; regression-test that unrelated wrapped permit-client error categories retain generic exchange handling, while existing timestamp telemetry tests retain the 503 classification (FR-020 grant-instant binding; SR-002; approved API-7 fail-closed 503 classification).
+- [X] T128 F5/P5: Correct `contracts/observability.md` to specify `error_kind` and list resolution, terminal binding-conflict and local grant-timestamp emitters, their levels, bounded classifications, response and span handling (SR-004; Principle XV with `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`).
 - [X] T129 F6/P6: Rename the reuse value to `ExchangeResultBinding` and ExtProc port/cache to `PermitResolver`, including constructors, wiring and test doubles. Update ADR 048, both glossaries, instructions and current feature contracts without changing wire fields, error bodies or telemetry identifiers.
 
 ## Approved apply-review remediation (2026-11-11)
