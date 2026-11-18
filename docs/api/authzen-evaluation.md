@@ -18,13 +18,14 @@ Host: broker.example.com
 HTTP/1.1 200 OK
 Content-Type: application/json
 Cache-Control: max-age=3600
+Vary: X-Request-ID
 
 {"policy_decision_point":"https://broker.example.com",
  "access_evaluation_endpoint":"https://broker.example.com/access/v1/evaluation"}
 ```
 
 `policy_decision_point` is `server.enduser.public_url` without a trailing slash, the same base as
-consent links. A consumer must compare it exactly with its expected identifier before sending any
+consent links. The broker refuses to start when that URL has a query or fragment. A consumer must compare it exactly with its expected identifier before sending any
 credential. Batch and search endpoints are not offered and are therefore omitted.
 
 AuthZEN inserts the well-known string between the host and the path of the identifier. For a broker
@@ -40,7 +41,7 @@ audit records as the calling peer. The caller is authorized by the unchanged
 `token_exchange.authorization.cel.expression`, with
 `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`,
 `request.resource = resource.id` and an empty `request.scope`. A policy cannot tell evaluation from
-exchange, so evaluation is never more permissive than exchange.
+an exchange without `scope`, so evaluation is never more permissive than exchange.
 
 ```http
 POST /access/v1/evaluation HTTP/1.1
@@ -128,7 +129,7 @@ with `grant_context.enabled` (see
 [ExtProc grant context configuration](../configuration.md#extproc-grant-context-configuration)).
 ExtProc caches only permits, for at most `min(max-age, max_staleness)` from the moment it sent the
 request, and fails closed: a denial returns 403 with the consent URL, and a broker failure or an
-expired permit returns 503. ExtProc rechecks the original deadline before final forwarding, including after header-only exchange and body or batch policy evaluation. Expiry returns `{"error":"service_unavailable","error_description":"grant context unavailable"}` without forwarding or re-resolution. OPA policies receive `input.context.principal`, `agent`, `resource`,
+expired permit returns 503. ExtProc requires a positive `max-age`: a permit with `max-age=0`, which the broker sends when less than one second of the grant remains, is an unusable response and also returns 503. ExtProc rechecks the original deadline before final forwarding, including after header-only exchange and body or batch policy evaluation. Expiry returns `{"error":"service_unavailable","error_description":"grant context unavailable"}` without forwarding or re-resolution. OPA policies receive `input.context.principal`, `agent`, `resource`,
 `grant` and `permission_sets` and can key on canonical IDs, for example
 `input.context.permission_sets[_].canonical_id == "repo-reader"`.
 

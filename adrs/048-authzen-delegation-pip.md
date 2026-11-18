@@ -34,7 +34,9 @@ Authorization API 1.0 Access Evaluation endpoint, and ExtProc to consume it with
   `POST /access/v1/evaluation` whenever token exchange is configured. There is no new broker
   flag or configuration key, and no admin API.
 - `policy_decision_point` is `server.enduser.public_url` without a trailing slash, the same base
-  as consent links and RFC 8414 metadata.
+  as consent links and RFC 8414 metadata. When token exchange is configured, startup validation
+  rejects a public URL with a query or fragment, because the evaluation endpoint is advertised by
+  appending its path. HTTP is accepted, as for the other end-user URLs.
 - Evaluation and exchange share one `tokenexchange.GrantResolver` that holds exchange steps
   2–9a unchanged. Evaluation never reaches session retrieval, decryption, or refresh, so it never
   touches provider credentials (FR-013).
@@ -56,7 +58,8 @@ Authorization API 1.0 Access Evaluation endpoint, and ExtProc to consume it with
 Evaluation authenticates the gateway with a bearer client assertion (ADR 029 trust anchor) and
 calls the existing caller CEL policy with
 `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`, the raw resource, and an
-empty scope. A policy cannot distinguish evaluation from exchange. This is intentional:
+empty scope. A policy cannot distinguish evaluation from an exchange without `scope`; an
+exchange with `scope` passes it to the policy. This is intentional:
 evaluation is never more permissive than exchange, and it issues no token.
 
 ### 3. Freshness
@@ -111,7 +114,9 @@ separate exchange-response deprecation in §8 remains unchanged.
 
 The shared deferred-route matcher in `SecurityContextMiddleware` extends from `POST /oauth2/token`
 to `POST /access/v1/evaluation`. The shared resolver finalizes the verified Actor and the distinct
-CallingPeer before caller authorization, so permits and caller-policy denials carry both. Early
+CallingPeer before caller authorization, so permits and caller-policy denials carry both.
+Evaluation rejects a client assertion without a non-blank `sub` with 401 before finalization. The
+evaluation route's audit middleware logs the finalized Actor. Early
 decode or authentication failures use the existing idempotent request-principal/anonymous
 finalization before in-handler audit; the perimeter fallback remains. Ordinary-request and
 token-route behavior is unchanged. `ARCHITECTURE.md` §3.1.4.2 is reconciled.
@@ -265,13 +270,16 @@ not authorize that redesign or provider downscoping in this PR.
   independent of the exchanged-token lifetime.
 - Header-only policies receive delegation data in enabled mode; `granted_permission_sets_available`
   becomes `true` there.
-- A broker outage now blocks enabled-mode ExtProc requests with 503 even when a cached exchanged
-  token exists.
+- A broker outage now blocks enabled-mode ExtProc requests with 503 once ExtProc needs a new
+  permit (no live cached permit), even when a cached exchanged token exists. A request with a live
+  cached permit and a cached compatible exchange result makes no broker call.
 - Policies can key on canonical IDs instead of deployment UUIDs.
 - Delegation denials are never cached, and header-only requests permit as soon as the user
   consents. On the body path, the concurrent exchange during a denied request records the
   existing ADR 012 exchange re-consent cooldown (5 s), so a body-bearing request right after
-  consent is answered from that cooldown until it lapses. This ADR does not change that
+  consent is answered from that cooldown until it lapses. The cooldown is keyed by subject token
+  and resource, not by request path, so on the same ExtProc instance a header-only request for that
+  pair also receives the cached exchange error after policy allows. This ADR does not change that
   cooldown; the maintainer accepted this behavior.
 - Gateways other than ExtProc can consume the endpoint.
 - The AuthZEN 1.0 discovery member names, well-known path insertion (between host and path),
