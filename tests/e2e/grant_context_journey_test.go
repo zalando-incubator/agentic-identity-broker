@@ -299,6 +299,52 @@ func newAdvertisedEndpointPDP(brokerURL string) *advertisedEndpointPDP {
 	return p
 }
 
+// newRewritingExchangeEndpoint fronts the broker token endpoint, applies rewrite to every
+// successful exchange response and counts the rewritten responses.
+func newRewritingExchangeEndpoint(brokerURL string, rewrite func(map[string]any)) (string, *atomic.Int32) {
+	target, err := url.Parse(brokerURL)
+	Expect(err).NotTo(HaveOccurred())
+	var calls atomic.Int32
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if response.StatusCode != http.StatusOK {
+			return nil
+		}
+		defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
+		var result map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+			return err
+		}
+		rewrite(result)
+		raw, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		response.Body = io.NopCloser(bytes.NewReader(raw))
+		response.ContentLength = int64(len(raw))
+		response.Header.Del("Content-Length")
+		calls.Add(1)
+		return nil
+	}
+	endpoint := httptest.NewServer(proxy)
+	DeferCleanup(endpoint.Close)
+	return endpoint.URL + "/oauth2/token", &calls
+}
+
+// newIdentityMismatchJourney runs the approval policy behind an exchange endpoint that
+// replaces one identity field of every successful exchange response.
+func newIdentityMismatchJourney(field, value string) (*grantContextJourney, *atomic.Int32) {
+	var calls *atomic.Int32
+	j := newGrantContextJourneyConfigured("approval_journey.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+		options.DisableToolApprovals = false
+		options.ExchangeEndpoint, calls = newRewritingExchangeEndpoint(f.Enduser.BaseURL(), func(result map[string]any) {
+			result[field] = value
+		})
+		options.GrantContext.PolicyDecisionPoint = f.Enduser.BaseURL()
+	})
+	return j, calls
+}
+
 func immediateJSON(resp *extprocv3.ProcessingResponse) (uint32, map[string]string) {
 	Expect(resp).NotTo(BeNil())
 	var body map[string]string
@@ -321,109 +367,97 @@ func expectGrantContextUnavailable(resp *extprocv3.ProcessingResponse) {
 }
 
 var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func() {
-	// Scenario US3.1 from specs/054-authzen-delegation-pip/spec.md
-	It("resolves concurrently with exchange and gives body policy the documented direct context members", func() {
-		var barrier *overlapBarrier
-		j := newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
-			barrier = newOverlapBarrier(f.Enduser.BaseURL())
-			options.ExchangeEndpoint = barrier.server.URL + "/oauth2/token"
-		})
-		grant, err := j.broker.Storage.UserGrants().FindByPrincipalAndAgent(context.Background(), j.broker.Principal, j.broker.Agent.ID)
-		Expect(err).NotTo(HaveOccurred())
-		headersResp, bodyResp := j.BodyCallWith(authzenRepoResource, map[string]string{
-			"x-expected-grant-id":     grant.ID.String(),
-			"x-expected-grant-update": grant.UpdatedAt.Format(time.RFC3339Nano),
-		})
-		Expect(bodyResp).To(extprochelpers.BeForwardedRequestBody(), "the canonical policy allows only with the direct members, the expected grant and permit-derived permission sets")
-		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(HavePrefix("Bearer "))
-		Expect(barrier.overlapped.Load()).To(BeTrue(), "evaluation and exchange were in flight at the broker together")
-		Expect(j.broker.EvaluationCount()).To(Equal(1))
+	Context("with overlapping, matching-identity and mismatching-identity exchanges", func() {
+		var (
+			j, matching, principalMismatch, agentMismatch *grantContextJourney
+			barrier                                       *overlapBarrier
+			principalMismatchCalls, agentMismatchCalls    *atomic.Int32
+		)
 
-		By("creating and approving a pending tool call owned by the matching exchange identity")
-		matching := newGrantContextJourneyConfigured("approval_journey.rego", time.Minute, true, func(_ *authzenFixture, options *bootstrap.ExtProcOptions) {
-			options.DisableToolApprovals = false
+		BeforeEach(func() {
+			j = newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+				barrier = newOverlapBarrier(f.Enduser.BaseURL())
+				options.ExchangeEndpoint = barrier.server.URL + "/oauth2/token"
+			})
+			matching = newGrantContextJourneyConfigured("approval_journey.rego", time.Minute, true, func(_ *authzenFixture, options *bootstrap.ExtProcOptions) {
+				options.DisableToolApprovals = false
+			})
+			principalMismatch, principalMismatchCalls = newIdentityMismatchJourney("principal", "different-exchange-principal")
+			agentMismatch, agentMismatchCalls = newIdentityMismatchJourney("agent_id", "00000000-0000-0000-0000-000000000001")
 		})
-		exchangeStatus, exchange := matching.broker.Exchange(authzenRepoResource)
-		Expect(exchangeStatus).To(Equal(http.StatusOK))
-		Expect(exchange["principal"]).To(Equal(matching.broker.Principal.String()))
-		Expect(exchange["agent_id"]).To(Equal(matching.broker.Agent.ID.String()))
-		toolBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}`)
-		headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), matching.client,
-			matching.request(http.MethodPost, false, authzenRepoResource, nil), toolBody)
-		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(Equal("Bearer " + exchange["access_token"].(string)))
-		approvalURL := approvalJourneyElicitationURL(bodyResp)
-		Expect(bodyResp).NotTo(extprochelpers.BeForwardedRequestBody())
-		pendingSync := approvalJourneySync(matching.broker.Enduser, matching.broker.ClientAssertion)
-		Expect(pendingSync.Data.Pairs).To(HaveLen(1))
-		pair := pendingSync.Data.Pairs[0]
-		Expect(pair.Principal).To(Equal(exchange["principal"]))
-		Expect(pair.AgentID).To(Equal(exchange["agent_id"]))
-		Expect(pair.Approvals).To(HaveLen(1))
-		pending := pair.Approvals[0]
-		Expect(pending.Status).To(Equal("pending"))
-		detail := approvalJourneyDetail(matching.broker.Enduser, pending.ID, pair.Principal)
-		Expect(detail.Data.ApprovalURL).To(Equal(approvalURL))
-		response, err := postJSON(matching.broker.Enduser, "/api/approvals/"+pending.ID+"/approve",
-			pair.Principal, helpers.ApproveRequest{Persistence: "once"})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(response.StatusCode).To(Equal(http.StatusOK))
-		approved := decodeJSON[helpers.ApproveResponse](response)
-		Expect(approved.Data.Persistence).To(Equal("once"))
 
-		By("forwarding the retry only after the approval is synchronized and consumed")
-		Eventually(func() *extprocv3.ProcessingResponse {
+		// Scenario US3.1 from specs/054-authzen-delegation-pip/spec.md
+		It("resolves concurrently with exchange and gives body policy the documented direct context members", func() {
+			grant, err := j.broker.Storage.UserGrants().FindByPrincipalAndAgent(context.Background(), j.broker.Principal, j.broker.Agent.ID)
+			Expect(err).NotTo(HaveOccurred())
+			headersResp, bodyResp := j.BodyCallWith(authzenRepoResource, map[string]string{
+				"x-expected-grant-id":     grant.ID.String(),
+				"x-expected-grant-update": grant.UpdatedAt.Format(time.RFC3339Nano),
+			})
+			Expect(bodyResp).To(extprochelpers.BeForwardedRequestBody(), "the canonical policy allows only with the direct members, the expected grant and permit-derived permission sets")
+			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(HavePrefix("Bearer "))
+			Expect(barrier.overlapped.Load()).To(BeTrue(), "evaluation and exchange were in flight at the broker together")
+			Expect(j.broker.EvaluationCount()).To(Equal(1))
+
+			By("creating and approving a pending tool call owned by the matching exchange identity")
+			exchangeStatus, exchange := matching.broker.Exchange(authzenRepoResource)
+			Expect(exchangeStatus).To(Equal(http.StatusOK))
+			Expect(exchange["principal"]).To(Equal(matching.broker.Principal.String()))
+			Expect(exchange["agent_id"]).To(Equal(matching.broker.Agent.ID.String()))
+			toolBody := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}`)
 			headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), matching.client,
 				matching.request(http.MethodPost, false, authzenRepoResource, nil), toolBody)
 			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(Equal("Bearer " + exchange["access_token"].(string)))
-			return bodyResp
-		}, 5*time.Second, 50*time.Millisecond).Should(extprochelpers.BeForwardedRequestBody())
-		detail = approvalJourneyDetail(matching.broker.Enduser, pending.ID, pair.Principal)
-		Expect(detail.Data.Consumed).To(BeTrue())
-
-		By("rejecting an exchange identity that differs from the permit before approval or forwarding")
-		var exchangeCalls atomic.Int32
-		withApproval := newGrantContextJourneyConfigured("approval_journey.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
-			options.DisableToolApprovals = false
-			target, err := url.Parse(f.Enduser.BaseURL())
+			approvalURL := approvalJourneyElicitationURL(bodyResp)
+			Expect(bodyResp).NotTo(extprochelpers.BeForwardedRequestBody())
+			pendingSync := approvalJourneySync(matching.broker.Enduser, matching.broker.ClientAssertion)
+			Expect(pendingSync.Data.Pairs).To(HaveLen(1))
+			pair := pendingSync.Data.Pairs[0]
+			Expect(pair.Principal).To(Equal(exchange["principal"]))
+			Expect(pair.AgentID).To(Equal(exchange["agent_id"]))
+			Expect(pair.Approvals).To(HaveLen(1))
+			pending := pair.Approvals[0]
+			Expect(pending.Status).To(Equal("pending"))
+			detail := approvalJourneyDetail(matching.broker.Enduser, pending.ID, pair.Principal)
+			Expect(detail.Data.ApprovalURL).To(Equal(approvalURL))
+			response, err := postJSON(matching.broker.Enduser, "/api/approvals/"+pending.ID+"/approve",
+				pair.Principal, helpers.ApproveRequest{Persistence: "once"})
 			Expect(err).NotTo(HaveOccurred())
-			proxy := httputil.NewSingleHostReverseProxy(target)
-			proxy.ModifyResponse = func(response *http.Response) error {
-				if response.StatusCode != http.StatusOK {
-					return nil
-				}
-				defer func(body io.ReadCloser) { _ = body.Close() }(response.Body)
-				var result map[string]any
-				if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-					return err
-				}
-				result["principal"] = "different-exchange-principal"
-				result["agent_id"] = "00000000-0000-0000-0000-000000000001"
-				raw, err := json.Marshal(result)
-				if err != nil {
-					return err
-				}
-				response.Body = io.NopCloser(bytes.NewReader(raw))
-				response.ContentLength = int64(len(raw))
-				response.Header.Del("Content-Length")
-				exchangeCalls.Add(1)
-				return nil
+			Expect(response.StatusCode).To(Equal(http.StatusOK))
+			approved := decodeJSON[helpers.ApproveResponse](response)
+			Expect(approved.Data.Persistence).To(Equal("once"))
+
+			By("forwarding the retry only after the approval is synchronized and consumed")
+			Eventually(func() *extprocv3.ProcessingResponse {
+				headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), matching.client,
+					matching.request(http.MethodPost, false, authzenRepoResource, nil), toolBody)
+				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(Equal("Bearer " + exchange["access_token"].(string)))
+				return bodyResp
+			}, 5*time.Second, 50*time.Millisecond).Should(extprochelpers.BeForwardedRequestBody())
+			detail = approvalJourneyDetail(matching.broker.Enduser, pending.ID, pair.Principal)
+			Expect(detail.Data.Consumed).To(BeTrue())
+
+			for _, mismatch := range []struct {
+				field   string
+				journey *grantContextJourney
+				calls   *atomic.Int32
+			}{
+				{"principal", principalMismatch, principalMismatchCalls},
+				{"agent_id", agentMismatch, agentMismatchCalls},
+			} {
+				By("rejecting an exchange " + mismatch.field + " that differs from the permit before approval or forwarding")
+				headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), mismatch.journey.client,
+					mismatch.journey.request(http.MethodPost, false, authzenRepoResource, nil), toolBody)
+				status, responseBody := immediateJSON(headersResp)
+				Expect(status).To(Equal(uint32(http.StatusServiceUnavailable)), mismatch.field)
+				Expect(responseBody).To(Equal(map[string]string{"error": "service_unavailable", "error_description": "exchange result binding unavailable"}), mismatch.field)
+				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(BeEmpty(), mismatch.field)
+				Expect(bodyResp).To(BeNil(), "an exchange %s mismatch must fail before body policy or approval", mismatch.field)
+				snapshot := approvalJourneySync(mismatch.journey.broker.Enduser, mismatch.journey.broker.ClientAssertion)
+				Expect(snapshot.Data.Pairs).To(BeEmpty(), "no approval is created for either identity after an exchange %s mismatch", mismatch.field)
+				Expect(mismatch.calls.Load()).To(Equal(int32(1)), "an exchange %s mismatch is terminal", mismatch.field)
 			}
-			endpoint := httptest.NewServer(proxy)
-			DeferCleanup(endpoint.Close)
-			options.ExchangeEndpoint = endpoint.URL + "/oauth2/token"
-			options.GrantContext.PolicyDecisionPoint = f.Enduser.BaseURL()
 		})
-		body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}`)
-		headersResp, bodyResp = extprochelpers.SendHeadersAndBody(context.Background(), withApproval.client,
-			withApproval.request(http.MethodPost, false, authzenRepoResource, nil), body)
-		status, responseBody := immediateJSON(headersResp)
-		Expect(status).To(Equal(uint32(http.StatusServiceUnavailable)))
-		Expect(responseBody).To(Equal(map[string]string{"error": "service_unavailable", "error_description": "exchange result binding unavailable"}))
-		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(BeEmpty())
-		Expect(bodyResp).To(BeNil(), "an identity mismatch must fail before body policy or approval")
-		snapshot := approvalJourneySync(withApproval.broker.Enduser, withApproval.broker.ClientAssertion)
-		Expect(snapshot.Data.Pairs).To(BeEmpty(), "no approval is created for either identity")
-		Expect(exchangeCalls.Load()).To(Equal(int32(1)), "an identity mismatch is terminal")
 	})
 
 	Context("with a one-minute permit cap", func() {
