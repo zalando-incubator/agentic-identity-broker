@@ -120,13 +120,6 @@ Errors are never decisions. Every error is `Cache-Control: no-store` and uses th
 | 403 | `forbidden` | The token-exchange caller policy rejects the gateway or resource |
 | 500 | `server_error` | Configuration or dependency failure, such as a grant-repository outage |
 
-### Unreleased contract migration (PR #292)
-
-The approved vocabulary correction renames the permit's service UUID from `resource.id`
-to `resource.service_id`, including in enabled OPA input. Update clients, fixtures and Rego
-joins such as `svc.id == input.context.resource.service_id` together. The request URI stays
-in `resource.id`; permission-set service entries retain `id`. No legacy permit alias is emitted.
-
 ## ExtProc consumer
 
 The standalone ExtProc service can consume this endpoint before every policy decision. Enable it
@@ -173,10 +166,3 @@ denials are Info and unavailable context is Warn. Neither logs nor spans include
 client assertions, grant context, requested resource URIs, or dependency error text.
 Broker evaluation audit and perimeter access logs share the finalized actor, optional distinct
 calling peer, and the trace ID returned in `traceresponse`.
-
-## Deprecation of `granted_permission_sets`
-
-End-user API `1.3.0` marks the token-exchange response field `granted_permission_sets` deprecated.
-It remains populated, and `principal` and `agent_id` are unchanged. Removal is scheduled for one
-release after the ExtProc grant-context resolver ships and requires a separately approved end-user API
-`2.0.0`.
