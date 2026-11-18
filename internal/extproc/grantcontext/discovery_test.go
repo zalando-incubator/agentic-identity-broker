@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,9 +22,12 @@ func TestDiscoveryURL_InsertsWellKnownBeforePath(t *testing.T) {
 		"https://example.com/broker/tenant1/":  "https://example.com/.well-known/authzen-configuration/broker/tenant1",
 		"https://[fe80::1%25eth0]:8443/broker": "https://[fe80::1%25eth0]:8443/.well-known/authzen-configuration/broker",
 	} {
-		got, err := DiscoveryURL(pdp)
-		require.NoError(t, err)
-		assert.Equal(t, want, got, pdp)
+		t.Run(pdp, func(t *testing.T) {
+			t.Parallel()
+			got, err := DiscoveryURL(pdp)
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+		})
 	}
 }
 
@@ -113,8 +117,11 @@ func TestDiscover_CallerCancellationIsTyped(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
+	// The client timeout bounds the test if the caller context stops reaching the request;
+	// the result is then a timeout instead of context.Canceled.
+	client := &http.Client{Timeout: 10 * time.Second, Transport: srv.Client().Transport}
 
-	_, err := Discover(ctx, srv.Client(), srv.URL, true)
+	_, err := Discover(ctx, client, srv.URL, true)
 
 	require.ErrorIs(t, err, ErrDiscoveryFailed)
 	require.ErrorIs(t, err, context.Canceled)

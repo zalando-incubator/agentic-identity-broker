@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -349,9 +350,9 @@ func TestClient_TimeoutAndAssertionFailure(t *testing.T) {
 	assert.Equal(t, CategoryUnavailable, resolveErr.Category)
 }
 
-// stallingBodyServer sends 200 headers with a usable max-age, then stalls the body until
-// the client goes away. headersSent, when non-nil, runs once the headers are flushed.
-func stallingBodyServer(t *testing.T, headersSent func()) *httptest.Server {
+// stallingBodyServer sends 200 headers with a usable max-age and part of the body, then
+// stalls the body until the client goes away.
+func stallingBodyServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Consuming the request body lets the server notice the client closing the connection.
@@ -361,41 +362,86 @@ func stallingBodyServer(t *testing.T, headersSent func()) *httptest.Server {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"decision":`))
 		w.(http.Flusher).Flush()
-		if headersSent != nil {
-			headersSent()
-		}
 		<-r.Context().Done()
 	}))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
+// bodyReadSignal closes reading when the client first reads a response body.
+type bodyReadSignal struct {
+	base    http.RoundTripper
+	once    sync.Once
+	reading chan struct{}
+}
+
+func newBodyReadSignal(base http.RoundTripper) *bodyReadSignal {
+	return &bodyReadSignal{base: base, reading: make(chan struct{})}
+}
+
+func (s *bodyReadSignal) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := s.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = &signalingBody{ReadCloser: resp.Body, signal: s}
+	return resp, nil
+}
+
+func (s *bodyReadSignal) reached() bool {
+	select {
+	case <-s.reading:
+		return true
+	default:
+		return false
+	}
+}
+
+type signalingBody struct {
+	io.ReadCloser
+	signal *bodyReadSignal
+}
+
+func (b *signalingBody) Read(p []byte) (int, error) {
+	b.signal.once.Do(func() { close(b.signal.reading) })
+	return b.ReadCloser.Read(p)
+}
+
 func TestClient_BodyReadTimeoutIsTimeout(t *testing.T) {
 	t.Parallel()
-	srv := stallingBodyServer(t, nil)
+	srv := stallingBodyServer(t)
+	signal := newBodyReadSignal(srv.Client().Transport)
 	client := newTestClient(t, srv, time.Minute)
-	client.httpClient = &http.Client{Timeout: 50 * time.Millisecond}
+	client.httpClient = &http.Client{Timeout: 250 * time.Millisecond, Transport: signal}
 
 	_, err := client.Evaluate(context.Background(), testSubject, testResource)
 
+	require.True(t, signal.reached(), "the timeout must expire while the client reads the body")
 	var resolveErr *Error
 	require.ErrorAs(t, err, &resolveErr)
 	assert.Equal(t, CategoryTimeout, resolveErr.Category)
 }
+
+// cancellationTestTimeout bounds a cancellation test if the caller context stops reaching the
+// request; the result is then a timeout instead of context.Canceled.
+const cancellationTestTimeout = 10 * time.Second
 
 func TestClient_PreservesCallerCancellation(t *testing.T) {
 	t.Parallel()
 	t.Run("before headers", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.Copy(io.Discard, r.Body)
 			cancel()
 			<-r.Context().Done()
 		}))
 		t.Cleanup(srv.Close)
+		client := newTestClient(t, srv, time.Minute)
+		client.httpClient = &http.Client{Timeout: cancellationTestTimeout, Transport: srv.Client().Transport}
 
-		_, err := newTestClient(t, srv, time.Minute).Evaluate(ctx, testSubject, testResource)
+		_, err := client.Evaluate(ctx, testSubject, testResource)
 
 		require.ErrorIs(t, err, context.Canceled)
 		assert.NotContains(t, err.Error(), srv.URL)
@@ -403,10 +449,22 @@ func TestClient_PreservesCallerCancellation(t *testing.T) {
 	t.Run("while reading the body", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(context.Background())
-		srv := stallingBodyServer(t, cancel)
+		defer cancel()
+		srv := stallingBodyServer(t)
+		signal := newBodyReadSignal(srv.Client().Transport)
+		client := newTestClient(t, srv, time.Minute)
+		client.httpClient = &http.Client{Timeout: cancellationTestTimeout, Transport: signal}
+		go func() {
+			select {
+			case <-signal.reading:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 
-		_, err := newTestClient(t, srv, time.Minute).Evaluate(ctx, testSubject, testResource)
+		_, err := client.Evaluate(ctx, testSubject, testResource)
 
+		require.True(t, signal.reached(), "the caller must cancel while the client reads the body")
 		require.ErrorIs(t, err, context.Canceled)
 		assert.NotContains(t, err.Error(), srv.URL)
 	})
