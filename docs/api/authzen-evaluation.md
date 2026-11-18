@@ -115,7 +115,7 @@ Errors are never decisions. Every error is `Cache-Control: no-store` and uses th
 
 | Status | `error` | When |
 |---|---|---|
-| 400 | `invalid_request` | Malformed or oversized body, wrong `Content-Type`, missing or unsupported member, invalid or expired subject token, `context.agent` mismatch, unregistered resource |
+| 400 | `invalid_request` | Malformed or oversized body, wrong `Content-Type`, missing or unsupported member, invalid or expired subject token, agent-subject token, `context.agent` mismatch, unregistered resource |
 | 401 | `unauthorized` | Missing, invalid or expired client assertion; `WWW-Authenticate: Bearer`, with `error="invalid_token"` for an invalid credential |
 | 403 | `forbidden` | The token-exchange caller policy rejects the gateway or resource |
 | 500 | `server_error` | Configuration or dependency failure, such as a grant-repository outage |

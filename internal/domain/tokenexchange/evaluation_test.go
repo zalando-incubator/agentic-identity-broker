@@ -474,6 +474,9 @@ func TestAccessEvaluation_ClassifiesOutcomes(t *testing.T) {
 		{name: "expired subject is 400", subject: func(t *testing.T, f *evaluationFixture) string {
 			return f.token(t, map[string]interface{}{"exp": time.Now().Add(-time.Hour).Unix()})
 		}, kind: DecisionRequestFailure, status: 400, detail: DetailSubjectExpired},
+		{name: "agent-subject token is a 400 client rejection", subject: func(t *testing.T, f *evaluationFixture) string {
+			return f.token(t, map[string]interface{}{"sub": f.agent.ID.String(), "agent_id": f.agent.ID.String()})
+		}, kind: DecisionRequestFailure, status: 400, detail: DetailSubjectCategoryUnsupported},
 		{name: "invalid assertion is 401", assertion: func(*testing.T, *evaluationFixture) string { return "not-a-jwt" },
 			kind: DecisionRequestFailure, status: 401, detail: DetailClientInvalid},
 		{name: "unregistered resource is 400", setup: func(f *evaluationFixture) {

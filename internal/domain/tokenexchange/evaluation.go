@@ -280,8 +280,12 @@ func evaluationStatus(err *TokenExchangeError) int {
 	case "invalid_client":
 		return 401
 	case "access_denied":
-		if err.Diagnostic().Detail() == DetailClientPolicyDenied {
+		switch err.Diagnostic().Detail() {
+		case DetailClientPolicyDenied:
 			return 403
+		case DetailSubjectCategoryUnsupported:
+			// A verified agent-subject token is an unsupported subject, rejected by design.
+			return 400
 		}
 	}
 	return 500
