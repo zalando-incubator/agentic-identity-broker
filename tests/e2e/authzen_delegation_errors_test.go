@@ -11,6 +11,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
@@ -82,9 +84,27 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 
 		// Scenario US2.18 from specs/054-authzen-delegation-pip/spec.md
 		It("returns 400 for a mismatched context.agent anchor", func() {
+			now := time.Now().UTC()
+			otherGrant := &storagedomain.UserGrant{
+				ID: id.NewGrantID(), Principal: f.Principal, AgentID: f.OtherAgent.ID,
+				GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{
+					{PermissionSetID: f.Reader.ID, IncludedServiceIDs: []id.ServiceID{f.Repo.ID}},
+				},
+				CreatedAt: now, UpdatedAt: now,
+			}
+			Expect(f.Storage.UserGrants().Create(context.Background(), otherGrant)).To(Succeed())
+
 			resp := f.Evaluate(authzenRepoResource, map[string]any{"agent": f.OtherAgent.ID.String()})
+
 			expectAuthZENError(resp, http.StatusBadRequest, "invalid_request")
+			Expect(resp.Raw).NotTo(ContainSubstring(otherGrant.ID.String()), "the anchored agent's covering grant never becomes a decision")
 			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"grant_id"`), "neither agent's grant is read")
+			Expect(f.Logs.Raw()).NotTo(ContainSubstring(otherGrant.ID.String()))
+
+			permit := f.Evaluate(authzenRepoResource, nil)
+			Expect(permit.StatusCode).To(Equal(http.StatusOK))
+			Expect(permit.Raw).To(ContainSubstring(f.Grant.ID.String()), "the token's own agent grant decides")
+			Expect(permit.Raw).NotTo(ContainSubstring(otherGrant.ID.String()))
 		})
 
 		// Scenario US2.20 from specs/054-authzen-delegation-pip/spec.md
