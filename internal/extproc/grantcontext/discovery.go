@@ -52,7 +52,7 @@ func Discover(ctx context.Context, client *http.Client, expectedPDP string, allo
 	req.Header.Set("Accept", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: transport error", ErrDiscoveryFailed)
+		return nil, discoveryTransportError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
@@ -60,7 +60,7 @@ func Discover(ctx context.Context, client *http.Client, expectedPDP string, allo
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxMetadataBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: transport error", ErrDiscoveryFailed)
+		return nil, discoveryTransportError(err)
 	}
 	if len(raw) > maxMetadataBytes {
 		return nil, fmt.Errorf("%w: metadata too large", ErrDiscoveryFailed)
@@ -85,6 +85,15 @@ func Discover(ctx context.Context, client *http.Client, expectedPDP string, allo
 		return nil, errors.New("grant context discovery: invalid access_evaluation_endpoint")
 	}
 	return &Metadata{PolicyDecisionPoint: expectedPDP, AccessEvaluationEndpoint: endpoint}, nil
+}
+
+// discoveryTransportError keeps caller cancellation typed so startup can treat a shutdown
+// signal as a normal exit, without exposing the raw transport error.
+func discoveryTransportError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%w: %w", ErrDiscoveryFailed, context.Canceled)
+	}
+	return fmt.Errorf("%w: transport error", ErrDiscoveryFailed)
 }
 
 func boundedValue(value string) string {

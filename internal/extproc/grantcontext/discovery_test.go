@@ -97,3 +97,19 @@ func TestDiscover(t *testing.T) {
 		})
 	}
 }
+
+func TestDiscover_CallerCancellationIsTyped(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cancel()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	_, err := Discover(ctx, srv.Client(), srv.URL, true)
+
+	require.ErrorIs(t, err, ErrDiscoveryFailed)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), srv.URL, "the raw transport error is not exposed")
+}

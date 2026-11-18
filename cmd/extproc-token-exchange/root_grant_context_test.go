@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -178,3 +180,32 @@ func TestNewPermitResolverFromConfig_UsesAdvertisedEndpointAndShutsDown(t *testi
 type staticAssertionProvider string
 
 func (s staticAssertionProvider) ClientAssertion() (string, error) { return string(s), nil }
+
+func TestRun_SignalDuringGrantContextDiscoveryIsNormalShutdown(t *testing.T) {
+	process, err := os.FindProcess(os.Getpid())
+	require.NoError(t, err)
+	// Hold a second SIGTERM registration until run exits so the signal cannot end the test process.
+	guard := make(chan os.Signal, 1)
+	signal.Notify(guard, syscall.SIGTERM)
+	t.Cleanup(func() { signal.Stop(guard) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth/token":
+			_, _ = io.WriteString(w, `{"access_token":"a","id_token":"assertion","token_type":"Bearer","expires_in":3600}`)
+		case "/.well-known/authzen-configuration":
+			_ = process.Signal(syscall.SIGTERM)
+			<-r.Context().Done()
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	configureExtProcRun(t, srv.URL, availableExtProcPort(t), "secret")
+	enableGrantContextRun(t)
+	t.Setenv("EXTPROC_GRANT_CONTEXT_REQUEST_TIMEOUT", "30s")
+
+	err = run(rootCmd, nil)
+
+	require.NoError(t, err, "a shutdown signal during discovery is a normal shutdown")
+}

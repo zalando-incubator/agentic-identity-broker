@@ -219,6 +219,10 @@ func run(cmd *cobra.Command, _ []string) error {
 	if cfg.GrantContext.Enabled {
 		resolver, err := grantcontext.NewPermitResolverFromConfig(sigCtx, cfg, exchanger)
 		if err != nil {
+			if isSignalCancellation(sigCtx, err) {
+				logger.Info("grant context discovery interrupted by signal, shutting down")
+				return nil
+			}
 			return err
 		}
 		defer resolver.Shutdown()
