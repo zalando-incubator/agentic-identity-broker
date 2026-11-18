@@ -2885,6 +2885,8 @@ paths:
             Malformed or oversized body, missing or unsupported member, invalid or expired
             subject token, `context.agent` mismatch, or unregistered resource.
           headers:
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
             X-Request-ID:
               $ref: "#/components/headers/AuthZENRequestId"
           content:
@@ -2909,6 +2911,8 @@ paths:
               schema:
                 type: string
                 example: 'Bearer error="invalid_token"'
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
             X-Request-ID:
               $ref: "#/components/headers/AuthZENRequestId"
           content:
@@ -2923,6 +2927,8 @@ paths:
         "403":
           description: The token-exchange caller policy rejects the gateway or resource.
           headers:
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
             X-Request-ID:
               $ref: "#/components/headers/AuthZENRequestId"
           content:
@@ -2939,6 +2945,8 @@ paths:
         "500":
           description: Configuration or dependency failure. Never a decision.
           headers:
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
             X-Request-ID:
               $ref: "#/components/headers/AuthZENRequestId"
           content:
@@ -3028,6 +3036,11 @@ components:
       description: The supplied request identifier, echoed. Absent when none was supplied.
       schema:
         type: string
+    AuthZENNoStore:
+      description: Every non-permit evaluation response is `no-store`; it is never cached.
+      schema:
+        type: string
+        enum: [no-store]
   schemas:
     AuthZENConfiguration:
       type: object

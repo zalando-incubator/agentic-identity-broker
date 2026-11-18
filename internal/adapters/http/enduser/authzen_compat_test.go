@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -53,5 +54,44 @@ func TestAuthZENContract_RetainsExchangeFieldsDuringDeprecation(t *testing.T) {
 		require.True(t, present, name)
 		assert.Equal(t, "string", property.Type, name)
 		assert.False(t, property.Deprecated, name)
+	}
+}
+
+func TestAuthZENContract_EvaluationErrorsDeclareNoStore(t *testing.T) {
+	t.Parallel()
+	_, source, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../../../api/enduser/openapi.yaml"))
+	require.NoError(t, err)
+	type header struct {
+		Ref    string `yaml:"$ref"`
+		Schema struct {
+			Type string   `yaml:"type"`
+			Enum []string `yaml:"enum"`
+		} `yaml:"schema"`
+	}
+	var contract struct {
+		Paths      map[string]map[string]yaml.Node `yaml:"paths"`
+		Components struct {
+			Headers map[string]header `yaml:"headers"`
+		} `yaml:"components"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &contract))
+	var operation struct {
+		Responses map[string]struct {
+			Headers map[string]header `yaml:"headers"`
+		} `yaml:"responses"`
+	}
+	post := contract.Paths["/access/v1/evaluation"]["post"]
+	require.NoError(t, post.Decode(&operation))
+	responses := operation.Responses
+	for _, status := range []string{"400", "401", "403", "500"} {
+		declared, ok := responses[status].Headers["Cache-Control"]
+		require.True(t, ok, "%s must declare the no-store Cache-Control header", status)
+		if name, isRef := strings.CutPrefix(declared.Ref, "#/components/headers/"); isRef {
+			declared = contract.Components.Headers[name]
+		}
+		assert.Equal(t, "string", declared.Schema.Type, status)
+		assert.Equal(t, []string{"no-store"}, declared.Schema.Enum, status)
 	}
 }
