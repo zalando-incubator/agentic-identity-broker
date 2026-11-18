@@ -159,6 +159,10 @@ func (f *evaluationFixture) token(t *testing.T, overrides map[string]interface{}
 		"iat": time.Now().Unix(),
 	}
 	for k, v := range overrides {
+		if v == nil {
+			delete(claims, k)
+			continue
+		}
 		claims[k] = v
 	}
 	return signServiceTestJWT(t, f.privateKey, claims)
@@ -363,6 +367,34 @@ func TestAccessEvaluation_ResolvedServiceKeepsOneCanonicalID(t *testing.T) {
 					}
 				}
 			}
+		})
+	}
+}
+
+func TestAccessEvaluation_RequiresCallingPeerSubject(t *testing.T) {
+	t.Parallel()
+	for name, sub := range map[string]interface{}{"absent": nil, "blank": "   "} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newEvaluationFixture(t)
+			svc := f.newService(t)
+			assertion := f.token(t, map[string]interface{}{"sub": sub})
+
+			decision := svc.Evaluate(context.Background(), f.request(t), assertion)
+
+			require.Equal(t, DecisionRequestFailure, decision.Kind)
+			assert.Equal(t, 401, decision.Status)
+			assert.Equal(t, StageClientValidation, decision.Diagnostic.Stage())
+			assert.Equal(t, DetailClientInvalid, decision.Diagnostic.Detail())
+			assert.Empty(t, decision.Authorization.Principal, "the caller is rejected before the subject is resolved")
+
+			_, err := svc.resolver.Resolve(context.Background(), GrantResolutionRequest{
+				SubjectToken:    f.token(t, nil),
+				ClientAssertion: assertion,
+				Resource:        evaluationResource,
+				GrantType:       TokenExchangeGrantType,
+			})
+			assert.NoError(t, err, "token exchange resolution keeps accepting the assertion")
 		})
 	}
 }

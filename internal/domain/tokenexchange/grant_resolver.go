@@ -31,6 +31,9 @@ type GrantResolutionRequest struct {
 	// ExpectedAgentID is an optional consistency anchor, compared after the agent is
 	// loaded and before any grant is read. Exchange never sets it.
 	ExpectedAgentID *id.AgentID
+	// RequireCallingPeer rejects a client assertion without a non-blank sub, so every
+	// finalized security context names the calling peer. Exchange never sets it.
+	RequireCallingPeer bool
 }
 
 // ResolvedGrant is the outcome of a successful resolution: every invariant of exchange
@@ -137,6 +140,12 @@ func (r *GrantResolver) Resolve(ctx context.Context, req GrantResolutionRequest)
 	clientAssertionJWT, err := r.jwtValidator.ValidateClientAssertion(ctx, req.ClientAssertion)
 	if err != nil {
 		return nil, err
+	}
+	if req.RequireCallingPeer {
+		if callingPeer, ok := clientAssertionJWT.Subject(); !ok || strings.TrimSpace(callingPeer) == "" {
+			return nil, NewInvalidClientError("client_assertion subject is required").
+				WithDiagnostic(NewDiagnostic(stage, DetailClientInvalid))
+		}
 	}
 
 	// Steps 4–5: resolve the human principal and agent_id; agent-subject tokens are denied

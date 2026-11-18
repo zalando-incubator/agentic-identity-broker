@@ -160,6 +160,8 @@ func (s *AccessEvaluationService) Evaluate(ctx context.Context, req AccessEvalua
 		GrantType:       TokenExchangeGrantType,
 		Scope:           "",
 		ExpectedAgentID: anchor,
+		// ADR 048 §6: permits and caller-policy denials carry both identities.
+		RequireCallingPeer: true,
 	})
 	if err != nil {
 		return s.classify(err)

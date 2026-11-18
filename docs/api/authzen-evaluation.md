@@ -35,7 +35,8 @@ published under a path prefix, such as `https://example.com/broker`, consumers r
 ## Access Evaluation
 
 The gateway authenticates with `Authorization: Bearer <client assertion>`, validated by the
-token-exchange client-assertion trust anchor. The caller is authorized by the unchanged
+token-exchange client-assertion trust anchor. The assertion must carry a non-blank `sub`, which
+audit records as the calling peer. The caller is authorized by the unchanged
 `token_exchange.authorization.cel.expression`, with
 `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange`,
 `request.resource = resource.id` and an empty `request.scope`. A policy cannot tell evaluation from
@@ -116,7 +117,7 @@ Errors are never decisions. Every error is `Cache-Control: no-store` and uses th
 | Status | `error` | When |
 |---|---|---|
 | 400 | `invalid_request` | Malformed or oversized body, wrong `Content-Type`, missing or unsupported member, invalid or expired subject token, agent-subject token, `context.agent` mismatch, unregistered resource |
-| 401 | `unauthorized` | Missing, invalid or expired client assertion; `WWW-Authenticate: Bearer`, with `error="invalid_token"` for an invalid credential |
+| 401 | `unauthorized` | Missing, invalid or expired client assertion, or one without a `sub`; `WWW-Authenticate: Bearer`, with `error="invalid_token"` for an invalid credential |
 | 403 | `forbidden` | The token-exchange caller policy rejects the gateway or resource |
 | 500 | `server_error` | Configuration or dependency failure, such as a grant-repository outage |
 
