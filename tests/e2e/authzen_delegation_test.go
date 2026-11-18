@@ -14,12 +14,27 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
+// maxAgeOf requires a private response with exactly one digits-only max-age directive across
+// all Cache-Control field values, as ExtProc does before it uses a permit.
 func maxAgeOf(resp *helpers.AuthZENResponse) int {
-	value := resp.Header.Get("Cache-Control")
-	Expect(value).To(HavePrefix("private, max-age="))
-	seconds, err := strconv.Atoi(strings.TrimPrefix(value, "private, max-age="))
+	private := false
+	var maxAges []string
+	for _, value := range resp.Header.Values("Cache-Control") {
+		for _, directive := range strings.Split(value, ",") {
+			name, argument, _ := strings.Cut(strings.TrimSpace(directive), "=")
+			switch name {
+			case "private":
+				private = true
+			case "max-age":
+				maxAges = append(maxAges, argument)
+			}
+		}
+	}
+	Expect(private).To(BeTrue(), "a permit is cacheable only privately")
+	Expect(maxAges).To(HaveLen(1), "exactly one max-age directive")
+	Expect(maxAges[0]).To(MatchRegexp(`^[0-9]+$`), "max-age is a digits-only delta-seconds value")
+	seconds, err := strconv.Atoi(maxAges[0])
 	Expect(err).NotTo(HaveOccurred())
-	Expect(seconds).To(BeNumerically(">=", 0), "max-age is never negative")
 	return seconds
 }
 
@@ -55,7 +70,7 @@ var _ = Describe("AuthZEN delegation evaluation", Label("authzen-delegation"), f
 			Expect(expected["agent"]).To(Equal(map[string]any{"id": f.Agent.ID.String(), "canonical_id": "data-assistant"}))
 			Expect(expected["subject"]).To(Equal(map[string]any{"id": "alice@example.com"}))
 			for _, resp := range []*helpers.AuthZENResponse{anchored, withoutAgent, withoutContext} {
-				Expect(maxAgeOf(resp)).To(BeNumerically("<=", 60))
+				Expect(maxAgeOf(resp)).To(Equal(60), "a grant without expiry gets the full freshness bound")
 				f.ExpectEvaluationIdentity(resp, f.Principal.String(), "authzen-gateway", true)
 			}
 			equalPeer := f.SignAssertionFor(f.Principal.String(), time.Now().Add(time.Hour))
@@ -133,23 +148,30 @@ var _ = Describe("AuthZEN delegation evaluation", Label("authzen-delegation"), f
 		})
 	})
 
-	// Scenario US1.7 from specs/054-authzen-delegation-pip/spec.md
-	It("serves neither route without token exchange and both routes once it is configured", func() {
-		data := newAuthZENData(nil)
-		data.Boot(func(cfg *ports.Config) { cfg.TokenExchange = ports.TokenExchangeConfig{} })
-		discovery, err := helpers.GetAuthZENConfiguration(&http.Client{}, data.Enduser.BaseURL())
-		Expect(err).NotTo(HaveOccurred())
-		Expect(discovery.StatusCode).To(Equal(http.StatusNotFound))
-		evaluation, err := helpers.DoAuthZENEvaluation(&http.Client{}, data.Enduser.BaseURL(), data.ClientAssertion, "",
-			helpers.AuthZENEvaluationBody(data.SubjectToken, authzenRepoResource, nil))
-		Expect(err).NotTo(HaveOccurred())
-		Expect(evaluation.StatusCode).To(Equal(http.StatusNotFound))
-		Expect(evaluation.Raw).NotTo(ContainSubstring("<html"))
+	Context("with token exchange not configured", func() {
+		var data *authzenFixture
 
-		data.Boot(nil)
-		discovery, err = helpers.GetAuthZENConfiguration(&http.Client{}, data.Enduser.BaseURL())
-		Expect(err).NotTo(HaveOccurred())
-		Expect(discovery.StatusCode).To(Equal(http.StatusOK))
-		permitContext(data.Evaluate(authzenRepoResource, nil))
+		BeforeEach(func() {
+			data = newAuthZENData(nil)
+			data.Boot(func(cfg *ports.Config) { cfg.TokenExchange = ports.TokenExchangeConfig{} })
+		})
+
+		// Scenario US1.7 from specs/054-authzen-delegation-pip/spec.md
+		It("serves neither route without token exchange and both routes once it is configured", func() {
+			discovery, err := helpers.GetAuthZENConfiguration(&http.Client{}, data.Enduser.BaseURL())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(discovery.StatusCode).To(Equal(http.StatusNotFound))
+			evaluation, err := helpers.DoAuthZENEvaluation(&http.Client{}, data.Enduser.BaseURL(), data.ClientAssertion, "",
+				helpers.AuthZENEvaluationBody(data.SubjectToken, authzenRepoResource, nil))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(evaluation.StatusCode).To(Equal(http.StatusNotFound))
+			Expect(evaluation.Raw).NotTo(ContainSubstring("<html"))
+
+			data.Boot(nil)
+			discovery, err = helpers.GetAuthZENConfiguration(&http.Client{}, data.Enduser.BaseURL())
+			Expect(err).NotTo(HaveOccurred())
+			Expect(discovery.StatusCode).To(Equal(http.StatusOK))
+			permitContext(data.Evaluate(authzenRepoResource, nil))
+		})
 	})
 })
