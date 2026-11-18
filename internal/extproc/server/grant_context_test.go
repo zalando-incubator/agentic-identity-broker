@@ -288,6 +288,14 @@ func TestGrantContext_RejectsExpiryDuringBindingReplacement(t *testing.T) {
 	}
 }
 
+// requirePolicyInput returns the context the harness last sent to policy and fails if policy was never called.
+func requirePolicyInput(t *testing.T, h *grantContextHarness) string {
+	t.Helper()
+	input, ok := h.lastInput.Load().(string)
+	require.True(t, ok, "policy was not evaluated")
+	return input
+}
+
 func TestGrantContext_BodyPathGivesPolicyPermitDerivedDirectMembers(t *testing.T) {
 	var h *grantContextHarness
 	h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return h.permitFor(time.Minute)() })
@@ -311,7 +319,7 @@ func TestGrantContext_BodyPathGivesPolicyPermitDerivedDirectMembers(t *testing.T
 		"grant": {"id": "grant-uuid", "updated_at": "2026-10-26T09:59:00Z"},
 		"permission_sets": [{"id": "ps-uuid", "canonical_id": "repo-reader",
 			"services": [{"id": "svc-uuid", "canonical_id": "repo-api", "scopes": ["read:repo"]}]}]
-	}`, h.lastInput.Load().(string))
+	}`, requirePolicyInput(t, h))
 }
 
 func TestGrantContext_BodyPathPrecedence(t *testing.T) {
@@ -332,7 +340,7 @@ func TestGrantContext_BodyPathPrecedence(t *testing.T) {
 		{"resolution error wins over exchange error", unavailable, exchangeErr, 503, "service_unavailable"},
 		{"resolution timeout wins over exchange error", context.DeadlineExceeded, exchangeErr, 503, "service_unavailable"},
 		{"resolution cancellation wins over exchange error", context.Canceled, exchangeErr, 503, "service_unavailable"},
-		{"exchange error after permit", nil, exchangeErr, 500, ""},
+		{"exchange error after permit", nil, exchangeErr, 500, "token_exchange_failed"},
 	}
 	for _, tt := range tests {
 		for _, resolverFirst := range []bool{true, false} {
@@ -373,17 +381,16 @@ func TestGrantContext_BodyPathPrecedence(t *testing.T) {
 				assert.Equal(t, int32(1), h.exchanges.Load(), "both calls complete on the body path")
 				assert.Equal(t, int32(1), h.resolver.calls.Load())
 				assert.Zero(t, h.policies.Load())
-				if tt.errorCode == "" {
-					assert.GreaterOrEqual(t, status, 500)
-					return
-				}
 				assert.Equal(t, tt.status, status)
 				assert.Equal(t, tt.errorCode, body["error"])
-				if tt.status == 403 {
+				switch {
+				case tt.status == 403:
 					assert.Equal(t, "delegation denied: grant_missing", body["error_description"])
 					assert.Equal(t, consentURL, body["error_uri"])
-				} else {
+				case tt.resolveErr != nil:
 					assert.Equal(t, "grant context unavailable", body["error_description"])
+				default:
+					assert.Equal(t, "token exchange request failed", body["error_description"])
 				}
 			})
 		}
@@ -472,7 +479,7 @@ func TestGrantContext_HeaderOnlyOrdering(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "Bearer exchanged", requireAuthorizationMutation(t, resp))
 		var ctxInput map[string]any
-		require.NoError(t, json.Unmarshal([]byte(h.lastInput.Load().(string)), &ctxInput))
+		require.NoError(t, json.Unmarshal([]byte(requirePolicyInput(t, h)), &ctxInput))
 		assert.Equal(t, true, ctxInput["granted_permission_sets_available"])
 		assert.Equal(t, "alice@example.com", ctxInput["principal"])
 		for _, forbidden := range []string{"delegation", "delegation_available", "subject"} {

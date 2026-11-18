@@ -158,7 +158,7 @@ func TestExchangeResultBinding_ReuseComparesScopeSetsAndGrantInstants(t *testing
 				assert.Equal(t, tt.wantCalls, calls.Load(), "equal bindings reuse; different bindings exchange exactly once more")
 				require.Equal(t, int32(2), h.policies.Load())
 				assert.Equal(t, int32(2), h.resolver.calls.Load())
-				assert.Contains(t, h.lastInput.Load().(string), tt.updatedAt)
+				assert.Contains(t, requirePolicyInput(t, h), tt.updatedAt)
 			})
 		}
 	}
@@ -279,7 +279,7 @@ func TestExchangeResultBinding_PreservesIdenticalTokenReplacementAndDetachedDeli
 			assert.Equal(t, tt.wantCalls, calls.Load(), "compare-and-delete must preserve the replacement identity")
 			assert.Equal(t, int32(1), waiting.resolver.calls.Load())
 			require.Equal(t, int32(1), waiting.policies.Load())
-			assert.Contains(t, waiting.lastInput.Load().(string), tt.updatedAt)
+			assert.Contains(t, requirePolicyInput(t, waiting), tt.updatedAt)
 			assert.Equal(t, "Bearer SYNTHETIC_IDENTICAL_PROVIDER_TOKEN", requireAuthorizationMutation(t, bindingHarnessCall(t, successor, true)))
 			wantAfterSuccessor := tt.wantCalls
 			if tt.wantCalls == 3 {
