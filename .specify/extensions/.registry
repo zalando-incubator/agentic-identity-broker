@@ -13,6 +13,9 @@
         ],
         "copilot": [
           "speckit.agent-context.update"
+        ],
+        "codex": [
+          "speckit.agent-context.update"
         ]
       },
       "registered_skills": [
