@@ -182,17 +182,17 @@ func (c *Client) Evaluate(ctx context.Context, subjectToken, resourceURI string)
 	requestStart := c.now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || isTimeout(err) {
-			return Result{}, newError(CategoryTimeout, nil)
-		}
-		return Result{}, newError(CategoryUnavailable, nil)
+		return Result{}, transportError(err, CategoryUnavailable)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return Result{}, newError(CategoryRejected, fmt.Errorf("status %d", resp.StatusCode))
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxEvaluationBodyBytes+1))
-	if err != nil || len(raw) > maxEvaluationBodyBytes {
+	if err != nil {
+		return Result{}, transportError(err, CategoryInvalidResponse)
+	}
+	if len(raw) > maxEvaluationBodyBytes {
 		return Result{}, newError(CategoryInvalidResponse, nil)
 	}
 	var decision struct {
@@ -214,6 +214,20 @@ func (c *Client) Evaluate(ctx context.Context, subjectToken, resourceURI string)
 		return Result{}, newError(CategoryInvalidResponse, err)
 	}
 	return Result{Context: permit, Deadline: requestStart.Add(min(maxAge, c.maxStaleness))}, nil
+}
+
+// transportError classifies a send or body-read failure without retaining the raw error:
+// caller cancellation keeps only the context.Canceled sentinel, timeouts are CategoryTimeout,
+// and anything else is the given fallback category.
+func transportError(err error, fallback string) *Error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return newError(CategoryUnavailable, context.Canceled)
+	case errors.Is(err, context.DeadlineExceeded) || isTimeout(err):
+		return newError(CategoryTimeout, nil)
+	default:
+		return newError(fallback, nil)
+	}
 }
 
 func isTimeout(err error) bool {

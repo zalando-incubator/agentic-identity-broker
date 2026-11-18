@@ -320,3 +320,66 @@ func TestClient_TimeoutAndAssertionFailure(t *testing.T) {
 	require.ErrorAs(t, err, &resolveErr)
 	assert.Equal(t, CategoryUnavailable, resolveErr.Category)
 }
+
+// stallingBodyServer sends 200 headers with a usable max-age, then stalls the body until
+// the client goes away. headersSent, when non-nil, runs once the headers are flushed.
+func stallingBodyServer(t *testing.T, headersSent func()) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Consuming the request body lets the server notice the client closing the connection.
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Cache-Control", "max-age=30")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"decision":`))
+		w.(http.Flusher).Flush()
+		if headersSent != nil {
+			headersSent()
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestClient_BodyReadTimeoutIsTimeout(t *testing.T) {
+	t.Parallel()
+	srv := stallingBodyServer(t, nil)
+	client := newTestClient(t, srv, time.Minute)
+	client.httpClient = &http.Client{Timeout: 50 * time.Millisecond}
+
+	_, err := client.Evaluate(context.Background(), testSubject, testResource)
+
+	var resolveErr *Error
+	require.ErrorAs(t, err, &resolveErr)
+	assert.Equal(t, CategoryTimeout, resolveErr.Category)
+}
+
+func TestClient_PreservesCallerCancellation(t *testing.T) {
+	t.Parallel()
+	t.Run("before headers", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.Copy(io.Discard, r.Body)
+			cancel()
+			<-r.Context().Done()
+		}))
+		t.Cleanup(srv.Close)
+
+		_, err := newTestClient(t, srv, time.Minute).Evaluate(ctx, testSubject, testResource)
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.NotContains(t, err.Error(), srv.URL)
+	})
+	t.Run("while reading the body", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		srv := stallingBodyServer(t, cancel)
+
+		_, err := newTestClient(t, srv, time.Minute).Evaluate(ctx, testSubject, testResource)
+
+		require.ErrorIs(t, err, context.Canceled)
+		assert.NotContains(t, err.Error(), srv.URL)
+	})
+}
