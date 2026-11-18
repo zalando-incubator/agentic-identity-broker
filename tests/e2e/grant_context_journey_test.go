@@ -484,10 +484,23 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 		})
 
 		Context("with canonical-ID variants", func() {
-			var second, withoutReaderCanonicalID *grantContextJourney
+			var (
+				second, withoutReaderCanonicalID *grantContextJourney
+				rewrittenExchanges               *atomic.Int32
+			)
 
 			BeforeEach(func() {
-				second = newGrantContextJourney(time.Minute, true)
+				second = newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+					options.ExchangeEndpoint, rewrittenExchanges = newRewritingExchangeEndpoint(f.Enduser.BaseURL(), func(result map[string]any) {
+						granted, _ := result["granted_permission_sets"].(map[string]any)
+						if granted == nil {
+							granted = map[string]any{}
+						}
+						granted[f.Reader.ID.String()] = []string{f.Wiki.ID.String()}
+						result["granted_permission_sets"] = granted
+					})
+					options.GrantContext.PolicyDecisionPoint = f.Enduser.BaseURL()
+				})
 				withoutReaderCanonicalID = newGrantContextJourney(time.Minute, true, func(f *authzenFixture) {
 					f.Reader.CanonicalID = nil
 					Expect(f.Storage.PermissionSets().Update(context.Background(), f.Reader)).To(Succeed())
@@ -503,6 +516,8 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 					Expect(forwarded(journey.BodyCall(authzenRepoResource))).To(BeTrue())
 					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(journey.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "))
 				}
+				Expect(rewrittenExchanges.Load()).To(BeNumerically(">=", 1),
+					"the second deployment allowed although its exchange responses map the reader to the wiki, not the permitted repo")
 
 				_, bodyResp := withoutReaderCanonicalID.BodyCall(authzenRepoResource)
 				status, body := immediateJSON(bodyResp)
