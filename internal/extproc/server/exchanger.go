@@ -262,8 +262,8 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 
 		// doExchangeAndCache performs the exchange and caches re-auth or success results.
 		// All errors (including transient 5xx) are propagated so gobreaker tracks them
-		// correctly. The stale-token fallback for transient failures is applied by the
-		// caller AFTER Execute() returns, keeping failure accounting accurate.
+		// correctly. The flight captures the stale-token candidate for a transient failure
+		// AFTER Execute() returns, keeping failure accounting accurate.
 		doExchangeAndCache := func() (ExchangeResult, error) {
 			result, window, err := te.doExchange(exchangeCtx, subjectToken, resourceURI)
 			if err != nil {
@@ -312,17 +312,21 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 		}
 
 		if te.cb == nil {
-			return doExchangeAndCache()
+			result, err := doExchangeAndCache()
+			if err != nil {
+				return te.staleCandidate(key, err), err
+			}
+			return result, nil
 		}
 
 		// Circuit breaker: wrap doExchangeAndCache so gobreaker tracks 5xx failures.
-		// Callers apply stale fallback after shared delivery so failures reach the breaker.
+		// Each caller decides after shared delivery whether it accepts the stale candidate.
 		result, execErr := te.cb.Execute(doExchangeAndCache)
 		if execErr != nil {
 			if errors.Is(execErr, gobreaker.ErrOpenState) || errors.Is(execErr, gobreaker.ErrTooManyRequests) {
 				execErr = NewOperationError(NewErrorMetadata(OperationExchange, KindCircuitOpen, DependencyBroker, 0, ""), errors.Join(ErrCircuitOpen, execErr))
 			}
-			return ExchangeResult{}, execErr
+			return te.staleCandidate(key, execErr), execErr
 		}
 		return result, nil
 	}
@@ -348,14 +352,13 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 			break
 		}
 	}
+	// The candidate was captured by the failed flight, so a later flight cannot remove it.
+	// A binding retry (no stale reuse) receives the original error.
 	if res.Err != nil && allowStale && isTransientBrokerError(res.Err) && !te.isAssertionExpired() {
-		te.cacheMu.RLock()
-		entry, ok := te.cache[key]
-		if ok && entry.accessToken != "" && time.Now().Before(entry.staleUntil) {
-			res.Val = entry.result()
+		if candidate, ok := res.Val.(staleFallback); ok && time.Now().Before(candidate.entry.staleUntil) {
+			res.Val = candidate.entry.result()
 			res.Err = nil
 		}
-		te.cacheMu.RUnlock()
 	}
 	if res.Shared {
 		diagnostic := SuccessDiagnostic(ExchangeUnknown)
@@ -373,6 +376,26 @@ func (te *TokenExchanger) exchange(ctx context.Context, subjectToken, resourceUR
 // cachedSuccess marks a flight result read from the cache rather than exchanged.
 type cachedSuccess struct {
 	result ExchangeResult
+}
+
+// staleFallback is a snapshot of the cached token a failed flight delivers alongside its
+// transient error. Callers still check the snapshot's original staleUntil deadline.
+type staleFallback struct {
+	entry cachedToken
+}
+
+// staleCandidate captures the stale-eligible cached token for a transient flight failure.
+func (te *TokenExchanger) staleCandidate(key tokenCacheKey, err error) any {
+	if !isTransientBrokerError(err) {
+		return nil
+	}
+	te.cacheMu.RLock()
+	defer te.cacheMu.RUnlock()
+	entry, ok := te.cache[key]
+	if !ok || entry.accessToken == "" || !time.Now().Before(entry.staleUntil) {
+		return nil
+	}
+	return staleFallback{entry: *entry}
 }
 
 // cachedFlightOutcome returns the cached outcome a flight delivers without a broker call.
