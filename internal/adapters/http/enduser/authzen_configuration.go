@@ -35,7 +35,12 @@ func (h *AuthZENConfigurationHandler) ServeHTTP(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 	// The response echoes X-Request-ID, so a cache must key it by that header.
 	w.Header().Set("Vary", "X-Request-ID")
-	w.Header().Set("Cache-Control", "max-age=3600")
+	cacheControl := "max-age=3600"
+	if w.Header().Get("traceresponse") != "" {
+		// The server middleware set a request-specific trace identifier.
+		cacheControl = "no-store"
+	}
+	w.Header().Set("Cache-Control", cacheControl)
 	_ = json.NewEncoder(w).Encode(h.configuration)
 }
 

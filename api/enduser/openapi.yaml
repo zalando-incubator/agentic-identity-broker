@@ -2739,6 +2739,9 @@ paths:
           description: PDP metadata
           headers:
             Cache-Control:
+              description: |
+                `max-age=3600`, or `no-store` when the response carries a request-specific
+                `traceresponse` header.
               schema:
                 type: string
                 example: "max-age=3600"

@@ -585,3 +585,22 @@ func TestAuthZENConfiguration_VariesByRequestID(t *testing.T) {
 		assert.Equal(t, requestID, rec.Header().Get("X-Request-ID"))
 	}
 }
+
+func TestAuthZENConfiguration_RequestSpecificTraceResponseIsNotCached(t *testing.T) {
+	t.Parallel()
+	for _, traceResponse := range []string{"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", ""} {
+		req := httptest.NewRequest(http.MethodGet, "/.well-known/authzen-configuration", nil)
+		rec := httptest.NewRecorder()
+		if traceResponse != "" {
+			rec.Header().Set("traceresponse", traceResponse)
+		}
+
+		NewAuthZENConfigurationHandler("https://broker.example.com").ServeHTTP(rec, req)
+
+		want := "max-age=3600"
+		if traceResponse != "" {
+			want = "no-store"
+		}
+		assert.Equal(t, want, rec.Header().Get("Cache-Control"), "a cache must not replay another request's traceresponse")
+	}
+}
