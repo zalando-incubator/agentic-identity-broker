@@ -430,7 +430,7 @@ func validateGrantContext(cfg *Config) []string {
 		}
 	}
 	pdp, err := url.Parse(dc.PolicyDecisionPoint)
-	if err != nil || !pdp.IsAbs() || pdp.Host == "" || (pdp.Scheme != "http" && pdp.Scheme != "https") ||
+	if err != nil || !pdp.IsAbs() || pdp.Hostname() == "" || (pdp.Scheme != "http" && pdp.Scheme != "https") ||
 		pdp.User != nil || pdp.RawQuery != "" || pdp.ForceQuery || pdp.Fragment != "" || strings.Contains(dc.PolicyDecisionPoint, "#") {
 		errs = append(errs, "grant_context.policy_decision_point must be an absolute URL with a host and no userinfo, query, or fragment")
 	} else if pdp.Scheme == "http" && !cfg.OAuth2.TLS.AllowHTTP {

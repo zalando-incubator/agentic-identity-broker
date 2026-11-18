@@ -32,6 +32,7 @@ func TestValidateGrantContext(t *testing.T) {
 	}{
 		{"requires authorization", func(c *config.Config) { c.Authorization.Enabled = false }, "grant_context.enabled requires authorization.enabled"},
 		{"rejects relative PDP", func(c *config.Config) { c.GrantContext.PolicyDecisionPoint = "/broker" }, "grant_context.policy_decision_point must be an absolute URL"},
+		{"rejects port without hostname", func(c *config.Config) { c.GrantContext.PolicyDecisionPoint = "https://:443" }, "grant_context.policy_decision_point must be an absolute URL"},
 		{"rejects userinfo", func(c *config.Config) { c.GrantContext.PolicyDecisionPoint = "https://user:pw@broker.example.com" }, "must be an absolute URL"},
 		{"rejects query", func(c *config.Config) { c.GrantContext.PolicyDecisionPoint = "https://broker.example.com?x=1" }, "must be an absolute URL"},
 		{"rejects fragment", func(c *config.Config) { c.GrantContext.PolicyDecisionPoint = "https://broker.example.com#x" }, "must be an absolute URL"},
@@ -63,6 +64,12 @@ func TestValidateGrantContext(t *testing.T) {
 		cfg.GrantContext.PolicyDecisionPoint = "https://example.com/broker"
 		require.NoError(t, config.Validate(cfg))
 		assert.Equal(t, "https://example.com/broker", cfg.GrantContext.PolicyDecisionPoint)
+	})
+
+	t.Run("keeps an IPv6 PDP with an explicit port", func(t *testing.T) {
+		cfg := validGrantContextConfig(t)
+		cfg.GrantContext.PolicyDecisionPoint = "https://[2001:db8::1]:8443"
+		require.NoError(t, config.Validate(cfg))
 	})
 
 	t.Run("permits local http under allow_http", func(t *testing.T) {
