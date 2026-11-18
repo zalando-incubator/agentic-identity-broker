@@ -35,8 +35,8 @@ var _ = Describe("ExtProc grant context startup", Label("grant-context-startup")
 		cfg := opaEnabledConfig(policyPath("grant_context_disabled_input.rego"))
 		Expect(cfg.GrantContext.Enabled).To(BeFalse())
 		env := bootstrap.NewTestEnvironment(cfg, opaLogger)
-		Expect(env.StartWithGrantContext()).To(Succeed())
 		DeferCleanup(env.Stop)
+		Expect(env.StartWithGrantContext()).To(Succeed())
 		env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
 		client, conn := env.NewExtProcClient()
 		DeferCleanup(conn.Close)
@@ -51,7 +51,7 @@ var _ = Describe("ExtProc grant context startup", Label("grant-context-startup")
 
 		Expect(helpers.ExtractMutatedAuthorizationHeader(headersResp)).To(Equal("Bearer " + fixtures.FreshExchangedToken))
 		Expect(bodyResp).To(helpers.BeForwardedRequestBody(), "disabled-mode policy input omits every delegation member")
-		Expect(broker.TotalRequestCount()).To(BeZero())
+		Expect(env.MockTokenExchange.UnroutedRequestCount()).To(BeZero(), "no AuthZEN request reaches the default PDP origin")
 	})
 
 	// Scenario US4.2 from specs/054-authzen-delegation-pip/spec.md

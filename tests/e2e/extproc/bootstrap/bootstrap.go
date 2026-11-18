@@ -111,35 +111,54 @@ func (e *TestEnvironment) Start() {
 		e.authorizer = authorizer
 	}
 
-	var approvalGate extprocserver.ApprovalGate
-	if e.Config.ToolApprovals.Enabled {
-		approvalHTTPClient, err := httpclient.New(e.Config, 0)
-		Expect(err).NotTo(HaveOccurred(), "failed to create approval HTTP client")
-		client, err := approval.NewClient(e.Config.ToolApprovals.URL, e.Config.ToolApprovals.RequestTimeout, exchanger, approvalHTTPClient)
-		Expect(err).NotTo(HaveOccurred(), "failed to create approval client")
-		e.approvalClient = client
-		e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness)
-		approvalGate = approval.NewGate(e.approvalCache, client)
-	}
-
-	var svc *extprocserver.Server
-	switch {
-	case e.Config.ToolApprovals.Enabled:
-		svc = extprocserver.NewServerWithApprovalGate(e.Config, exchanger, authorizer, approvalGate, e.logger)
-	case authorizer != nil:
-		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, authorizer, e.logger)
-	default:
-		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
-	}
-	e.startGRPCServer(svc)
+	approvalGate, err := e.newApprovalGate(exchanger)
+	Expect(err).NotTo(HaveOccurred())
+	e.startGRPCServer(e.newServer(exchanger, authorizer, approvalGate))
 	e.startApprovalSync()
 }
 
+// newApprovalGate builds the approval client, cache and gate when tool approvals are
+// enabled; it returns a nil gate otherwise.
+func (e *TestEnvironment) newApprovalGate(exchanger *extprocserver.TokenExchanger) (extprocserver.ApprovalGate, error) {
+	if !e.Config.ToolApprovals.Enabled {
+		return nil, nil
+	}
+	approvalHTTPClient, err := httpclient.New(e.Config, 0)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create approval HTTP client: %w", err)
+	}
+	client, err := approval.NewClient(e.Config.ToolApprovals.URL, e.Config.ToolApprovals.RequestTimeout, exchanger, approvalHTTPClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create approval client: %w", err)
+	}
+	e.approvalClient = client
+	e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness)
+	return approval.NewGate(e.approvalCache, client), nil
+}
+
+// newServer selects the server constructor that production startup selects.
+func (e *TestEnvironment) newServer(exchanger *extprocserver.TokenExchanger, authorizer authorization.Authorizer, approvalGate extprocserver.ApprovalGate) *extprocserver.Server {
+	switch {
+	case e.Config.ToolApprovals.Enabled:
+		return extprocserver.NewServerWithApprovalGate(e.Config, exchanger, authorizer, approvalGate, e.logger)
+	case authorizer != nil:
+		return extprocserver.NewServerWithAuthorizer(e.Config, exchanger, authorizer, e.logger)
+	default:
+		return extprocserver.NewServer(e.Config, exchanger, e.logger)
+	}
+}
+
 // StartWithGrantContext follows production startup order for grant context:
-// validate configuration, build the exchanger and authorizer, then discover and verify the
-// PDP before listening. It returns the startup error instead of failing the test so
-// startup-failure scenarios can observe it; no gRPC listener exists after a failure.
-func (e *TestEnvironment) StartWithGrantContext() error {
+// validate configuration, build the exchanger, authorizer and approval gate, then discover
+// and verify the PDP before listening. It returns the startup error instead of failing the
+// test so startup-failure scenarios can observe it. On failure it stops every server it
+// started, so no mock server or gRPC listener survives.
+func (e *TestEnvironment) StartWithGrantContext() (err error) {
+	defer func() {
+		if err != nil {
+			e.Stop()
+		}
+	}()
 	e.startMockServers()
 	if err := extprocconfig.Validate(e.Config); err != nil {
 		return err
@@ -156,12 +175,11 @@ func (e *TestEnvironment) StartWithGrantContext() error {
 		}
 		e.authorizer = authorizer
 	}
-	var svc *extprocserver.Server
-	if authorizer != nil {
-		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, authorizer, e.logger)
-	} else {
-		svc = extprocserver.NewServer(e.Config, exchanger, e.logger)
+	approvalGate, err := e.newApprovalGate(exchanger)
+	if err != nil {
+		return err
 	}
+	svc := e.newServer(exchanger, authorizer, approvalGate)
 	if e.Config.GrantContext.Enabled {
 		resolver, err := grantcontext.NewPermitResolverFromConfig(context.Background(), e.Config, exchanger)
 		if err != nil {
@@ -171,6 +189,7 @@ func (e *TestEnvironment) StartWithGrantContext() error {
 		svc.WithPermitResolver(resolver)
 	}
 	e.startGRPCServer(svc)
+	e.startApprovalSync()
 	return nil
 }
 
@@ -410,6 +429,7 @@ type MockTokenExchangeServer struct {
 	errorURI              string
 	lastBody              string
 	lastRequestHeaders    http.Header
+	unroutedCount         int
 }
 
 // NewMockTokenExchangeServer creates a mock token exchange server with default responses.
@@ -429,6 +449,7 @@ func (m *MockTokenExchangeServer) Start() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/oauth2/token", m.handleExchange)
 	mux.HandleFunc("/api/approvals", m.handleApprovals)
+	mux.HandleFunc("/", m.handleUnrouted)
 	m.server = httptest.NewServer(mux)
 }
 
@@ -452,6 +473,21 @@ func (m *MockTokenExchangeServer) CallCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.callCount
+}
+
+// UnroutedRequestCount returns the number of requests to paths the mock does not serve,
+// such as AuthZEN discovery or evaluation at the token endpoint origin (thread-safe).
+func (m *MockTokenExchangeServer) UnroutedRequestCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.unroutedCount
+}
+
+func (m *MockTokenExchangeServer) handleUnrouted(w http.ResponseWriter, r *http.Request) {
+	m.mu.Lock()
+	m.unroutedCount++
+	m.mu.Unlock()
+	http.NotFound(w, r)
 }
 
 // ApprovalCreateCount returns the number of approval creation requests.

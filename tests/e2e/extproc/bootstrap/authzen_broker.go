@@ -8,18 +8,21 @@ import (
 )
 
 // MockAuthZENBroker is a counting AuthZEN PDP for ExtProc startup scenarios. It records
-// discovery and evaluation requests and every request that carried credentials.
+// every request, discovery and evaluation requests, and every request that carried
+// credentials.
 type MockAuthZENBroker struct {
 	server *httptest.Server
 
 	// AdvertisedPDP overrides the advertised policy_decision_point; empty advertises the
-	// mock's own URL.
+	// mock's own URL. The advertised access_evaluation_endpoint is always the mock's own,
+	// so a credential sent after accepting a mismatched identifier stays observable.
 	AdvertisedPDP string
 	// DiscoveryStatus is the discovery response status; zero means 200.
 	DiscoveryStatus int
 	// DiscoveryBody overrides the discovery body when non-empty.
 	DiscoveryBody string
 
+	requests        atomic.Int32
 	discoveries     atomic.Int32
 	evaluations     atomic.Int32
 	credentialCalls atomic.Int32
@@ -32,6 +35,7 @@ func NewMockAuthZENBroker() *MockAuthZENBroker {
 }
 
 func (m *MockAuthZENBroker) handle(w http.ResponseWriter, r *http.Request) {
+	m.requests.Add(1)
 	if r.Header.Get("Authorization") != "" {
 		m.credentialCalls.Add(1)
 	}
@@ -52,7 +56,7 @@ func (m *MockAuthZENBroker) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"policy_decision_point":      pdp,
-			"access_evaluation_endpoint": pdp + "/access/v1/evaluation",
+			"access_evaluation_endpoint": m.server.URL + "/access/v1/evaluation",
 		})
 	case "/access/v1/evaluation":
 		m.evaluations.Add(1)
@@ -67,4 +71,4 @@ func (m *MockAuthZENBroker) Stop()                    { m.server.Close() }
 func (m *MockAuthZENBroker) DiscoveryCount() int      { return int(m.discoveries.Load()) }
 func (m *MockAuthZENBroker) EvaluationCount() int     { return int(m.evaluations.Load()) }
 func (m *MockAuthZENBroker) CredentialCallCount() int { return int(m.credentialCalls.Load()) }
-func (m *MockAuthZENBroker) TotalRequestCount() int   { return m.DiscoveryCount() + m.EvaluationCount() }
+func (m *MockAuthZENBroker) TotalRequestCount() int   { return int(m.requests.Load()) }
