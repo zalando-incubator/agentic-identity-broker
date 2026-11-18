@@ -3,3 +3,6 @@ reviews:
   auto_review:
     base_branches:
       - '^release/.*$'
+  # Spec Kit feature documents are reviewed by the Spec Kit analyze and architecture-review phases.
+  path_filters:
+    - '!specs/**'
