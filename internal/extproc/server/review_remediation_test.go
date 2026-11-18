@@ -36,10 +36,12 @@ func (e identityExchanger) ExchangeBound(_ context.Context, _, _ string, _ *Exch
 func (identityExchanger) Shutdown() {}
 
 type identityAuthorizer struct {
+	calls int
 	input authorization.ContextInput
 }
 
 func (a *identityAuthorizer) Evaluate(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
+	a.calls++
 	a.input = input["context"].(authorization.ContextInput)
 	return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
 }
@@ -59,7 +61,7 @@ func TestApprovalIdentityUsesExchangeAndRequiresPermitConsistencyWhenEnabled(t *
 		for _, exchangeIdentity := range []approval.Identity{{Principal: "cached-principal", AgentID: "cached-agent"}, {}, {Principal: "permit-principal", AgentID: "permit-agent"}} {
 			t.Run(fmt.Sprintf("enabled=%t/identity=%s/%s", enabled, exchangeIdentity.Principal, exchangeIdentity.AgentID), func(t *testing.T) {
 				var logs bytes.Buffer
-				logger := slog.New(slog.NewJSONHandler(&logs, nil))
+				logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 				permit := grantcontext.Result{Deadline: time.Now().Add(time.Minute), Context: grantcontext.Context{
 					Principal: "permit-principal", Agent: grantcontext.EntityRef{ID: "permit-agent"},
 					Grant: grantcontext.Grant{UpdatedAt: "2026-10-26T09:59:00Z"},
@@ -78,7 +80,7 @@ func TestApprovalIdentityUsesExchangeAndRequiresPermitConsistencyWhenEnabled(t *
 					assert.Equal(t, int32(503), int32(response.GetImmediateResponse().Status.Code))
 					assert.JSONEq(t, grantContextBindingUnavailableBody, string(response.GetImmediateResponse().Body))
 					assert.Empty(t, gate.invocations)
-					assert.Empty(t, authorizer.input.Principal)
+					assert.Zero(t, authorizer.calls, "an identity mismatch must stop before OPA")
 					assert.Nil(t, state)
 					for _, marker := range []string{"subject-token-marker", "provider-token-marker", "permit-principal", "cached-principal"} {
 						assert.NotContains(t, logs.String(), marker)
@@ -91,6 +93,7 @@ func TestApprovalIdentityUsesExchangeAndRequiresPermitConsistencyWhenEnabled(t *
 				response = s.processRequestBody(context.Background(), state, body)
 				require.NotNil(t, response.GetRequestBody())
 				require.Len(t, gate.invocations, 1)
+				assert.Equal(t, 1, authorizer.calls)
 				want := exchangeIdentity
 				if enabled {
 					assert.Equal(t, want.Principal, authorizer.input.Principal)
