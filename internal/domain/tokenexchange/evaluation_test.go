@@ -197,8 +197,9 @@ func TestAccessEvaluation_PermitProjectsCredentialFreeContext(t *testing.T) {
 	t.Parallel()
 	f := newEvaluationFixture(t)
 	svc := f.newService(t)
+	gatewayAssertion := f.token(t, map[string]interface{}{"sub": "gateway-prod"})
 
-	decision := svc.Evaluate(context.Background(), f.request(t), f.token(t, nil))
+	decision := svc.Evaluate(context.Background(), f.request(t), gatewayAssertion)
 
 	require.Equal(t, DecisionPermit, decision.Kind)
 	assert.Equal(t, 60, decision.MaxAge)

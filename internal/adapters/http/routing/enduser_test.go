@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
@@ -291,10 +292,11 @@ func newGrantRequest(t *testing.T, agentID string) *http.Request {
 func TestSetupEnduserRoutes_RegistersAuthZENRoutesOnlyWithHandlers(t *testing.T) {
 	t.Parallel()
 
+	evaluator := &countingEvaluator{}
 	router := chi.NewRouter()
 	routing.SetupEnduserRoutes(router, &app.EnduserHandlers{
 		AuthZENConfiguration: enduserhttp.NewAuthZENConfigurationHandler("https://broker.example.com"),
-		AuthZENEvaluation:    &enduserhttp.AuthZENEvaluationHandler{},
+		AuthZENEvaluation:    &enduserhttp.AuthZENEvaluationHandler{Evaluator: evaluator},
 	}, routing.EnduserRouteConfig{Logger: slog.Default()})
 
 	discovery := httptest.NewRecorder()
@@ -305,10 +307,30 @@ func TestSetupEnduserRoutes_RegistersAuthZENRoutesOnlyWithHandlers(t *testing.T)
 	evaluation := httptest.NewRecorder()
 	router.ServeHTTP(evaluation, httptest.NewRequest(http.MethodPost, "/access/v1/evaluation", nil))
 	require.Equal(t, http.StatusUnauthorized, evaluation.Code, "the route must reach the evaluation handler, which requires a bearer assertion")
+	require.Zero(t, evaluator.calls.Load())
+
+	withoutBrowserPrincipal := httptest.NewRequest(http.MethodPost, "/access/v1/evaluation", strings.NewReader(`{"subject":{"type":"urn:ietf:params:oauth:token-type:jwt","id":"s"},
+		"action":{"name":"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"resource":{"type":"protected_resource","id":"https://api.example.com/repos"}}`))
+	withoutBrowserPrincipal.Header.Set("Content-Type", "application/json")
+	withoutBrowserPrincipal.Header.Set("Authorization", "Bearer assertion")
+	router.ServeHTTP(httptest.NewRecorder(), withoutBrowserPrincipal)
+	require.Equal(t, int32(1), evaluator.calls.Load(), "a bearer evaluation without a browser principal must reach the evaluator")
 
 	wrongMethod := httptest.NewRecorder()
 	router.ServeHTTP(wrongMethod, httptest.NewRequest(http.MethodGet, "/access/v1/evaluation", nil))
 	require.Equal(t, http.StatusMethodNotAllowed, wrongMethod.Code)
+}
+
+// countingEvaluator records how many evaluations reached it and denies each one.
+type countingEvaluator struct {
+	calls atomic.Int32
+}
+
+func (e *countingEvaluator) Evaluate(context.Context, tokenexchange.AccessEvaluationRequest, string) tokenexchange.GrantDecision {
+	e.calls.Add(1)
+	return tokenexchange.GrantDecision{Kind: tokenexchange.DecisionDeny, Detail: tokenexchange.DetailGrantMissing,
+		Diagnostic: tokenexchange.NewDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing)}
 }
 
 // finalizingEvaluator finalizes the verified subject as the shared resolver does.
