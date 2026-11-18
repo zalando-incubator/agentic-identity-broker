@@ -508,20 +508,22 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 		// Scenario US3.7 from specs/054-authzen-delegation-pip/spec.md
 		It("isolates the cache per subject and resource and honors max_staleness", func() {
 			original := j.broker.SubjectToken
-			var warmedAt time.Time
+			var warmedAt, lastPairRequestDone time.Time
 			reusedInsideCap := false
 			// The permit deadline starts between warmStart and warmedAt. A reuse that completes
 			// within 2 s of warmStart must hit the cache; a slower one may legitimately
-			// revalidate, so the sequence is repeated after that permit has expired.
+			// revalidate and cache a new permit, so the sequence is repeated only after every
+			// permit for the pair, including one created by a late reuse, has expired.
 			for attempt := 0; attempt < 3 && !reusedInsideCap; attempt++ {
 				if attempt > 0 {
-					awaitBindingPermitExpiry(warmedAt)
+					awaitBindingPermitExpiry(lastPairRequestDone)
 				}
 				before := j.broker.EvaluationCount()
 				warmStart := time.Now()
 				Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
 				warmedAt = time.Now()
 				Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+				lastPairRequestDone = time.Now()
 				if time.Since(warmStart) >= 2*time.Second {
 					continue
 				}
@@ -535,6 +537,7 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 
 				j.broker.SubjectToken = original
 				Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+				lastPairRequestDone = time.Now()
 				if time.Since(warmStart) >= 2*time.Second {
 					continue
 				}
