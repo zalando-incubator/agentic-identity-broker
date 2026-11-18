@@ -22,11 +22,15 @@ func enduserOpenAPI() map[string]any {
 }
 
 var _ = Describe("Token exchange compatibility during the AuthZEN deprecation window", Label("authzen-delegation"), func() {
+	var f *authzenFixture
+
+	BeforeEach(func() {
+		f = newAuthZENFixture(nil)
+		f.SeedSession(f.Repo, []string{"read:repo"})
+	})
+
 	// Scenario US4.6 from specs/054-authzen-delegation-pip/spec.md
 	It("keeps principal, agent_id, and deprecated granted_permission_sets on exchange", func() {
-		f := newAuthZENFixture(nil)
-		f.SeedSession(f.Repo, []string{"read:repo"})
-
 		status, body := f.Exchange(authzenRepoResource)
 
 		Expect(status).To(Equal(http.StatusOK))

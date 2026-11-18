@@ -71,7 +71,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 
 		// Scenario US2.16 from specs/054-authzen-delegation-pip/spec.md
 		It("returns 401 for an expired or untrusted client assertion", func() {
-			for _, assertion := range []string{f.SignAssertion(time.Now().Add(-time.Hour)), "not-a-signed-assertion"} {
+			for _, assertion := range []string{f.SignAssertion(time.Now().Add(-time.Hour)), f.SignUntrustedAssertion(time.Now().Add(time.Hour))} {
 				resp := f.EvaluateRaw(assertion, helpers.AuthZENEvaluationBody(f.SubjectToken, authzenRepoResource, nil))
 				expectAuthZENError(resp, http.StatusUnauthorized, "unauthorized")
 				Expect(resp.Header.Get("WWW-Authenticate")).To(Equal(`Bearer error="invalid_token"`))
@@ -95,18 +95,25 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 		})
 	})
 
-	// Scenario US2.17 from specs/054-authzen-delegation-pip/spec.md
-	It("returns 403 when the unchanged token-exchange caller policy rejects the gateway", func() {
-		f := newAuthZENFixture(func(cfg *ports.Config) {
-			cfg.TokenExchange.Authorization.CEL.Expression = `request.grant_type == "urn:ietf:params:oauth:grant-type:token-exchange" && client_assertion.sub == "another-gateway"`
+	Context("when the token-exchange caller policy rejects the gateway", func() {
+		var f *authzenFixture
+
+		BeforeEach(func() {
+			f = newAuthZENFixture(func(cfg *ports.Config) {
+				cfg.TokenExchange.Authorization.CEL.Expression = `request.grant_type == "urn:ietf:params:oauth:grant-type:token-exchange" && client_assertion.sub == "another-gateway"`
+			})
+			f.SeedSession(f.Repo, []string{"read:repo"})
 		})
-		resp := f.Evaluate(authzenRepoResource, nil)
-		expectAuthZENError(resp, http.StatusForbidden, "forbidden")
-		f.ExpectEvaluationIdentity(resp, f.Principal.String(), "authzen-gateway", true)
-		f.SeedSession(f.Repo, []string{"read:repo"})
-		status, body := f.Exchange(authzenRepoResource)
-		Expect(status).To(Equal(http.StatusForbidden), "exchange is rejected by the same policy")
-		Expect(body["error"]).To(Equal("access_denied"))
+
+		// Scenario US2.17 from specs/054-authzen-delegation-pip/spec.md
+		It("returns 403 when the unchanged token-exchange caller policy rejects the gateway", func() {
+			resp := f.Evaluate(authzenRepoResource, nil)
+			expectAuthZENError(resp, http.StatusForbidden, "forbidden")
+			f.ExpectEvaluationIdentity(resp, f.Principal.String(), "authzen-gateway", true)
+			status, body := f.Exchange(authzenRepoResource)
+			Expect(status).To(Equal(http.StatusForbidden), "exchange is rejected by the same policy")
+			Expect(body["error"]).To(Equal("access_denied"))
+		})
 	})
 
 	Context("when the grant repository is unavailable", Label("docker"), func() {

@@ -19,6 +19,7 @@ func maxAgeOf(resp *helpers.AuthZENResponse) int {
 	Expect(value).To(HavePrefix("private, max-age="))
 	seconds, err := strconv.Atoi(strings.TrimPrefix(value, "private, max-age="))
 	Expect(err).NotTo(HaveOccurred())
+	Expect(seconds).To(BeNumerically(">=", 0), "max-age is never negative")
 	return seconds
 }
 

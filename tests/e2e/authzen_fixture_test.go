@@ -204,10 +204,22 @@ func (f *authzenFixture) SignAssertion(exp time.Time) string {
 }
 
 func (f *authzenFixture) SignAssertionFor(subject string, exp time.Time) string {
+	return f.signAssertionWith(f.Upstream.GetPrivateKeyPEM(), subject, exp)
+}
+
+// SignUntrustedAssertion signs an otherwise valid gateway assertion with a fresh key that
+// the configured trust anchor does not publish.
+func (f *authzenFixture) SignUntrustedAssertion(exp time.Time) string {
+	privateKeyPEM, _, err := helpers.GenerateTestRSAKeyPair()
+	Expect(err).NotTo(HaveOccurred())
+	return f.signAssertionWith(privateKeyPEM, "authzen-gateway", exp)
+}
+
+func (f *authzenFixture) signAssertionWith(privateKeyPEM, subject string, exp time.Time) string {
 	token, err := helpers.SignTestJWT(map[string]interface{}{
 		"sub": subject, "iss": f.Upstream.URL(), "aud": "token-exchange-broker",
 		"iat": time.Now().Add(-2 * time.Hour).Unix(), "exp": exp.Unix(), "marker": authzenPeerMarker,
-	}, f.Upstream.GetPrivateKeyPEM())
+	}, privateKeyPEM)
 	Expect(err).NotTo(HaveOccurred())
 	return token
 }
@@ -221,8 +233,23 @@ func (f *authzenFixture) EvaluateRaw(assertion string, body []byte) *helpers.Aut
 	resp, err := helpers.DoAuthZENEvaluation(f.client, f.Enduser.BaseURL(), assertion, "delegation-001", body)
 	Expect(err).NotTo(HaveOccurred())
 	Expect(resp.Header.Get("X-Request-ID")).To(Equal("delegation-001"), "the supplied request ID is echoed on every path")
-	f.ExpectCredentialFree(resp.Raw)
+	f.ExpectCredentialFree(resp.Raw, assertion, jwtSubjectOf(body))
 	return resp
+}
+
+// jwtSubjectOf returns the JWT subject token of an evaluation body, or empty when the
+// body is malformed or its subject is not a JWT.
+func jwtSubjectOf(body []byte) string {
+	var request struct {
+		Subject struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		} `json:"subject"`
+	}
+	if json.Unmarshal(body, &request) != nil || request.Subject.Type != helpers.AuthZENSubjectTypeJWT {
+		return ""
+	}
+	return request.Subject.ID
 }
 
 func (f *authzenFixture) ExpectEvaluationIdentity(resp *helpers.AuthZENResponse, actor, peer string, reachedService bool) {
@@ -325,11 +352,18 @@ func (f *authzenFixture) SaveAgent() {
 	Expect(f.Storage.Agents().Update(context.Background(), f.Agent)).To(Succeed())
 }
 
-// ExpectCredentialFree asserts that neither credential nor its private claim leaks into
-// the response body or captured logs.
-func (f *authzenFixture) ExpectCredentialFree(raw string) {
+// ExpectCredentialFree asserts that neither the fixture credentials, the credentials a
+// request actually sent, nor their private claims leak into the response body or captured
+// logs. Empty sent credentials are skipped.
+func (f *authzenFixture) ExpectCredentialFree(raw string, sent ...string) {
 	logs := f.Logs.Raw()
-	for _, secret := range []string{f.SubjectToken, f.ClientAssertion, authzenSubjectMarker, authzenPeerMarker} {
+	secrets := []string{f.SubjectToken, f.ClientAssertion, authzenSubjectMarker, authzenPeerMarker}
+	for _, credential := range sent {
+		if credential != "" {
+			secrets = append(secrets, credential)
+		}
+	}
+	for _, secret := range secrets {
 		Expect(raw).NotTo(ContainSubstring(secret))
 		Expect(logs).NotTo(ContainSubstring(secret))
 	}
