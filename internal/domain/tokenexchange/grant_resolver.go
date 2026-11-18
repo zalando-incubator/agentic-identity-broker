@@ -34,7 +34,9 @@ type GrantResolutionRequest struct {
 }
 
 // ResolvedGrant is the outcome of a successful resolution: every invariant of exchange
-// steps 2–9a holds. It never contains a credential.
+// steps 2–9a holds. Resolution decrypts no credential, but Service is the full provider
+// entity and still carries its encrypted client secret; only the GrantContext projection
+// is credential-free.
 type ResolvedGrant struct {
 	Principal       id.Principal
 	Agent           *storage.Agent
