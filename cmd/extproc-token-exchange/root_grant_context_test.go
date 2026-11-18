@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -24,18 +23,21 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 )
 
+const advertisedEvaluationPath = "/pdp/v2/evaluate"
+
 type grantContextBrokerStub struct {
-	discoveryBody  func(baseURL string) string
-	discoveryCode  int
-	discoveries    atomic.Int32
-	evaluations    atomic.Int32
-	authorizations atomic.Int32
+	discoveryBody       func(baseURL string) string
+	discoveryCode       int
+	discoveries         atomic.Int32
+	evaluations         atomic.Int32
+	advertisedEvaluated atomic.Int32
+	authorizations      atomic.Int32
 }
 
 func (b *grantContextBrokerStub) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "" && r.URL.Path != "/oauth/token" {
 			b.authorizations.Add(1)
 		}
@@ -50,10 +52,14 @@ func (b *grantContextBrokerStub) start(t *testing.T) *httptest.Server {
 		case "/access/v1/evaluation":
 			b.evaluations.Add(1)
 			w.WriteHeader(http.StatusInternalServerError)
+		case advertisedEvaluationPath:
+			b.advertisedEvaluated.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
+	srv.Start()
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -84,20 +90,22 @@ func TestRun_GrantContextStartupFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			broker := &grantContextBrokerStub{discoveryCode: tt.code, discoveryBody: tt.body}
 			srv := broker.start(t)
-			port := availableExtProcPort(t)
-			configureExtProcRun(t, srv.URL, port, "secret")
+			// Occupy the gRPC port so a run that skipped discovery fails to listen instead of serving until a signal.
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, listener.Close()) })
+			configureExtProcRun(t, srv.URL, listener.Addr().(*net.TCPAddr).Port, "secret")
 			enableGrantContextRun(t)
 
-			err := run(rootCmd, nil)
+			err = run(rootCmd, nil)
 
 			require.ErrorContains(t, err, tt.errText)
+			assert.NotContains(t, err.Error(), "failed to listen", "failed discovery must stop startup before the gRPC listener")
 			assert.NotContains(t, err.Error(), "assertion")
 			assert.Equal(t, int32(1), broker.discoveries.Load())
 			assert.Zero(t, broker.evaluations.Load())
+			assert.Zero(t, broker.advertisedEvaluated.Load())
 			assert.Zero(t, broker.authorizations.Load(), "no credential is sent to discovery or a mismatched PDP")
-			listener, listenErr := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-			require.NoError(t, listenErr, "failed discovery must not start the gRPC listener")
-			require.NoError(t, listener.Close())
 		})
 	}
 }
@@ -161,7 +169,7 @@ func TestRun_GrantContextRequiresAuthorization(t *testing.T) {
 
 func TestNewPermitResolverFromConfig_UsesAdvertisedEndpointAndShutsDown(t *testing.T) {
 	broker := &grantContextBrokerStub{discoveryCode: http.StatusOK, discoveryBody: func(base string) string {
-		return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"` + base + `/access/v1/evaluation"}`
+		return `{"policy_decision_point":"` + base + `","access_evaluation_endpoint":"` + base + advertisedEvaluationPath + `"}`
 	}}
 	srv := broker.start(t)
 	cfg := &extprocconfig.Config{
@@ -173,7 +181,8 @@ func TestNewPermitResolverFromConfig_UsesAdvertisedEndpointAndShutsDown(t *testi
 	require.NoError(t, err)
 	_, _, resolveErr := resolver.Resolve(context.Background(), "subject", "https://api.example.com")
 	require.Error(t, resolveErr, "the stub endpoint rejects evaluation, which must fail closed")
-	assert.Equal(t, int32(1), broker.evaluations.Load())
+	assert.Equal(t, int32(1), broker.advertisedEvaluated.Load(), "evaluation must use the advertised endpoint")
+	assert.Zero(t, broker.evaluations.Load(), "evaluation must not fall back to the default path")
 	resolver.Shutdown()
 }
 
