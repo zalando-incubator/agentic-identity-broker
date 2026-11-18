@@ -764,8 +764,9 @@ type collector struct {
 	// active holds what the collector is following, so that it does not
 	// follow it into itself.
 	active map[any]bool
-	// visited holds the calls that pass a span to a module function, which
-	// the collector followed.
+	// visited holds the calls that pass a span to a module function, while
+	// the collector follows them. A call that another binding reaches later
+	// is followed again.
 	visited map[*ast.CallExpr]bool
 	// bind gives, for each parameter of a function that the collector
 	// follows from a call, the arguments of that call.
@@ -1304,6 +1305,7 @@ func (x *extractor) spanCalls(objs map[types.Object]bool, c fnCtx, s *Span, k *c
 		unbind := k.bindCall(fn, call, c)
 		x.spanCalls(next, fc, s, k, depth+1)
 		unbind()
+		delete(k.visited, call)
 		return true
 	})
 }

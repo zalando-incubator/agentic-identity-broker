@@ -76,7 +76,7 @@ func TestExtractSpans(t *testing.T) {
 	if got, want := attrKeys(fetch.Attrs), []string{
 		"db.system", "fixture.cache", "fixture.count", "fixture.outcome", "fixture.result",
 	}; !reflect.DeepEqual(got, want) {
-		t.Errorf("fixture.fetch attributes = %v, want %v", got, want)
+		t.Fatalf("fixture.fetch attributes = %v, want %v", got, want)
 	}
 	if !fetch.Attrs["db.system"].Values["postgresql"] {
 		t.Errorf("db.system values = %v, want postgresql", fetch.Attrs["db.system"].Values)
@@ -135,6 +135,10 @@ func TestExtractSpans(t *testing.T) {
 	// The held span is passed to a function. The value of the other caller stays with its own span.
 	if et := held.Attrs["error.type"]; et == nil || !et.Values["abort_failed"] || et.Values["direct_failed"] {
 		t.Errorf("fixture.held error.type = %+v, want the value abort_failed and not direct_failed", et)
+	}
+	// The same call reaches fail with each value.
+	if et := ref.Spans["fixture.direct"].Attrs["error.type"]; et == nil || !et.Values["direct_failed"] || !et.Values["retry_failed"] {
+		t.Errorf("fixture.direct error.type = %+v, want the values direct_failed and retry_failed", et)
 	}
 	// The span is started straight into the same field.
 	if reopened := ref.Spans["fixture.reopened"]; !reopened.ErrorStatus || reopened.Attrs["error.type"] == nil {

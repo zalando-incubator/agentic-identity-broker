@@ -104,12 +104,15 @@ func fail(span trace.Span, kind string) {
 	span.SetStatus(codes.Error, "failed")
 }
 
-// Direct passes its own span to fail.
+// Direct passes its own span to fail, twice through the same call.
 func Direct(ctx context.Context) {
 	_, span := tracer.Start(ctx, "fixture.direct")
 	defer span.End()
-	fail(span, "direct_failed")
+	failAs(span, "direct_failed")
+	failAs(span, "retry_failed")
 }
+
+func failAs(span trace.Span, kind string) { fail(span, kind) }
 
 // labeler is an interface, so the callers of its method are not all known.
 type labeler interface {
