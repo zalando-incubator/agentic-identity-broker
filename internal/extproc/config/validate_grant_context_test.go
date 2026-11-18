@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,7 +88,19 @@ func TestValidateGrantContext(t *testing.T) {
 	})
 }
 
+// clearExtProcEnv blanks inherited EXTPROC_* variables for the test; the loader treats empty values as unset.
+func clearExtProcEnv(t *testing.T) {
+	t.Helper()
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(name, "EXTPROC_") {
+			t.Setenv(name, "")
+		}
+	}
+}
+
 func TestLoadFromViper_GrantContextDefaults(t *testing.T) {
+	clearExtProcEnv(t)
 	v := configutil.NewViper()
 	v.Set(configutil.Key("oauth2", "token_endpoint"), "https://idp.example.com/oauth2/token")
 	v.Set(configutil.Key("oauth2", "issuer"), "https://idp.example.com")
@@ -100,6 +113,7 @@ func TestLoadFromViper_GrantContextDefaults(t *testing.T) {
 }
 
 func TestLoadWithCommand_GrantContextPrecedence(t *testing.T) {
+	clearExtProcEnv(t)
 	policyPath := filepath.Join(t.TempDir(), "policy.rego")
 	require.NoError(t, os.WriteFile(policyPath, []byte("package aib.extproc.authz\nresult := {\"action\": \"deny\"}\n"), 0o600))
 	t.Setenv("EXTPROC_OAUTH2_TOKEN_ENDPOINT", "https://env.example.com/oauth2/token")
