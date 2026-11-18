@@ -72,6 +72,7 @@ The pre-migration baseline violated OPENTELEMETRY §§3.2, 3.3 and 4.1. The supp
 | Permit log event | `authzen.access_evaluation.permitted` | `tokenexchange.access_evaluation.permitted` |
 | Denial log event | `authzen.access_evaluation.denied` | `tokenexchange.access_evaluation.denied` |
 | Failure log event | `authzen.access_evaluation.failed` | `tokenexchange.access_evaluation.failed` |
+| Route audit record (`oauth2 authorization request`, finalized identity) | none | `tokenexchange.access_evaluation_request.completed`; other OAuth2 route records unchanged |
 | Resolver span (scope `extproc`) | `extproc.grant_context.resolve`, implicit Internal | Same name, explicit `trace.WithSpanKind(trace.SpanKindInternal)` |
 | Broker-call span (scope `extproc`) | `extproc.grant_context.evaluate`, Client | Same name, explicit `trace.WithSpanKind(trace.SpanKindClient)` |
 | Attributes | `access_evaluation.decision`, `access_evaluation.max_age`, `grant_context.cache` | Names unchanged; registration below MUST precede publication/use |

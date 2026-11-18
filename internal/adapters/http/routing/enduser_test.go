@@ -379,6 +379,7 @@ func TestSetupEnduserRoutes_AuthZENRouteAuditUsesFinalizedIdentity(t *testing.T)
 			var record map[string]any
 			require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
 			require.Equal(t, "oauth2 authorization request", record["msg"])
+			require.Equal(t, "tokenexchange.access_evaluation_request.completed", record["event"])
 			require.Equal(t, tt.want, record["principal"], "the route audit must name the finalized resource owner")
 		})
 	}
