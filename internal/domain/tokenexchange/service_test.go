@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -2169,6 +2170,8 @@ const (
 	grantStalePermissionSet
 )
 
+const exchangeFixtureCaller = "gateway-client"
+
 type exchangeFixtureConfig struct {
 	coverage        grantCoverage
 	callbackBaseURL string
@@ -2280,10 +2283,13 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 
 	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 	require.NoError(t, err)
+	// The caller policy requires the client assertion's own subject, so a subject token passed as the
+	// assertion cannot authorize the exchange.
+	const callerPolicy = `client_assertion.sub == "` + exchangeFixtureCaller + `"`
 	celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
 		PrincipalExpression:     "subject_token.sub",
 		AgentIDExpression:       "subject_token.azp",
-		AuthorizationExpression: "true",
+		AuthorizationExpression: callerPolicy,
 		EvaluationTimeout:       100 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -2298,7 +2304,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		agentRepository:      agentRepo,
 		config: &ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp"},
-			Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
+			Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: callerPolicy}},
 		},
 	}
 
@@ -2311,11 +2317,13 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		"exp": now.Add(time.Hour).Unix(),
 		"iat": now.Unix(),
 	}
+	assertionClaims := maps.Clone(claims)
+	assertionClaims["sub"] = exchangeFixtureCaller
 	req := NewTokenExchangeRequest(
 		TokenExchangeGrantType,
 		signServiceTestJWT(t, privateKey, claims),
 		AccessTokenType,
-		signServiceTestJWT(t, privateKey, claims),
+		signServiceTestJWT(t, privateKey, assertionClaims),
 		JWTBearerType,
 		"https://api.example.com/requested",
 		"",
