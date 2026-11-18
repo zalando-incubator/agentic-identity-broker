@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -28,10 +30,13 @@ func TestExchange_StaleFallbackIsCapturedWithTheFailedFlight(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":"server_error"}`))
 	}))
 	t.Cleanup(broker.Close)
+	bodyClosed := make(chan struct{})
+	client := broker.Client()
+	client.Transport = closeSignalingTransport{next: client.Transport, closed: bodyClosed}
 	te := &TokenExchanger{
 		cfg: &extprocconfig.Config{OAuth2: extprocconfig.OAuth2Config{TokenEndpoint: broker.URL, ExchangeTimeout: 5 * time.Second},
 			Cache: extprocconfig.CacheConfig{DefaultTTL: time.Minute, MaxTTL: time.Hour}},
-		client: broker.Client(), logger: slog.New(slog.DiscardHandler), cache: make(map[tokenCacheKey]*cachedToken),
+		client: client, logger: slog.New(slog.DiscardHandler), cache: make(map[tokenCacheKey]*cachedToken),
 	}
 	te.assertion.Store(&assertionState{value: "ASSERTION"})
 	key := tokenCacheKey{subjectToken: subject, resourceURI: resource}
@@ -51,13 +56,22 @@ func TestExchange_StaleFallbackIsCapturedWithTheFailedFlight(t *testing.T) {
 	// Hold the cache so no fallback read can complete, then let the broker fail.
 	te.cacheMu.Lock()
 	close(release)
+	select {
+	case <-bodyClosed:
+	case <-time.After(5 * time.Second):
+		te.cacheMu.Unlock()
+		t.Fatal("the exchanger did not finish reading the broker failure")
+	}
+	// The failure has been read, so a flight that does not capture its fallback under the
+	// cache lock releases the singleflight key within this window. A correct flight is still
+	// blocked on the lock, so no second flight can start.
 	var secondFlightRan atomic.Bool
 	probe := func() (any, error) {
 		secondFlightRan.Store(true)
 		return ExchangeResult{}, nil
 	}
 	sfKey := subject + "\x00" + resource
-	for deadline := time.Now().Add(300 * time.Millisecond); !secondFlightRan.Load() && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(time.Second); !secondFlightRan.Load() && time.Now().Before(deadline); {
 		te.sfGroup.DoChan(sfKey, probe)
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -71,4 +85,30 @@ func TestExchange_StaleFallbackIsCapturedWithTheFailedFlight(t *testing.T) {
 	got := <-done
 	require.NoError(t, got.err, "the failed flight's waiter keeps the fallback it was eligible for")
 	assert.Equal(t, "STALE", got.result.Token)
+}
+
+type closeSignalingTransport struct {
+	next   http.RoundTripper
+	closed chan struct{}
+}
+
+func (c closeSignalingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := c.next.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	resp.Body = &closeSignalingBody{ReadCloser: resp.Body, closed: c.closed}
+	return resp, nil
+}
+
+type closeSignalingBody struct {
+	io.ReadCloser
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *closeSignalingBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.once.Do(func() { close(b.closed) })
+	return err
 }

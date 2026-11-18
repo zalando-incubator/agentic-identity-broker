@@ -449,26 +449,32 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 			expectGrantContextDenied(j.HeaderOnly(authzenRepoResource, nil), j.broker.Enduser.BaseURL()+"/agents/"+j.broker.Agent.ID.String())
 		})
 
-		// Scenario US3.8 from specs/054-authzen-delegation-pip/spec.md
-		It("makes the same canonical-ID policy decision across different UUIDs on both paths with permit-derived permission-set inputs", func() {
-			first := j
-			second := newGrantContextJourney(time.Minute, true)
-			Expect(second.broker.Agent.ID).NotTo(Equal(first.broker.Agent.ID))
-			Expect(second.broker.Repo.ID).NotTo(Equal(first.broker.Repo.ID))
-			Expect(second.broker.Reader.ID).NotTo(Equal(first.broker.Reader.ID))
-			for _, journey := range []*grantContextJourney{first, second} {
-				Expect(forwarded(journey.BodyCall(authzenRepoResource))).To(BeTrue())
-				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(journey.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "))
-			}
+		Context("with canonical-ID variants", func() {
+			var second, withoutReaderCanonicalID *grantContextJourney
 
-			withoutReaderCanonicalID := newGrantContextJourney(time.Minute, true, func(f *authzenFixture) {
-				f.Reader.CanonicalID = nil
-				Expect(f.Storage.PermissionSets().Update(context.Background(), f.Reader)).To(Succeed())
+			BeforeEach(func() {
+				second = newGrantContextJourney(time.Minute, true)
+				withoutReaderCanonicalID = newGrantContextJourney(time.Minute, true, func(f *authzenFixture) {
+					f.Reader.CanonicalID = nil
+					Expect(f.Storage.PermissionSets().Update(context.Background(), f.Reader)).To(Succeed())
+				})
 			})
-			_, bodyResp := withoutReaderCanonicalID.BodyCall(authzenRepoResource)
-			status, body := immediateJSON(bodyResp)
-			Expect(status).To(Equal(uint32(http.StatusForbidden)), "the policy keys on canonical IDs, not UUIDs")
-			Expect(body["error_description"]).To(ContainSubstring("delegation does not cover repo-api"))
+
+			// Scenario US3.8 from specs/054-authzen-delegation-pip/spec.md
+			It("makes the same canonical-ID policy decision across different UUIDs on both paths with permit-derived permission-set inputs", func() {
+				Expect(second.broker.Agent.ID).NotTo(Equal(j.broker.Agent.ID))
+				Expect(second.broker.Repo.ID).NotTo(Equal(j.broker.Repo.ID))
+				Expect(second.broker.Reader.ID).NotTo(Equal(j.broker.Reader.ID))
+				for _, journey := range []*grantContextJourney{j, second} {
+					Expect(forwarded(journey.BodyCall(authzenRepoResource))).To(BeTrue())
+					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(journey.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "))
+				}
+
+				_, bodyResp := withoutReaderCanonicalID.BodyCall(authzenRepoResource)
+				status, body := immediateJSON(bodyResp)
+				Expect(status).To(Equal(uint32(http.StatusForbidden)), "the policy keys on canonical IDs, not UUIDs")
+				Expect(body["error_description"]).To(ContainSubstring("delegation does not cover repo-api"))
+			})
 		})
 
 		// Scenario US3.9 from specs/054-authzen-delegation-pip/spec.md
@@ -501,28 +507,46 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 
 		// Scenario US3.7 from specs/054-authzen-delegation-pip/spec.md
 		It("isolates the cache per subject and resource and honors max_staleness", func() {
-			// The permit deadline starts between these instants: before them it cannot have
-			// expired, after them it must have.
-			warmStart := time.Now()
-			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-			warmedAt := time.Now()
-			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-			Expect(j.broker.EvaluationCount()).To(Equal(1), "the second request reuses the fresh permit")
-
-			_, _ = j.BodyCall(authzenOtherResource)
-			Expect(j.broker.EvaluationCount()).To(Equal(2), "another resource never uses the cached permit")
 			original := j.broker.SubjectToken
-			j.broker.SubjectToken = j.broker.SignSubject(time.Now().Add(time.Hour).Add(time.Second))
-			_, _ = j.BodyCall(authzenRepoResource)
-			Expect(j.broker.EvaluationCount()).To(Equal(3), "another subject token never uses the cached permit")
+			var warmedAt time.Time
+			reusedInsideCap := false
+			// The permit deadline starts between warmStart and warmedAt. A reuse that completes
+			// within 2 s of warmStart must hit the cache; a slower one may legitimately
+			// revalidate, so the sequence is repeated after that permit has expired.
+			for attempt := 0; attempt < 3 && !reusedInsideCap; attempt++ {
+				if attempt > 0 {
+					awaitBindingPermitExpiry(warmedAt)
+				}
+				before := j.broker.EvaluationCount()
+				warmStart := time.Now()
+				Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+				warmedAt = time.Now()
+				Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+				if time.Since(warmStart) >= 2*time.Second {
+					continue
+				}
+				Expect(j.broker.EvaluationCount()).To(Equal(before+1), "the second request reuses the fresh permit")
 
-			j.broker.SubjectToken = original
-			Expect(time.Since(warmStart)).To(BeNumerically("<", 2*time.Second), "still inside the original permit's local cap")
-			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-			Expect(j.broker.EvaluationCount()).To(Equal(3), "the original pair reuses its permit before the cap")
+				_, _ = j.BodyCall(authzenOtherResource)
+				Expect(j.broker.EvaluationCount()).To(Equal(before+2), "another resource never uses the cached permit")
+				j.broker.SubjectToken = j.broker.SignSubject(time.Now().Add(time.Hour).Add(time.Second))
+				_, _ = j.BodyCall(authzenRepoResource)
+				Expect(j.broker.EvaluationCount()).To(Equal(before+3), "another subject token never uses the cached permit")
+
+				j.broker.SubjectToken = original
+				Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+				if time.Since(warmStart) >= 2*time.Second {
+					continue
+				}
+				Expect(j.broker.EvaluationCount()).To(Equal(before+3), "the original pair reuses its permit before the cap")
+				reusedInsideCap = true
+			}
+			Expect(reusedInsideCap).To(BeTrue(), "the warm-and-reuse sequence completed within the 2 s cap in one of three attempts")
+
+			revalidations := j.broker.EvaluationCount()
 			awaitBindingPermitExpiry(warmedAt)
 			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-			Expect(j.broker.EvaluationCount()).To(Equal(4), "the 2 s local cap forces revalidation of the original pair despite the 60 s permit")
+			Expect(j.broker.EvaluationCount()).To(Equal(revalidations+1), "the 2 s local cap forces revalidation of the original pair despite the 60 s permit")
 		})
 	})
 
