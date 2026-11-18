@@ -132,7 +132,9 @@ grant type, flag, or CEL variable is added. A CEL denial maps to HTTP 403 (US2.1
 literally. An existing policy that rejects a gateway or resource for exchange rejects the same
 evaluation.
 
-**Consequence documented in the ADR**: A policy cannot distinguish evaluation from exchange.
+**Consequence documented in the ADR**: A policy cannot distinguish evaluation from an exchange
+without `scope`. An exchange with `scope` passes it as `request.scope`, so a scope-based policy
+can treat that exchange differently.
 This is intentional. Evaluation is never more permissive than exchange, and it issues no token.
 
 ## R4. Grant Context projection
@@ -224,7 +226,8 @@ API does not use it anywhere. The reviewed OpenAPI can still choose it during co
 
 **Decision**: The evaluation and discovery handlers copy a supplied, non-empty `X-Request-ID`
 request header to the response on every path, including 400, 401, 403, and 500. The
-`OAuth2AuditMiddleware` on the route keeps generating an internal ID for audit when none is
+`FinalizedIdentityAuditMiddleware` on the route (the `OAuth2AuditMiddleware` variant that logs
+the finalized Actor) keeps generating an internal ID for audit when none is
 supplied, but that generated ID is **not** echoed (spec Edge Cases: no new request-ID
 generation requirement). Trace correlation is unchanged.
 
@@ -236,7 +239,10 @@ generation requirement). Trace correlation is unchanged.
 - `access_evaluation_endpoint`: the same base plus `/access/v1/evaluation`
 
 The response uses `Content-Type: application/json` and `Cache-Control: max-age=3600`,
-the same header that the RFC 8414 handler (`oauth2_metadata.go`) sets.
+the same header that the RFC 8414 handler (`oauth2_metadata.go`) sets. It also sends
+`Vary: X-Request-ID`, because it echoes that header. When token exchange is configured, startup
+validation rejects a `public_url` with a query or fragment, which would otherwise absorb the
+appended evaluation path.
 
 **Rationale**:
 
@@ -268,7 +274,7 @@ proxy must also route the standard discovery URL. The docs will state this.
   Both registrations happen only when their handler is non-nil.
 - The `/access` namespace is always reserved, like `/health`. A disabled deployment therefore
   returns 404 instead of SPA HTML or a 405 from the SPA catch-all.
-- The evaluation route uses `OAuth2AuditMiddleware` and no principal middleware. It is a
+- The evaluation route uses `FinalizedIdentityAuditMiddleware` and no principal middleware. It is a
   machine-facing endpoint like `/oauth2/token`. The server-wide `SecurityContextMiddleware`
   currently defers finalization **only** for `POST /oauth2/token`; evaluation does not yet
   receive a capture holder. The proposed design must extend the shared deferred-route matcher
@@ -348,8 +354,9 @@ a Proposed approval item; it is not resolved through an unapproved implementatio
 
 - This feature adds `deprecated: true` and a removal note to the `granted_permission_sets`
   property of the `/oauth2/token` response schema.
-- Proposed: bump `info.version` of `api/enduser/openapi.yaml` from its current `1.1.0` to
-  `1.2.0` for the additive endpoints and deprecation marker (contract §3). Reusing `1.1.0`
+- Bump `info.version` of `api/enduser/openapi.yaml` from the released `1.2.0` to `1.3.0`
+  for the additive endpoints and deprecation marker (contract §3; approved F3/P3, ADR 048 §8).
+  The earlier `1.1.0` → `1.2.0` proposal used a stale baseline and is historical. Reusing `1.2.0`
   would not distinguish this revision; removing the field now would violate FR-019.
 - It documents the deprecation in `docs/reference/token-exchange.md`.
 - The field remains populated. `principal` and `agent_id` are unchanged (US4.6 and FR-019).
@@ -360,9 +367,9 @@ of this feature, because it must ship in a later release. It needs a separately 
 contract change (spec API-006 and Principles IV and X). The plan records it as follow-up work.
 
 **Stakeholder**: The 2026-10-28 review used a stale `1.0.0` baseline when describing the
-`1.1.0` additive bump. The corrected `1.2.0` version and deprecation marker with its removal
-note remain Proposed under approval item API-3; the earlier review is not approval of this
-correction. Removal itself still needs a separately confirmed `2.0.0` change in a later release.
+`1.1.0` additive bump. The later `1.2.0` correction under approval item API-3 is historical:
+`1.2.0` is the released baseline, and approved F3/P3 (2026-11-09, ADR 048 §8) publishes the
+additive endpoints and deprecation marker as `1.3.0`. Removal itself still needs a separately confirmed `2.0.0` change in a later release.
 
 ## R13. ExtProc resolver boundary
 

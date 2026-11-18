@@ -31,12 +31,13 @@ expiry are observed on each resolution. Nothing in this feature writes to any ag
 | `GrantType` | `string` | Always `urn:ietf:params:oauth:grant-type:token-exchange` (R3). Passed to CEL as `request.grant_type`. |
 | `Scope` | `string` | Exchange passes the request scope. Evaluation passes `""` (absent-scope semantics). |
 | `ExpectedAgentID` | `*id.AgentID` | Optional anchor (FR-005). Compared after agent load and before the grant read. |
+| `RequireCallingPeer` | `bool` | Evaluation sets it; exchange never does. A client assertion without a non-blank `sub` is rejected as `invalid_client` (401) before identity finalization. |
 
 ### 2.2 `ResolvedGrant` (result of the shared resolver)
 
 | Field | Type | Notes |
 |---|---|---|
-| `Principal` | `string` | Extracted by CEL `principal_expression` |
+| `Principal` | `id.Principal` | Extracted by CEL `principal_expression`; projected as the JSON string `subject.id` |
 | `Agent` | `*storage.Agent` | Loaded by UUID from CEL `agent_id_expression` |
 | `Service` | `*model.ThirdpartyOAuth2ProviderEntity` | Resolved from the normalized resource |
 | `ResourceURI` | `string` | Normalized URI |
@@ -89,7 +90,7 @@ GrantDecision = Permit | Deny | RequestFailure
 
 Permit         { Context: GrantContext, MaxAge: int (0..60) }
 Deny           { Detail: FailureDetail (grant_* only), ConsentURL: string }
-RequestFailure { Status: 400 | 401 | 403 | 500, Code: string, Detail: FailureDetail }
+RequestFailure { Status: 400 | 401 | 403 | 500, Diagnostic: Diagnostic }
 ```
 
 Classification follows research R6. A `Deny` requires an `AccessDenied` error from

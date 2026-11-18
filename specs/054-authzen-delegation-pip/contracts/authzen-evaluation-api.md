@@ -34,7 +34,7 @@ configured (the builder's `tokenExchangeEnabled`). No admin API change is made.
 | Aspect | Value |
 |---|---|
 | Authentication | None (public metadata) |
-| Response | `200 application/json`, `Cache-Control: max-age=3600` |
+| Response | `200 application/json`, `Cache-Control: max-age=3600`, `Vary: X-Request-ID` |
 | Disabled deployment | `404` (the `/.well-known` group has no matching route) |
 
 ```yaml
@@ -46,8 +46,9 @@ AuthZENConfiguration:
     policy_decision_point:
       type: string
       format: uri
-      description: server.enduser.public_url without trailing slash. Consumers MUST compare it exactly
-        with their expected identifier before sending credentials.
+      description: server.enduser.public_url without trailing slash. The broker rejects a public URL
+        with a query or fragment at startup. Consumers MUST compare it exactly with their expected
+        identifier before sending credentials.
       example: https://broker.example.com
     access_evaluation_endpoint:
       type: string
@@ -134,8 +135,8 @@ provider tokens, secrets, raw claims, or internal error text.
 |---|---|---|---|
 | 200 | Permit | `private, max-age=<0..60>` | `AccessEvaluationPermit` |
 | 200 | Grant denial (US2.1–US2.10) | `no-store` | `AccessEvaluationDenial` |
-| 400 | Malformed or oversized body; missing required member, wrong member type, or unsupported `subject.type`/`action.name`/`resource.type` value; `context` present but not an object; non-string `context.agent`; invalid or expired subject; anchor mismatch; unregistered or invalid resource | `no-store` | `ErrorResponse` (`error: invalid_request`) |
-| 401 | Missing, invalid, or expired client assertion. Adds `WWW-Authenticate: Bearer` and, for an invalid credential, `error="invalid_token"`. | `no-store` | `ErrorResponse` (`error: unauthorized`) |
+| 400 | Malformed or oversized body; missing required member, wrong member type, or unsupported `subject.type`/`action.name`/`resource.type` value; `context` present but not an object; non-string `context.agent`; invalid or expired subject; agent-subject token; anchor mismatch; unregistered or invalid resource | `no-store` | `ErrorResponse` (`error: invalid_request`) |
+| 401 | Missing, invalid, or expired client assertion, or one without a non-blank `sub`. Adds `WWW-Authenticate: Bearer` and, for an invalid credential, `error="invalid_token"`. | `no-store` | `ErrorResponse` (`error: unauthorized`) |
 | 403 | Caller CEL policy denies | `no-store` | `ErrorResponse` (`error: forbidden`) |
 | 500 | Configuration or dependency failure (agent missing or invalid, resource ambiguous, JWKS, CEL, repositories, canonical-ID lookup) | `no-store` | `ErrorResponse` (`error: server_error`) |
 
