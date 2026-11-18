@@ -43,7 +43,10 @@ grant_context:
   # policy_decision_point before any credential is sent.
   # Default (empty): the origin of oauth2.token_endpoint
   # (https://identity-broker.example.com here). Set it explicitly when the broker's
-  # public URL has a path prefix, for example https://example.com/broker.
+  # public URL has a path prefix, for example https://example.com/broker. ExtProc then
+  # discovers https://example.com/.well-known/authzen-configuration/broker, so the
+  # reverse proxy must route that URL to the broker's /.well-known/authzen-configuration
+  # (see docs/configuration.md); otherwise ExtProc fails startup.
   policy_decision_point: ""
   # Timeout for discovery and each evaluation request. Default: 5s.
   request_timeout: 5s
