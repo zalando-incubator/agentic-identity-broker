@@ -178,6 +178,28 @@ func TestClient_UnusableMaxAgeFailsClosed(t *testing.T) {
 	}
 }
 
+func TestParseMaxAge_QuotedArgumentsAreNotDirectives(t *testing.T) {
+	t.Parallel()
+	for name, tt := range map[string]struct {
+		values []string
+		want   time.Duration
+		ok     bool
+	}{
+		"quoted comma and max-age": {[]string{`private, ext="a, max-age=5", max-age=15`}, 15 * time.Second, true},
+		"escaped quote":            {[]string{`ext="a\", max-age=5", max-age=15`}, 15 * time.Second, true},
+		"only quoted max-age":      {[]string{`ext="max-age=5"`}, 0, false},
+		"two real directives":      {[]string{`ext="x", max-age=15, max-age=15`}, 0, false},
+		"unterminated quote":       {[]string{`ext="a, max-age=15`}, 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := parseMaxAge(tt.values)
+			assert.Equal(t, tt.ok, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestClient_TypedContextValidation(t *testing.T) {
 	t.Parallel()
 	mutate := func(path string, value any) string {

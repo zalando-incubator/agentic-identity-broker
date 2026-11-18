@@ -241,7 +241,11 @@ func parseMaxAge(values []string) (time.Duration, bool) {
 	found := 0
 	var seconds int64
 	for _, value := range values {
-		for _, directive := range strings.Split(value, ",") {
+		directives, ok := splitDirectives(value)
+		if !ok {
+			return 0, false
+		}
+		for _, directive := range directives {
 			name, arg, hasArg := strings.Cut(strings.TrimSpace(directive), "=")
 			if !strings.EqualFold(strings.TrimSpace(name), "max-age") {
 				continue
@@ -262,6 +266,29 @@ func parseMaxAge(values []string) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(seconds) * time.Second, true
+}
+
+// splitDirectives splits a Cache-Control value at the commas between directives. A comma
+// inside a quoted-string argument (RFC 9111 §5.2, RFC 9110 §5.6.4) does not separate
+// directives. An unterminated quoted string makes the value unusable.
+func splitDirectives(value string) ([]string, bool) {
+	var directives []string
+	start, quoted := 0, false
+	for i := 0; i < len(value); i++ {
+		switch c := value[i]; {
+		case quoted && c == '\\':
+			i++
+		case c == '"':
+			quoted = !quoted
+		case !quoted && c == ',':
+			directives = append(directives, value[start:i])
+			start = i + 1
+		}
+	}
+	if quoted {
+		return nil, false
+	}
+	return append(directives, value[start:]), true
 }
 
 func parseDenial(raw json.RawMessage) error {
