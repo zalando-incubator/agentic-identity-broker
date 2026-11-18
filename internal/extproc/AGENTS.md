@@ -32,7 +32,7 @@ internal/extproc/
     syncer.go        ETag long-poll synchronization
     precedence.go    ExtProc candidate ranking and selection
 
-  delegation/
+  grantcontext/
     discovery.go     AuthZEN PDP metadata discovery and exact identifier verification
     client.go        Access Evaluation client: typed permit decoding, max-age, deadline
     context.go       Typed permit context validation (unknown members dropped)
@@ -108,7 +108,7 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `NewOPAAuthorizer(cfg, logger)` | Path mode compiles Rego at startup. Config-file mode denies access until the bundle is ready. |
 | `OPAInput` map alias | OPA document from the opa-envoy-plugin-compatible base, with top-level `type`, `mcp`, and `context` keys |
 | `mcp` input object | Map of decoded MCP fields and agentgateway target-server metadata. Omit fields irrelevant to the request type |
-| `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and token-bound `granted_permission_sets` when present |
+| `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and `granted_permission_sets` (token-bound in disabled mode, permit-derived in enabled mode) |
 | `OPADecision` struct | Policy output: `Action string` (`"allow"`, `"deny"`, or `"approval_required"`), `Reasons []string`, optional `ApprovalContext` |
 | `ParseDecision(map[string]any)` | Fail-closed extraction. `ciba_required` remains deny |
 | `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once. `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |
@@ -234,7 +234,7 @@ Header-only:   → PermitResolver.Resolve → denial 403 / error 503
 ```
 
 - Map the permit through the pure `contextInputFromGrantContext` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
-- Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility fields remain unchanged today; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
+- Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility field names remain supported, with permit-derived values in enabled mode; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
 - Leave `agent_session_id` unchanged. The approval gate uses exchange response identity under ADR 036 in both modes. Enabled mode requires exchange principal/agent UUID to match the permit; mismatch or absence returns terminal API-7 503 before approval or forwarding, without an identity-repair retry.
 - After body-path precedence and before buffering/mutation, call `ExchangeBound` with the observed exchange result. Header-only passes no observed result and uses the evaluated permit after allow.
 - Every successful result has an opaque handle and shared binding cell, including non-cacheable flights. Atomically claim once; compare principal/agent UUID, scope sets and timestamp instants thereafter. Exchange identities must match the permit before any claim. Never rebind or compare credential bytes.
@@ -253,7 +253,7 @@ Read `adrs/036-extproc-approval-cache-and-gate.md` and the Feature 026 contracts
 
 - Gate only standalone MCP tool calls after `approval_required`. Deny approval-required batches and `ciba_required`.
 - Scope approval records only with broker exchange `principal` and `agent_id`. Enabled grant context checks their equality with permit identities; it never overrides them. Do not parse tokens for identity.
-- Keep approvals outside OPA. Permission sets come from the exchange snapshot.
+- Keep approvals outside OPA. In disabled mode, OPA permission sets come from the exchange snapshot; enabled mode derives them from the permit.
 - Keep configured `context.agent_session_id` separate from fixed MCP `mcp.session_id`.
 - Replace full snapshots on `200`. Refresh confirmation time on `304`.
 - Keep one long-poll loop per instance, with active session IDs.

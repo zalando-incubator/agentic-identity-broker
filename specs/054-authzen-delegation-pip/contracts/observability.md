@@ -4,16 +4,18 @@
 **Binding sources**: `coding-standards/LOGGING.md`, `coding-standards/OPENTELEMETRY.md`, ADRs 027/033/048, SR-003/SR-004.
 **Status**: D-7 was approved by mjungsbluth on 2026-11-06 at https://github.com/zalando-incubator/agentic-identity-broker/pull/292#issuecomment-6688524728. Run 42297225880/1 implements section 3, registers both namespaces in `coding-standards/OPENTELEMETRY.md` and publishes the breaking-telemetry changelog/query migration in `docs/reference/token-exchange.md`. Section 1 preserves the pre-migration inventory, not current names. ADR-2's approved log-only mismatch diagnostic is still unimplemented.
 
+**Later corrections**: the breaking-telemetry changelog was removed from `docs/reference/token-exchange.md` because the old identifiers never shipped (§3). The permit-cache namespace is registered as `grant_context`, the namespace the resolver emits. The ADR-2 mismatch diagnostic is implemented in `internal/extproc/server/exchange_result_binding.go`.
+
 ## 1. Historical pre-migration signal inventory
 
 | Signal | Scope / kind or level | Bounded metadata and handling |
 |---|---|---|
-| `authzen.access_evaluation` span | `tokenexchange`, Internal (current implementation's default) | `token_exchange.operation=access_evaluation`; diagnostic outcome, recovery action/target, stage/detail and typed service/agent/grant IDs from the existing diagnostic reference. `access_evaluation.decision=permit|deny|error`; permit `access_evaluation.max_age` integer 0–60; error HTTP status 400/401/403/500. |
+| `authzen.access_evaluation` span | `tokenexchange`, Internal (current implementation's default) | `token_exchange.operation=access_evaluation`; diagnostic outcome, recovery action/target, stage/detail and typed service/agent/grant IDs from the existing diagnostic reference. `access_evaluation.decision=permit\|deny\|error`; permit `access_evaluation.max_age` integer 0–60; error HTTP status 400/401/403/500. |
 | `authzen.access_evaluation.permitted`, `.denied`, `.failed` log events | Existing evaluation audit/security records | Verified identities come from the shared security context/principal policy, never from raw claims. Outcomes and error metadata are bounded; no raw dependency cause or credential. These identifiers are the existing baseline, not the F2 target. |
-| `extproc.grant_context.resolve` span | `extproc`, Internal (current implementation's default) | `grant_context.cache=hit|miss` and the resolution family below; original permit deadline is never extended by observability. |
+| `extproc.grant_context.resolve` span | `extproc`, Internal (current implementation's default) | `grant_context.cache=hit\|miss` and the resolution family below; original permit deadline is never extended by observability. |
 | `extproc.grant_context.evaluate` span | `extproc`, Client | Resolution family below; no body, headers, full URL or requested resource URI. |
 | `extproc.grant_context.denied` log event | Info, expected delegation denial | `operation=grant_resolution`; allowlisted `grant_context.code`; cache hit/miss and diagnostic stage/detail. |
-| `extproc.grant_context.unavailable` log event | Warn, fail-closed delegation failure | `error_kind=timeout|unavailable|rejected|invalid_response`; resolution emitters also carry operation/cache metadata. Emitted for resolution failure, terminal exchange-result binding conflict, or invalid grant timestamp (see §2.1); no wrapped cause. |
+| `extproc.grant_context.unavailable` log event | Warn, fail-closed delegation failure | `error_kind=timeout\|unavailable\|rejected\|invalid_response`; resolution emitters also carry operation/cache metadata. Emitted for resolution failure, terminal exchange-result binding conflict, or invalid grant timestamp (see §2.1); no wrapped cause. |
 | `extproc.grant_context.permit_expired` log event | Warn | `operation=grant_resolution`; bounded unavailable diagnostic; no permit/context contents. |
 | Permit cache hit/miss/success diagnostics | Debug | Closed hit/miss values and success diagnostics only. Do not add principals to Debug records. |
 
@@ -49,7 +51,7 @@ and header-only paths. Its canonical classification key is `error_kind`, not `gr
 
 | Emitter | `error_kind` | Additional bounded metadata / response |
 |---|---|---|
-| `resolveGrantContext`: permit resolution failure | `timeout`, `unavailable`, `rejected`, or `invalid_response` (untyped errors use `unavailable`) | `operation=grant_resolution`, `grant_context.cache=hit|miss`; 503 `grant context unavailable`. |
+| `resolveGrantContext`: permit resolution failure | `timeout`, `unavailable`, `rejected`, or `invalid_response` (untyped errors use `unavailable`) | `operation=grant_resolution`, `grant_context.cache=hit\|miss`; 503 `grant context unavailable`. |
 | `exchangeErrorResponse`: terminal `ErrExchangeResultBindingConflict` | `unavailable` | 503 `exchange result binding unavailable`; no grant, scopes or exchange-result contents. |
 | `exchangeErrorResponse`: local `errInvalidGrantTimestamp` from `exchangeWithGrantContext` | `invalid_response` | 503 `grant context unavailable`; never export the malformed timestamp or parse cause. Arbitrary permit-client errors are not timestamp failures. |
 
@@ -62,7 +64,7 @@ Reason: [approved F5/P5](https://github.com/zalando-incubator/agentic-identity-b
 
 ## 3. Exact registry and identifier migration (approved D-7; T103)
 
-The pre-migration baseline violated OPENTELEMETRY §§3.2, 3.3 and 4.1. The supplied five-item approval covers this concrete mapping. The old identifiers below are retained for query migration and historical review; production now emits only the targets. No audit record or span is dual-emitted. Query both old and new names during rolling deployment and the desired historical retention window, then retire the old query branches; attribute filters remain unchanged.
+The pre-migration baseline violated OPENTELEMETRY §§3.2, 3.3 and 4.1. The supplied five-item approval covers this concrete mapping. The old identifiers below never shipped in a release and are retained only as history; production emits only the targets. No audit record or span is dual-emitted. Operators query only the target names; attribute filters remain unchanged.
 
 | Signal | Old identifier / kind | Required target / explicit kind |
 |---|---|---|
@@ -80,11 +82,11 @@ The pre-migration baseline violated OPENTELEMETRY §§3.2, 3.3 and 4.1. The supp
 | Namespace | Describes | Reference |
 |---|---|---|
 | `access_evaluation` | Credential-free broker AuthZEN decision and freshness | `specs/054-authzen-delegation-pip/contracts/observability.md` |
-| `delegation` | ExtProc permit-cache lookup | `specs/054-authzen-delegation-pip/contracts/observability.md` |
+| `grant_context` | ExtProc permit-cache lookup | `specs/054-authzen-delegation-pip/contracts/observability.md` |
 
 Attribute values remain `access_evaluation.decision=permit|deny|error`, permit-only integer `access_evaluation.max_age` 0–60 and `grant_context.cache=hit|miss`. Existing `token_exchange.*` diagnostic families and semantic HTTP/error keys are already registered and unchanged. Do not add principal attributes pending #356, metrics, request values or synonym namespaces.
 
-**Migration behavior**: replace broker span/event identifiers atomically; do not dual-emit audit records or duplicate spans. Preserve bounded outcomes/levels and constructor plumbing. Update queries, pinned tests and diagnostic docs to the target names. Record old→new identifiers, unchanged attribute names and rollout guidance in a dedicated breaking-telemetry changelog section of `docs/reference/token-exchange.md` and its feature-local counterpart here. No metric rename exists, so the one-release metric dual-emission rule does not apply. Main alternative: retain old identifiers under a standard exception; rejected because the existing scope/name rule can be followed without weakening it.
+**Migration behavior**: replace broker span/event identifiers atomically; do not dual-emit audit records or duplicate spans. Preserve bounded outcomes/levels and constructor plumbing. Update queries, pinned tests and diagnostic docs to the target names. Because the old identifiers never shipped, `docs/reference/token-exchange.md` carries no breaking-telemetry changelog or rollout query guidance. No metric rename exists, so the one-release metric dual-emission rule does not apply. Main alternative: retain old identifiers under a standard exception; rejected because the existing scope/name rule can be followed without weakening it.
 
 **Publication prerequisite satisfied in run 42297225880/1**: the implementation workflow now allows `coding-standards/**`, and this change adds both exact namespace rows together with the code/test migration. No workflow, permission or allowlist is changed by the implementation worker. The former publication blocker is resolved; telemetry compliance does not establish completion of the independent token-binding work.
 
