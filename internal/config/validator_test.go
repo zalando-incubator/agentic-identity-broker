@@ -224,6 +224,50 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestValidateEndUserPublicURLAsAuthZENBase(t *testing.T) {
+	tests := []struct {
+		name                  string
+		publicURL             string
+		tokenExchangeDisabled bool
+		wantValid             bool
+	}{
+		{name: "query", publicURL: "https://broker.example.com?region=eu"},
+		{name: "empty query", publicURL: "https://broker.example.com/?"},
+		{name: "fragment", publicURL: "https://broker.example.com#pdp"},
+		{name: "empty fragment", publicURL: "https://broker.example.com/broker#"},
+		{name: "origin", publicURL: "https://broker.example.com", wantValid: true},
+		{name: "origin with trailing slash", publicURL: "https://broker.example.com/", wantValid: true},
+		{name: "path prefix", publicURL: "https://example.com/broker", wantValid: true},
+		{name: "query without token exchange", publicURL: "https://broker.example.com?region=eu", tokenExchangeDisabled: true, wantValid: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.Server.EndUser.PublicURL = tt.publicURL
+			if !tt.tokenExchangeDisabled {
+				cfg.TokenExchange.ClaimExtraction.PrincipalExpression = "subject_token.sub"
+				cfg.TokenExchange.Authorization.CEL.Expression = "true"
+			}
+			err := Validate(cfg)
+			if tt.wantValid {
+				if err != nil {
+					t.Fatalf("Validate() returned error for end-user URL %q: %v", tt.publicURL, err)
+				}
+				return
+			}
+
+			var configErr *config.ConfigError
+			if !errors.As(err, &configErr) {
+				t.Fatalf("Validate() error = %v, want *config.ConfigError", err)
+			}
+			if configErr.Field != "server.enduser.public_url" {
+				t.Errorf("Validate() error field = %q, want server.enduser.public_url", configErr.Field)
+			}
+		})
+	}
+}
+
 func TestValidateAdminPublicURL(t *testing.T) {
 	tests := []struct {
 		name      string

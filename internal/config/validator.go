@@ -86,6 +86,14 @@ func Validate(cfg *ports.Config) error {
 		}
 		return err
 	}
+	// Configured token exchange publishes the AuthZEN endpoints, whose identifier and
+	// evaluation URL are derived from the end-user public URL (ADR 048 §1).
+	tokenExchange := &cfg.TokenExchange
+	if issuerURI != "" && tokenExchange.ClaimExtraction.PrincipalExpression != "" && tokenExchange.Authorization.CEL.Expression != "" {
+		if err := validateAuthZENPublicBase(cfg.Server.EndUser.PublicURL); err != nil {
+			return err
+		}
+	}
 	if err := validateTokenRefreshConfig(&cfg.TokenRefresh); err != nil {
 		return err
 	}
@@ -228,6 +236,21 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 		return err
 	}
 
+	return nil
+}
+
+// validateAuthZENPublicBase rejects a query or fragment, because the AuthZEN evaluation
+// endpoint is advertised by appending its path to the public URL.
+func validateAuthZENPublicBase(publicURL string) error {
+	u, err := url.Parse(publicURL)
+	if err != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(publicURL, "#") {
+		return formatValidationError(
+			"server.enduser.public_url",
+			publicURL,
+			"HTTP/HTTPS URL without query or fragment when token exchange is configured (AuthZEN policy decision point)",
+			nil,
+		)
+	}
 	return nil
 }
 
