@@ -333,7 +333,7 @@ func (s *AccessEvaluationService) project(ctx context.Context, d *ResolvedGrant)
 		PermissionSets: make([]GrantPermissionSet, 0, len(d.Grant.GrantedPermissionSets)),
 	}
 	if d.Grant.ValidUntil != nil {
-		result.Grant.ValidUntil = d.Grant.ValidUntil.UTC().Format(time.RFC3339)
+		result.Grant.ValidUntil = d.Grant.ValidUntil.UTC().Format(time.RFC3339Nano)
 	}
 	for _, entry := range d.Grant.GrantedPermissionSets {
 		ps := d.PermissionSets[entry.PermissionSetID]

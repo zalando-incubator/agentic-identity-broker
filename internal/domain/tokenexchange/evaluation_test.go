@@ -294,7 +294,9 @@ func TestAccessEvaluation_MaxAgeBoundedByGrantExpiry(t *testing.T) {
 			require.Equal(t, DecisionPermit, decision.Kind)
 			assert.Equal(t, tt.maxAge, decision.MaxAge)
 			if tt.remaining != nil {
-				assert.Equal(t, validUntil.UTC().Format(time.RFC3339), decision.Context.Grant.ValidUntil)
+				reported, err := time.Parse(time.RFC3339Nano, decision.Context.Grant.ValidUntil)
+				require.NoError(t, err)
+				assert.True(t, validUntil.Equal(reported), "valid_until %s must be the exact stored expiry %s", reported, validUntil)
 			}
 		})
 	}
