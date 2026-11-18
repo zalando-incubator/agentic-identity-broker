@@ -690,10 +690,6 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 			response, diagnostic = grantContextFailureResponse(grantContextErr)
 			return response
 		}
-		if response, expired := s.grantContextExpired(ctx, logger, result); expired {
-			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
-			return response
-		}
 		state.grantContext = result
 		contextInput = contextInputFromGrantContext(result, state.agentSessionID)
 	}
@@ -705,6 +701,12 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 
+	if state.grantContext != nil {
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
+			return response
+		}
+	}
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed)

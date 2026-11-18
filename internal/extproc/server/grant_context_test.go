@@ -479,6 +479,20 @@ func TestGrantContext_HeaderOnlyOrdering(t *testing.T) {
 	}
 }
 
+func TestGrantContext_HeaderOnlyChecksDeadlineImmediatelyBeforePolicy(t *testing.T) {
+	var h *grantContextHarness
+	h = newGrantContextHarness(t, func() (grantcontext.Result, error) { return samplePermit(h.clock.Now()), nil })
+
+	resp, err := sendRequestHeadersWithMetadata(t, h.client, map[string]string{":method": "GET", ":path": "/%zz"}, validTokenExchangeMetadata("mcp"), true)
+
+	require.NoError(t, err)
+	status, body := immediate(t, resp)
+	assert.Equal(t, 403, status, "input construction precedes the deadline check, which runs immediately before policy as on the body path")
+	assert.Equal(t, "failed to parse request protocol", body["error_description"])
+	assert.Zero(t, h.policies.Load())
+	assert.Zero(t, h.exchanges.Load())
+}
+
 func TestGrantContext_RejectsExpiryBeforeFinalForwarding(t *testing.T) {
 	for _, path := range []string{"body", "batch", "header-only"} {
 		t.Run(path, func(t *testing.T) {
