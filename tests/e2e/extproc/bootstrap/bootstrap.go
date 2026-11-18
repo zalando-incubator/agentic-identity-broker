@@ -113,7 +113,7 @@ func (e *TestEnvironment) Start() {
 
 	approvalGate, err := e.newApprovalGate(exchanger)
 	Expect(err).NotTo(HaveOccurred())
-	e.startGRPCServer(e.newServer(exchanger, authorizer, approvalGate))
+	Expect(e.startGRPCServer(e.newServer(exchanger, authorizer, approvalGate))).To(Succeed())
 	e.startApprovalSync()
 }
 
@@ -188,7 +188,9 @@ func (e *TestEnvironment) StartWithGrantContext() (err error) {
 		e.grantContextResolver = resolver
 		svc.WithPermitResolver(resolver)
 	}
-	e.startGRPCServer(svc)
+	if err := e.startGRPCServer(svc); err != nil {
+		return err
+	}
 	e.startApprovalSync()
 	return nil
 }
@@ -236,9 +238,11 @@ func (e *TestEnvironment) startApprovalSync() {
 }
 
 // startGRPCServer creates and starts the gRPC server with the provided ExtProc service.
-func (e *TestEnvironment) startGRPCServer(svc *extprocserver.Server) {
+func (e *TestEnvironment) startGRPCServer(svc *extprocserver.Server) error {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	Expect(err).NotTo(HaveOccurred(), "failed to create gRPC listener")
+	if err != nil {
+		return fmt.Errorf("failed to create gRPC listener: %w", err)
+	}
 	e.grpcListener = listener
 	e.grpcAddress = listener.Addr().String()
 
@@ -250,6 +254,7 @@ func (e *TestEnvironment) startGRPCServer(svc *extprocserver.Server) {
 			e.logger.Error("gRPC server error", "error", serveErr)
 		}
 	}()
+	return nil
 }
 
 // Stop shuts down all servers. Safe to call multiple times.
