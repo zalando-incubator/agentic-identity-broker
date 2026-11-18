@@ -108,6 +108,18 @@ func (c *joinedBindingContext) Done() <-chan struct{} {
 	return c.Context.Done()
 }
 
+func receiveWithin[T any](t *testing.T, ch <-chan T, msg string) T {
+	t.Helper()
+	select {
+	case value := <-ch:
+		return value
+	case <-time.After(5 * time.Second):
+		t.Fatal(msg)
+		var zero T
+		return zero
+	}
+}
+
 func TestBindingPortSharedRetryNeverRebindsOrLoops(t *testing.T) {
 	for _, lifetime := range []int{3600, 0} {
 		for _, outcome := range []string{"matching", "unbound", "conflict", "failure"} {
@@ -141,7 +153,9 @@ func TestBindingPortSharedRetryNeverRebindsOrLoops(t *testing.T) {
 					return replacement, nil
 				})
 				<-entered
-				ctx := &joinedBindingContext{Context: context.Background(), joined: make(chan struct{})}
+				deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				ctx := &joinedBindingContext{Context: deadline, joined: make(chan struct{})}
 				done := make(chan singleflight.Result, 1)
 				go func() {
 					r, e := te.ExchangeBound(ctx, "SUBJECT_SECRET", "https://resource.example", &initial, portBinding("read"))
@@ -155,8 +169,8 @@ func TestBindingPortSharedRetryNeverRebindsOrLoops(t *testing.T) {
 					t.Fatal("retry not joined")
 				}
 				unblock()
-				<-leader
-				r := <-done
+				receiveWithin(t, leader, "the leader flight did not complete")
+				r := receiveWithin(t, done, "the retry did not deliver a result")
 				switch outcome {
 				case "conflict":
 					assert.ErrorIs(t, r.Err, ErrExchangeResultBindingConflict)
@@ -195,7 +209,9 @@ func TestBindingPortRetryIsNotSatisfiedByCacheOnlyFlight(t *testing.T) {
 		return value, err
 	})
 	<-entered
-	ctx := &joinedBindingContext{Context: context.Background(), joined: make(chan struct{})}
+	deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx := &joinedBindingContext{Context: deadline, joined: make(chan struct{})}
 	done := make(chan singleflight.Result, 1)
 	go func() {
 		r, e := te.ExchangeBound(ctx, key.subjectToken, key.resourceURI, &initial, portBinding("read"))
@@ -207,8 +223,8 @@ func TestBindingPortRetryIsNotSatisfiedByCacheOnlyFlight(t *testing.T) {
 		t.Fatal("retry did not join the cache-only flight")
 	}
 	unblock()
-	<-leader
-	r := <-done
+	receiveWithin(t, leader, "the cache-only flight did not complete")
+	r := receiveWithin(t, done, "the retry did not deliver a result")
 
 	require.NoError(t, r.Err, "a cache-only delivery must not consume the one additional exchange")
 	result := r.Val.(ExchangeResult)

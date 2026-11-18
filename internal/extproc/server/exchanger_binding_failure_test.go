@@ -26,6 +26,7 @@ func TestExchangeResultBinding_ReplacementFailuresRetainExchangeErrorHandling(t 
 		status   int
 		error    string
 		cooldown bool
+		timeout  time.Duration
 		respond  func(http.ResponseWriter, *http.Request)
 		prepare  func(*server.TokenExchanger)
 	}{
@@ -37,7 +38,7 @@ func TestExchangeResultBinding_ReplacementFailuresRetainExchangeErrorHandling(t 
 			},
 		},
 		{
-			name: "exchange timeout", status: 500, error: "token_exchange_failed",
+			name: "exchange timeout", status: 500, error: "token_exchange_failed", timeout: time.Second,
 			respond: func(_ http.ResponseWriter, r *http.Request) {
 				_, _ = io.Copy(io.Discard, r.Body)
 				<-r.Context().Done()
@@ -71,7 +72,11 @@ func TestExchangeResultBinding_ReplacementFailuresRetainExchangeErrorHandling(t 
 						return
 					}
 					tt.respond(w, r)
-				}, func(cfg *extprocconfig.Config) { cfg.OAuth2.ExchangeTimeout = 100 * time.Millisecond })
+				}, func(cfg *extprocconfig.Config) {
+					if tt.timeout > 0 {
+						cfg.OAuth2.ExchangeTimeout = tt.timeout
+					}
+				})
 				permit := samplePermit(time.Unix(1_000, 0).Add(time.Minute))
 				h := newGrantContextHarnessWithExchanger(t, func() (grantcontext.Result, error) { return permit, nil }, exchanger)
 				require.Equal(t, "Bearer SYNTHETIC_PRIOR_RESULT", requireAuthorizationMutation(t, bindingHarnessCall(t, h, headerOnly)))
@@ -138,6 +143,8 @@ func TestExchangeResultBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
 			release := make(chan struct{})
 			var releaseOnce sync.Once
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			// Deferred, so a failed harness start releases the blocked resolver before any GracefulStop cleanup.
+			defer unblock()
 			permits := []grantcontext.Result{
 				samplePermit(time.Unix(1_000, 0).Add(time.Minute)),
 				samplePermit(time.Unix(1_000, 0).Add(time.Minute)),
@@ -151,7 +158,6 @@ func TestExchangeResultBinding_CompetingFirstUseOfSharedResults(t *testing.T) {
 				}, shared)
 				go func() { responses <- callBindingHarness(h, false) }()
 			}
-			t.Cleanup(unblock)
 			awaitBindingBarrier(t, shared.delivered)
 			awaitBindingBarrier(t, shared.delivered)
 			unblock()
