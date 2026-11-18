@@ -85,8 +85,12 @@ func (j *grantContextJourney) request(method string, endOfStream bool, resource 
 }
 
 func (j *grantContextJourney) BodyCall(resource string) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse) {
+	return j.BodyCallWith(resource, nil)
+}
+
+func (j *grantContextJourney) BodyCallWith(resource string, extra map[string]string) (*extprocv3.ProcessingResponse, *extprocv3.ProcessingResponse) {
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_repositories"}}`)
-	return extprochelpers.SendHeadersAndBody(context.Background(), j.client, j.request(http.MethodPost, false, resource, nil), body)
+	return extprochelpers.SendHeadersAndBody(context.Background(), j.client, j.request(http.MethodPost, false, resource, extra), body)
 }
 
 func (j *grantContextJourney) HeaderOnly(resource string, extra map[string]string) *extprocv3.ProcessingResponse {
@@ -257,6 +261,44 @@ func (b *overlapBarrier) hold(kind string) {
 	}
 }
 
+// advertisedEndpointPDP fronts the broker as token endpoint origin and PDP. It advertises an
+// evaluation endpoint that differs from the default path and counts requests to each.
+type advertisedEndpointPDP struct {
+	server      *httptest.Server
+	advertised  atomic.Int32
+	defaultPath atomic.Int32
+}
+
+const advertisedEvaluationPath = "/pdp/v1/evaluate"
+
+func newAdvertisedEndpointPDP(brokerURL string) *advertisedEndpointPDP {
+	target, err := url.Parse(brokerURL)
+	Expect(err).NotTo(HaveOccurred())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	p := &advertisedEndpointPDP{}
+	p.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/authzen-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"policy_decision_point":      p.server.URL,
+				"access_evaluation_endpoint": p.server.URL + advertisedEvaluationPath,
+			})
+		case advertisedEvaluationPath:
+			p.advertised.Add(1)
+			r.URL.Path = "/access/v1/evaluation"
+			proxy.ServeHTTP(w, r)
+		case "/access/v1/evaluation":
+			p.defaultPath.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			proxy.ServeHTTP(w, r)
+		}
+	}))
+	DeferCleanup(p.server.Close)
+	return p
+}
+
 func immediateJSON(resp *extprocv3.ProcessingResponse) (uint32, map[string]string) {
 	Expect(resp).NotTo(BeNil())
 	var body map[string]string
@@ -286,8 +328,13 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 			barrier = newOverlapBarrier(f.Enduser.BaseURL())
 			options.ExchangeEndpoint = barrier.server.URL + "/oauth2/token"
 		})
-		headersResp, bodyResp := j.BodyCall(authzenRepoResource)
-		Expect(bodyResp).To(extprochelpers.BeForwardedRequestBody(), "the canonical policy allows only with the direct members and permit-derived permission sets")
+		grant, err := j.broker.Storage.UserGrants().FindByPrincipalAndAgent(context.Background(), j.broker.Principal, j.broker.Agent.ID)
+		Expect(err).NotTo(HaveOccurred())
+		headersResp, bodyResp := j.BodyCallWith(authzenRepoResource, map[string]string{
+			"x-expected-grant-id":     grant.ID.String(),
+			"x-expected-grant-update": grant.UpdatedAt.Format(time.RFC3339Nano),
+		})
+		Expect(bodyResp).To(extprochelpers.BeForwardedRequestBody(), "the canonical policy allows only with the direct members, the expected grant and permit-derived permission sets")
 		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(HavePrefix("Bearer "))
 		Expect(barrier.overlapped.Load()).To(BeTrue(), "evaluation and exchange were in flight at the broker together")
 		Expect(j.broker.EvaluationCount()).To(Equal(1))
@@ -379,135 +426,155 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 		Expect(exchangeCalls.Load()).To(Equal(int32(1)), "an identity mismatch is terminal")
 	})
 
-	// Scenario US3.2 from specs/054-authzen-delegation-pip/spec.md
-	It("resolves before header-only policy with the same direct members and exchanges only after allow", func() {
-		j := newGrantContextJourney(time.Minute, true)
-		resp := j.HeaderOnly(authzenRepoResource, nil)
-		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(resp)).To(HavePrefix("Bearer "), "header-only policy allowed, then exchange ran")
-		Expect(j.broker.EvaluationCount()).To(Equal(1))
-	})
+	Context("with a one-minute permit cap", func() {
+		var j *grantContextJourney
 
-	// Scenario US3.3 from specs/054-authzen-delegation-pip/spec.md
-	It("returns 403 access_denied with the consent URL before policy", func() {
-		j := newGrantContextJourney(time.Minute, true)
-		Expect(j.broker.Storage.UserGrants().Delete(context.Background(), j.broker.Grant.ID)).To(Succeed())
-		headersResp, bodyResp := j.BodyCall(authzenRepoResource)
-		Expect(bodyResp).To(BeNil())
-		expectGrantContextDenied(headersResp, j.broker.Enduser.BaseURL()+"/agents/"+j.broker.Agent.ID.String())
-		expectGrantContextDenied(j.HeaderOnly(authzenRepoResource, nil), j.broker.Enduser.BaseURL()+"/agents/"+j.broker.Agent.ID.String())
-	})
-
-	// Scenario US3.4 from specs/054-authzen-delegation-pip/spec.md
-	It("re-resolves after permit freshness lapses and denies a revoked grant despite a cached token", func() {
-		j := newGrantContextJourney(2*time.Second, true)
-		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		j.broker.RevokeGrant()
-		Eventually(func() uint32 {
-			headersResp, _ := j.BodyCall(authzenRepoResource)
-			return extprochelpers.ExtractImmediateResponseStatus(headersResp)
-		}, 5*time.Second, 200*time.Millisecond).Should(Equal(uint32(http.StatusForbidden)))
-	})
-
-	// Scenario US3.5 from specs/054-authzen-delegation-pip/spec.md
-	It("re-consults after consent immediately and preserves the body exchange cooldown", func() {
-		j := newGrantContextJourney(time.Second, true)
-		consentURL := j.broker.Enduser.BaseURL() + "/agents/" + j.broker.Agent.ID.String()
-		j.broker.RevokeGrant()
-		expectGrantContextDenied(j.HeaderOnly(authzenRepoResource, nil), consentURL)
-		j.broker.ConsentToRepo()
-		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(j.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "),
-			"consent takes effect immediately: the denial was not cached")
-		Expect(j.broker.EvaluationCount()).To(Equal(2))
-
-		// A separate consumer has no exchanged token from the header-only permit above.
-		bodyJourney := newGrantContextJourney(time.Second, true)
-		bodyConsentURL := bodyJourney.broker.Enduser.BaseURL() + "/agents/" + bodyJourney.broker.Agent.ID.String()
-		bodyJourney.broker.RevokeGrant()
-		headersResp, bodyResp := bodyJourney.BodyCall(authzenRepoResource)
-		Expect(bodyResp).To(BeNil())
-		expectGrantContextDenied(headersResp, bodyConsentURL)
-		Expect(bodyJourney.broker.EvaluationCount()).To(Equal(1))
-		bodyJourney.broker.ConsentToRepo()
-		headersResp, bodyResp = bodyJourney.BodyCall(authzenRepoResource)
-		Expect(bodyResp).To(BeNil(), "the independent exchange cooldown still blocks forwarding")
-		Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
-		challenge := extprochelpers.ExtractImmediateResponseHeader(headersResp, "www-authenticate")
-		Expect(challenge).To(HavePrefix(`Bearer error="insufficient_scope"`))
-		Expect(challenge).To(ContainSubstring(`error_uri="` + bodyConsentURL + `"`))
-		Expect(bodyJourney.broker.EvaluationCount()).To(Equal(2), "the delegation denial was not cached")
-		Eventually(func() bool { return forwarded(bodyJourney.BodyCall(authzenRepoResource)) }, 8*time.Second, 250*time.Millisecond).Should(BeTrue())
-	})
-
-	// Scenario US3.6 from specs/054-authzen-delegation-pip/spec.md
-	It("fails closed when the broker is unavailable after permit expiry", func() {
-		j := newGrantContextJourney(time.Second, true)
-		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		j.broker.Enduser.CloseListener()
-		Eventually(func() uint32 {
-			headersResp, _ := j.BodyCall(authzenRepoResource)
-			return extprochelpers.ExtractImmediateResponseStatus(headersResp)
-		}, 5*time.Second, 200*time.Millisecond).Should(Equal(uint32(http.StatusServiceUnavailable)))
-		headersResp, bodyResp := j.BodyCall(authzenRepoResource)
-		Expect(bodyResp).To(BeNil())
-		expectGrantContextUnavailable(headersResp)
-		expectGrantContextUnavailable(j.HeaderOnly(authzenRepoResource, nil))
-	})
-
-	// Scenario US3.7 from specs/054-authzen-delegation-pip/spec.md
-	It("isolates the cache per subject and resource and honors max_staleness", func() {
-		j := newGrantContextJourney(2*time.Second, true)
-		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		warmedAt := time.Now()
-		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		Expect(j.broker.EvaluationCount()).To(Equal(1), "the second request reuses the fresh permit")
-
-		_, _ = j.BodyCall(authzenOtherResource)
-		Expect(j.broker.EvaluationCount()).To(Equal(2), "another resource never uses the cached permit")
-		original := j.broker.SubjectToken
-		j.broker.SubjectToken = j.broker.SignSubject(time.Now().Add(time.Hour).Add(time.Second))
-		_, _ = j.BodyCall(authzenRepoResource)
-		Expect(j.broker.EvaluationCount()).To(Equal(3), "another subject token never uses the cached permit")
-
-		j.broker.SubjectToken = original
-		Expect(time.Since(warmedAt)).To(BeNumerically("<", 2*time.Second), "still inside the original permit's local cap")
-		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		Expect(j.broker.EvaluationCount()).To(Equal(3), "the original pair reuses its permit before the cap")
-		awaitBindingPermitExpiry(warmedAt)
-		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-		Expect(j.broker.EvaluationCount()).To(Equal(4), "the 2 s local cap forces revalidation of the original pair despite the 60 s permit")
-	})
-
-	// Scenario US3.8 from specs/054-authzen-delegation-pip/spec.md
-	It("makes the same canonical-ID policy decision across different UUIDs on both paths with permit-derived permission-set inputs", func() {
-		first := newGrantContextJourney(time.Minute, true)
-		second := newGrantContextJourney(time.Minute, true)
-		Expect(second.broker.Agent.ID).NotTo(Equal(first.broker.Agent.ID))
-		Expect(second.broker.Repo.ID).NotTo(Equal(first.broker.Repo.ID))
-		Expect(second.broker.Reader.ID).NotTo(Equal(first.broker.Reader.ID))
-		for _, j := range []*grantContextJourney{first, second} {
-			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
-			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(j.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "))
-		}
-
-		withoutReaderCanonicalID := newGrantContextJourney(time.Minute, true, func(f *authzenFixture) {
-			f.Reader.CanonicalID = nil
-			Expect(f.Storage.PermissionSets().Update(context.Background(), f.Reader)).To(Succeed())
+		BeforeEach(func() {
+			j = newGrantContextJourney(time.Minute, true)
 		})
-		_, bodyResp := withoutReaderCanonicalID.BodyCall(authzenRepoResource)
-		status, body := immediateJSON(bodyResp)
-		Expect(status).To(Equal(uint32(http.StatusForbidden)), "the policy keys on canonical IDs, not UUIDs")
-		Expect(body["error_description"]).To(ContainSubstring("delegation does not cover repo-api"))
+
+		// Scenario US3.2 from specs/054-authzen-delegation-pip/spec.md
+		It("resolves before header-only policy with the same direct members and exchanges only after allow", func() {
+			resp := j.HeaderOnly(authzenRepoResource, nil)
+			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(resp)).To(HavePrefix("Bearer "), "header-only policy allowed, then exchange ran")
+			Expect(j.broker.EvaluationCount()).To(Equal(1))
+		})
+
+		// Scenario US3.3 from specs/054-authzen-delegation-pip/spec.md
+		It("returns 403 access_denied with the consent URL before policy", func() {
+			Expect(j.broker.Storage.UserGrants().Delete(context.Background(), j.broker.Grant.ID)).To(Succeed())
+			headersResp, bodyResp := j.BodyCall(authzenRepoResource)
+			Expect(bodyResp).To(BeNil())
+			expectGrantContextDenied(headersResp, j.broker.Enduser.BaseURL()+"/agents/"+j.broker.Agent.ID.String())
+			expectGrantContextDenied(j.HeaderOnly(authzenRepoResource, nil), j.broker.Enduser.BaseURL()+"/agents/"+j.broker.Agent.ID.String())
+		})
+
+		// Scenario US3.8 from specs/054-authzen-delegation-pip/spec.md
+		It("makes the same canonical-ID policy decision across different UUIDs on both paths with permit-derived permission-set inputs", func() {
+			first := j
+			second := newGrantContextJourney(time.Minute, true)
+			Expect(second.broker.Agent.ID).NotTo(Equal(first.broker.Agent.ID))
+			Expect(second.broker.Repo.ID).NotTo(Equal(first.broker.Repo.ID))
+			Expect(second.broker.Reader.ID).NotTo(Equal(first.broker.Reader.ID))
+			for _, journey := range []*grantContextJourney{first, second} {
+				Expect(forwarded(journey.BodyCall(authzenRepoResource))).To(BeTrue())
+				Expect(extprochelpers.ExtractMutatedAuthorizationHeader(journey.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "))
+			}
+
+			withoutReaderCanonicalID := newGrantContextJourney(time.Minute, true, func(f *authzenFixture) {
+				f.Reader.CanonicalID = nil
+				Expect(f.Storage.PermissionSets().Update(context.Background(), f.Reader)).To(Succeed())
+			})
+			_, bodyResp := withoutReaderCanonicalID.BodyCall(authzenRepoResource)
+			status, body := immediateJSON(bodyResp)
+			Expect(status).To(Equal(uint32(http.StatusForbidden)), "the policy keys on canonical IDs, not UUIDs")
+			Expect(body["error_description"]).To(ContainSubstring("delegation does not cover repo-api"))
+		})
+
+		// Scenario US3.9 from specs/054-authzen-delegation-pip/spec.md
+		It("denies a header-only request by policy without calling exchange", func() {
+			resp := j.HeaderOnly(authzenRepoResource, map[string]string{"x-policy-deny": "true"})
+			status, body := immediateJSON(resp)
+			Expect(status).To(Equal(uint32(http.StatusForbidden)))
+			Expect(body["error_description"]).To(ContainSubstring("header requested a policy denial"))
+			Expect(j.broker.EvaluationCount()).To(Equal(1))
+			Expect(j.broker.ExchangeCount()).To(BeZero(), "no exchange after a policy denial")
+		})
 	})
 
-	// Scenario US3.9 from specs/054-authzen-delegation-pip/spec.md
-	It("denies a header-only request by policy without calling exchange", func() {
-		j := newGrantContextJourney(time.Minute, true)
-		resp := j.HeaderOnly(authzenRepoResource, map[string]string{"x-policy-deny": "true"})
-		status, body := immediateJSON(resp)
-		Expect(status).To(Equal(uint32(http.StatusForbidden)))
-		Expect(body["error_description"]).To(ContainSubstring("header requested a policy denial"))
-		Expect(j.broker.EvaluationCount()).To(Equal(1))
-		Expect(j.broker.ExchangeCount()).To(BeZero(), "no exchange after a policy denial")
+	Context("with a two-second permit cap", func() {
+		var j *grantContextJourney
+
+		BeforeEach(func() {
+			j = newGrantContextJourney(2*time.Second, true)
+		})
+
+		// Scenario US3.4 from specs/054-authzen-delegation-pip/spec.md
+		It("re-resolves after permit freshness lapses and denies a revoked grant despite a cached token", func() {
+			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			j.broker.RevokeGrant()
+			Eventually(func() uint32 {
+				headersResp, _ := j.BodyCall(authzenRepoResource)
+				return extprochelpers.ExtractImmediateResponseStatus(headersResp)
+			}, 5*time.Second, 200*time.Millisecond).Should(Equal(uint32(http.StatusForbidden)))
+		})
+
+		// Scenario US3.7 from specs/054-authzen-delegation-pip/spec.md
+		It("isolates the cache per subject and resource and honors max_staleness", func() {
+			// The permit deadline starts between these instants: before them it cannot have
+			// expired, after them it must have.
+			warmStart := time.Now()
+			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			warmedAt := time.Now()
+			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			Expect(j.broker.EvaluationCount()).To(Equal(1), "the second request reuses the fresh permit")
+
+			_, _ = j.BodyCall(authzenOtherResource)
+			Expect(j.broker.EvaluationCount()).To(Equal(2), "another resource never uses the cached permit")
+			original := j.broker.SubjectToken
+			j.broker.SubjectToken = j.broker.SignSubject(time.Now().Add(time.Hour).Add(time.Second))
+			_, _ = j.BodyCall(authzenRepoResource)
+			Expect(j.broker.EvaluationCount()).To(Equal(3), "another subject token never uses the cached permit")
+
+			j.broker.SubjectToken = original
+			Expect(time.Since(warmStart)).To(BeNumerically("<", 2*time.Second), "still inside the original permit's local cap")
+			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			Expect(j.broker.EvaluationCount()).To(Equal(3), "the original pair reuses its permit before the cap")
+			awaitBindingPermitExpiry(warmedAt)
+			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			Expect(j.broker.EvaluationCount()).To(Equal(4), "the 2 s local cap forces revalidation of the original pair despite the 60 s permit")
+		})
+	})
+
+	Context("with a one-second permit cap", func() {
+		var j *grantContextJourney
+
+		BeforeEach(func() {
+			j = newGrantContextJourney(time.Second, true)
+		})
+
+		// Scenario US3.5 from specs/054-authzen-delegation-pip/spec.md
+		It("re-consults after consent immediately and preserves the body exchange cooldown", func() {
+			consentURL := j.broker.Enduser.BaseURL() + "/agents/" + j.broker.Agent.ID.String()
+			j.broker.RevokeGrant()
+			expectGrantContextDenied(j.HeaderOnly(authzenRepoResource, nil), consentURL)
+			j.broker.ConsentToRepo()
+			Expect(extprochelpers.ExtractMutatedAuthorizationHeader(j.HeaderOnly(authzenRepoResource, nil))).To(HavePrefix("Bearer "),
+				"consent takes effect immediately: the denial was not cached")
+			Expect(j.broker.EvaluationCount()).To(Equal(2))
+
+			// A separate consumer has no exchanged token from the header-only permit above.
+			bodyJourney := newGrantContextJourney(time.Second, true)
+			bodyConsentURL := bodyJourney.broker.Enduser.BaseURL() + "/agents/" + bodyJourney.broker.Agent.ID.String()
+			bodyJourney.broker.RevokeGrant()
+			headersResp, bodyResp := bodyJourney.BodyCall(authzenRepoResource)
+			Expect(bodyResp).To(BeNil())
+			expectGrantContextDenied(headersResp, bodyConsentURL)
+			Expect(bodyJourney.broker.EvaluationCount()).To(Equal(1))
+			bodyJourney.broker.ConsentToRepo()
+			headersResp, bodyResp = bodyJourney.BodyCall(authzenRepoResource)
+			Expect(bodyResp).To(BeNil(), "the independent exchange cooldown still blocks forwarding")
+			Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
+			challenge := extprochelpers.ExtractImmediateResponseHeader(headersResp, "www-authenticate")
+			Expect(challenge).To(HavePrefix(`Bearer error="insufficient_scope"`))
+			Expect(challenge).To(ContainSubstring(`error_uri="` + bodyConsentURL + `"`))
+			Expect(bodyJourney.broker.EvaluationCount()).To(Equal(2), "the delegation denial was not cached")
+			Eventually(func() bool { return forwarded(bodyJourney.BodyCall(authzenRepoResource)) }, 8*time.Second, 250*time.Millisecond).Should(BeTrue())
+		})
+
+		// Scenario US3.6 from specs/054-authzen-delegation-pip/spec.md
+		It("fails closed when the broker is unavailable after permit expiry", func() {
+			Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+			j.broker.Enduser.CloseListener()
+			Eventually(func() uint32 {
+				headersResp, _ := j.BodyCall(authzenRepoResource)
+				return extprochelpers.ExtractImmediateResponseStatus(headersResp)
+			}, 5*time.Second, 200*time.Millisecond).Should(Equal(uint32(http.StatusServiceUnavailable)))
+			headersResp, bodyResp := j.BodyCall(authzenRepoResource)
+			Expect(bodyResp).To(BeNil())
+			expectGrantContextUnavailable(headersResp)
+			expectGrantContextUnavailable(j.HeaderOnly(authzenRepoResource, nil))
+		})
 	})
 
 	// Scenario US3.10 from specs/054-authzen-delegation-pip/spec.md
@@ -661,10 +728,16 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 
 	// Scenario US4.5 from specs/054-authzen-delegation-pip/spec.md
 	It("discovers from the token endpoint origin by default and uses the advertised endpoint", func() {
-		j := newGrantContextJourney(time.Minute, true)
-		Expect(j.env.PolicyDecisionPoint).To(Equal(j.broker.Enduser.BaseURL()))
+		var pdp *advertisedEndpointPDP
+		j := newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+			pdp = newAdvertisedEndpointPDP(f.Enduser.BaseURL())
+			options.ExchangeEndpoint = pdp.server.URL + "/oauth2/token"
+		})
+		Expect(j.env.PolicyDecisionPoint).To(Equal(pdp.server.URL), "the default PDP is the token endpoint origin")
 		Expect(strings.HasSuffix(j.broker.Config.Server.EndUser.PublicURL, "/")).To(BeFalse())
 		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
 		Expect(j.broker.EvaluationCount()).To(Equal(1))
+		Expect(pdp.advertised.Load()).To(Equal(int32(1)), "evaluation uses the advertised endpoint")
+		Expect(pdp.defaultPath.Load()).To(BeZero(), "evaluation never falls back to the default path")
 	})
 })
