@@ -46,8 +46,10 @@ func (e *scriptedEvaluator) Evaluate(_ context.Context, subject, resource string
 func newTestResolver(t *testing.T, evaluator Evaluator, clock *fakeClock) *PermitResolver {
 	t.Helper()
 	r := NewPermitResolver(evaluator, time.Minute)
+	// Join the sweep worker before replacing the clock so it never reads r.now concurrently;
+	// tests drive sweep directly.
+	r.Shutdown()
 	r.now = clock.Now
-	t.Cleanup(r.Shutdown)
 	return r
 }
 
@@ -158,6 +160,12 @@ func TestResolver_SingleflightSharesOneEvaluationAndDeadline(t *testing.T) {
 	const callers = 8
 	results := make(chan Result, callers)
 	var wg sync.WaitGroup
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(evaluator.release) }) }
+	t.Cleanup(func() {
+		release()
+		wg.Wait()
+	})
 	for range callers {
 		wg.Add(1)
 		go func() {
@@ -170,7 +178,7 @@ func TestResolver_SingleflightSharesOneEvaluationAndDeadline(t *testing.T) {
 	}
 	require.Eventually(t, func() bool { return evaluator.calls.Load() == 1 }, time.Second, time.Millisecond)
 	clock.Advance(10 * time.Second)
-	close(evaluator.release)
+	release()
 	wg.Wait()
 	close(results)
 	count := 0

@@ -47,6 +47,7 @@ type brokerStub struct {
 	cacheControl []string
 	body         string
 	delay        time.Duration
+	beforeReply  func()
 	requests     atomic.Int32
 	lastBody     atomic.Value
 	lastAuth     atomic.Value
@@ -61,6 +62,9 @@ func (b *brokerStub) server(t *testing.T) *httptest.Server {
 		b.lastAuth.Store(r.Header.Get("Authorization"))
 		if b.delay > 0 {
 			time.Sleep(b.delay)
+		}
+		if b.beforeReply != nil {
+			b.beforeReply()
 		}
 		for _, value := range b.cacheControl {
 			w.Header().Add("Cache-Control", value)
@@ -129,13 +133,15 @@ func TestClient_DeadlineUsesClockReadBeforeSendAndMaxStaleness(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			broker := permitStub("private, " + tt.maxAge)
-			broker.delay = 50 * time.Millisecond
-			client := newTestClient(t, broker.server(t), tt.maxStaleness)
 			start := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+			var elapsed atomic.Int64
+			// The broker advances the clock before it replies, so a read after the response sees a later time.
+			broker.beforeReply = func() { elapsed.Add(int64(time.Hour)) }
+			client := newTestClient(t, broker.server(t), tt.maxStaleness)
 			var reads atomic.Int32
 			client.now = func() time.Time {
 				reads.Add(1)
-				return start.Add(time.Duration(reads.Load()-1) * time.Hour)
+				return start.Add(time.Duration(elapsed.Load()))
 			}
 
 			result, err := client.Evaluate(context.Background(), testSubject, testResource)
