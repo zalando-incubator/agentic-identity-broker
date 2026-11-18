@@ -57,7 +57,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 			f.ExpectEvaluationIdentity(resp, "anonymous", "", false)
 			Expect(f.Logs.Raw()).To(ContainSubstring(`"token_exchange.failure_stage":"request_validation"`))
 			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"token_exchange.failure_stage":"grant_authorization"`))
-			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"token_exchange.agent.id"`), "no delegation was resolved")
+			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"agent_id"`), "no delegation was resolved")
 		})
 
 		// Scenario US2.15 from specs/054-authzen-delegation-pip/spec.md
@@ -84,7 +84,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 		It("returns 400 for a mismatched context.agent anchor", func() {
 			resp := f.Evaluate(authzenRepoResource, map[string]any{"agent": f.OtherAgent.ID.String()})
 			expectAuthZENError(resp, http.StatusBadRequest, "invalid_request")
-			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"token_exchange.grant.id"`), "neither agent's grant is read")
+			Expect(f.Logs.Raw()).NotTo(ContainSubstring(`"grant_id"`), "neither agent's grant is read")
 		})
 
 		// Scenario US2.20 from specs/054-authzen-delegation-pip/spec.md

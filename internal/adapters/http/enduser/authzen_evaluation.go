@@ -270,19 +270,25 @@ func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span,
 			attribute.String("token_exchange.failure_detail", string(diagnostic.Detail())),
 		)
 	}
+	// Entity IDs use the OpenTelemetry <namespace>.<entity>.id keys on the span and the
+	// canonical typed <entity>_id keys in the audit record (LOGGING.md §2.3).
+	var spanIDs []attribute.KeyValue
+	var logIDs []slog.Attr
 	if !decision.Service.ID.IsZero() {
-		attrs = append(attrs, attribute.String("token_exchange.service.id", decision.Service.ID.String()))
+		spanIDs = append(spanIDs, attribute.String("token_exchange.service.id", decision.Service.ID.String()))
+		logIDs = append(logIDs, slog.Any("service_id", decision.Service.ID))
 	}
 	authorization := decision.Authorization
 	if !authorization.AgentID.IsZero() {
-		attrs = append(attrs, attribute.String("token_exchange.agent.id", authorization.AgentID.String()))
+		spanIDs = append(spanIDs, attribute.String("token_exchange.agent.id", authorization.AgentID.String()))
+		logIDs = append(logIDs, slog.Any("agent_id", authorization.AgentID))
 	}
 	if !authorization.GrantID.IsZero() {
-		attrs = append(attrs,
-			attribute.String("token_exchange.grant.id", authorization.GrantID.String()),
-			attribute.String("token_exchange.grant.updated_at", authorization.GrantUpdatedAt.UTC().Format(time.RFC3339Nano)))
+		spanIDs = append(spanIDs, attribute.String("token_exchange.grant.id", authorization.GrantID.String()))
+		logIDs = append(logIDs, slog.Any("grant_id", authorization.GrantID))
+		attrs = append(attrs, attribute.String("token_exchange.grant.updated_at", authorization.GrantUpdatedAt.UTC().Format(time.RFC3339Nano)))
 	}
-	span.SetAttributes(attrs...)
+	span.SetAttributes(append(attrs, spanIDs...)...)
 	if h.Logger != nil {
 		principal := authorization.Principal
 		if principal == "" {
@@ -291,11 +297,12 @@ func (h *AuthZENEvaluationHandler) observe(ctx context.Context, span trace.Span,
 				principal = sc.Actor
 			}
 		}
-		logAttrs := make([]slog.Attr, 0, len(attrs)+2)
+		logAttrs := make([]slog.Attr, 0, len(attrs)+len(logIDs)+2)
 		logAttrs = append(logAttrs, slog.String("event", event), slog.Any("principal", principal))
 		for _, attr := range attrs {
 			logAttrs = append(logAttrs, slog.Any(string(attr.Key), attr.Value.AsInterface()))
 		}
+		logAttrs = append(logAttrs, logIDs...)
 		h.Logger.LogAttrs(ctx, level, "access evaluation completed", logAttrs...)
 	}
 }

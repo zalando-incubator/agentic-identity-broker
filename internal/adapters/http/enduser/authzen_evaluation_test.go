@@ -457,6 +457,40 @@ func TestAuthZENConfiguration_PublishesMetadataFromPublicURL(t *testing.T) {
 		"access_evaluation_endpoint":"https://broker.example.com/access/v1/evaluation"}`, rec.Body.String())
 }
 
+func TestAuthZENEvaluation_AuditUsesCanonicalEntityIDKeys(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previous)
+		require.NoError(t, provider.Shutdown(context.Background()))
+	})
+	decision := permitDecision()
+	decision.Service = tokenexchange.ServiceRef{ID: id.NewServiceID()}
+	decision.Authorization = tokenexchange.AuthorizationRef{Principal: "alice@example.com", AgentID: id.NewAgentID(), GrantID: id.NewGrantID()}
+
+	_, logs := serveEvaluation(t, &stubEvaluator{decision: decision}, newEvaluationRequest(validEvaluationBody()))
+
+	var record map[string]any
+	require.NoError(t, json.Unmarshal([]byte(logs), &record))
+	assert.Equal(t, decision.Service.ID.String(), record["service_id"])
+	assert.Equal(t, decision.Authorization.AgentID.String(), record["agent_id"])
+	assert.Equal(t, decision.Authorization.GrantID.String(), record["grant_id"])
+	for _, synonym := range []string{"token_exchange.service.id", "token_exchange.agent.id", "token_exchange.grant.id"} {
+		assert.NotContains(t, record, synonym, "logs use the canonical <entity>_id key, not the span key")
+	}
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	attrs := make(map[string]any)
+	for _, attr := range spans[0].Attributes() {
+		attrs[string(attr.Key)] = attr.Value.AsInterface()
+	}
+	assert.Equal(t, decision.Service.ID.String(), attrs["token_exchange.service.id"])
+	assert.Equal(t, decision.Authorization.AgentID.String(), attrs["token_exchange.agent.id"])
+	assert.Equal(t, decision.Authorization.GrantID.String(), attrs["token_exchange.grant.id"])
+}
+
 func TestAuthZENEvaluation_MembersMatchByExactName(t *testing.T) {
 	t.Parallel()
 	baseline := &stubEvaluator{decision: permitDecision()}
