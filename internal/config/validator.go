@@ -207,12 +207,14 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 		return formatValidationError(prefix+".public_url", "", expected, nil)
 	}
 
+	// A rejected public URL can carry a credential in its userinfo, path or query, so
+	// public URL errors report RedactedValue instead of the value.
 	if prefix == "server.admin" {
 		u, err := url.Parse(sic.PublicURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.HasSuffix(u.Host, ":") {
 			return formatValidationError(
 				prefix+".public_url",
-				redactedPublicURL,
+				RedactedValue,
 				"valid HTTP/HTTPS URL with hostname, no userinfo, and no empty explicit port",
 				nil,
 			)
@@ -220,7 +222,7 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 	} else if !isValidURL(sic.PublicURL) {
 		return formatValidationError(
 			prefix+".public_url",
-			redactedPublicURL,
+			RedactedValue,
 			"valid HTTP/HTTPS URL",
 			nil,
 		)
@@ -239,10 +241,6 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 	return nil
 }
 
-// redactedPublicURL replaces a rejected public URL in configuration errors. A malformed URL can
-// carry a credential in its userinfo, path or query, so the value is never echoed.
-const redactedPublicURL = "[redacted]"
-
 // validateAuthZENPublicBase rejects userinfo, a query or a fragment, because the public URL
 // is published unauthenticated as the AuthZEN identifier and the evaluation endpoint is
 // advertised by appending its path.
@@ -251,7 +249,7 @@ func validateAuthZENPublicBase(publicURL string) error {
 	if err != nil || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(publicURL, "#") {
 		return formatValidationError(
 			"server.enduser.public_url",
-			redactedPublicURL,
+			RedactedValue,
 			"HTTP/HTTPS URL without userinfo, query or fragment when token exchange is configured (AuthZEN policy decision point)",
 			nil,
 		)

@@ -321,6 +321,9 @@ func TestValidatePublicURLErrorNeverEchoesURL(t *testing.T) {
 			if want := "server." + tt.server + ".public_url"; configErr.Field != want {
 				t.Errorf("Validate() error field = %q, want %s", configErr.Field, want)
 			}
+			if configErr.Value != RedactedValue {
+				t.Errorf("Validate() error value = %q, want %q", configErr.Value, RedactedValue)
+			}
 			if strings.Contains(err.Error(), "s3cret-marker") || strings.Contains(err.Error(), "operator") {
 				t.Errorf("Validate() error echoes the rejected URL: %v", err)
 			}
