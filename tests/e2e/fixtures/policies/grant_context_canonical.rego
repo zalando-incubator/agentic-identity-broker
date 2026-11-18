@@ -8,11 +8,11 @@ import rego.v1
 default result := {"action": "deny", "reasons": ["delegation does not cover repo-api"]}
 
 result := {"action": "deny", "reasons": ["unexpected delegation wrapper"]} if {
-	input.context.delegation
+	"delegation" in object.keys(input.context)
 } else := {"action": "deny", "reasons": ["unexpected delegation_available flag"]} if {
 	"delegation_available" in object.keys(input.context)
 } else := {"action": "deny", "reasons": ["unexpected subject member"]} if {
-	input.context.subject
+	"subject" in object.keys(input.context)
 } else := {"action": "deny", "reasons": ["permission sets unavailable"]} if {
 	input.context.granted_permission_sets_available != true
 } else := {"action": "deny", "reasons": ["header requested a policy denial"]} if {
@@ -26,5 +26,5 @@ result := {"action": "deny", "reasons": ["unexpected delegation wrapper"]} if {
 	ps.canonical_id == "repo-reader"
 	some svc in ps.services
 	svc.id == c.resource.service_id
-	count(c.granted_permission_sets[ps.id]) > 0
+	{id | some id in c.granted_permission_sets[ps.id]} == {s.id | some s in ps.services}
 }

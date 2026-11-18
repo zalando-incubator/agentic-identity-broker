@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -110,6 +111,7 @@ func (j *grantContextJourney) narrowConsent() *storage.UserGrant {
 	resp, err := j.broker.Enduser.AuthenticatedPOST("/api/consent/agents/"+j.broker.Agent.ID.String()+"/grants",
 		j.broker.Principal.String(), "application/json", strings.NewReader(string(body)))
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = resp.Body.Close() })
 	Expect(resp.StatusCode).To(Equal(http.StatusCreated))
 	Expect(resp.Body.Close()).To(Succeed())
 	grant, err := j.broker.Storage.UserGrants().FindByPrincipalAndAgent(context.Background(), j.broker.Principal, j.broker.Agent.ID)
@@ -126,6 +128,7 @@ func (j *grantContextJourney) reauthorizeReader() {
 	start, err := j.broker.Enduser.AuthenticatedGET("/api/third-party/"+j.broker.Repo.ID.String()+
 		"/oauth2/authorize?redirect_uri="+url.QueryEscape(j.broker.Enduser.BaseURL()+"/sessions"), j.broker.Principal.String())
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = start.Body.Close() })
 	Expect(start.StatusCode).To(Equal(http.StatusFound))
 	providerURL, err := url.Parse(start.Header.Get("Location"))
 	Expect(err).NotTo(HaveOccurred())
@@ -134,12 +137,14 @@ func (j *grantContextJourney) reauthorizeReader() {
 	browser := &http.Client{Timeout: 5 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	provider, err := browser.Get(providerURL.String())
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = provider.Body.Close() })
 	Expect(provider.StatusCode).To(Equal(http.StatusFound))
 	callbackURL, err := url.Parse(provider.Header.Get("Location"))
 	Expect(err).NotTo(HaveOccurred())
 	Expect(provider.Body.Close()).To(Succeed())
 	callback, err := j.broker.Enduser.AuthenticatedGET(callbackURL.RequestURI(), j.broker.Principal.String())
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { _ = callback.Body.Close() })
 	Expect(callback.StatusCode).To(Equal(http.StatusFound))
 	Expect(callback.Body.Close()).To(Succeed())
 	session, err := j.broker.Storage.UserSessions().FindByPrincipalAndService(context.Background(), j.broker.Principal, j.broker.Repo.ID)
@@ -160,9 +165,96 @@ func awaitBindingPermitExpiry(warmedAt time.Time) {
 		Should(BeNumerically(">=", 2*time.Second), "wait without issuing extra target requests")
 }
 
-// forwarded reports whether the body phase allowed and forwarded the request.
+// forwarded reports whether the body phase returned a request-body response that forwards
+// the request with the exchanged Authorization header.
 func forwarded(headersResp, bodyResp *extprocv3.ProcessingResponse) bool {
-	return bodyResp != nil && extprochelpers.ExtractMutatedAuthorizationHeader(headersResp) != "" && extprochelpers.ExtractImmediateResponseStatus(bodyResp) == 0
+	return bodyResp.GetRequestBody() != nil && extprochelpers.ExtractMutatedAuthorizationHeader(headersResp) != ""
+}
+
+// expectSessionRecovery asserts the MCP URL elicitation that sends the user to
+// re-authorize the repository provider session, without forwarding.
+func expectSessionRecovery(j *grantContextJourney, headersResp *extprocv3.ProcessingResponse) {
+	Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
+	raw := extprochelpers.ExtractImmediateResponseBody(headersResp)
+	var envelope struct {
+		Error struct {
+			Data struct {
+				Elicitations []struct {
+					ID string `json:"elicitationId"`
+				} `json:"elicitations"`
+			} `json:"data"`
+		} `json:"error"`
+	}
+	Expect(json.Unmarshal([]byte(raw), &envelope)).To(Succeed())
+	Expect(envelope.Error.Data.Elicitations).To(HaveLen(1))
+	elicitationID := envelope.Error.Data.Elicitations[0].ID
+	_, err := uuid.Parse(elicitationID)
+	Expect(err).NotTo(HaveOccurred())
+	const message = "User session is unavailable. Please re-authenticate."
+	recoveryURI := j.broker.Enduser.BaseURL() + "/api/third-party/" + j.broker.Repo.ID.String() +
+		"/oauth2/authorize?redirect_uri=" + url.QueryEscape(j.broker.Enduser.BaseURL()+"/sessions")
+	expected, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": nil,
+		"error": map[string]any{"code": -32042, "message": message,
+			"data": map[string]any{"elicitations": []map[string]any{{
+				"mode": "url", "elicitationId": elicitationID, "url": recoveryURI, "message": message,
+			}}}},
+	})
+	Expect(err).NotTo(HaveOccurred())
+	Expect(raw).To(MatchJSON(expected))
+}
+
+// overlapBarrier fronts the broker as PDP and token endpoint. It holds the first
+// evaluation and the first exchange until both have arrived, or until a timeout, and
+// records whether both were in flight together.
+type overlapBarrier struct {
+	server     *httptest.Server
+	mu         sync.Mutex
+	arrived    map[string]bool
+	both       chan struct{}
+	overlapped atomic.Bool
+}
+
+func newOverlapBarrier(brokerURL string) *overlapBarrier {
+	target, err := url.Parse(brokerURL)
+	Expect(err).NotTo(HaveOccurred())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	b := &overlapBarrier{arrived: map[string]bool{}, both: make(chan struct{})}
+	b.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/authzen-configuration":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"policy_decision_point":      b.server.URL,
+				"access_evaluation_endpoint": b.server.URL + "/access/v1/evaluation",
+			})
+			return
+		case "/access/v1/evaluation", "/oauth2/token":
+			b.hold(r.URL.Path)
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	DeferCleanup(b.server.Close)
+	return b
+}
+
+func (b *overlapBarrier) hold(kind string) {
+	b.mu.Lock()
+	first := !b.arrived[kind]
+	b.arrived[kind] = true
+	completes := first && len(b.arrived) == 2
+	if completes {
+		close(b.both)
+	}
+	b.mu.Unlock()
+	if !first || completes {
+		return
+	}
+	select {
+	case <-b.both:
+		b.overlapped.Store(true)
+	case <-time.After(time.Second):
+	}
 }
 
 func immediateJSON(resp *extprocv3.ProcessingResponse) (uint32, map[string]string) {
@@ -189,10 +281,15 @@ func expectGrantContextUnavailable(resp *extprocv3.ProcessingResponse) {
 var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func() {
 	// Scenario US3.1 from specs/054-authzen-delegation-pip/spec.md
 	It("resolves concurrently with exchange and gives body policy the documented direct context members", func() {
-		j := newGrantContextJourney(time.Minute, true)
+		var barrier *overlapBarrier
+		j := newGrantContextJourneyConfigured("grant_context_canonical.rego", time.Minute, true, func(f *authzenFixture, options *bootstrap.ExtProcOptions) {
+			barrier = newOverlapBarrier(f.Enduser.BaseURL())
+			options.ExchangeEndpoint = barrier.server.URL + "/oauth2/token"
+		})
 		headersResp, bodyResp := j.BodyCall(authzenRepoResource)
 		Expect(bodyResp).To(extprochelpers.BeForwardedRequestBody(), "the canonical policy allows only with the direct members and permit-derived permission sets")
 		Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headersResp)).To(HavePrefix("Bearer "))
+		Expect(barrier.overlapped.Load()).To(BeTrue(), "evaluation and exchange were in flight at the broker together")
 		Expect(j.broker.EvaluationCount()).To(Equal(1))
 
 		By("creating and approving a pending tool call owned by the matching exchange identity")
@@ -360,19 +457,24 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 	It("isolates the cache per subject and resource and honors max_staleness", func() {
 		j := newGrantContextJourney(2*time.Second, true)
 		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+		warmedAt := time.Now()
 		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
 		Expect(j.broker.EvaluationCount()).To(Equal(1), "the second request reuses the fresh permit")
 
 		_, _ = j.BodyCall(authzenOtherResource)
 		Expect(j.broker.EvaluationCount()).To(Equal(2), "another resource never uses the cached permit")
+		original := j.broker.SubjectToken
 		j.broker.SubjectToken = j.broker.SignSubject(time.Now().Add(time.Hour).Add(time.Second))
 		_, _ = j.BodyCall(authzenRepoResource)
 		Expect(j.broker.EvaluationCount()).To(Equal(3), "another subject token never uses the cached permit")
 
-		Eventually(func() int {
-			_, _ = j.BodyCall(authzenRepoResource)
-			return j.broker.EvaluationCount()
-		}, 5*time.Second, 250*time.Millisecond).Should(BeNumerically(">=", 4), "the local cap forces revalidation")
+		j.broker.SubjectToken = original
+		Expect(time.Since(warmedAt)).To(BeNumerically("<", 2*time.Second), "still inside the original permit's local cap")
+		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+		Expect(j.broker.EvaluationCount()).To(Equal(3), "the original pair reuses its permit before the cap")
+		awaitBindingPermitExpiry(warmedAt)
+		Expect(forwarded(j.BodyCall(authzenRepoResource))).To(BeTrue())
+		Expect(j.broker.EvaluationCount()).To(Equal(4), "the 2 s local cap forces revalidation of the original pair despite the 60 s permit")
 	})
 
 	// Scenario US3.8 from specs/054-authzen-delegation-pip/spec.md
@@ -405,7 +507,7 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 		Expect(status).To(Equal(uint32(http.StatusForbidden)))
 		Expect(body["error_description"]).To(ContainSubstring("header requested a policy denial"))
 		Expect(j.broker.EvaluationCount()).To(Equal(1))
-		Expect(j.broker.Logs.Raw()).NotTo(ContainSubstring("token_exchange_succeeded"), "no exchange after a policy denial")
+		Expect(j.broker.ExchangeCount()).To(BeZero(), "no exchange after a policy denial")
 	})
 
 	// Scenario US3.10 from specs/054-authzen-delegation-pip/spec.md
@@ -413,34 +515,7 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 		j := newGrantContextJourney(time.Minute, false)
 		headersResp, bodyResp := j.BodyCall(authzenRepoResource)
 		Expect(bodyResp).To(BeNil())
-		Expect(extprochelpers.ExtractImmediateResponseStatus(headersResp)).To(Equal(uint32(http.StatusForbidden)))
-		raw := extprochelpers.ExtractImmediateResponseBody(headersResp)
-		var envelope struct {
-			Error struct {
-				Data struct {
-					Elicitations []struct {
-						ID string `json:"elicitationId"`
-					} `json:"elicitations"`
-				} `json:"data"`
-			} `json:"error"`
-		}
-		Expect(json.Unmarshal([]byte(raw), &envelope)).To(Succeed())
-		Expect(envelope.Error.Data.Elicitations).To(HaveLen(1))
-		elicitationID := envelope.Error.Data.Elicitations[0].ID
-		_, err := uuid.Parse(elicitationID)
-		Expect(err).NotTo(HaveOccurred())
-		const message = "User session is unavailable. Please re-authenticate."
-		recoveryURI := j.broker.Enduser.BaseURL() + "/api/third-party/" + j.broker.Repo.ID.String() +
-			"/oauth2/authorize?redirect_uri=" + url.QueryEscape(j.broker.Enduser.BaseURL()+"/sessions")
-		expected, err := json.Marshal(map[string]any{
-			"jsonrpc": "2.0", "id": nil,
-			"error": map[string]any{"code": -32042, "message": message,
-				"data": map[string]any{"elicitations": []map[string]any{{
-					"mode": "url", "elicitationId": elicitationID, "url": recoveryURI, "message": message,
-				}}}},
-		})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(raw).To(MatchJSON(expected))
+		expectSessionRecovery(j, headersResp)
 		Expect(j.broker.EvaluationCount()).To(Equal(1), "the delegation permitted; exchange failure decided")
 	})
 
@@ -467,7 +542,7 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 				headers, body = j.bindingCall(headerOnly, "read:repo", grant.UpdatedAt.Format(time.RFC3339Nano))
 				Expect(j.broker.ExchangeCount()).To(Equal(before+1), "one target request makes exactly one additional broker exchange")
 				if failExchange {
-					Expect(extprochelpers.ExtractImmediateResponseStatus(headers)).NotTo(BeZero())
+					expectSessionRecovery(j, headers)
 					Expect(extprochelpers.ExtractMutatedAuthorizationHeader(headers)).To(BeEmpty())
 					Expect(body).To(BeNil())
 				} else {
@@ -547,6 +622,7 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 			Expect(err).NotTo(HaveOccurred())
 			resp, err := j.broker.Enduser.AuthenticatedPOST("/api/consent/agents/"+j.broker.Agent.ID.String()+"/grants", j.broker.Principal.String(), "application/json", strings.NewReader(string(grantBody)))
 			Expect(err).NotTo(HaveOccurred())
+			DeferCleanup(func() { _ = resp.Body.Close() })
 			Expect(resp.StatusCode).To(Equal(http.StatusCreated))
 			Expect(resp.Body.Close()).To(Succeed())
 			go call(1)
