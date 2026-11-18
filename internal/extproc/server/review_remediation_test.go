@@ -123,3 +123,37 @@ func TestExchangeErrorDoesNotClassifyPermitClientErrorsAsGrantTimestamps(t *test
 		})
 	}
 }
+
+type expiringApprovalAuthorizer struct {
+	advance func()
+}
+
+func (a expiringApprovalAuthorizer) Evaluate(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
+	a.advance()
+	return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
+}
+func (expiringApprovalAuthorizer) Stop(context.Context) {}
+
+func TestApprovalGateIsNotConsultedForPermitExpiredDuringPolicy(t *testing.T) {
+	now := time.Unix(1_000, 0)
+	permit := grantcontext.Result{Deadline: now.Add(time.Second), Context: grantcontext.Context{
+		Principal: "permit-principal", Agent: grantcontext.EntityRef{ID: "permit-agent"},
+		Grant: grantcontext.Grant{UpdatedAt: "2026-10-26T09:59:00Z"},
+	}}
+	exchanger := identityExchanger{result: ExchangeResult{Token: "provider-token-marker", Principal: "permit-principal", AgentID: "permit-agent"}}
+	gate := &identityGate{}
+	authorizer := expiringApprovalAuthorizer{advance: func() { now = now.Add(time.Second) }}
+	s := NewServerWithApprovalGate(&extprocconfig.Config{}, exchanger, authorizer, gate, slog.New(slog.DiscardHandler)).WithPermitResolver(observedGrantResolver{result: &permit})
+	s.SetClock(func() time.Time { return now })
+	headers := &extprocv3.HttpHeaders{Headers: &corev3.HeaderMap{Headers: []*corev3.HeaderValue{{Key: ":method", RawValue: []byte("POST")}, {Key: "mcp-session-id", RawValue: []byte("mcp-session")}}}}
+	_, state := s.processRequestHeadersOPA(context.Background(), false, safetyRequest("subject-token-marker", "https://resource.example", headers), headers)
+	require.NotNil(t, state)
+
+	body := &extprocv3.HttpBody{Body: []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_files"}}`), EndOfStream: true}
+	response := s.processRequestBody(context.Background(), state, body)
+
+	require.NotNil(t, response.GetImmediateResponse())
+	assert.Equal(t, int32(503), int32(response.GetImmediateResponse().Status.Code))
+	assert.JSONEq(t, grantContextUnavailableBody, string(response.GetImmediateResponse().Body))
+	assert.Empty(t, gate.invocations, "an expired permit must not consume a one-time approval")
+}

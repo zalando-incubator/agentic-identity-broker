@@ -644,6 +644,11 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 			logDiagnostic(ctx, logger, slog.LevelWarn, "opa approval-required request is not a standalone tool call", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
+		if state.grantContext != nil {
+			if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+				return response
+			}
+		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
 			return s.forwardRequestBody(ctx, logger, state, body)
