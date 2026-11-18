@@ -206,7 +206,8 @@ unchanged; this ADR does not supersede ADR 036.
   An expired permit before forwarding is rejected with the existing delegation-unavailable 503,
   not re-resolved. An approval the gate grants is honoured: the body is forwarded even if the
   permit expires during the gate's broker call, so a consumed one-time approval is never lost.
-  The window is at most one approval round-trip after a deadline check.
+  After the deadline check, the window is one broker call (the consume) when the approval
+  cache matches, and two calls (the snapshot read, then the consume) when it misses.
 - Disabled mode, cache key, per-key singleflight key, TTL calculations, `cache.max_ttl`,
   and five-second re-consent cooldown are unchanged. Cooldown entries carry no token binding.
   This revision adds no broker response member, configuration key, schema or dependency.
