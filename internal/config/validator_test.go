@@ -9,6 +9,8 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func validTokenRefreshConfig() ports.TokenRefreshConfig {
@@ -253,22 +255,15 @@ func TestValidateEndUserPublicURLAsAuthZENBase(t *testing.T) {
 			}
 			err := Validate(cfg)
 			if tt.wantValid {
-				if err != nil {
-					t.Fatalf("Validate() returned error for end-user URL %q: %v", tt.publicURL, err)
-				}
+				require.NoError(t, err)
 				return
 			}
 
 			var configErr *config.ConfigError
-			if !errors.As(err, &configErr) {
-				t.Fatalf("Validate() error = %v, want *config.ConfigError", err)
-			}
-			if configErr.Field != "server.enduser.public_url" {
-				t.Errorf("Validate() error field = %q, want server.enduser.public_url", configErr.Field)
-			}
-			if strings.Contains(err.Error(), "s3cret-marker") || strings.Contains(err.Error(), "operator@") {
-				t.Errorf("Validate() error echoes the rejected URL: %v", err)
-			}
+			require.ErrorAs(t, err, &configErr)
+			assert.Equal(t, "server.enduser.public_url", configErr.Field)
+			assert.NotContains(t, err.Error(), "s3cret-marker", "the error must not echo the rejected URL")
+			assert.NotContains(t, err.Error(), "operator@", "the error must not echo the rejected URL")
 		})
 	}
 }
