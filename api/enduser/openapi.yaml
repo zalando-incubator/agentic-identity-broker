@@ -2871,6 +2871,30 @@ paths:
                           services:
                             - id: 880e8400-e29b-41d4-a716-446655440010
                               scopes: ["read:repo"]
+                permitExpiringSoon:
+                  summary: >-
+                    Permit whose grant expires in 15 seconds; the response carries
+                    `Cache-Control: private, max-age=15` instead of the 60-second cap
+                  value:
+                    decision: true
+                    context:
+                      subject:
+                        id: alice@example.com
+                      agent:
+                        id: 550e8400-e29b-41d4-a716-446655440000
+                      resource:
+                        service_id: 880e8400-e29b-41d4-a716-446655440010
+                        resource_uri: https://api.example.com/repos
+                        scopes: ["read:repo"]
+                      grant:
+                        id: 990e8400-e29b-41d4-a716-446655440020
+                        updated_at: "2026-10-26T09:59:00Z"
+                        valid_until: "2026-10-26T10:00:15Z"
+                      permission_sets:
+                        - id: 770e8400-e29b-41d4-a716-446655440001
+                          services:
+                            - id: 880e8400-e29b-41d4-a716-446655440010
+                              scopes: ["read:repo"]
                 denyGrantMissing:
                   summary: No active grant; the user can consent at the URL
                   value:
@@ -2883,7 +2907,8 @@ paths:
         "400":
           description: |
             Malformed or oversized body, missing or unsupported member, invalid or expired
-            subject token, `context.agent` mismatch, or unregistered resource.
+            subject token, an agent-subject token (ADR 045), `context.agent` mismatch, or
+            unregistered resource.
           headers:
             Cache-Control:
               $ref: "#/components/headers/AuthZENNoStore"
