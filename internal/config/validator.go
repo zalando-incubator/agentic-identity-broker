@@ -1001,23 +1001,16 @@ func validateOTLPEndpoint(endpoint, protocol string) error {
 }
 
 // isValidURL checks if a string is a valid HTTP or HTTPS URL.
-// urlWithoutUserinfo returns rawURL for a configuration error with any userinfo removed,
-// including when rawURL does not parse, so a password in a URL never reaches the error.
+// urlWithoutUserinfo returns rawURL for a configuration error with any userinfo removed, so a
+// password in a URL never reaches the error. A URL that does not parse hierarchically, including
+// an opaque one such as "https:user:pass@host", is withheld entirely when it contains "@".
 func urlWithoutUserinfo(rawURL string) string {
-	if u, err := url.Parse(rawURL); err == nil {
+	if u, err := url.Parse(rawURL); err == nil && u.Opaque == "" {
 		u.User = nil
 		return u.String()
 	}
-	authorityStart := 0
-	if i := strings.Index(rawURL, "://"); i >= 0 {
-		authorityStart = i + len("://")
-	}
-	authorityEnd := len(rawURL)
-	if i := strings.IndexAny(rawURL[authorityStart:], "/?#"); i >= 0 {
-		authorityEnd = authorityStart + i
-	}
-	if at := strings.LastIndex(rawURL[authorityStart:authorityEnd], "@"); at >= 0 {
-		return rawURL[:authorityStart] + rawURL[authorityStart+at+1:]
+	if strings.Contains(rawURL, "@") {
+		return "[redacted]"
 	}
 	return rawURL
 }
