@@ -235,6 +235,8 @@ func TestValidateEndUserPublicURLAsAuthZENBase(t *testing.T) {
 		{name: "empty query", publicURL: "https://broker.example.com/?"},
 		{name: "fragment", publicURL: "https://broker.example.com#pdp"},
 		{name: "empty fragment", publicURL: "https://broker.example.com/broker#"},
+		{name: "userinfo", publicURL: "https://operator:s3cret-marker@broker.example.com/broker"},
+		{name: "username only", publicURL: "https://operator@broker.example.com"},
 		{name: "origin", publicURL: "https://broker.example.com", wantValid: true},
 		{name: "origin with trailing slash", publicURL: "https://broker.example.com/", wantValid: true},
 		{name: "path prefix", publicURL: "https://example.com/broker", wantValid: true},
@@ -263,6 +265,9 @@ func TestValidateEndUserPublicURLAsAuthZENBase(t *testing.T) {
 			}
 			if configErr.Field != "server.enduser.public_url" {
 				t.Errorf("Validate() error field = %q, want server.enduser.public_url", configErr.Field)
+			}
+			if strings.Contains(err.Error(), "s3cret-marker") || strings.Contains(err.Error(), "operator@") {
+				t.Errorf("Validate() error exposes URL credentials: %v", err)
 			}
 		})
 	}

@@ -239,15 +239,22 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 	return nil
 }
 
-// validateAuthZENPublicBase rejects a query or fragment, because the AuthZEN evaluation
-// endpoint is advertised by appending its path to the public URL.
+// validateAuthZENPublicBase rejects userinfo, a query or a fragment, because the public URL
+// is published unauthenticated as the AuthZEN identifier and the evaluation endpoint is
+// advertised by appending its path. The error never echoes userinfo.
 func validateAuthZENPublicBase(publicURL string) error {
 	u, err := url.Parse(publicURL)
-	if err != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(publicURL, "#") {
+	if err != nil || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(publicURL, "#") {
+		shown := publicURL
+		if err == nil && u.User != nil {
+			withoutUserinfo := *u
+			withoutUserinfo.User = nil
+			shown = withoutUserinfo.String()
+		}
 		return formatValidationError(
 			"server.enduser.public_url",
-			publicURL,
-			"HTTP/HTTPS URL without query or fragment when token exchange is configured (AuthZEN policy decision point)",
+			shown,
+			"HTTP/HTTPS URL without userinfo, query or fragment when token exchange is configured (AuthZEN policy decision point)",
 			nil,
 		)
 	}
