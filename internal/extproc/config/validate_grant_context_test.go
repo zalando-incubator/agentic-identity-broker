@@ -60,6 +60,13 @@ func TestValidateGrantContext(t *testing.T) {
 		assert.Equal(t, "https://broker.example.com:8443", cfg.GrantContext.PolicyDecisionPoint)
 	})
 
+	t.Run("defaults PDP to the token endpoint origin preserving an escaped IPv6 zone", func(t *testing.T) {
+		cfg := validGrantContextConfig(t)
+		cfg.OAuth2.TokenEndpoint = "https://[fe80::1%25eth0]:8443/oauth2/token"
+		require.NoError(t, config.Validate(cfg))
+		assert.Equal(t, "https://[fe80::1%25eth0]:8443", cfg.GrantContext.PolicyDecisionPoint)
+	})
+
 	t.Run("keeps an explicit path-prefixed PDP", func(t *testing.T) {
 		cfg := validGrantContextConfig(t)
 		cfg.GrantContext.PolicyDecisionPoint = "https://example.com/broker"

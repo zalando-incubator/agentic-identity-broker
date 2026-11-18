@@ -15,10 +15,11 @@ import (
 func TestDiscoveryURL_InsertsWellKnownBeforePath(t *testing.T) {
 	t.Parallel()
 	for pdp, want := range map[string]string{
-		"https://broker.example.com":          "https://broker.example.com/.well-known/authzen-configuration",
-		"https://broker.example.com/":         "https://broker.example.com/.well-known/authzen-configuration",
-		"https://example.com:8443/tenant1":    "https://example.com:8443/.well-known/authzen-configuration/tenant1",
-		"https://example.com/broker/tenant1/": "https://example.com/.well-known/authzen-configuration/broker/tenant1",
+		"https://broker.example.com":           "https://broker.example.com/.well-known/authzen-configuration",
+		"https://broker.example.com/":          "https://broker.example.com/.well-known/authzen-configuration",
+		"https://example.com:8443/tenant1":     "https://example.com:8443/.well-known/authzen-configuration/tenant1",
+		"https://example.com/broker/tenant1/":  "https://example.com/.well-known/authzen-configuration/broker/tenant1",
+		"https://[fe80::1%25eth0]:8443/broker": "https://[fe80::1%25eth0]:8443/.well-known/authzen-configuration/broker",
 	} {
 		got, err := DiscoveryURL(pdp)
 		require.NoError(t, err)

@@ -35,7 +35,8 @@ func DiscoveryURL(policyDecisionPoint string) (string, error) {
 		return "", ErrDiscoveryFailed
 	}
 	path := strings.TrimRight(pdp.EscapedPath(), "/")
-	return pdp.Scheme + "://" + pdp.Host + wellKnownPath + path, nil
+	// Serialize through url.URL: Host is decoded, so an escaped IPv6 zone must be re-escaped.
+	return (&url.URL{Scheme: pdp.Scheme, Host: pdp.Host}).String() + wellKnownPath + path, nil
 }
 
 // Discover fetches the PDP metadata without credentials, requires the advertised

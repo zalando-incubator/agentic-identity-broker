@@ -426,7 +426,8 @@ func validateGrantContext(cfg *Config) []string {
 	}
 	if dc.PolicyDecisionPoint == "" {
 		if endpoint, err := url.Parse(cfg.OAuth2.TokenEndpoint); err == nil && endpoint.Scheme != "" && endpoint.Host != "" {
-			dc.PolicyDecisionPoint = endpoint.Scheme + "://" + endpoint.Host
+			// Serialize through url.URL: Host is decoded, so an escaped IPv6 zone must be re-escaped.
+			dc.PolicyDecisionPoint = (&url.URL{Scheme: endpoint.Scheme, Host: endpoint.Host}).String()
 		}
 	}
 	pdp, err := url.Parse(dc.PolicyDecisionPoint)
