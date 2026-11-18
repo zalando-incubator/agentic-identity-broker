@@ -58,11 +58,18 @@ func Discover(ctx context.Context, client *http.Client, expectedPDP string, allo
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("%w: status %d", ErrDiscoveryFailed, resp.StatusCode)
 	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxMetadataBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: transport error", ErrDiscoveryFailed)
+	}
+	if len(raw) > maxMetadataBytes {
+		return nil, fmt.Errorf("%w: metadata too large", ErrDiscoveryFailed)
+	}
 	var document struct {
 		PolicyDecisionPoint      *string `json:"policy_decision_point"`
 		AccessEvaluationEndpoint *string `json:"access_evaluation_endpoint"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxMetadataBytes)).Decode(&document); err != nil {
+	if err := json.Unmarshal(raw, &document); err != nil {
 		return nil, fmt.Errorf("%w: invalid JSON", ErrDiscoveryFailed)
 	}
 	if document.PolicyDecisionPoint == nil || document.AccessEvaluationEndpoint == nil {

@@ -41,6 +41,16 @@ func TestDiscover(t *testing.T) {
 		}},
 		{name: "unavailable", status: 503, allowHTTP: true, body: func() string { return `{}` }, errText: "grant context discovery failed"},
 		{name: "invalid JSON", status: 200, allowHTTP: true, body: func() string { return `{` }, errText: "grant context discovery failed"},
+		{name: "trailing JSON value", status: 200, allowHTTP: true, body: func() string {
+			return `{"policy_decision_point":"` + srvURL + `","access_evaluation_endpoint":"` + srvURL + `/access/v1/evaluation"}{}`
+		}, errText: "grant context discovery failed"},
+		{name: "trailing invalid bytes", status: 200, allowHTTP: true, body: func() string {
+			return `{"policy_decision_point":"` + srvURL + `","access_evaluation_endpoint":"` + srvURL + `/access/v1/evaluation"} x`
+		}, errText: "grant context discovery failed"},
+		{name: "oversized document with valid prefix", status: 200, allowHTTP: true, body: func() string {
+			return `{"policy_decision_point":"` + srvURL + `","access_evaluation_endpoint":"` + srvURL + `/access/v1/evaluation"}` +
+				strings.Repeat(" ", maxMetadataBytes)
+		}, errText: "grant context discovery failed"},
 		{name: "missing endpoint", status: 200, allowHTTP: true, body: func() string { return `{"policy_decision_point":"` + srvURL + `"}` }, errText: "grant context discovery failed"},
 		{name: "PDP mismatch", status: 200, allowHTTP: true, body: func() string {
 			return `{"policy_decision_point":"https://evil.example.com","access_evaluation_endpoint":"https://evil.example.com/access/v1/evaluation"}`
