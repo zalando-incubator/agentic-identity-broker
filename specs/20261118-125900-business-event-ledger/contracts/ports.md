@@ -27,6 +27,8 @@ type BusinessEventAppender interface {
 
 // BusinessEventRetention deletes business events.
 type BusinessEventRetention interface {
+	// StorageTime samples the clock that assigns RecordedAt, outside any transaction in ctx.
+	StorageTime(ctx context.Context) (time.Time, error)
 	// DeleteRecordedBefore deletes up to limit events with RecordedAt before cutoff, oldest
 	// first, and returns the number deleted.
 	DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error)
@@ -37,7 +39,7 @@ type BusinessEventRetention interface {
 | Adapter | Location | Notes |
 |---|---|---|
 | Memory | `internal/adapters/storage/memory/business_event.go` | Deep copies in and out. |
-| PostgreSQL | `internal/adapters/storage/postgres/business_event.go` | `sqlx`. `Append` and `DeleteRecordedBefore` use `a.db`, not `storageExecutor(ctx)` (research R4). `DeleteRecordedBefore` uses `DELETE ... WHERE id IN (SELECT id ... ORDER BY recorded_at, id LIMIT $2)`. Each method starts a `storage.*` span with `startStorageSpan` ([observability.md](./observability.md#spans)). |
+| PostgreSQL | `internal/adapters/storage/postgres/business_event.go` | All methods use `a.db`, not `storageExecutor(ctx)` (research R4). `StorageTime` samples `statement_timestamp()` with the read timeout. `DeleteRecordedBefore` uses `DELETE ... WHERE id IN (SELECT id ... ORDER BY recorded_at, id LIMIT $2)`. Each method uses `startStorageSpan` ([observability.md](./observability.md#spans)). |
 
 No port has an update operation (FR-010). The only delete operation is the one of retention.
 
@@ -50,6 +52,11 @@ Timestamp precision follows [the data model](../data-model.md#timestamp-precisio
 preserves the caller's `OccurredAt` and sets `RecordedAt`. Memory retains occurrence nanoseconds;
 the PostgreSQL row contains `OccurredAt.UTC().Truncate(time.Microsecond)` through pgx encoding.
 Adapter tests must supply sub-microsecond input, not pre-truncated fixtures, to verify this boundary.
+
+Decoded stdout JSON and stored attributes match for values that PostgreSQL can store as JSONB.
+JSONB rejects U+0000 in strings and keys, unpaired surrogate escapes, numbers outside PostgreSQL's `numeric` range, and characters the database encoding cannot represent.
+PostgreSQL rejects the append without writing a row. The handler reports the failed append and still forwards the original log record.
+The memory adapter does not enforce PostgreSQL's JSONB limits. Adapter tests cover an escaped U+0000 in a nested string.
 
 ## 3. Ledger handler (`internal/adapters/telemetry/ledger_handler.go`)
 
@@ -71,7 +78,7 @@ previous provider in cleanup, and do not run those global-mutating cases in para
 | `Enabled` | True for `slog.LevelInfo` and above (FR-008). |
 | `Handle` | No definition in the record or in the accumulated attributes: return nil. Otherwise build the event (research R7), call `Append` with `context.WithoutCancel(ctx)` and `writeTimeout`, record the duration, and on error follow research R8. Always return nil. |
 | `WithAttrs` | Return a handler that includes the attributes, under the current group. |
-| `WithGroup` | Return a handler that nests later attributes under the group. The reserved keys `event`, `principal`, `actor`, and `trace_id` are read only at the top level. A definition under a group is not a business event and is not stored (FR-001). FR-012 requires the revocation event at the top level. |
+| `WithGroup` | Nest later attributes under the group. A definition inside a group is not eligible. An inherited definition can still qualify if it remains the effective top-level `event` (FR-001, FR-012). |
 
 For duplicate keys in the same JSON object, the last attribute wins, matching the value obtained
 by decoding the operational JSON record. Process inherited attributes in attachment order,
@@ -81,6 +88,10 @@ definition under top-level `event` overrides an earlier typed event and causes n
 A final valid definition replaces an earlier identifier and yields only one append. A group
 remains scoped; a grouped `event` cannot replace a top-level `event`. Handler tests cover these
 cases and duplicate principal and ordinary attribute keys across `WithAttrs` and the record.
+
+Promotion reads top-level reserved fields by default. On an eligible grouped record, the ledger also promotes `actor` and `trace_id` that the context handler added.
+These values take precedence over root values in their columns. The grouped document stays unchanged and retains the same fields as stdout JSON.
+The context handler identifies which fields it added, but passes no raw identity to the ledger. Grouped call-site fields alone do not qualify for promotion.
 
 Builder wiring (`internal/app/builder.go`), when `business_events.enabled` is true:
 
@@ -121,10 +132,10 @@ func (s *Service) Run(ctx context.Context)
 ```
 
 The service is in its own package, so that `internal/domain/bizevent` keeps its standard-library
-imports (research R13). It follows `oauth2server.SessionCleanup`. Each run fixes its cutoff at
-the run's start time minus the retention period. It calls
-`DeleteRecordedBefore(cutoff, batch_size)` until a call deletes fewer rows than the batch size,
-the context ends, or a call fails. Runs do not overlap. The first run starts immediately.
+imports (research R13). It follows `oauth2server.SessionCleanup`.
+Each run samples `StorageTime` once and subtracts the configured period to fix its cutoff.
+It calls `DeleteRecordedBefore(cutoff, batch_size)` until a call returns a short batch or an error, or the context ends.
+If the clock sample fails, the run deletes nothing. Runs do not overlap. The first run starts immediately.
 A failed run logs one `Error` record ([observability.md](./observability.md)) and retries at the next scheduled interval.
 The service does not log retention-driven deletion.
 

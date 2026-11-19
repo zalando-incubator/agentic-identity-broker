@@ -78,6 +78,20 @@ func TestBusinessEventAppendStorageSpans(t *testing.T) {
 	}
 }
 
+func TestBusinessEventStorageTimeUsesDatabaseClock(t *testing.T) {
+	recorder := recordStorageSpans(t)
+	databaseTime := time.Date(2025, time.March, 4, 5, 6, 7, 123456000, time.UTC)
+	adapter := newUnitTestSigningKeyRepo(t, signingKeyRepoTestConfig{
+		queryColumns: []string{"statement_timestamp"}, queryRows: [][]driver.Value{{databaseTime}},
+	}).adapter
+	actual, err := adapter.StorageTime(t.Context())
+	require.NoError(t, err)
+	assert.True(t, databaseTime.Equal(actual))
+	span := requireOneStorageSpan(t, recorder, "storage.current_time.business_event")
+	assert.Equal(t, "StorageTime", spanAttributes(span)["db.operation"])
+	assertStorageSpanResult(t, span, codes.Unset, "", "")
+}
+
 func TestBusinessEventDeleteStorageSpans(t *testing.T) {
 	for _, test := range []struct {
 		name      string

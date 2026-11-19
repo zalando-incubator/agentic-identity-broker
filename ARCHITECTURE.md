@@ -1212,6 +1212,7 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 ### 4.3. Business event ledger
 
 The builder installs a ledger handler after the context and principal policy handlers when `business_events.enabled` is true. It stores typed business-event audit records after the mutation commits, outside the mutation transaction. Both PostgreSQL and memory adapters support append and retention deletion. The builder runs retention in each enabled broker replica. The ledger is disabled by default.
+Each retention run fixes its cutoff from the clock that assigns `recorded_at`. PostgreSQL retention uses the database clock.
 
 The consent package declares `GrantRevoked` for `consent.grant.revoked`, the first stored event. Both committed grant-deletion branches emit it, including refresh-cleanup failure. The scope is broker-only storage and retention, without a reader API, UI, or SSF delivery.
 

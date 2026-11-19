@@ -122,8 +122,8 @@ retention run, and read the ledger.
 - The ledger is disabled after it stored rows: retention does not run, and the rows stay until
   the ledger is enabled again or an operator deletes them. The operations documentation states
   this.
-- Several replicas run retention at the same time: each delete is idempotent, and no row newer
-  than the period is deleted. A short batch can end one replica's run while expired rows remain.
+- Several replicas run retention at the same time: each delete is idempotent and uses the storage clock.
+  Rows at or newer than a run's fixed cutoff stay. A short batch can end one replica's run while expired rows remain.
   If the competing run fails before it clears the backlog, later scheduled runs resume cleanup.
 - The ledger write times out: the result is unknown. The failure is counted, and the row can
   exist.
@@ -219,9 +219,9 @@ Content-Type: application/json
 No grant exists, so the consent service changes no state and logs no audit record. The ledger
 handler receives nothing to store.
 
-**Observable result**: The ledger has one row for the revocation. Its `event` value and attributes
-equal those of the stdout record and of the OpenTelemetry log record with the same trace ID. The
-second revocation adds no row.
+**Observable result**: The ledger has one row for the revocation. Its event and attributes match the decoded stdout JSON.
+The OpenTelemetry record has the same event identifier, resource identifiers, trace ID, and policy-rendered identities.
+The bridge exports `granted_permission_sets` as formatted strings rather than JSON objects. The second revocation adds no row.
 
 ### Journey 2 — An old event expires (User Story 2, Scenario 1)
 
@@ -440,6 +440,8 @@ The uncleaned refresh session row remains, and the ledger still contains exactly
 - **FR-003**: A ledger row MUST contain a unique time-ordered ID, the event identifier, the record
   time, the time of storage, the principal when the record has one, the actor and trace ID when
   the request context has them, and all other effective record attributes after duplicate-key resolution.
+  An eligible grouped record promotes context-supplied `actor` and `trace_id` without removing them from the attribute group.
+  The actor passes through the principal policy before promotion.
   The handler and memory adapter preserve record-time nanoseconds; PostgreSQL stores that instant
   truncated to microseconds, as defined in [timestamp precision](./data-model.md#timestamp-precision).
 - **FR-004**: Storing a new event type or a new attribute MUST NOT need a schema migration or a
@@ -457,12 +459,14 @@ The uncleaned refresh session row remains, and the ledger still contains exactly
 - **FR-009**: The broker MUST delete ledger rows whose storage time is older than a configurable
   retention period, with a default of 90 days. Retention MUST run when FR-007 enables the
   ledger and MUST NOT run when the ledger is disabled. No separate key switches retention.
+  Each run MUST use the clock that assigns the storage time and keep the same strict cutoff for every batch.
   Retention-driven deletion MUST NOT produce a log record or a counter metric. Retention
   failure logs remain unchanged.
 - **FR-010**: A stored ledger row MUST NOT be updated by any operation. A row is removed only by FR-009.
 - **FR-011**: Both storage adapters (memory and PostgreSQL) MUST implement the ledger repository.
 - **FR-012**: `consent.grant.revoked` MUST be declared once in the consent service package and logged as a top-level `event` only after committed grant deletion.
-  A rejected or unchanged operation MUST emit no business event. Both committed-delete branches MUST retain the existing resource attributes.
+  A rejected or unchanged operation MUST emit no business event. Both committed-delete branches MUST include the full
+  grant snapshot: `principal`, `agent_id`, `grant_id`, `valid_until`, `updated_at`, `granted_permission_sets`, and `revoked_at`.
   The event MUST distinguish failed refresh-session cleanup from successful cleanup without changing the operation's result.
 
 ### Domain Model

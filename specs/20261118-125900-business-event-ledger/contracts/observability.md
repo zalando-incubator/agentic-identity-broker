@@ -46,13 +46,15 @@ attributes as for every other storage span. No new span attribute namespace is a
 
 | Span | Kind | Method | Status |
 |---|---|---|---|
-| `storage.append.business_event` | `Client` | `Append` | `Error` when the method returns an error, as `recordStorageResult` decides |
-| `storage.delete_recorded_before.business_event` | `Client` | `DeleteRecordedBefore` | The same |
+| `storage.append.business_event` | `Client` | `Append` | Set by `recordStorageResult` |
+| `storage.current_time.business_event` | `Client` | `StorageTime` | Set by `recordStorageResult` |
+| `storage.delete_recorded_before.business_event` | `Client` | `DeleteRecordedBefore` | Set by `recordStorageResult` |
 
-The append span is a child of the request span, because the ledger write keeps the trace context
-of the request. The delete span is a root span of the retention run, which has no request. The
-memory adapter creates no span, as its other repositories do not. The ledger
-handler creates no span of its own.
+The helper leaves status unset on success. It records not found, conflict, validation, and caller cancellation as `storage.outcome`, without setting `Error`.
+Other failures set `Error` and `error.type`.
+
+The append span is a child of the request span. The clock and delete spans are root spans because retention has no request.
+The memory adapter and ledger handler create no spans of their own.
 
 ## Safety tests
 
@@ -66,6 +68,6 @@ handler creates no span of its own.
 - A handler-chain test with a non-identity principal policy asserts identical rendered
   `principal`, `actor`, and `operator_principal` values in the ledger and operational sinks,
   including grouped and `WithAttrs` principals, while preserving typed-event recognition (SR-002).
-- An adapter test asserts the two span names and their error status, as `span_test.go` does for the existing spans.
+- Adapter tests verify the repository span names and status through the shared helpers.
 - An instrument-construction failure test asserts the warning's event and bounded instrument
   attribute, no raw error cause or principal, no ledger recursion, and continued handler operation.

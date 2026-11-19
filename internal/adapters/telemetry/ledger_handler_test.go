@@ -282,6 +282,43 @@ func TestLedgerHandlerWithGroupScopesOnlyLaterAttributes(t *testing.T) {
 	assert.Nil(t, appender.events[0].Principal)
 }
 
+func TestLedgerHandlerPromotesGroupedRequestIdentity(t *testing.T) {
+	const actor = "request-actor"
+	const traceID = "context-trace"
+	policy := func(value string) string { return "policy:" + value }
+	for _, test := range []struct {
+		name  string
+		ctx   context.Context
+		actor bool
+		trace string
+	}{
+		{name: "request", ctx: security.WithSecurityContext(t.Context(), security.SecurityContext{Actor: id.NewPrincipal(actor), TraceID: traceID}), actor: true, trace: traceID},
+		{name: "span only", ctx: trace.ContextWithSpanContext(t.Context(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}})), trace: trace.TraceID{1}.String()},
+		{name: "no context identity", ctx: t.Context()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			appender := &ledgerCaptureAppender{}
+			var operational bytes.Buffer
+			fanout := NewMultiHandler(slog.NewJSONHandler(&operational, nil), NewLedgerHandler(appender, enabledNoopHandler{}, time.Second))
+			logger := slog.New(NewContextHandler(newPrincipalPolicyHandler(fanout, policy))).With("event", ledgerTestEvent).WithGroup("outer").WithGroup("details")
+			logger.InfoContext(test.ctx, "business event recorded", "actor", id.NewPrincipal("group-actor"), "trace_id", "group-trace")
+
+			require.Len(t, appender.events, 1)
+			event := appender.events[0]
+			if test.actor {
+				require.NotNil(t, event.Actor)
+				assert.Equal(t, policy(actor), *event.Actor)
+			} else {
+				assert.Nil(t, event.Actor)
+			}
+			assert.Equal(t, test.trace, event.TraceID)
+			decoded := decodeLedgerJSON(t, operational.Bytes())
+			delete(decoded, "event")
+			assert.Equal(t, decoded, normalizeLedgerJSON(t, event.Attributes), "keep the operational group intact")
+		})
+	}
+}
+
 func TestLedgerHandlerLevelIndependenceAndCancellation(t *testing.T) {
 	appender := &ledgerCaptureAppender{}
 	var operational bytes.Buffer

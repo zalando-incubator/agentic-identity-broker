@@ -40,24 +40,37 @@ func (s *Service) Run(ctx context.Context) {
 }
 
 func (s *Service) sweep(ctx context.Context) {
-	cutoff := time.Now().Add(-s.cfg.Period)
+	if ctx.Err() != nil {
+		return
+	}
+	now, err := s.repo.StorageTime(ctx)
+	if err != nil {
+		s.logFailure(ctx, err)
+		return
+	}
+	cutoff := now.Add(-s.cfg.Period)
 	for ctx.Err() == nil {
 		deleted, err := s.repo.DeleteRecordedBefore(ctx, cutoff, s.cfg.BatchSize)
 		if err != nil {
-			if ctx.Err() == nil {
-				kind := storage.ErrorKindUnknown
-				var storageErr *storage.StorageError
-				if errors.Is(err, context.DeadlineExceeded) {
-					kind = storage.ErrorKindTimeout
-				} else if errors.As(err, &storageErr) {
-					kind = storageErr.Kind
-				}
-				s.logger.ErrorContext(ctx, "business event retention failed", "event", "business_event.ledger.retention_failed", "error_kind", kind)
-			}
+			s.logFailure(ctx, err)
 			return
 		}
 		if deleted < int64(s.cfg.BatchSize) {
 			return
 		}
 	}
+}
+
+func (s *Service) logFailure(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	kind := storage.ErrorKindUnknown
+	var storageErr *storage.StorageError
+	if errors.Is(err, context.DeadlineExceeded) {
+		kind = storage.ErrorKindTimeout
+	} else if errors.As(err, &storageErr) {
+		kind = storageErr.Kind
+	}
+	s.logger.ErrorContext(ctx, "business event retention failed", "event", "business_event.ledger.retention_failed", "error_kind", kind)
 }

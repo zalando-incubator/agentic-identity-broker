@@ -57,6 +57,21 @@ func (a *Adapter) Append(ctx context.Context, event *model.BusinessEvent) (err e
 	return nil
 }
 
+func (a *Adapter) StorageTime(ctx context.Context) (now time.Time, err error) {
+	const operation = "StorageTime"
+	ctx, finish := startStorageSpan(ctx, "storage.current_time.business_event", operation)
+	defer func() { finish(err) }()
+	if a.db == nil {
+		return time.Time{}, storage.NewStorageError(operation, storage.ErrorKindConnection, nil, "database not initialized")
+	}
+	execCtx, cancel := context.WithTimeout(ctx, a.timeouts.Read)
+	defer cancel()
+	if err := sqlx.GetContext(execCtx, a.db, &now, `SELECT statement_timestamp()`); err != nil {
+		return time.Time{}, businessEventStorageError(operation, err, "failed to read business event storage time")
+	}
+	return now, nil
+}
+
 // DeleteRecordedBefore uses one bounded statement outside any transaction carried by ctx.
 func (a *Adapter) DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (deleted int64, err error) {
 	const operation = "DeleteRecordedBefore"

@@ -21,6 +21,63 @@ func (f retentionRepository) DeleteRecordedBefore(ctx context.Context, cutoff ti
 	return f(ctx, cutoff, limit)
 }
 
+func (f retentionRepository) StorageTime(context.Context) (time.Time, error) {
+	return time.Now(), nil
+}
+
+type retentionStorageClock struct {
+	retentionRepository
+	now func() (time.Time, error)
+}
+
+func (r retentionStorageClock) StorageTime(context.Context) (time.Time, error) { return r.now() }
+
+func TestRetentionFreezesStorageCutoff(t *testing.T) {
+	const period = 24 * time.Hour
+	synctest.Test(t, func(t *testing.T) {
+		storageNow := time.Now().Add(-time.Hour)
+		cutoff := storageNow.Add(-period)
+		rows := []time.Time{cutoff.Add(-2 * time.Microsecond), cutoff.Add(-time.Microsecond), cutoff, cutoff.Add(time.Microsecond)}
+		reads := 0
+		repo := retentionStorageClock{
+			now: func() (time.Time, error) {
+				reads++
+				return storageNow, nil
+			},
+			retentionRepository: func(_ context.Context, before time.Time, _ int) (int64, error) {
+				assert.Equal(t, cutoff, before)
+				storageNow = storageNow.Add(time.Hour)
+				if len(rows) > 0 && rows[0].Before(before) {
+					rows = rows[1:]
+					return 1, nil
+				}
+				return 0, nil
+			},
+		}
+		service, err := NewService(repo, ports.BusinessEventsRetentionConfig{Period: period, Interval: time.Second, BatchSize: 1}, slog.New(slog.DiscardHandler))
+		require.NoError(t, err)
+		service.sweep(t.Context())
+		assert.Equal(t, 1, reads)
+		assert.Equal(t, []time.Time{cutoff, cutoff.Add(time.Microsecond)}, rows)
+	})
+}
+
+func TestRetentionSkipsDeleteWhenStorageClockFails(t *testing.T) {
+	var logs bytes.Buffer
+	repo := retentionStorageClock{
+		now: func() (time.Time, error) { return time.Time{}, context.DeadlineExceeded },
+		retentionRepository: func(context.Context, time.Time, int) (int64, error) {
+			t.Fatal("retention must not delete without storage time")
+			return 0, nil
+		},
+	}
+	service, err := NewService(repo, ports.BusinessEventsRetentionConfig{Period: 24 * time.Hour, Interval: time.Second, BatchSize: 1}, slog.New(slog.NewJSONHandler(&logs, nil)))
+	require.NoError(t, err)
+	service.sweep(t.Context())
+	assert.Contains(t, logs.String(), `"event":"business_event.ledger.retention_failed"`)
+	assert.Contains(t, logs.String(), `"error_kind":"timeout"`)
+}
+
 type retentionLogBuffer struct {
 	mu     sync.Mutex
 	buffer bytes.Buffer

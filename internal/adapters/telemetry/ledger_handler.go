@@ -90,29 +90,15 @@ func (h *ledgerHandler) Handle(ctx context.Context, record slog.Record) error {
 		return nil
 	}
 	document := attrs
+	var identity groupedIdentity
 	if len(h.groups) != 0 {
 		document = mergeLedgerAttrs(h.attrs, h.groups, h.openGroups, attrs)
+		identity, _ = ctx.Value(groupedIdentityKey{}).(groupedIdentity)
 	}
 	if eventName, ok := document["event"].(string); !ok || eventName != definition.Name() {
 		return nil
 	}
-	event := &model.BusinessEvent{
-		ID:         id.BusinessEventID(uuid.Must(uuid.NewV7())),
-		Event:      definition.Name(),
-		OccurredAt: record.Time.UTC(),
-		Attributes: document,
-	}
-	if principal, ok := document["principal"].(string); ok {
-		event.Principal = &principal
-	}
-	if actor, ok := document["actor"].(string); ok {
-		event.Actor = &actor
-	}
-	event.TraceID, _ = document["trace_id"].(string)
-	delete(document, "event")
-	delete(document, "principal")
-	delete(document, "actor")
-	delete(document, "trace_id")
+	event := ledgerOccurrence(record.Time, definition.Name(), document, attrs, identity)
 
 	measurementCtx := context.WithoutCancel(ctx)
 	appendCtx, cancel := context.WithTimeout(measurementCtx, h.writeTimeout)
@@ -133,6 +119,34 @@ func (h *ledgerHandler) Handle(ctx context.Context, record slog.Record) error {
 			"error_kind", string(kind), "duration_ms", elapsed.Milliseconds())
 	}
 	return nil
+}
+
+func ledgerOccurrence(occurredAt time.Time, name string, document, recordAttrs ledgerObject, identity groupedIdentity) *model.BusinessEvent {
+	event := &model.BusinessEvent{
+		ID:         id.BusinessEventID(uuid.Must(uuid.NewV7())),
+		Event:      name,
+		OccurredAt: occurredAt.UTC(),
+		Attributes: document,
+	}
+	actorAttrs, traceAttrs := document, document
+	switch identity {
+	case groupedActorAndTrace:
+		actorAttrs, traceAttrs = recordAttrs, recordAttrs
+	case groupedTraceOnly:
+		traceAttrs = recordAttrs
+	}
+	if principal, ok := document["principal"].(string); ok {
+		event.Principal = &principal
+	}
+	if actor, ok := actorAttrs["actor"].(string); ok {
+		event.Actor = &actor
+	}
+	event.TraceID, _ = traceAttrs["trace_id"].(string)
+	delete(document, "event")
+	delete(document, "principal")
+	delete(document, "actor")
+	delete(document, "trace_id")
+	return event
 }
 
 func (h *ledgerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {

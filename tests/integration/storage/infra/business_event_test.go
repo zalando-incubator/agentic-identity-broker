@@ -110,6 +110,20 @@ func TestBusinessEventPostgresAppend(t *testing.T) {
 		assert.Nil(t, event.Attributes)
 	})
 
+	t.Run("JSONB rejects escaped NUL", func(t *testing.T) {
+		event := postgresBusinessEvent()
+		event.Attributes = map[string]any{"nested": []any{"a\x00b"}}
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, store.BusinessEvents().Append(ctx, event), &storageErr)
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, storageErr, &pgErr)
+		assert.Equal(t, "22P05", pgErr.Code)
+		assert.True(t, event.RecordedAt.IsZero())
+		var exists bool
+		require.NoError(t, db.Get(&exists, `SELECT EXISTS (SELECT 1 FROM business_events WHERE id = $1)`, event.ID))
+		assert.False(t, exists)
+	})
+
 	t.Run("duplicate ID is conflict and preserves original", func(t *testing.T) {
 		event := postgresBusinessEvent()
 		require.NoError(t, store.BusinessEvents().Append(ctx, event))
@@ -123,13 +137,15 @@ func TestBusinessEventPostgresAppend(t *testing.T) {
 		assert.True(t, original.RecordedAt.Equal(row.RecordedAt))
 	})
 
-	t.Run("committed context transaction is ignored by both methods", func(t *testing.T) {
+	t.Run("committed context transaction is ignored by ledger operations", func(t *testing.T) {
 		txCtx, err := store.BeginTX(ctx)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = store.Rollback(txCtx) })
 		require.NoError(t, store.Commit(txCtx))
 		event := postgresBusinessEvent()
 		require.NoError(t, store.BusinessEvents().Append(txCtx, event))
+		_, err = store.BusinessEventRetention().StorageTime(txCtx)
+		require.NoError(t, err)
 		row := readBusinessEventSQL(t, db, event.ID)
 		assert.Equal(t, event.Event, row.Event)
 		deleted, err := store.BusinessEventRetention().DeleteRecordedBefore(txCtx, event.OccurredAt, 1)
@@ -198,7 +214,15 @@ func TestBusinessEventPostgresAppend(t *testing.T) {
 
 func TestBusinessEventPostgresRetentionOrderAndLimit(t *testing.T) {
 	store, db := newBusinessEventStorage(t)
-	cutoff := time.Date(2025, time.March, 4, 5, 6, 7, 0, time.UTC)
+	const period = 24 * time.Hour
+	var before, after time.Time
+	require.NoError(t, db.Get(&before, `SELECT statement_timestamp()`))
+	storageNow, err := store.BusinessEventRetention().StorageTime(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, db.Get(&after, `SELECT statement_timestamp()`))
+	require.False(t, storageNow.Before(before))
+	require.False(t, storageNow.After(after))
+	cutoff := storageNow.Add(-period)
 	ids := []id.BusinessEventID{
 		id.BusinessEventID(uuid.MustParse("00000000-0000-4000-8000-000000000001")),
 		id.BusinessEventID(uuid.MustParse("00000000-0000-4000-8000-000000000002")),
@@ -206,7 +230,7 @@ func TestBusinessEventPostgresRetentionOrderAndLimit(t *testing.T) {
 		id.BusinessEventID(uuid.MustParse("00000000-0000-4000-8000-000000000004")),
 		id.BusinessEventID(uuid.MustParse("00000000-0000-4000-8000-000000000005")),
 	}
-	for index, recordedAt := range []time.Time{cutoff.Add(-time.Hour), cutoff.Add(-time.Hour), cutoff, cutoff.Add(time.Hour), cutoff.Add(-2 * time.Hour)} {
+	for index, recordedAt := range []time.Time{cutoff.Add(-time.Microsecond), cutoff.Add(-time.Microsecond), cutoff, cutoff.Add(time.Microsecond), cutoff.Add(-time.Hour)} {
 		_, err := db.Exec(`INSERT INTO business_events (id, event, occurred_at, recorded_at) VALUES ($1, 'test.ledger.recorded', $2, $2)`, ids[index], recordedAt)
 		require.NoError(t, err)
 	}
@@ -218,7 +242,7 @@ func TestBusinessEventPostgresRetentionOrderAndLimit(t *testing.T) {
 		require.NoError(t, db.Get(&exists, `SELECT EXISTS (SELECT 1 FROM business_events WHERE id = $1)`, expectedID))
 		assert.False(t, exists, "oldest row, then lowest ID, must be deleted")
 	}
-	deleted, err := store.BusinessEventRetention().DeleteRecordedBefore(context.Background(), cutoff, 1000)
+	deleted, err := store.BusinessEventRetention().DeleteRecordedBefore(t.Context(), cutoff, 1000)
 	require.NoError(t, err)
 	assert.Zero(t, deleted)
 	var remaining []string

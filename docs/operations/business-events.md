@@ -87,6 +87,7 @@ The accepted outcomes are:
 - A process stop after commit but before the log call can lose both the row and the operational audit record. No failure metric counts that loss.
 - A process stop during the log call can leave either sink without the record.
 - A confirmed insert failure leaves no row. The original audit record still reaches the operational sinks.
+  For example, PostgreSQL JSONB rejects U+0000 in an attribute string or key, even when stdout and the memory adapter accept it.
 - A timed-out append has an **unknown outcome**. The database can commit the insert after the handler stops waiting.
 
 A failed or timed-out append does not change the business operation's result.
@@ -110,7 +111,9 @@ A shorter period can create an overdue backlog. Different replica periods during
 A replica with a shorter period can delete rows that another replica still considers current.
 
 Retention uses **storage time** (`recorded_at`), not occurrence time (`occurred_at`).
-Each run fixes its cutoff at run start minus the retention period. It deletes only rows strictly older than that cutoff, oldest first.
+Each run samples the same clock that assigns `recorded_at` and subtracts the retention period.
+This cutoff stays fixed across batches. PostgreSQL uses its own clock, not the broker clock.
+Retention deletes only rows strictly older than the cutoff, oldest first.
 Each statement deletes at most `batch_size` rows. The run continues until a short batch, cancellation, or an error.
 Rows that expire after the fixed cutoff remain eligible for a later run.
 Successful retention deletion emits neither a log record nor a deleted-row counter.

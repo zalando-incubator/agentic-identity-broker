@@ -111,13 +111,13 @@ For other values, match
 If value encoding returns an error, store the JSON string `fmt.Sprintf("!ERROR:%v", err)`,
 not the original value's printed representation. This also applies to non-finite floats.
 These rules apply after resolution and within slog groups, not recursively inside arbitrary Go values.
-Attributes from `WithAttrs` and `WithGroup`
-are included. Only top-level keys `event`, `principal`, `actor`, and `trace_id` move to their columns.
-They are not repeated in the document. Keys inside a group remain in the document. `calling_peer` also remains in the document.
+The projection includes attributes from `WithAttrs` and `WithGroup`. Top-level `event`, `principal`, `actor`, and `trace_id` move to columns.
+Grouped keys stay in the document. For an eligible grouped log record, the context-supplied actor and trace ID also populate their columns.
+`calling_peer` stays in the document.
 
-**Rationale**: This equals the output of `slog.JSONHandler`, so a ledger row and the stdout line
-of the same record have the same attribute values (spec Journey 1, observable result). A typed ID
-has `MarshalJSON` and encodes as its string form.
+**Rationale**: The ledger uses the same JSON value encoding as `slog.JSONHandler` for attributes that PostgreSQL can store.
+A typed ID has `MarshalJSON` and encodes as its string form. OpenTelemetry can use a different encoding for structured attributes.
+See the [storage contract](./contracts/ports.md#2-storage-ports-internalportsstoragego) for JSONB restrictions and failed appends.
 
 **Alternatives**: Store the stdout JSON line as text: not queryable and includes the message.
 

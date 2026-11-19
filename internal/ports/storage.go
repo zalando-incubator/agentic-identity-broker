@@ -54,6 +54,8 @@ type BusinessEventAppender interface {
 
 // BusinessEventRetention removes expired occurrences, oldest first.
 type BusinessEventRetention interface {
+	// StorageTime samples the clock that assigns RecordedAt, outside any transaction in ctx.
+	StorageTime(ctx context.Context) (time.Time, error)
 	DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error)
 }
 

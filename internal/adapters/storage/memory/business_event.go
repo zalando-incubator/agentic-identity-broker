@@ -47,6 +47,13 @@ func (a *Adapter) Append(ctx context.Context, event *model.BusinessEvent) error 
 	return nil
 }
 
+func (a *Adapter) StorageTime(ctx context.Context) (time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, storage.NewStorageError("StorageTime", storage.ErrorKindTimeout, err, "operation cancelled or timed out")
+	}
+	return time.Now().UTC(), nil
+}
+
 // DeleteRecordedBefore removes at most limit occurrences, oldest storage time first.
 func (a *Adapter) DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
 	const operation = "DeleteRecordedBefore"

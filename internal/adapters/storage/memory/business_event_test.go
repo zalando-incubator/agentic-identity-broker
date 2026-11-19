@@ -98,6 +98,15 @@ func TestBusinessEventAppendNilAttributesAndDuplicate(t *testing.T) {
 	assert.True(t, recordedAt.Equal(stored.RecordedAt))
 }
 
+func TestBusinessEventAppendPreservesNUL(t *testing.T) {
+	adapter := NewAdapter()
+	event := memoryBusinessEvent()
+	event.Attributes = map[string]any{"nested": []any{"a\x00b"}}
+	require.NoError(t, adapter.Append(t.Context(), event))
+	require.Len(t, adapter.businessEvents, 1)
+	assert.Equal(t, event.Attributes, adapter.businessEvents[0].Attributes)
+}
+
 func TestBusinessEventAppendRejectsInvalidInput(t *testing.T) {
 	for _, test := range []struct {
 		name string
