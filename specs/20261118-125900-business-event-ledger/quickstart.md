@@ -9,9 +9,10 @@ Use a local PostgreSQL database that holds test data only. The SQL statements in
 and 6 need the PostgreSQL storage adapter; the memory adapter keeps the ledger in the process and
 has no query interface. Section 6 changes and deletes rows.
 
-For sections 5 and 6, enable `telemetry.enabled` and `telemetry.metrics.enabled`.
-Configure a reachable OTLP collector with a metrics receiver, and wait for the metrics export interval before comparing counters.
-For the OpenTelemetry log comparison in section 3, also enable `telemetry.logs.enabled` and collect OTLP logs.
+To export metrics or logs, enable `telemetry.enabled` and configure a reachable OTLP collector.
+For the failed-write metric check in section 5, enable `telemetry.metrics.enabled` and configure the collector's metrics receiver.
+Wait for the metrics export interval before comparing counters.
+For the OpenTelemetry log comparison in section 3, enable `telemetry.logs.enabled` and configure the collector's logs receiver.
 To compare an incoming `traceparent` ID, enable `telemetry.traces.enabled` and include `tracecontext` in `telemetry.traces.propagators`.
 See the [telemetry configuration reference](../../docs/configuration.md#observability--opentelemetry) for exporter settings.
 
