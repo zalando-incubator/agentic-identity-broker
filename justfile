@@ -237,6 +237,8 @@ fmt:
     "$(go env GOROOT)/bin/gofmt" -s -w .
     @echo "Format complete"
 
+# Run it locally after a change to a span, a metric or an attribute, and commit the page. CI does
+# not run it: TestReferenceIsCurrent in the unit tests fails while the page is out of date.
 # Regenerate docs/reference/telemetry.md from the code (coding-standards/OPENTELEMETRY.md section 9)
 telemetry-doc:
     @page="$(go run ./tools/telemetrydoc)" && printf '%s\n' "$page" > docs/reference/telemetry.md
