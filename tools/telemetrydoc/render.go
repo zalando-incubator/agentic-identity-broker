@@ -1,121 +1,28 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
+	"text/template"
 )
 
-const header = `---
-title: "Telemetry"
-description: Spans, metrics and attributes that the broker and ExtProc emit through OpenTelemetry. Generated from the source code.
----
+//go:embed page.md.tmpl
+var pageTemplate string
 
-# Telemetry
-
-This page lists every span, metric and attribute that the broker and ExtProc create through
-the OpenTelemetry API. ` + "`tools/telemetrydoc`" + ` generates it from the source code, and a test
-fails when the page is out of date. Do not edit it by hand. After you change a span or a
-metric, run ` + "`just telemetry-doc`" + `.
-
-The page does not list:
-
-- the HTTP server spans and metrics that ` + "`otelchi`" + ` creates for each inbound request;
-- metrics that the OpenTelemetry SDK, the Go runtime or a library creates;
-- span events and resource attributes;
-- log records. ` + "`coding-standards/LOGGING.md`" + ` covers them.
-
-A value list can show more values than one span or metric sets. An attribute with an
-enumerated Go type lists every constant of the type. A variable or a parameter lists every
-constant that the code can assign or pass to it. An attribute that the code sets on the span
-in a context is listed under each span of this module that the context can hold. Rules for
-adding telemetry are in ` + "`coding-standards/OPENTELEMETRY.md`" + `.
-`
+var page = template.Must(template.New("page").Funcs(template.FuncMap{
+	"anchor":     anchor,
+	"code":       code,
+	"codes":      codes,
+	"documented": documented,
+	"text":       text,
+	"values":     values,
+}).Parse(pageTemplate))
 
 // Write renders ref as the telemetry reference page.
 func Write(w io.Writer, ref *Reference) error {
-	b := &strings.Builder{}
-	b.WriteString(header)
-	writeSpans(b, ref)
-	writeMetrics(b, ref)
-	writeSpanAttributes(b, ref)
-	writeMetricAttributes(b, ref)
-	writeEnums(b, ref)
-	_, err := io.WriteString(w, strings.TrimRight(b.String(), "\n")+"\n")
-	return err
-}
-
-func writeSpans(b *strings.Builder, ref *Reference) {
-	b.WriteString("\n## Spans\n\n")
-	b.WriteString("Error status: whether the span can end with status `Error`.\n\n")
-	b.WriteString("| Span | Kind | Scope | Error status | Started in |\n|---|---|---|---|---|\n")
-	for _, n := range sortedKeys(ref.Spans) {
-		s := ref.Spans[n]
-		started := codeList(sortedKeys(s.Files))
-		if s.RenamedFrom != "" {
-			started = fmt.Sprintf("Renamed from `%s`", s.RenamedFrom)
-		}
-		fmt.Fprintf(b, "| [`%s`](#%s) | %s | `%s` | %s | %s |\n",
-			n, anchor(n), kindName(s.Kind), s.Scope, yesNo(s.ErrorStatus), started)
-	}
-}
-
-func writeMetrics(b *strings.Builder, ref *Reference) {
-	b.WriteString("\n## Metrics\n\n")
-	b.WriteString("| Metric | Instrument | Unit | Scope | Description |\n|---|---|---|---|---|\n")
-	for _, n := range sortedKeys(ref.Metrics) {
-		m := ref.Metrics[n]
-		fmt.Fprintf(b, "| [`%s`](#%s) | %s | %s | `%s` | %s |\n",
-			n, anchor(n), m.Instrument, code(m.Unit), m.Scope, text(m.Desc))
-	}
-}
-
-func writeSpanAttributes(b *strings.Builder, ref *Reference) {
-	b.WriteString("\n## Span attributes\n")
-	for _, n := range sortedKeys(ref.Spans) {
-		s := ref.Spans[n]
-		fmt.Fprintf(b, "\n### %s\n\n", n)
-		if s.RenamedFrom != "" {
-			fmt.Fprintf(b, "The `%s` span, renamed while it runs. It has the same attributes.\n\n", s.RenamedFrom)
-		}
-		writeAttrs(b, s.Attrs)
-	}
-}
-
-func writeMetricAttributes(b *strings.Builder, ref *Reference) {
-	b.WriteString("\n## Metric attributes\n")
-	for _, n := range sortedKeys(ref.Metrics) {
-		m := ref.Metrics[n]
-		fmt.Fprintf(b, "\n### %s\n\n", n)
-		fmt.Fprintf(b, "Created in `%s`.\n\n", m.File)
-		writeAttrs(b, m.Attrs)
-	}
-}
-
-func writeAttrs(b *strings.Builder, attrs map[string]*Attr) {
-	if len(attrs) == 0 {
-		b.WriteString("No attributes.\n")
-		return
-	}
-	b.WriteString("| Attribute | Values |\n|---|---|\n")
-	for _, k := range sortedKeys(attrs) {
-		a := attrs[k]
-		var vals []string
-		for _, v := range sortedKeys(a.Values) {
-			vals = append(vals, code(v))
-		}
-		if a.EnumType != "" {
-			vals = append(vals, fmt.Sprintf("[`%s`](#%s)", a.EnumType, anchor(a.EnumType)))
-		}
-		for _, t := range sortedKeys(a.Types) {
-			vals = append(vals, "any "+code(t))
-		}
-		fmt.Fprintf(b, "| `%s` | %s |\n", a.Key, strings.Join(vals, ", "))
-	}
-}
-
-func writeEnums(b *strings.Builder, ref *Reference) {
 	enums := map[string][]EnumValue{}
 	collect := func(attrs map[string]*Attr) {
 		for _, a := range attrs {
@@ -130,40 +37,42 @@ func writeEnums(b *strings.Builder, ref *Reference) {
 	for _, m := range ref.Metrics {
 		collect(m.Attrs)
 	}
-	b.WriteString("\n## Attribute values\n")
-	for _, n := range sortedKeys(enums) {
-		fmt.Fprintf(b, "\n### %s\n\n", n)
-		documented := false
-		for _, e := range enums[n] {
-			documented = documented || e.Doc != ""
-		}
-		if !documented {
-			vals := make([]string, 0, len(enums[n]))
-			for _, e := range enums[n] {
-				vals = append(vals, code(e.Value))
-			}
-			b.WriteString(strings.Join(vals, ", ") + "\n")
-			continue
-		}
-		b.WriteString("| Value | Meaning |\n|---|---|\n")
-		for _, e := range enums[n] {
-			fmt.Fprintf(b, "| %s | %s |\n", code(e.Value), text(e.Doc))
-		}
+	var b strings.Builder
+	err := page.Execute(&b, struct {
+		Spans   map[string]*Span
+		Metrics map[string]*Metric
+		Enums   map[string][]EnumValue
+	}{ref.Spans, ref.Metrics, enums})
+	if err != nil {
+		return err
 	}
+	_, err = io.WriteString(w, strings.TrimRight(b.String(), "\n")+"\n")
+	return err
 }
 
-func kindName(k string) string {
-	if k == "" {
-		return "Internal"
+// values lists what the code can put in the attribute a.
+func values(a *Attr) string {
+	var vals []string
+	for _, v := range sortedKeys(a.Values) {
+		vals = append(vals, code(v))
 	}
-	return k
+	if a.EnumType != "" {
+		vals = append(vals, fmt.Sprintf("[`%s`](#%s)", a.EnumType, anchor(a.EnumType)))
+	}
+	for _, t := range sortedKeys(a.Types) {
+		vals = append(vals, "any "+code(t))
+	}
+	return strings.Join(vals, ", ")
 }
 
-func yesNo(v bool) string {
-	if v {
-		return "Yes"
+// documented reports whether any of the values has a doc comment.
+func documented(values []EnumValue) bool {
+	for _, e := range values {
+		if e.Doc != "" {
+			return true
+		}
 	}
-	return "No"
+	return false
 }
 
 func code(s string) string {
@@ -173,7 +82,8 @@ func code(s string) string {
 	return "`" + strings.ReplaceAll(s, "|", `\|`) + "`"
 }
 
-func codeList(list []string) string {
+func codes(set map[string]bool) string {
+	list := sortedKeys(set)
 	out := make([]string, len(list))
 	for i, s := range list {
 		out[i] = code(s)
