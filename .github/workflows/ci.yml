@@ -79,8 +79,9 @@ jobs:
             echo "helm=$(match '^(charts/|tests/integration/helm_chart_test\.go$|tests/e2e/fixtures/oauth2-secret-file-values\.yaml$|\.github/workflows/ci\.yml$|go\.(mod|sum)$)')"
             echo "workflows=$(match '^(\.github/(workflows/|scripts/(speckit|architecture-review|pr-conflict)-|actionlint\.yaml$|zizmor\.yml$|aw/actions-lock\.json$|dependabot\.yml)|\.agents/skills/speckit-)')"
             echo "deps=$(match '(^|/)(go\.mod|go\.sum|package(-lock)?\.json)$')"
-            # "code" = anything that is not purely documentation.
-            if grep -Evq "$DOCS_ONLY" changed.txt; then echo "code=true"; else echo "code=false"; fi
+            # "code" = anything that is not purely documentation. The telemetry reference counts as
+            # code because TestReferenceIsCurrent checks it against the source.
+            if grep -Evq "$DOCS_ONLY" changed.txt || grep -q '^docs/reference/telemetry' changed.txt; then echo "code=true"; else echo "code=false"; fi
           } | tee -a "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
