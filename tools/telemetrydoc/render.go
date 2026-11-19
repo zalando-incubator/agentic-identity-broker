@@ -93,7 +93,7 @@ func codes(set map[string]bool) string {
 
 // text escapes characters that break a table cell or MDX.
 func text(s string) string {
-	return strings.NewReplacer("|", `\|`, "{", `\{`, "}", `\}`, "<", "&lt;", ">", "&gt;").Replace(s)
+	return strings.NewReplacer("\n", " ", "|", `\|`, "{", `\{`, "}", `\}`, "<", "&lt;", ">", "&gt;").Replace(s)
 }
 
 // anchor returns the heading ID that GitHub and Docusaurus generate.
