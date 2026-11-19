@@ -251,6 +251,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 |---|---|
 | `just check` | Non-mutating format, vet, and lint checks |
 | `just fmt` | Apply Go formatting changes |
+| `just telemetry-doc` | Regenerate `docs/reference/telemetry.md` from the code |
 | `just build` | Build Go binary → `./bin/agentic-identity-broker` |
 | `just test` | Fast Go/package tests (no E2E or integration suites) |
 | `just verify` | Full gate: static checks, security scans, tests, integration, then E2E |
@@ -263,6 +264,8 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just render-wireframes <spec.md>` | Render Wireloom wireframes in a spec to SVG (after `just install-tools`) |
 
 After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
+After a Go change under `internal/` or `cmd/`, run `just telemetry-doc` and commit `docs/reference/telemetry.md` if it changed.
+The page also lists the files that start spans and create metrics, and the doc comments of value constants, so it can change without a telemetry change.
 Do not rely only on editor diagnostics. Before a pull request, run the full gate from `CONTRIBUTING.md`.
 
 ## Code Style
