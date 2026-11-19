@@ -42,6 +42,8 @@ Error status: whether the span can end with status `Error`.
 | [`encryption.encrypt`](#encryptionencrypt) | Internal | `encryption` | No | `internal/adapters/encryption/aws/adapter.go` |
 | [`extproc.approval.gate`](#extprocapprovalgate) | Internal | `extproc` | No | `internal/extproc/approval/gate.go` |
 | [`extproc.client_assertion.refresh`](#extprocclient_assertionrefresh) | Internal | `extproc` | Yes | `internal/extproc/server/exchanger.go` |
+| [`extproc.grant_context.evaluate`](#extprocgrant_contextevaluate) | Client | `extproc` | Yes | `internal/extproc/grantcontext/client.go` |
+| [`extproc.grant_context.resolve`](#extprocgrant_contextresolve) | Internal | `extproc` | Yes | `internal/extproc/grantcontext/resolver.go` |
 | [`extproc.opa.evaluate`](#extprocopaevaluate) | Internal | `extproc` | No | `internal/extproc/authorization/authorizer.go` |
 | [`extproc.token_exchange`](#extproctoken_exchange) | Server | `extproc` | Yes | `internal/extproc/server/server.go` |
 | [`http.request`](#httprequest) | Client | `telemetryhttp` | Yes | `internal/telemetryhttp/transport.go` |
@@ -83,10 +85,11 @@ Error status: whether the span can end with status `Error`.
 | [`storage.revoke_by_request.refresh_token_session`](#storagerevoke_by_requestrefresh_token_session) | Client | `storage` | Yes | `internal/adapters/storage/postgres/refresh_token_session_repo.go` |
 | [`storage.revoke_permanent.tool_approval`](#storagerevoke_permanenttool_approval) | Client | `storage` | Yes | `internal/adapters/storage/postgres/tool_approval_repository.go` |
 | [`storage.rotate.client_credential`](#storagerotateclient_credential) | Client | `storage` | Yes | `internal/adapters/storage/postgres/client_credential_repo.go` |
+| [`tokenexchange.access_evaluation`](#tokenexchangeaccess_evaluation) | Internal | `tokenexchange` | Yes | `internal/adapters/http/enduser/authzen_evaluation.go` |
 | [`tokenexchange.exchange`](#tokenexchangeexchange) | Internal | `tokenexchange` | Yes | `internal/adapters/http/enduser/oauth2_token.go` |
 | [`tokenexchange.get_valid_access_token`](#tokenexchangeget_valid_access_token) | Internal | `tokenexchange` | No | `internal/domain/tokenexchange/service.go` |
 | [`tokenexchange.impersonation`](#tokenexchangeimpersonation) | Internal | `tokenexchange` | Yes | Renamed from `tokenexchange.exchange` |
-| [`tokenexchange.verify_agent_access`](#tokenexchangeverify_agent_access) | Internal | `tokenexchange` | No | `internal/domain/tokenexchange/service.go` |
+| [`tokenexchange.verify_agent_access`](#tokenexchangeverify_agent_access) | Internal | `tokenexchange` | Yes | `internal/domain/tokenexchange/grant_resolver.go` |
 
 ## Metrics
 
@@ -216,6 +219,25 @@ Error status: whether the span can end with status `Error`.
 | `token_exchange.outcome` | [`internal/extproc/server.Outcome`](#internalextprocserveroutcome) |
 | `token_exchange.recovery_action` | [`internal/extproc/server.RecoveryAction`](#internalextprocserverrecoveryaction) |
 | `token_exchange.recovery_target` | [`internal/extproc/server.RecoveryTarget`](#internalextprocserverrecoverytarget) |
+
+### extproc.grant_context.evaluate
+
+| Attribute | Values |
+|---|---|
+| `error.type` | `unavailable`, any `string` |
+| `token_exchange.failure_detail` | `caller_canceled`, `grant_context_denied`, `grant_context_unavailable`, `none` |
+| `token_exchange.operation` | `grant_resolution` |
+| `token_exchange.outcome` | `authorization_denied`, `canceled`, `infrastructure_error`, `success` |
+
+### extproc.grant_context.resolve
+
+| Attribute | Values |
+|---|---|
+| `error.type` | `unavailable`, any `string` |
+| `grant_context.cache` | `hit`, `miss` |
+| `token_exchange.failure_detail` | `caller_canceled`, `grant_context_denied`, `grant_context_unavailable`, `none` |
+| `token_exchange.operation` | `grant_resolution` |
+| `token_exchange.outcome` | `authorization_denied`, `canceled`, `infrastructure_error`, `success` |
 
 ### extproc.opa.evaluate
 
@@ -588,6 +610,24 @@ Error status: whether the span can end with status `Error`.
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 
+### tokenexchange.access_evaluation
+
+| Attribute | Values |
+|---|---|
+| `access_evaluation.decision` | `deny`, `error`, `permit` |
+| `access_evaluation.max_age` | any `int` |
+| `http.response.status_code` | any `int` |
+| `token_exchange.agent.id` | any `string` |
+| `token_exchange.failure_detail` | [`internal/domain/tokenexchange.FailureDetail`](#internaldomaintokenexchangefailuredetail) |
+| `token_exchange.failure_stage` | [`internal/domain/tokenexchange.FailureStage`](#internaldomaintokenexchangefailurestage) |
+| `token_exchange.grant.id` | any `string` |
+| `token_exchange.grant.updated_at` | any `string` |
+| `token_exchange.operation` | `access_evaluation` |
+| `token_exchange.outcome` | [`internal/domain/tokenexchange.Outcome`](#internaldomaintokenexchangeoutcome) |
+| `token_exchange.recovery_action` | [`internal/domain/tokenexchange.RecoveryAction`](#internaldomaintokenexchangerecoveryaction) |
+| `token_exchange.recovery_target` | [`internal/domain/tokenexchange.RecoveryTarget`](#internaldomaintokenexchangerecoverytarget) |
+| `token_exchange.service.id` | any `string` |
+
 ### tokenexchange.exchange
 
 | Attribute | Values |
@@ -642,7 +682,9 @@ The `tokenexchange.exchange` span, renamed while it runs. It has the same attrib
 
 ### tokenexchange.verify_agent_access
 
-No attributes.
+| Attribute | Values |
+|---|---|
+| `error.type` | `grant_repository_unavailable` |
 
 ## Metric attributes
 
@@ -857,7 +899,7 @@ Created in `internal/domain/oauth2session/sweep.go`.
 
 ### internal/extproc/server.FailureDetail
 
-`authorization_denied`, `broker_response_invalid`, `broker_unavailable`, `caller_canceled`, `circuit_open`, `client_expired`, `client_invalid`, `configuration`, `consent_required`, `credential_rejected`, `internal_unclassified`, `none`, `policy_configuration`, `policy_denied`, `policy_evaluation_failed`, `provider_response_invalid`, `provider_unavailable`, `reauth_required`, `request_malformed`, `resource_missing`, `response_write_failed`, `session_reauth_required`, `subject_invalid`
+`authorization_denied`, `broker_response_invalid`, `broker_unavailable`, `caller_canceled`, `circuit_open`, `client_expired`, `client_invalid`, `configuration`, `consent_required`, `credential_rejected`, `grant_context_denied`, `grant_context_unavailable`, `internal_unclassified`, `none`, `policy_configuration`, `policy_denied`, `policy_evaluation_failed`, `provider_response_invalid`, `provider_unavailable`, `reauth_required`, `request_malformed`, `resource_missing`, `response_write_failed`, `session_reauth_required`, `subject_invalid`
 
 ### internal/extproc/server.FailureStage
 

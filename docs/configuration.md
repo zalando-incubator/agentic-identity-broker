@@ -1933,10 +1933,10 @@ The spans are in these groups:
 | `jwks.fetch` | JWKS key set fetch or cache lookup |
 | `oauth2.token_proxy` | Upstream OAuth2 token proxy |
 | `http.request` | Outbound HTTP calls |
-| `tokenexchange.*` | RFC 8693 token exchange in the broker |
+| `tokenexchange.*` | RFC 8693 token exchange and AuthZEN access evaluation in the broker |
 | `approval.*` | Tool approval operations |
 | `oauth2session.*` | Third-party session refresh in the background |
-| `extproc.*` | ExtProc token exchange, OPA evaluation, and the approval gate |
+| `extproc.*` | ExtProc token exchange, OPA evaluation, grant context, and the approval gate |
 
 `http.request` spans have span kind `Client`. A failed call sets the error status and `error.type`:
 
