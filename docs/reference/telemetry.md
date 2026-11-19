@@ -44,7 +44,7 @@ Error status: whether the span can end with status `Error`.
 | [`extproc.approval.gate`](#extprocapprovalgate) | Internal | `extproc` | No | Decides whether a tool call proceeds, needs the user's approval first, or is denied. It does not wait for the approval. |
 | [`extproc.client_assertion.refresh`](#extprocclient_assertionrefresh) | Internal | `extproc` | Yes | Obtains a new client assertion through the client credentials grant. |
 | [`extproc.grant_context.evaluate`](#extprocgrant_contextevaluate) | Client | `extproc` | Yes | Calls the broker's AuthZEN access evaluation endpoint for the subject token and the requested resource. The resolver calls it on a cache miss, once for all concurrent requests for the same token and resource. |
-| [`extproc.grant_context.resolve`](#extprocgrant_contextresolve) | Internal | `extproc` | Yes | Returns the delegation permit for the subject token and the requested resource, from ExtProc's permit cache or from the broker. With `grant_context.enabled`, ExtProc resolves it before each OPA decision. |
+| [`extproc.grant_context.resolve`](#extprocgrant_contextresolve) | Internal | `extproc` | Yes | Returns the delegation permit for the subject token and the requested resource, from ExtProc's permit cache or from the broker. With `grant_context.enabled`, ExtProc resolves it once per request, in the headers phase, and uses it for every OPA decision of the request, including each message of an MCP batch. A permit that expires before a decision fails the request; ExtProc does not resolve it again. |
 | [`extproc.opa.evaluate`](#extprocopaevaluate) | Internal | `extproc` | No | Evaluates the OPA policy for a request. |
 | [`extproc.token_exchange`](#extproctoken_exchange) | Server | `extproc` | Yes | Handles the request headers of one gateway request in ExtProc. It validates the request metadata and gets an exchanged token from ExtProc's cache or from the broker. For a request with a body, the OPA decision on the body comes after the span ends. |
 | [`http.request`](#httprequest) | Client | `telemetryhttp` | Yes | Outbound HTTP call through `telemetryhttp`. The span does not record URLs, headers, bodies or error messages. |
@@ -288,7 +288,7 @@ Started in `internal/extproc/grantcontext/client.go`.
 
 ### extproc.grant_context.resolve
 
-Returns the delegation permit for the subject token and the requested resource, from ExtProc's permit cache or from the broker. With `grant_context.enabled`, ExtProc resolves it before each OPA decision.
+Returns the delegation permit for the subject token and the requested resource, from ExtProc's permit cache or from the broker. With `grant_context.enabled`, ExtProc resolves it once per request, in the headers phase, and uses it for every OPA decision of the request, including each message of an MCP batch. A permit that expires before a decision fails the request; ExtProc does not resolve it again.
 
 Started in `internal/extproc/grantcontext/resolver.go`.
 
