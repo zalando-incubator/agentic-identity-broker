@@ -152,7 +152,7 @@ just test                     # unit tests, includes handler and memory adapter 
 just test-integration         # self-contained integration tests
 just test-e2e-backend         # existing non-container acceptance suites
 just test-integration-infra   # PostgreSQL adapter and migration 049 (containers)
-just test-e2e-docker          # all five ledger scenarios; test-local SQL inspection (containers)
+just test-e2e-docker          # all six ledger scenarios; test-local SQL inspection (containers)
 just test-e2e-performance     # SC-004 measurement (containers)
 ```
 

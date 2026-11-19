@@ -27,18 +27,19 @@ import (
 
 var _ = Describe("Business event ledger", Label("docker"), func() {
 	var (
-		postgres *bootstrap.PostgresFixture
-		db       *sql.DB
-		store    *storageadapter.Adapter
-		server   *bootstrap.TestServer
-		cfg      *ports.Config
-		logger   *slog.Logger
-		logs     *bootstrap.BufferedLogCapture
-		reader   *sdkmetric.ManualReader
-		client   *http.Client
-		agent    *storagedomain.Agent
-		grantID  id.GrantID
-		failing  bool
+		postgres   *bootstrap.PostgresFixture
+		db         *sql.DB
+		store      *storageadapter.Adapter
+		server     *bootstrap.TestServer
+		cfg        *ports.Config
+		logger     *slog.Logger
+		logs       *bootstrap.BufferedLogCapture
+		reader     *sdkmetric.ManualReader
+		client     *http.Client
+		agent      *storagedomain.Agent
+		grantID    id.GrantID
+		validUntil *time.Time
+		failing    bool
 	)
 
 	revoke := func(status int) string {
@@ -57,6 +58,7 @@ var _ = Describe("Business event ledger", Label("docker"), func() {
 	BeforeEach(func() {
 		postgres, db, store, server = nil, nil, nil, nil
 		failing = false
+		validUntil = nil
 		Expect(bootstrap.CanAccessContainerRuntime()).To(Succeed(), "ledger acceptance journeys require Docker or Podman")
 		var err error
 		postgres, err = bootstrap.NewPostgresFixture(context.Background())
@@ -87,7 +89,7 @@ var _ = Describe("Business event ledger", Label("docker"), func() {
 		Expect(err).NotTo(HaveOccurred())
 		server, err = bootstrap.NewEndUserTestServer(application, logger)
 		Expect(err).NotTo(HaveOccurred())
-		grantID = helpers.CreateBusinessEventGrant(client, server, agent.ID)
+		grantID = helpers.CreateBusinessEventGrant(client, server, agent.ID, validUntil)
 		Expect(helpers.CommittedBusinessEvents(db)).To(BeEmpty(), "ordinary grant creation is not a business event")
 	})
 
@@ -135,6 +137,11 @@ var _ = Describe("Business event ledger", Label("docker"), func() {
 	Context("when grant deletion commits but refresh cleanup fails", func() {
 		var snapshot *storagedomain.UserGrant
 
+		BeforeEach(func() {
+			expiresAt := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Microsecond)
+			validUntil = &expiresAt
+		})
+
 		JustBeforeEach(func() {
 			var err error
 			snapshot, err = store.UserGrants().FindByPrincipalAndAgent(context.Background(), id.NewPrincipal(fixtures.DefaultPrincipal().String()), agent.ID)
@@ -172,7 +179,7 @@ var _ = Describe("Business event ledger", Label("docker"), func() {
 			Expect(events[0].Attributes).To(HaveKeyWithValue("refresh_cleanup", "failed"))
 			Expect(events[0].Attributes).To(HaveKeyWithValue("agent_id", agent.ID.String()))
 			Expect(events[0].Attributes).To(HaveKeyWithValue("grant_id", grantID.String()))
-			Expect(events[0].Attributes).To(HaveKeyWithValue("valid_until", BeNil()))
+			Expect(events[0].Attributes).To(HaveKeyWithValue("valid_until", validUntil.UTC().Format(time.RFC3339Nano)))
 			Expect(events[0].Attributes).To(HaveKeyWithValue("updated_at", snapshot.UpdatedAt.UTC().Format(time.RFC3339Nano)))
 			Expect(events[0].Attributes).To(HaveKeyWithValue("granted_permission_sets", []any{map[string]any{
 				"permission_set_id":    fixtures.PlaceholderPermissionSetID.String(),
@@ -185,6 +192,10 @@ var _ = Describe("Business event ledger", Label("docker"), func() {
 			Expect(db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM refresh_token_sessions WHERE signature = $1 AND used_at IS NULL", "cleanup-failure-signature").Scan(&pendingRefresh)).To(Succeed())
 			Expect(pendingRefresh).To(Equal(1), "the failed cleanup must leave a session row, not undo grant deletion")
 			revoke(http.StatusNotFound)
+			Expect(db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM user_grants WHERE id = $1", grantID).Scan(&grants)).To(Succeed())
+			Expect(grants).To(BeZero())
+			Expect(db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM refresh_token_sessions WHERE signature = $1 AND used_at IS NULL", "cleanup-failure-signature").Scan(&pendingRefresh)).To(Succeed())
+			Expect(pendingRefresh).To(Equal(1), "the retry must leave the same refresh session uncleaned")
 			Expect(helpers.CommittedBusinessEvents(db)).To(Equal(events))
 		})
 	})
@@ -294,7 +305,7 @@ var _ = Describe("Business event ledger", Label("docker"), func() {
 			revoke(http.StatusNoContent)
 			first := helpers.CommittedBusinessEvents(db)
 			Expect(first).To(HaveLen(1))
-			secondGrant := helpers.CreateBusinessEventGrant(client, server, agent.ID)
+			secondGrant := helpers.CreateBusinessEventGrant(client, server, agent.ID, nil)
 			Expect(secondGrant).NotTo(Equal(grantID))
 			revoke(http.StatusNoContent)
 			both := helpers.CommittedBusinessEvents(db)

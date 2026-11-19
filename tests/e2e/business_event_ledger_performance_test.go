@@ -98,7 +98,7 @@ var _ = Describe("Business event ledger SC-004 performance", Label("performance"
 				before := helpers.CommittedBusinessEvents(db)
 				Expect(proactiveEvents(logs[broker], "business_event.ledger.write_failed")).To(BeEmpty())
 				for range 100 {
-					helpers.CreateBusinessEventGrant(client, server, agent.ID)
+					helpers.CreateBusinessEventGrant(client, server, agent.ID, nil)
 					req, err := http.NewRequest(http.MethodDelete,
 						server.BaseURL()+"/api/consent/agents/"+agent.ID.String()+"/grants", nil)
 					Expect(err).NotTo(HaveOccurred())

@@ -66,7 +66,7 @@ The artifact prerequisites are complete. Task completion and remaining verificat
 - [x] **API Documentation**: Not applicable. The end-user API and the Admin API are not changed.
 - [x] **API Changes**: None.
 - [x] **Database Design**: Atomic migration `049_create_business_events` and schema-specific tests are present. PostgreSQL migration and repository execution passed through `just test-integration-infra` (T014, T031, T071, T089).
-- [x] **E2E Acceptance Tests**: All five mapped container-backed scenarios were written before foundation behavior and compile (T018–T020).
+- [x] **E2E Acceptance Tests**: The original five container-backed scenarios preceded foundation behavior (T018–T020). Review coverage adds US1.5, for six mapped scenarios.
 - [x] **E2E Test Mapping**: One `It()` per scenario (table in Testing Strategy).
 - [x] **E2E Red Phase**: Compiling acceptance/performance tests with persistence assertions preceded foundation behavior. Docker was initially unavailable; the final PostgreSQL acceptance and SC-004 performance runs have now passed (T021, T084, T053, T055, T056).
 - [x] **Frontend Playwright E2E**: Not applicable. No UI change.
@@ -97,8 +97,8 @@ attributes and return behavior. A temporary production-bootstrap memory HTTP smo
 `201` creation, `204` revocation, `404` retry, and exactly one enabled-ledger occurrence (zero when disabled).
 The memory smoke file was removed. PostgreSQL acceptance, migration/repository execution, the
 documented retention quickstart, and SC-004 have now passed. The complete SC-004 environment and
-result record is published in PR #467. Only the full PR-readiness gate remains deferred under the
-user's explicit ledger-only scope decision; `tasks.md` records T083/T090 as incomplete.
+result record is published in PR #467. The full PR-readiness gate remains deferred under the
+user's explicit ledger-only scope decision. `tasks.md` records T083/T090/T094/T095 as incomplete.
 At implementation handoff, changes were uncommitted and PR #467 was unchanged. The user subsequently authorized committing. During implementation continuation on 2026-11-19, the required PR-description changelog, standard-amendment rationales, and onboarding review were published to [PR #467](https://github.com/zalando-incubator/agentic-identity-broker/pull/467); publication does not certify pushed code or PR readiness.
 
 ## Project Structure
@@ -181,7 +181,7 @@ neither separate red commits nor recorded red-run output are required by the con
 
 Phase 2 must be complete before Phase 2.5 begins: glossary and non-functional constraints,
 the committed configuration example, the Helm contract, migration files, standard amendments,
-and all five E2E acceptance tests plus the SC-004 performance test written before foundation behavior. Documentation is prepared; code-bearing prerequisites remain incomplete and require `/speckit-implement`.
+and the original five E2E acceptance tests plus the SC-004 performance test written before foundation behavior. These prerequisites are complete. Review coverage adds the sixth scenario, US1.5.
 T017 adds configuration types only. E2E fixtures supply all five values explicitly.
 T035 precedes T042's loader defaults, environment bindings, CLI registration, and validation.
 
@@ -198,7 +198,7 @@ Container-backed tests may first run in CI when no local container runtime is av
 architecture remains governed by `20261118-125900-business-events-as-typed-log-records`.
 
 Complete T007, T009–T011, and T025 before foundation implementation. T017 supplies only the types,
-ports, and empty methods needed to compile acceptance tests. T018–T020 define the five complete
+ports, and empty methods needed to compile acceptance tests. T018–T020 define the original five complete
 HTTP acceptance scenarios, using PostgreSQL inspection in test code, not a production reader.
 T031 defines migration-specific schema assertions before T014 creates the SQL. Both tasks belong
 to Phase 2d. The existing general migration lifecycle test does not assert the new table's
@@ -300,20 +300,21 @@ storage or telemetry, following the existing SessionCleanup lifecycle.
 
 **Exit**: Builder tests verify disabled behavior, synthetic typed-event persistence through
 `app.Logger`, enabled construction failure without an appender, and retention startup/shutdown.
-Foundation unit and integration tests pass. The five production-event acceptance scenarios are
+Foundation unit and integration tests pass. The six production-event acceptance scenarios are
 not required to pass yet: the consent definition is deliberately introduced in Phase 3.
 
 ### Phase 3: first production event and consumer-visible verification
 
 **Scope**: T047–T055; depends on the integrated foundation.
 
-Write consent tests using the production handler chain and test-local append capture. Declare
-`GrantRevoked` once in the consent package, then convert both committed-delete branches: normal
-completion and refresh-cleanup failure. Preserve the returned cleanup error, `refresh_cleanup`,
-all existing resource attributes, and the unchanged HTTP behavior. A missing grant emits no event.
-Update only the affected log-contract assertions and documentation; record both identifier renames.
+Write consent tests in the internal `consent` package with local repository and log-handler doubles.
+Cover event emission, rejected deletion, unchanged retries, and the deleted grant snapshot.
+The integration test `TestGrantLifecycleAudit_RevocationBusinessEventPipeline` proves deletion precedes append through the production handler chain.
+Declare `GrantRevoked` once in the consent package, then convert both committed-delete branches:
+normal completion and refresh-cleanup failure. Preserve the cleanup error, `refresh_cleanup`, resource attributes, and HTTP behavior.
+A missing grant emits no event. Update affected log-contract assertions and documentation, and record both identifier renames.
 
-**Exit**: The four US1 acceptance scenarios pass unchanged, including insert rejection and disabled
+**Exit**: The five US1 acceptance scenarios pass, including cleanup failure, insert rejection, and disabled
 mode. SC-001 establishes the package-local change limit, verified by T054. Run SC-004's actual
 PostgreSQL request benchmark, with untimed persistence checks described below; a no-op ledger
 must not satisfy the latency criterion.
@@ -329,7 +330,7 @@ test data only. Verify final architecture, configuration, standards, migration, 
 compliance, then run the matching final recipes. Preserve the accepted loss window and explicitly
 report any container checks not run; do not claim them as validated.
 
-**Exit**: All five acceptance scenarios and the performance criterion pass in a suitable runtime,
+**Exit**: All six acceptance scenarios and the performance criterion pass in a suitable runtime,
 the disabled-mode regression suite passes, and compliance checks are complete. No additional
 event, reader API, UI, SSF delivery mechanism, or erasure operation is included.
 
@@ -339,10 +340,10 @@ After Phase 2.5a, Phases 2.5b–2.5d can proceed independently against the stabl
 waits for all three; Phase 3 waits for integration; Phase 4 and Phase N verify the completed flow.
 
 **Implementation gate: ledger implementation and validation complete — full PR readiness deferred.**
-Static, race-enabled unit, self-contained/infrastructure integration, all five ledger acceptance
+Static, race-enabled unit, self-contained/infrastructure integration, all six ledger acceptance
 scenarios, the backend E2E suite, the documented retention quickstart, and SC-004 passed.
 The user explicitly declined unrelated dependency/security-script remediation, so the full
-`just verify` gate and T083/T090 remain incomplete. PR #467 contains the required changelog,
+`just verify` gate and T083/T090/T094/T095 remain incomplete. PR #467 contains the required changelog,
 standard rationales, onboarding review, and complete performance environment/result record.
 
 The [specification-quality checklist](./checklists/requirements.md) retains four unchecked criteria.
@@ -391,9 +392,11 @@ status, the log buffer, and the metric reader.
   creates a `BEFORE INSERT` trigger on `business_events` whose function raises an exception, and
   drops the trigger and the function in `AfterEach`. No test-only production API is added. The
   handler's failure path is also covered by unit tests with a failing appender.
-- US1.5 seeds one refresh session and uses a PostgreSQL `BEFORE UPDATE` trigger to reject its cleanup.
-  The real HTTP revocation returns `500`. SQL verifies committed grant deletion, an uncleaned
-  refresh row, and one complete ledger snapshot. A repeated DELETE returns `404` without another event.
+- US1.5 creates a grant with a non-null expiry through the consent API and seeds one refresh session.
+  A PostgreSQL `BEFORE UPDATE` trigger rejects cleanup, and the real HTTP revocation returns `500`.
+  SQL verifies committed grant deletion, the uncleaned refresh row, and one ledger snapshot with the UTC RFC3339Nano expiry.
+  A repeated DELETE returns `404`. SQL verifies that the same refresh row remains uncleaned and the grant remains absent.
+  The ledger occurrence stays unchanged.
 - US1.1 creates the grant through the API first. That audit record has no typed definition, so
   "exactly one row" also proves that a record without a definition is not stored (FR-001).
 - US2.1 needs a row that is older than the retention period. The smallest valid period is 24
@@ -406,11 +409,11 @@ status, the log buffer, and the metric reader.
   Retention unit and repository tests turn green in Phase 2.5. T056 owns the retention E2E green gate.
 
 **Bootstrap Strategy**:
-- All five scenarios use production bootstrap against PostgreSQL and inspect committed rows with
+- All six scenarios use production bootstrap against PostgreSQL and inspect committed rows with
   explicit-column SQL in test helpers; no production reader port is introduced for assertions.
 - US1.3 and US1.4 assert log output through the existing buffer-logger bootstrap path.
-- These scenarios run in `just test-e2e-docker`. The memory adapter remains covered by its
-  same-package repository tests and handler/consent tests with test-local append capture.
+- These scenarios run in `just test-e2e-docker`. Same-package repository tests cover the memory adapter.
+  Handler tests use test-local append capture. Consent tests use local doubles, and integration tests cover the production handler chain.
 
 **Helper Utilities**:
 - New matcher `HaveBusinessEvent(event, principal)` in `tests/e2e/matchers/`.
@@ -432,10 +435,14 @@ Not applicable. No UI change.
   Include a non-UTC record time with `.123456789` fractional seconds; capture the same instant in UTC without truncation (T032).
 - `internal/adapters/storage/postgres/business_event_test.go`: the two `storage.*` spans. FR-005 needs PostgreSQL and is covered by the integration test.
 - `internal/adapters/telemetry/business_event_logging_guard_test.go`: a definition is logged only under `event`.
-- `internal/domain/consent/` service tests, in the external test package `consent_test`: production ledger handler with a test-local capturing appender, one event per revocation, none on not-found, one with `refresh_cleanup=failed`. No reader port is needed.
+- `internal/domain/consent/` service tests use the internal `consent` package with local repository and log-handler doubles.
+  They cover the deleted grant snapshot, one event after committed deletion, and no event on missing or failed deletion.
+  They also cover unchanged retries and cleanup failure.
 - `internal/config/` and `cmd/agentic-identity-broker/`: defaults, range validation, all five CLI flags, and file/environment/CLI precedence (T035). Tests precede T042. T037 verifies missing behavior where the runtime is available; recorded red-run output is not required.
 
 **Integration Tests**:
+- `tests/integration/grant_lifecycle_audit_test.go`: `TestGrantLifecycleAudit_RevocationBusinessEventPipeline` uses the production context, principal-policy, fan-out, and ledger handlers.
+  The appender asserts that the grant is absent before append. The test compares operational and stored snapshots for successful and failed cleanup.
 - `tests/integration/migrations/`: migration `049` apply, rollback, repeat; assert all three secondary index definitions from `data-model.md`, including the agent JSONB expression and history sort keys. Verify principal/agent equality filtering and deterministic ordering for tied occurrence times, with absent-principal and absent-agent fixtures remaining valid.
 - `tests/integration/storage/infra/business_event_test.go`: PostgreSQL adapter against testcontainers, inspected with explicit-column SQL: `Append` with a committed transaction in context (research R4), JSONB round trip, concurrent retention deletes, both `CHECK` constraints, nil attributes stored as `{}`, and `Timeout` errors for an expired context deadline (Principle IX). For T029, a test transaction locks the first 1,000 of 2,500 expired rows with `SELECT id ... FOR UPDATE`. The test starts `DeleteRecordedBefore` in a goroutine. It polls `pg_stat_activity` with `pg_blocking_pids` until that delete waits on the test transaction. The test transaction deletes the locked IDs and commits. The adapter call then returns zero, with 1,500 expired rows and all newer rows still present (SC-005). T029 specifies the SQL, bounded waits, and transaction/goroutine cleanup.
   T029 also appends fixed occurrence times ending in `.123456789` and `.999999999`, including a non-UTC offset.
@@ -521,5 +528,9 @@ The following changelog, amendment rationales, and onboarding review were publis
 
 ### Onboarding review: FR-012 and SC-001
 
-Onboarding changes two consent production files: `events.go` and `service.go`. One package-local declaration has explicit owner visibility. Both top-level emissions follow committed deletion, retain canonical resource attributes, and distinguish cleanup failure without changing the operation's return behavior. External-package service tests cover committed deletion before append, missing and failed deletion, unchanged retries, and cleanup failure. Revocation handles no credential. Onboarding adds no migration, API, or builder change; those belong to the separate shared foundation.
+Onboarding changes two consent production files: `events.go` and `service.go`. One package-local declaration has explicit owner visibility.
+Both top-level emissions follow committed deletion, retain canonical resource attributes, and distinguish cleanup failure without changing the operation's return behavior.
+Internal-package consent tests use local repository and log-handler doubles for snapshots, missing or failed deletion, unchanged retries, and cleanup failure.
+`TestGrantLifecycleAudit_RevocationBusinessEventPipeline` in `tests/integration/grant_lifecycle_audit_test.go` proves deletion precedes append through the production handler chain.
+Revocation handles no credential. Onboarding adds no migration, API, or builder change. Those belong to the separate shared foundation.
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/onsi/gomega"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -68,10 +69,13 @@ func BusinessEventCounterValues(reader *sdkmetric.ManualReader) map[string]float
 }
 
 // CreateBusinessEventGrant creates a grant through the consent API and returns its nonzero ID.
-func CreateBusinessEventGrant(client *http.Client, server *bootstrap.TestServer, agentID id.AgentID) id.GrantID {
-	payload, err := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{
-		fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
-	}})
+func CreateBusinessEventGrant(client *http.Client, server *bootstrap.TestServer, agentID id.AgentID, validUntil *time.Time) id.GrantID {
+	payload, err := json.Marshal(map[string]any{
+		"granted_permission_sets": map[string][]string{
+			fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()},
+		},
+		"valid_until": validUntil,
+	})
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 	req, err := http.NewRequest(http.MethodPost, server.BaseURL()+"/api/consent/agents/"+agentID.String()+"/grants",
 		bytes.NewReader(payload))
