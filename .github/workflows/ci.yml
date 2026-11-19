@@ -66,8 +66,9 @@ jobs:
             exit 0
           fi
 
-          # Files changed by the PR relative to the base branch tip.
-          git diff --name-only HEAD^1 HEAD > changed.txt
+          # Files changed by the PR relative to the base branch tip. --no-renames lists both
+          # paths of a renamed file.
+          git diff --name-only --no-renames HEAD^1 HEAD > changed.txt
           echo "Changed files:"; sed 's/^/  /' changed.txt
 
           match() { grep -Eq "$1" changed.txt && echo true || echo false; }
