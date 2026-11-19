@@ -9,10 +9,19 @@ Use a local PostgreSQL database that holds test data only. The SQL statements in
 and 6 need the PostgreSQL storage adapter; the memory adapter keeps the ledger in the process and
 has no query interface. Section 6 changes and deletes rows.
 
+For sections 5 and 6, enable `telemetry.enabled` and `telemetry.metrics.enabled`.
+Configure a reachable OTLP collector with a metrics receiver, and wait for the metrics export interval before comparing counters.
+For the OpenTelemetry log comparison in section 3, also enable `telemetry.logs.enabled` and collect OTLP logs.
+To compare an incoming `traceparent` ID, enable `telemetry.traces.enabled` and include `tracecontext` in `telemetry.traces.propagators`.
+See the [telemetry configuration reference](../../docs/configuration.md#observability--opentelemetry) for exporter settings.
+
 ## 1. Enable the ledger
 
 ```yaml
 # config.yaml, added to a working local configuration
+log:
+  level: info
+  format: json
 business_events:
   enabled: true
 ```
@@ -66,10 +75,9 @@ ORDER BY occurred_at DESC, id DESC
 LIMIT 5;
 ```
 
-With telemetry enabled, the OpenTelemetry log record with the same `trace_id` has the same
-attributes. These examples use the current identity principal policy. Under any future policy,
-the ledger must contain the same rendered principal values as the operational sinks, not raw
-identities; SQL filters must use stored policy output.
+With OTLP log export enabled, compare the event, agent ID, grant ID, trace ID, and rendered identities.
+Compare structured attributes with stdout JSON, not OTLP. The OTLP bridge formats the permission-set entries as strings.
+These examples use the current identity principal policy. If that policy changes, use its rendered principal in SQL filters.
 
 Compare `occurred_at` with the log timestamp under [the timestamp precision contract](./data-model.md#timestamp-precision):
 PostgreSQL truncates occurrence nanoseconds to microseconds; the handler and memory adapter do not.

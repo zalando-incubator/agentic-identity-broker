@@ -88,18 +88,10 @@ The artifact prerequisites are complete. Task completion and remaining verificat
 [contracts/observability.md](./contracts/observability.md). T025's approved LOGGING.md amendments
 are applied in sections 1, 2.2, 8, 9, and 10. OPENTELEMETRY.md registers the `business_events` scope.
 The ledger handler adds no `trace_id` or `actor`: its failure record passes the context handler.
-Both PostgreSQL methods create the contracted `storage.*` spans. The existing principal guard
+The PostgreSQL append, clock sample, and delete methods create the contracted `storage.*` spans. The existing principal guard
 is unchanged, and a separate typed-event key guard is present.
 
-**Result**: The ledger foundation, retention lifecycle, configuration and deployment contract,
-and the single consent event are implemented. Both committed-delete paths preserve their existing
-attributes and return behavior. A temporary production-bootstrap memory HTTP smoke verified
-`201` creation, `204` revocation, `404` retry, and exactly one enabled-ledger occurrence (zero when disabled).
-The memory smoke file was removed. PostgreSQL acceptance, migration/repository execution, the
-documented retention quickstart, and SC-004 have now passed. The complete SC-004 environment and
-result record is published in PR #467. The full PR-readiness gate remains deferred under the
-user's explicit ledger-only scope decision. `tasks.md` records T083/T090/T094/T095 as incomplete.
-At implementation handoff, changes were uncommitted and PR #467 was unchanged. The user subsequently authorized committing. During implementation continuation on 2026-11-19, the required PR-description changelog, standard-amendment rationales, and onboarding review were published to [PR #467](https://github.com/zalando-incubator/agentic-identity-broker/pull/467); publication does not certify pushed code or PR readiness.
+**Result**: See [Current verification status](./tasks.md#current-verification-status) for the ledger checks and the open full PR-readiness gate.
 
 ## Project Structure
 
@@ -277,8 +269,8 @@ with CLI over environment over file over defaults. Extend the existing command r
 and loader conventions rather than adding a separate configuration mechanism. Validate duration
 and batch bounds even while disabled; keep examples, reference documentation, and Helm aligned.
 
-Implement retention against its focused port in `bizevent/retention`. Start each run with a fixed
-cutoff, delete batches until a short batch, cancellation, or failure, and avoid overlapping runs
+Implement retention against its focused port in `bizevent/retention`. Sample the storage clock once per run to fix the cutoff.
+Delete batches until a short batch, cancellation, or failure, and avoid overlapping runs
 within a replica. Run immediately at startup and then on the configured schedule. Log failures,
 not successful deletions; retry on the next interval. Concurrent replicas may end a run early,
 so use SC-005's recovery contract rather than claiming a successful run clears every backlog.
@@ -339,12 +331,7 @@ event, reader API, UI, SSF delivery mechanism, or erasure operation is included.
 After Phase 2.5a, Phases 2.5b–2.5d can proceed independently against the stable ports. Phase 2.5e
 waits for all three; Phase 3 waits for integration; Phase 4 and Phase N verify the completed flow.
 
-**Implementation gate: ledger implementation and validation complete — full PR readiness deferred.**
-Static, race-enabled unit, self-contained/infrastructure integration, all six ledger acceptance
-scenarios, the backend E2E suite, the documented retention quickstart, and SC-004 passed.
-The user explicitly declined unrelated dependency/security-script remediation, so the full
-`just verify` gate and T083/T090/T094/T095 remain incomplete. PR #467 contains the required changelog,
-standard rationales, onboarding review, and complete performance environment/result record.
+**Implementation gate:** See [Current verification status](./tasks.md#current-verification-status).
 
 The [specification-quality checklist](./checklists/requirements.md) retains four unchecked criteria.
 On 2026-11-18, the user explicitly accepted all four documented specification-quality deviations
@@ -385,6 +372,8 @@ status, the log buffer, and the metric reader.
 
 **Test Data Strategy**:
 - Existing fixtures for agents, grants, and principals from `tests/e2e/fixtures/`.
+  PostgreSQL acceptance requires `SeedDefaultConsentData` to set `UserSession.Scope` to an empty slice.
+  A nil slice reaches `user_sessions.scope` as SQL `NULL`, which the `NOT NULL` column rejects.
 - New fixture: a configuration variant with `business_events.enabled: true`.
 - US1.4 needs a ledger write that fails. The memory adapter cannot fail, and `storage.Adapter` is
   a concrete type, so the test runs in the container E2E suite against PostgreSQL. The E2E
