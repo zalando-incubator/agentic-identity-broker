@@ -73,14 +73,10 @@ Created in `{{$m.File}}`.
 {{range $name, $values := .Enums}}
 ### {{$name}}
 
-{{if documented $values -}}
 | Value | Meaning |
 |---|---|
 {{range $values -}}
 | {{code .Value}} | {{text .Doc}} |
-{{end -}}
-{{else -}}
-{{range $i, $e := $values}}{{if $i}}, {{end}}{{code $e.Value}}{{end}}
 {{end -}}
 {{end}}
 

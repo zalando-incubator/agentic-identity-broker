@@ -37,6 +37,9 @@ func TestReferenceIsCurrent(t *testing.T) {
 	if problems := checkDescriptions(ref, d); len(problems) > 0 {
 		t.Fatalf("%s (coding-standards/OPENTELEMETRY.md section 10):\n%s", descriptionsPath, strings.Join(problems, "\n"))
 	}
+	if problems := checkValueDocs(ref); len(problems) > 0 {
+		t.Fatalf("values without a doc comment (coding-standards/OPENTELEMETRY.md section 10):\n%s", strings.Join(problems, "\n"))
+	}
 	var got bytes.Buffer
 	if err := Write(&got, ref, d); err != nil {
 		t.Fatal(err)
@@ -251,6 +254,27 @@ func TestDescriptions(t *testing.T) {
 	}
 	if got := checkDescriptions(ref, d); !reflect.DeepEqual(got, want) {
 		t.Fatalf("problems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestValueDocs(t *testing.T) {
+	ref := &Reference{
+		Spans: map[string]*Span{"s": {Attrs: map[string]*Attr{
+			"s.kind": {EnumType: "p.Kind", Enum: []EnumValue{{"a", "Set when a."}, {"b", ""}}},
+		}}},
+		Metrics: map[string]*Metric{"m": {Attrs: map[string]*Attr{
+			"m.other": {EnumType: "p.Other", Enum: []EnumValue{{"c", ""}}},
+		}}},
+	}
+	want := []string{
+		`value "b" of p.Kind has no doc comment`,
+		`value "c" of p.Other has no doc comment`,
+	}
+	if got := checkValueDocs(ref); !reflect.DeepEqual(got, want) {
+		t.Fatalf("problems =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if got := checkValueDocs(extractFixture(t, "fixture")); len(got) > 0 {
+		t.Fatalf("unexpected problems in the fixture: %v", got)
 	}
 }
 

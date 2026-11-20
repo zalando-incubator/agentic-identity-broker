@@ -59,6 +59,22 @@ func checkDescriptions(ref *Reference, d *Descriptions) []string {
 	return problems
 }
 
+// checkValueDocs returns a problem for each constant of an enumerated
+// attribute type in ref without a doc comment. The page shows the first
+// sentence of the comment as the meaning of the value.
+func checkValueDocs(ref *Reference) []string {
+	var problems []string
+	for name, values := range allEnums(ref) {
+		for _, v := range values {
+			if v.Doc == "" {
+				problems = append(problems, fmt.Sprintf("value %q of %s has no doc comment", v.Value, name))
+			}
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
 // allAttrKeys returns the attribute keys of all spans and metrics in ref.
 func allAttrKeys(ref *Reference) map[string]bool {
 	keys := map[string]bool{}
