@@ -376,7 +376,7 @@ OTel resources exclude process command arguments and command lines, including co
 
 ## Grant and definition lifecycle audits
 
-The domain mutation service emits one operational audit record after a committed mutation. Request handlers do not emit a second success or infer a mutation from the HTTP status. These synchronous logs are observations, not a transactional delivery guarantee. The enabled ledger stores typed business-event records under [LOGGING.md section 8](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/coding-standards/LOGGING.md#8-audit-records).
+The domain mutation service emits one operational audit record after a committed mutation. Request handlers do not emit a second record or infer a mutation from the HTTP status. The logs do not guarantee transactional delivery.
 
 | Audit discriminator | Purpose-limited fields |
 |---|---|
@@ -386,8 +386,6 @@ The domain mutation service emits one operational audit record after a committed
 | `agent_deleted` | The primary agent ID actually deleted; no inferred grant cascade count or per-grant revocation claim. |
 | `permission_set_created`, `permission_set_updated` | `permission_set_id` and typed `service_scopes`. |
 | `permission_set_deleted` | The permission-set ID actually deleted. |
-
-Both committed-delete branches use the typed `consent.GrantRevoked` definition. The event reports grant deletion, not guaranteed refresh-session cleanup. If cleanup fails, the request returns the cleanup error despite committed deletion.
 
 Audit timestamps use UTC RFC3339Nano. Indefinite grant validity is JSON `null`. Stored definition scopes are authorization metadata, not issued-token scope values; names, profile text, credentials, token/JWT material, arbitrary errors and sensitive URIs are excluded. None of these identity or snapshot fields are metric labels.
 

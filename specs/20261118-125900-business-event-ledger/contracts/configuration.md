@@ -33,7 +33,7 @@ Retention runs when `enabled` is true and not otherwise (FR-009). No separate ke
 If an operator disables the ledger after it stored rows, those rows stay until the ledger is
 enabled again.
 
-SC-005 defines the healthy-operation age bound, not a deletion deadline during failures.
+In [healthy operation](../spec.md#measurable-outcomes), retention deletes expired rows within one interval plus the duration of the deleting run (SC-005).
 Startup and re-enable trigger an immediate run. Failed runs retry at the next scheduled interval.
 Without concurrent retention deletes, the first successful recovery run deletes all rows older than its start-time cutoff.
 With concurrent replicas, a short batch can end one run while expired rows remain for another run to delete.
@@ -54,12 +54,24 @@ business_events:
     batch_size: 1000
 ```
 
+## Operating the ledger
+
+Choose a retention period that meets your privacy requirements. There is no principal-erasure operation.
+For PostgreSQL, apply migrations through `049_create_business_events` before you enable the ledger.
+To enable it, copy the [YAML example](../../../examples/config/business-events.yaml) into the broker configuration. Then restart the broker.
+For Helm, set `broker.businessEvents.enabled` to `true`.
+If `storage.type=postgres` and `migration.enabled=true`, the chart runs the migration job.
+If you disable that job for PostgreSQL, apply the migrations separately before you enable the ledger.
+
+To change retention, update `business_events.retention.period` and restart every replica.
+During a rolling update, a replica with a shorter period can delete rows that other replicas do not yet consider eligible.
+Increasing the period does not restore deleted rows.
+
+[20261118-125900-business-events-as-typed-log-records](../../../adrs/20261118-125900-business-events-as-typed-log-records.md) describes the post-commit loss window and the privacy limits.
+
 ## Deployment contract
 
 - `docs/configuration.md`: one row per key.
 - `charts/agentic-identity-broker/`: `broker.businessEvents.*` in the values,
   `templates/configmap.yaml`, `values.schema.json`, and the chart README. No new workload:
   retention runs in the broker Deployment.
-- `docs/operations/business-events.md`: how to enable the ledger, the accepted loss window
-  (ADR 20261118-125900-business-events-as-typed-log-records), the retention period and how to change it (SR-003), and the absence of an erasure
-  operation. Include the healthy-operation age bound and recovery behavior of SC-005.

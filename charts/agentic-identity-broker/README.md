@@ -293,7 +293,7 @@ There is no principal-erasure operation or ledger-read API.
 During healthy continuous operation, retention deletes an expired row within one interval plus the duration of its deleting run.
 This requires every run to succeed, finish before the next scheduled start, and start no more than one interval apart.
 Failures, downtime, disabled operation, and recovery have no fixed maximum row age.
-See the [operations runbook](../../docs/operations/business-events.md) for retention changes, startup cleanup, and recovery across concurrent replicas.
+See the [ledger configuration contract](../../specs/20261118-125900-business-event-ledger/contracts/configuration.md) for retention changes, startup cleanup, and recovery across concurrent replicas.
 
 ### Protected-resource discovery
 

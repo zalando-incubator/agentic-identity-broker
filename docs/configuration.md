@@ -19,7 +19,6 @@ This guide explains how to configure the Agentic Identity Broker for different d
 - [Configuration Reference](#configuration-reference)
 - [Available Settings](#available-settings)
 - [Token Refresh](#token-refresh)
-- [Business Events](#business-events)
 - [Trust-Anchor Key Sets](#trust-anchor-key-sets)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -307,8 +306,8 @@ Each successful confidential-provider secret decryption emits `service_secret_de
 
 | Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
 |--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
-| `business_events.enabled` | bool | `false` | `true`, `false` | No | `IDENTITY_BROKER_BUSINESS_EVENTS_ENABLED` | `--business_events.enabled` | Enable ledger writes and retention. Disabled operation preserves the original logger chain and leaves existing rows unchanged. |
-| `business_events.write_timeout` | Go duration string | `1s` | `100ms`–`10s` inclusive | No | `IDENTITY_BROKER_BUSINESS_EVENTS_WRITE_TIMEOUT` | `--business_events.write_timeout` | Context deadline for `Append` only, not total logging or request latency. A timeout has an unknown insert outcome. |
+| `business_events.enabled` | bool | `false` | `true`, `false` | No | `IDENTITY_BROKER_BUSINESS_EVENTS_ENABLED` | `--business_events.enabled` | Enable ledger writes and retention. Disabling leaves existing rows in place. |
+| `business_events.write_timeout` | Go duration string | `1s` | `100ms`–`10s` inclusive | No | `IDENTITY_BROKER_BUSINESS_EVENTS_WRITE_TIMEOUT` | `--business_events.write_timeout` | Deadline for a ledger write, not for the request. A timed-out write can still commit. |
 | `business_events.retention.period` | Go duration string | `2160h` (90 days) | `24h`–`8760h` inclusive | No | `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_PERIOD` | `--business_events.retention.period` | Storage age after which a row is eligible for deletion. Maximum is 365 days. |
 | `business_events.retention.interval` | Go duration string | `1h` | `1s`–`24h` inclusive | No | `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_INTERVAL` | `--business_events.retention.interval` | Time between retention runs in each replica. The first run is immediate. |
 | `business_events.retention.batch_size` | integer | `1000` | 1–10000 inclusive | No | `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_BATCH_SIZE` | `--business_events.retention.batch_size` | Maximum rows per delete statement. |
@@ -791,35 +790,6 @@ log:
 ```
 
 **Recommendation**: Use `json` format in production for structured logging and log aggregation.
-
-### Business Events
-
-The ledger stores typed business-event audit records and is disabled by default. An enabled ledger always runs retention in the broker process.
-
-```yaml
-business_events:
-  enabled: true
-  write_timeout: 1s
-  retention:
-    period: 2160h
-    interval: 1h
-    batch_size: 1000
-```
-
-All five keys support CLI flags, environment variables, YAML files, and defaults, in that order of precedence.
-An explicit `--business_events.enabled=false` overrides an enabled file value. Omitted flags preserve environment and file values.
-Startup rejects invalid values with the key name, even when the ledger is disabled. Durations use Go syntax, not day suffixes such as `90d`.
-
-The append deadline ignores request cancellation and starts after event construction, immediately before `Append`.
-Encoding, instrumentation, and operational sinks are outside this deadline. It does not bound the entire request or logging operation.
-A timed-out write can still commit. A failed write does not change the business operation's result.
-The ledger inherits the accepted post-commit loss window of [20261118-125900-business-events-as-typed-log-records](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/20261118-125900-business-events-as-typed-log-records.md).
-
-Retention uses storage time, not occurrence time. Disabling the ledger stops both writes and retention, but leaves existing rows unchanged.
-Startup and re-enable trigger immediate cleanup. Failed runs retry at the next scheduled interval.
-The healthy-operation deletion bound requires successful, timely runs and does not apply during downtime, disabled operation, failures, or recovery.
-There is no principal-erasure operation and no ledger-read API or UI.
-See the [operations runbook](operations/business-events.md) for enablement, retention changes, recovery across replicas, and the complete SC-005 conditions.
 
 ### Token Refresh
 
@@ -1629,7 +1599,7 @@ Grant deletion, expiration, or replacement ends refresh authority. Renewal of ex
 Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
 Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
 
-After committed grant deletion, both revocation branches emit `event=consent.grant.revoked`. If refresh cleanup fails, the event retains `refresh_cleanup=failed` and the request returns the cleanup error. Retrying DELETE returns 404 because the grant is already absent. The failure event does not report successful session cleanup.
+If refresh cleanup fails after grant deletion, the request returns the cleanup error. Retrying DELETE returns 404 because the grant is already absent.
 
 Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
 

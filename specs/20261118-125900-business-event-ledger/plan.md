@@ -79,7 +79,7 @@ The artifact prerequisites are complete. Task completion and remaining verificat
 - **ADRs**: `20261118-125900-business-events-as-typed-log-records`, including the explicitly approved review revisions.
 - **Library-First Security**: No cryptography.
 - **Zalando Guidelines**: Not applicable. No API change.
-- **End-User Docs**: `docs/configuration.md` and `docs/operations/business-events.md` (T010).
+- **Documentation**: The runtime settings are listed in `docs/configuration.md`. Deployment and recovery details are in [contracts/configuration.md](./contracts/configuration.md) (T010).
 - **Migration Testing**: Apply, rollback, and repeat in `tests/integration/migrations/` (T031).
 - **Hexagonal Architecture**: Definition type and retention service in the domain, two focused ports with production consumers, two storage adapters, and the handler as a telemetry adapter. Domain services do not import the handler.
 - **Persistence Patterns**: Follow `specs/004-persistence-layer/quickstart.md`: ISP ports in `internal/ports/storage.go`, both adapters, `sqlx`, `StorageError`, factory accessors.
@@ -139,7 +139,7 @@ cmd/agentic-identity-broker/root.go
 migrations/049_create_business_events.{up,down}.sql
 examples/config/business-events.yaml
 charts/agentic-identity-broker/
-docs/configuration.md, docs/operations/business-events.md
+docs/configuration.md
 tests/e2e/business_event_ledger_test.go
 tests/e2e/business_event_ledger_performance_test.go
 tests/e2e/matchers/

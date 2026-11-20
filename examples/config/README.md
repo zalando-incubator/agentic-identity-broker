@@ -34,7 +34,7 @@ Use PostgreSQL for durable rows. Memory storage loses rows on process exit.
 
 The write timeout limits the append call, not total logging or request latency.
 A timed-out write can still commit. The ledger has an accepted post-commit loss window and no principal-erasure operation.
-See the [configuration reference](../../docs/configuration.md#business-events) and [operations runbook](../../docs/operations/business-events.md) for bounds, retention changes, and recovery.
+See the [ledger configuration contract](../../specs/20261118-125900-business-event-ledger/contracts/configuration.md) for bounds, retention changes, and recovery.
 
 ### `extproc-tool-approvals.yaml`
 
