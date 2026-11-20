@@ -285,11 +285,11 @@
   "fixes": [
     {
       "issue": 367,
-      "pr": 403,
-      "branch": "repo-assist/fix-issue-367-release-v02-44733281261",
-      "status": "blocked",
+      "pr": null,
+      "branch": "repo-assist/fix-issue-367-release-v02-44751400904",
+      "status": "open",
       "updated_at": "2026-11-20",
-      "note": "Closed #403 replacement prepared at f5c31e8f against confirmed release/v0.2; publication pending, verify live PR next run. Static/build/fast/race and integration tests plus full non-Docker backend E2E pass. Security gate reproduces unchanged release scanner fixture compilation failure."
+      "note": "Replacement for closed #403 prepared at 7023138f against release/v0.2; publication pending. Check/build/fast/integration/race pass; 1003 backend E2E pass. Full verify stops at unchanged security-tool fixture imports and G304 tooling finding. Verify live PR by branch before retrying."
     },
     {
       "issue": 212,
@@ -436,7 +436,7 @@
     {
       "task": 6,
       "item": "Confirm #367 replacement publication; unblock #432",
-      "note": "#367 local replacement targets confirmed release/v0.2; verify new PR before further work. #432 still needs approved publication path after oversized bundle rejection; do not repeat or rewrite existing PR history."
+      "note": "Verify #367 replacement publication from repo-assist/fix-issue-367-release-v02-44751400904 targeting release/v0.2 before further action. #432 still needs approved publication path after oversized bundle rejection; do not rewrite existing PR history."
     },
     {
       "task": 2,
