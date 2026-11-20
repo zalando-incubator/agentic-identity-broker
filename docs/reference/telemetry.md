@@ -1128,19 +1128,57 @@ Created in `internal/domain/oauth2session/sweep.go`.
 
 ### internal/domain/oauth2session.Dependency
 
-`credential_source`, `encryption`, `none`, `provider`, `provider_repository`, `session_repository`, `signing`
+| Value | Meaning |
+|---|---|
+| `credential_source` | The service's credential files are not configured or could not be read, or the recorded client ID is missing or differs. |
+| `encryption` | Encrypting or decrypting the session's tokens or the service's client secret failed. |
+| `none` | The failure is not attributed to a dependency, as for most configuration errors, cancellations and unclassified failures. |
+| `provider` | The provider's token endpoint failed, rejected the request or sent an invalid response. |
+| `provider_repository` | The broker could not load the service registration, because storage failed or the service is missing. |
+| `session_repository` | The failure concerns the stored session: storage failed, or the session is missing or has no refresh token. |
+| `signing` | The broker had no usable key to sign the client assertion, or signing it failed. |
 
 ### internal/domain/oauth2session.ErrorDetail
 
-`access_token_expired`, `caller_canceled`, `configuration`, `credential_source_unavailable`, `decryption_failed`, `encryption_failed`, `internal_unclassified`, `persistence_failed`, `provider_client_rejected`, `provider_rejected`, `provider_response_invalid`, `provider_unavailable`, `refresh_rejected`, `refresh_unavailable`, `repository_unavailable`, `session_missing`
+| Value | Meaning |
+|---|---|
+| `access_token_expired` | The access token has expired and the session has no refresh token, so the user must reconnect to the service. |
+| `caller_canceled` | The request was canceled, or its deadline passed, before the session operation finished. |
+| `configuration` | The service's OAuth2 registration is missing, invalid or incomplete, so fix the service configuration. |
+| `credential_source_unavailable` | No credential files are configured for the service, the broker could not read them, or the recorded client ID is missing or differs from the configured one. |
+| `decryption_failed` | The broker could not decrypt the session's stored tokens or the service's client secret, so check the encryption keys. |
+| `encryption_failed` | The broker could not encrypt new tokens from the provider before storing them, so check the encryption keys. |
+| `internal_unclassified` | The broker could not classify the failure into any other detail. |
+| `persistence_failed` | The broker could not save new tokens, or a recorded refresh rejection, to the session, so check the storage backend. |
+| `provider_client_rejected` | The provider answered with a 4xx `invalid_client` or `unauthorized_client` error, so fix the client credentials or the client registration of the service. |
+| `provider_rejected` | The provider's token endpoint refused the request with a 4xx error that is neither a client rejection nor a refresh `invalid_grant`. |
+| `provider_response_invalid` | The provider answered a refresh with a success status but a malformed or oversized body, or one without an access token. |
+| `provider_unavailable` | The provider's token endpoint was unreachable, timed out or answered 429 or 5xx, or signing the client assertion failed. |
+| `refresh_rejected` | The provider answered a refresh with a 4xx `invalid_grant` error, now or earlier, so the user must reconnect to the service. |
+| `refresh_unavailable` | A refresh was due or requested but the session has no refresh token, so the user must reconnect to the service. |
+| `repository_unavailable` | The broker could not read or lock the stored session, or read the service registration, so check the storage backend. |
+| `session_missing` | No session is stored for the user and the service, so the user must connect to the service. |
 
 ### internal/domain/oauth2session.ErrorKind
 
-`canceled`, `configuration`, `infrastructure`, `internal`, `provider`, `session`
+| Value | Meaning |
+|---|---|
+| `canceled` | The request was canceled, or its deadline passed, before the session operation finished. |
+| `configuration` | The service's configuration is wrong, including a provider that rejects the broker's client, so fix the configuration. |
+| `infrastructure` | A dependency failed: the provider was unavailable, or storage, encryption, signing or the credential files failed. |
+| `internal` | The broker could not classify the failure. |
+| `provider` | The provider rejected the request, including a rejected refresh token, or answered a refresh with an invalid response. |
+| `session` | No session is stored, or a due refresh is impossible because the session has no refresh token, so the user must connect to the service. |
 
 ### internal/domain/oauth2session.Operation
 
-`code_exchange`, `refresh`, `scope_validation`, `session_lookup`, `unknown`
+| Value | Meaning |
+|---|---|
+| `code_exchange` | Connecting the user to the service failed, while starting the authorization or while exchanging the authorization code on the callback. |
+| `refresh` | The broker could not renew the access token with the stored refresh token, or could not save the renewed tokens. |
+| `scope_validation` | Reserved and currently unused; a token exchange reports missing session scopes as `session_scope_insufficient` in `token_exchange.failure_detail`. |
+| `session_lookup` | The broker failed to read or decrypt the stored session of the user for the service, or found none. |
+| `unknown` | The broker could not tell which session operation failed; it comes with the `internal_unclassified` detail. |
 
 ### internal/domain/oauth2session.SessionHealthExpiry
 
@@ -1153,11 +1191,19 @@ Created in `internal/domain/oauth2session/sweep.go`.
 
 ### internal/domain/storage.ApprovalPersistence
 
-`once`, `permanent`, `session`
+| Value | Meaning |
+|---|---|
+| `once` | The approval covers one call to the tool with the approved arguments, and ExtProc consumes it when it lets that call through. |
+| `permanent` | The decision covers matching tool calls until the user revokes it, and a permanent denial blocks the tool for any arguments. |
+| `session` | The approval covers matching tool calls in the agent session it was requested in, while that session is active. |
 
 ### internal/domain/storage.ApprovalStatus
 
-`approved`, `denied`, `pending`
+| Value | Meaning |
+|---|---|
+| `approved` | The user approved the tool call, and the approval lets matching calls through within its persistence scope. |
+| `denied` | The user denied the tool call or revoked a permanent decision, and only a permanent denial keeps blocking the tool. |
+| `pending` | The approval waits for the user's decision, and it expires if the user does not decide within `approvals.pending_ttl`. |
 
 ### internal/domain/storage.ErrorKind
 

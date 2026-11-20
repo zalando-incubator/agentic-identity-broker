@@ -81,55 +81,124 @@ func (e *RefreshRejectedError) Unwrap() error {
 type Operation string
 
 const (
-	OperationUnknown         Operation = "unknown"
-	OperationSessionLookup   Operation = "session_lookup"
-	OperationRefresh         Operation = "refresh"
+	// OperationUnknown means the broker could not tell which session operation failed; it comes with the
+	// `internal_unclassified` detail.
+	OperationUnknown Operation = "unknown"
+	// OperationSessionLookup means the broker failed to read or decrypt the stored session of the user for the
+	// service, or found none.
+	OperationSessionLookup Operation = "session_lookup"
+	// OperationRefresh means the broker could not renew the access token with the stored refresh token, or could
+	// not save the renewed tokens.
+	OperationRefresh Operation = "refresh"
+	// OperationScopeValidation is reserved and currently unused; a token exchange reports missing session scopes
+	// as `session_scope_insufficient` in `token_exchange.failure_detail`.
 	OperationScopeValidation Operation = "scope_validation"
-	OperationCodeExchange    Operation = "code_exchange"
+	// OperationCodeExchange means connecting the user to the service failed, while starting the authorization or
+	// while exchanging the authorization code on the callback. Token exchanges never report it.
+	OperationCodeExchange Operation = "code_exchange"
 )
 
 type ErrorDetail string
 
 const (
-	DetailSessionMissing              ErrorDetail = "session_missing"
-	DetailAccessTokenExpired          ErrorDetail = "access_token_expired"
-	DetailRefreshUnavailable          ErrorDetail = "refresh_unavailable"
-	DetailRefreshRejected             ErrorDetail = "refresh_rejected"
-	DetailProviderClientRejected      ErrorDetail = "provider_client_rejected"
-	DetailProviderRejected            ErrorDetail = "provider_rejected"
-	DetailProviderUnavailable         ErrorDetail = "provider_unavailable"
-	DetailProviderResponseInvalid     ErrorDetail = "provider_response_invalid"
+	// DetailSessionMissing means no session is stored for the user and the service, so the user must connect to
+	// the service. The background refresh and the session sweep skip such sessions instead of counting a failure.
+	DetailSessionMissing ErrorDetail = "session_missing"
+	// DetailAccessTokenExpired means the access token has expired and the session has no refresh token, so the
+	// user must reconnect to the service.
+	DetailAccessTokenExpired ErrorDetail = "access_token_expired"
+	// DetailRefreshUnavailable means a refresh was due or requested but the session has no refresh token, so the
+	// user must reconnect to the service. If the access token has already expired when a refresh is due, the
+	// detail is `access_token_expired` instead.
+	DetailRefreshUnavailable ErrorDetail = "refresh_unavailable"
+	// DetailRefreshRejected means the provider answered a refresh with a 4xx `invalid_grant` error, now or earlier,
+	// so the user must reconnect to the service. The broker records the rejection and stops refreshing the session
+	// until the user reconnects.
+	DetailRefreshRejected ErrorDetail = "refresh_rejected"
+	// DetailProviderClientRejected means the provider answered with a 4xx `invalid_client` or `unauthorized_client`
+	// error, so fix the client credentials or the client registration of the service.
+	DetailProviderClientRejected ErrorDetail = "provider_client_rejected"
+	// DetailProviderRejected means the provider's token endpoint refused the request with a 4xx error that is
+	// neither a client rejection nor a refresh `invalid_grant`. At the callback, this includes an authorization
+	// code that the provider no longer accepts.
+	DetailProviderRejected ErrorDetail = "provider_rejected"
+	// DetailProviderUnavailable means the provider's token endpoint was unreachable, timed out or answered 429 or
+	// 5xx, or signing the client assertion failed. The dependency is `signing` for the signing case.
+	DetailProviderUnavailable ErrorDetail = "provider_unavailable"
+	// DetailProviderResponseInvalid means the provider answered a refresh with a success status but a malformed or
+	// oversized body, or one without an access token.
+	DetailProviderResponseInvalid ErrorDetail = "provider_response_invalid"
+	// DetailCredentialSourceUnavailable means no credential files are configured for the service, the broker could not
+	// read them, or the recorded client ID is missing or differs from the configured one. A token exchange reports the
+	// client ID cases as `credential_identity_changed`.
 	DetailCredentialSourceUnavailable ErrorDetail = "credential_source_unavailable" // #nosec G101 -- diagnostic detail code, not a credential.
-	DetailRepositoryUnavailable       ErrorDetail = "repository_unavailable"
-	DetailDecryptionFailed            ErrorDetail = "decryption_failed"
-	DetailEncryptionFailed            ErrorDetail = "encryption_failed"
-	DetailPersistenceFailed           ErrorDetail = "persistence_failed"
-	DetailConfiguration               ErrorDetail = "configuration"
-	DetailCallerCanceled              ErrorDetail = "caller_canceled"
-	DetailInternalUnclassified        ErrorDetail = "internal_unclassified"
+	// DetailRepositoryUnavailable means the broker could not read or lock the stored session, or read the service
+	// registration, so check the storage backend. The session sweep stops at this failure instead of counting it.
+	DetailRepositoryUnavailable ErrorDetail = "repository_unavailable"
+	// DetailDecryptionFailed means the broker could not decrypt the session's stored tokens or the service's
+	// client secret, so check the encryption keys.
+	DetailDecryptionFailed ErrorDetail = "decryption_failed"
+	// DetailEncryptionFailed means the broker could not encrypt new tokens from the provider before storing them,
+	// so check the encryption keys. Starting an authorization also logs it when the broker cannot encrypt the
+	// authorization state.
+	DetailEncryptionFailed ErrorDetail = "encryption_failed"
+	// DetailPersistenceFailed means the broker could not save new tokens, or a recorded refresh rejection, to the
+	// session, so check the storage backend. The session sweep stops at this failure instead of counting it.
+	DetailPersistenceFailed ErrorDetail = "persistence_failed"
+	// DetailConfiguration means the service's OAuth2 registration is missing, invalid or incomplete, so fix the service
+	// configuration.
+	DetailConfiguration ErrorDetail = "configuration"
+	// DetailCallerCanceled means the request was canceled, or its deadline passed, before the session operation
+	// finished. A refresh that other requests share keeps running and reports its own result.
+	DetailCallerCanceled ErrorDetail = "caller_canceled"
+	// DetailInternalUnclassified means the broker could not classify the failure into any other detail.
+	DetailInternalUnclassified ErrorDetail = "internal_unclassified"
 )
 
 type ErrorKind string
 
 const (
-	KindSession        ErrorKind = "session"
-	KindProvider       ErrorKind = "provider"
+	// KindSession means no session is stored, or a due refresh is impossible because the session has no refresh
+	// token, so the user must connect to the service.
+	KindSession ErrorKind = "session"
+	// KindProvider means the provider rejected the request, including a rejected refresh token, or answered a
+	// refresh with an invalid response.
+	KindProvider ErrorKind = "provider"
+	// KindInfrastructure means a dependency failed: the provider was unavailable, or storage, encryption, signing
+	// or the credential files failed.
 	KindInfrastructure ErrorKind = "infrastructure"
-	KindConfiguration  ErrorKind = "configuration"
-	KindCanceled       ErrorKind = "canceled"
-	KindInternal       ErrorKind = "internal"
+	// KindConfiguration means the service's configuration is wrong, including a provider that rejects the broker's
+	// client, so fix the configuration.
+	KindConfiguration ErrorKind = "configuration"
+	// KindCanceled means the request was canceled, or its deadline passed, before the session operation finished.
+	KindCanceled ErrorKind = "canceled"
+	// KindInternal means the broker could not classify the failure.
+	KindInternal ErrorKind = "internal"
 )
 
 type Dependency string
 
 const (
-	DependencyNone               Dependency = "none"
-	DependencySessionRepository  Dependency = "session_repository"
+	// DependencyNone means the failure is not attributed to a dependency, as for most configuration errors,
+	// cancellations and unclassified failures.
+	DependencyNone Dependency = "none"
+	// DependencySessionRepository means the failure concerns the stored session: storage failed, or the session is
+	// missing or has no refresh token.
+	DependencySessionRepository Dependency = "session_repository"
+	// DependencyProviderRepository means the broker could not load the service registration, because storage
+	// failed or the service is missing.
 	DependencyProviderRepository Dependency = "provider_repository"
-	DependencyProvider           Dependency = "provider"
-	DependencyEncryption         Dependency = "encryption"
-	DependencyCredentialSource   Dependency = "credential_source" // #nosec G101 -- diagnostic dependency name, not a credential.
-	DependencySigning            Dependency = "signing"
+	// DependencyProvider means the provider's token endpoint failed, rejected the request or sent an invalid
+	// response.
+	DependencyProvider Dependency = "provider"
+	// DependencyEncryption means encrypting or decrypting the session's tokens or the service's client secret
+	// failed.
+	DependencyEncryption Dependency = "encryption"
+	// DependencyCredentialSource means the service's credential files are not configured or could not be read, or the
+	// recorded client ID is missing or differs.
+	DependencyCredentialSource Dependency = "credential_source" // #nosec G101 -- diagnostic dependency name, not a credential.
+	// DependencySigning means the broker had no usable key to sign the client assertion, or signing it failed.
+	DependencySigning Dependency = "signing"
 )
 
 // ErrorMetadata contains only bounded, credential-free classifications.

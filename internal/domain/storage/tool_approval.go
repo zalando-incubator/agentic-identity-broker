@@ -14,9 +14,16 @@ import (
 type ApprovalStatus string
 
 const (
-	ApprovalStatusPending  ApprovalStatus = "pending"
+	// ApprovalStatusPending means the approval waits for the user's decision, and it expires if the user does not
+	// decide within `approvals.pending_ttl`. ExtProc answers the tool call with the approval URL at once, so the agent
+	// calls the tool again after the decision.
+	ApprovalStatusPending ApprovalStatus = "pending"
+	// ApprovalStatusApproved means the user approved the tool call, and the approval lets matching calls through
+	// within its persistence scope.
 	ApprovalStatusApproved ApprovalStatus = "approved"
-	ApprovalStatusDenied   ApprovalStatus = "denied"
+	// ApprovalStatusDenied means the user denied the tool call or revoked a permanent decision, and only a
+	// permanent denial keeps blocking the tool.
+	ApprovalStatusDenied ApprovalStatus = "denied"
 )
 
 // IsValid returns true if the status is a known state.
@@ -32,8 +39,14 @@ func (s ApprovalStatus) IsValid() bool {
 type ApprovalPersistence string
 
 const (
-	ApprovalPersistenceOnce      ApprovalPersistence = "once"
-	ApprovalPersistenceSession   ApprovalPersistence = "session"
+	// ApprovalPersistenceOnce means the approval covers one call to the tool with the approved arguments, and ExtProc
+	// consumes it when it lets that call through.
+	ApprovalPersistenceOnce ApprovalPersistence = "once"
+	// ApprovalPersistenceSession means the approval covers matching tool calls in the agent session it was
+	// requested in, while that session is active.
+	ApprovalPersistenceSession ApprovalPersistence = "session"
+	// ApprovalPersistencePermanent means the decision covers matching tool calls until the user revokes it, and a
+	// permanent denial blocks the tool for any arguments.
 	ApprovalPersistencePermanent ApprovalPersistence = "permanent"
 )
 
