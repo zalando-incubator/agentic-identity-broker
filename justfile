@@ -22,7 +22,7 @@ E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false"
 
 COMPOSE_CMD := "docker compose"
 COMPOSE_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml"
-COMPOSE_POSTGRES_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml -f docker-compose.postgres.yml"
+COMPOSE_POSTGRES_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml -f configs/compose/postgres.yml"
 
 
 # Default recipe (shown when running `just` with no args)
@@ -717,16 +717,28 @@ compose-env:
 
 # Create a stable local encryption key for the PostgreSQL setup
 compose-env-postgres: compose-env
-    @if [ ! -s .env.compose.key ]; then \
+    @just _compose-postgres-credentials
+    @if [ ! -e .env.compose.key ]; then \
         umask 077; \
-        ./scripts/generate-jwe-key.sh > .env.compose.key || { rm -f .env.compose.key; exit 1; }; \
-        echo "✓ Created persistent database encryption key"; \
+        key_file=$(mktemp .env.compose.key.XXXXXX) || exit 1; \
+        ./scripts/generate-jwe-key.sh > "$key_file" || { rm -f "$key_file"; exit 1; }; \
+        if ln "$key_file" .env.compose.key 2>/dev/null; then echo "✓ Created persistent database encryption key"; fi; \
+        rm -f "$key_file"; \
     fi
+    @[ -s .env.compose.key ] || { echo "Missing or empty .env.compose.key" >&2; exit 1; }
     @chmod 600 .env.compose.key
+
+_compose-postgres-credentials:
+    @for name in IDENTITY_BROKER_POSTGRES_DB IDENTITY_BROKER_POSTGRES_USER IDENTITY_BROKER_POSTGRES_PASSWORD; do \
+        value=$(awk -F= -v name="$name" '$1 == name { value = substr($0, index($0, "=") + 1) } END { print value }' .env.compose); \
+        if printenv "$name" >/dev/null; then value=$(printenv "$name"); fi; \
+        case "$value" in *[!A-Za-z0-9._~-]*) echo "$name must use only letters, digits, dots, underscores, tildes, or hyphens" >&2; exit 1 ;; esac; \
+    done
 
 # Validate default and PostgreSQL Compose configurations
 compose-validate:
     @echo "Validating default and PostgreSQL Compose configurations..."
+    @just _compose-postgres-credentials
     @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} config > /dev/null && {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} config > /dev/null && echo "✓ Both Compose configs are valid" || (echo "✗ Compose configuration error" >&2; exit 1)
 
 _compose-urls storage:
@@ -998,8 +1010,12 @@ compose-extproc-up: compose-env
     @echo "  - mcp-server-mock (9003)"
     @echo "  - agentgateway (4000, 15000)"
     @echo ""
-    @echo "Requires identity-broker and upstream-oauth2 to be running."
-    IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(./scripts/generate-jwe-key.sh) {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up extproc-token-exchange mcp-server-mock agentgateway
+    @echo "Requires identity-broker, upstream-oauth2, and opa-bundle-server to be running."
+    @for service in identity-broker upstream-oauth2 opa-bundle-server; do \
+        {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps --services --status running "$service" | grep -qx "$service" || { echo "$service is not running" >&2; exit 1; }; \
+    done
+    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --no-deps --wait --wait-timeout 120 extproc-token-exchange mcp-server-mock
+    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --no-deps agentgateway
 
 # Stop ExtProc integration services only
 compose-extproc-down:

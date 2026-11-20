@@ -96,6 +96,8 @@ just compose-up-detached postgres     # background, then print service URLs
 
 This adds a dedicated PostgreSQL service and runs migrations before the broker starts. Host clients connect on `localhost:5433` by default; Compose services use `postgres:5432`. Credentials are in `.env.compose` and are for local development only.
 
+Use only letters, digits, dots, underscores, tildes, and hyphens in the PostgreSQL database name, user, and password. The startup recipe rejects other characters because it uses these values in connection URLs.
+
 `just compose-down` preserves the database volume. `just compose-down-volumes` and `just compose-clean` delete it. The encryption key in `.env.compose.key` must be kept while the database volume exists.
 
 ---
