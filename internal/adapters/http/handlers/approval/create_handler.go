@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -40,6 +41,11 @@ type createResponseData struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+// approvalCreateBodyLimit allows 7 MiB: sixfold JSON re-encoding expansion of the
+// ExtProc authorization.max_body_size default of 1 MiB, plus 1 MiB of envelope
+// headroom. Go's JSON encoder can expand characters such as '<' to six bytes.
+const approvalCreateBodyLimit = 7 << 20
+
 // CreateHandler handles POST /api/approvals.
 type CreateHandler struct {
 	service *domainapproval.Service
@@ -69,8 +75,8 @@ func (h *CreateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "invalid request body")
+	if err := requestbody.Decode(w, r, approvalCreateBodyLimit, &req); err != nil {
+		writeError(w, requestbody.Status(err), "bad_request", "invalid request body")
 		return
 	}
 

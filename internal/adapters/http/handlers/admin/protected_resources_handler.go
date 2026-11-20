@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -45,9 +46,10 @@ type protectedResourceSetResponse struct {
 
 func (h *ProtectedResourcesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req protectedResourceCreateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.error(w, http.StatusBadRequest, "invalid request body", "")
-		h.audit(r, "add", chi.URLParam(r, "service-id"), "rejected", http.StatusBadRequest, "", "", "")
+	if err := requestbody.Decode(w, r, 8<<10, &req); err != nil {
+		status := requestbody.Status(err)
+		h.error(w, status, "invalid request body", "")
+		h.audit(r, "add", chi.URLParam(r, "service-id"), "rejected", status, "", "", "")
 		return
 	}
 	h.add(w, r, req.ResourceURI)
@@ -110,9 +112,10 @@ func (h *ProtectedResourcesHandler) Rename(w http.ResponseWriter, r *http.Reques
 	source, sourceValid := h.normalized(from)
 
 	var req protectedResourceRenameRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.error(w, http.StatusBadRequest, "invalid request body", "")
-		h.audit(r, "rename", chi.URLParam(r, "service-id"), "rejected", http.StatusBadRequest, "", source, "")
+	if err := requestbody.Decode(w, r, 8<<10, &req); err != nil {
+		status := requestbody.Status(err)
+		h.error(w, status, "invalid request body", "")
+		h.audit(r, "rename", chi.URLParam(r, "service-id"), "rejected", status, "", source, "")
 		return
 	}
 	target, targetValid := h.normalized(req.To)

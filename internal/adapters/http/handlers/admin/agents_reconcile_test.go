@@ -64,7 +64,11 @@ func TestReconcileHandlerRejectsBeforeWrites(t *testing.T) {
 			handler := newAgentsHandlerForTest(repo, new(MockProviderRepository), slog.Default())
 			w := httptest.NewRecorder()
 			handler.ReconcileAgent(w, httptest.NewRequest(http.MethodPut, tc.path, strings.NewReader(tc.body)))
-			require.Equal(t, http.StatusBadRequest, w.Code)
+			status := http.StatusBadRequest
+			if tc.name == "limit" {
+				status = http.StatusRequestEntityTooLarge
+			}
+			require.Equal(t, status, w.Code)
 			var response ErrorResponse
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 			assert.Equal(t, tc.errorCode, response.Error)
@@ -123,7 +127,11 @@ func TestReconcileHandlerLogsValidationFailures(t *testing.T) {
 			}
 			w := httptest.NewRecorder()
 			handler.ReconcileAgent(w, httptest.NewRequest(http.MethodPut, path, body))
-			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			status := http.StatusBadRequest
+			if tc.name == "body limit" {
+				status = http.StatusRequestEntityTooLarge
+			}
+			require.Equal(t, status, w.Code, w.Body.String())
 			assert.NotContains(t, logs.String(), "do-not-log-this")
 			var record map[string]any
 			decoder := json.NewDecoder(&logs)

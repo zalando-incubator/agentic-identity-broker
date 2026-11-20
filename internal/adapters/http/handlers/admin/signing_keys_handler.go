@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -67,11 +68,11 @@ func (h *SigningKeysHandler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req signingKeyAddRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := requestbody.Decode(w, r, 4<<10, &req); err != nil {
 		if errors.Is(err, io.EOF) {
 			req.Algorithm = "ES256"
 		} else {
-			h.writeError(w, http.StatusBadRequest, "invalid request body", "")
+			h.writeError(w, requestbody.Status(err), "invalid request body", "")
 			return
 		}
 	}

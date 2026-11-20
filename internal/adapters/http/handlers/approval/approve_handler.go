@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/requestbody"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
@@ -14,6 +15,11 @@ import (
 )
 
 var errNullParamsPattern = errors.New("params_pattern must be an object")
+
+// approvalDecisionBodyLimit allows 64 entries with 255-byte keys and 1024-byte values,
+// each byte JSON-escaped to at most six bytes, plus object syntax and the request
+// envelope, because clients post the stored pattern back verbatim.
+const approvalDecisionBodyLimit = 512 << 10
 
 type approveRequest struct {
 	Persistence           string          `json:"persistence"`
@@ -57,8 +63,8 @@ func (h *ApproveHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req approveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", "request body must be valid JSON")
+	if err := requestbody.Decode(w, r, approvalDecisionBodyLimit, &req); err != nil {
+		writeError(w, requestbody.Status(err), "bad_request", "request body must be valid JSON")
 		return
 	}
 
