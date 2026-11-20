@@ -262,6 +262,8 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 
 After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
 Do not rely only on editor diagnostics. Before a pull request, run the full gate from `CONTRIBUTING.md`.
+Sign off your commits with `git commit -s`. The DCO check requires an author-matching `Signed-off-by` trailer.
+When Copilot commits, keep its required `Co-authored-by` trailer. Read `CONTRIBUTING.md` before you commit.
 
 ## Code Style
 

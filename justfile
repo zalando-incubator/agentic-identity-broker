@@ -235,9 +235,16 @@ vet:
     @echo "Running go vet..."
     go vet ./...
 
-# Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom)
+# Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom, jq)
 install-tools:
     @echo "Installing development tools..."
+    @if ! command -v jq >/dev/null 2>&1; then \
+        if command -v brew >/dev/null 2>&1; then brew install jq; \
+        elif command -v apt-get >/dev/null 2>&1; then \
+            if [ "$(id -u)" -eq 0 ]; then apt-get update && apt-get install -y jq; \
+            else sudo apt-get update && sudo apt-get install -y jq; fi; \
+        else echo "Install jq with your system package manager" >&2; exit 1; fi; \
+    fi
     @air -v 2>/dev/null | grep -q 'v1\.67\.4' || go install github.com/air-verse/air@v1.67.4
     @GOTOOLCHAIN="$(go env GOVERSION)" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
     @go install github.com/jstemmer/go-junit-report/v2@v2.1.0
@@ -1013,14 +1020,7 @@ compose-extproc-up: compose-env
     @for service in identity-broker upstream-oauth2 opa-bundle-server; do \
         {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps --services --status running "$service" | grep -qx "$service" || { echo "$service is not running" >&2; exit 1; }; \
     done
-    @command -v jq >/dev/null || { echo "jq is required for ExtProc Compose mode" >&2; exit 1; }
-    @attempt=0; while :; do \
-        status=$({{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps --format json upstream-oauth2) || exit 1; \
-        if printf '%s\n' "$status" | jq -e 'any(.[]; .Service == "upstream-oauth2" and .Health == "healthy")' >/dev/null; then break; fi; \
-        attempt=$((attempt + 1)); \
-        if [ "$attempt" -ge 60 ]; then echo "upstream-oauth2 did not become healthy within 120 seconds" >&2; exit 1; fi; \
-        sleep 2; \
-    done
+    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --no-deps --no-recreate --wait --wait-timeout 120 upstream-oauth2
     @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --no-deps --wait --wait-timeout 120 extproc-token-exchange mcp-server-mock
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --no-deps agentgateway
 

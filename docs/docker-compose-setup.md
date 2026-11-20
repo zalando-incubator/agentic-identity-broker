@@ -10,7 +10,7 @@ Compose. It includes hot reload for the backend and frontend.
 - Docker installed and running, with Docker Compose v2 (`docker compose`)
 - OpenSSL for host-side key generation
 - [just](https://github.com/casey/just), installed with `brew install just` or `cargo install just`
-- `jq` for PostgreSQL or ExtProc Compose mode
+- `jq` for PostgreSQL Compose mode
 
 For plain Docker Compose commands and a complete consent-to-tool journey,
 see [Get started](get-started/index.md).
