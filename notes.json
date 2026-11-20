@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": null
+    "investigation_after": 515
   },
   "issues": [
     {
@@ -46,12 +46,6 @@
       "state": "awaiting_clarification",
       "updated_at": "2026-11-06",
       "note": "Nov19 human body revision confirms PDP placement and likely agentgateway Decisions API; remaining adapter/input, egress/retention and evaluation contracts are explicit design work. Do not re-ask placement or duplicate the existing comment."
-    },
-    {
-      "number": 222,
-      "state": "resolution_recommended",
-      "updated_at": "2026-11-07",
-      "note": "Verified merged #293 and current source: explicit agent category, no agent delegation, reserved claims/act, and early third-party rejection. Fresh race package tests passed. Recommended closing; no duplicate fix."
     },
     {
       "number": 245,
@@ -246,12 +240,6 @@
       "note": "Separated Nov17 govulncheck data-fetch reset from Nov16 OSV fast-xml-parser finding. Existing #464 fixes 5.11.1 to 5.12.0; both check types pass tests/docs but approvals pending. Recommend review then complete main Security rerun; keep issue open. No new exception or scan pass."
     },
     {
-      "number": 346,
-      "state": "commented",
-      "updated_at": "2026-11-18",
-      "note": "Verified merged #415 on release/v0.2, not main: messages/events and sloglint rules land there. Posted release-delivery boundary and event migration release-note request. Three focused race tests pass; no duplicate fix."
-    },
-    {
       "number": 347,
       "state": "commented",
       "updated_at": "2026-11-19",
@@ -279,18 +267,34 @@
       "number": 508,
       "state": "commented",
       "updated_at": "2026-11-20",
-      "note": "Posted distinct ExtProc/broker meanings and per-constant first-sentence plan. Guard every EnumValue.Doc, not documented(any); coordinate #469/#498. Four classification race tests pass on release/v0.2; generator/docs unrun. Maintenance-only candidate."
+      "note": "Active external draft #549 addresses telemetry value descriptions on release/v0.2; do not duplicate documentation candidate. Prior per-value/classifier guidance remains available for review."
+    },
+    {
+      "number": 367,
+      "state": "deferred",
+      "updated_at": "2026-11-20",
+      "note": "Closed #403 has maintainer-owned replacement draft #545 on release/v0.2. #524 fixed base-override config; earlier Repo Assist replacement never published. Do not retry or duplicate #545; keep issue open pending merge."
+    },
+    {
+      "number": 497,
+      "state": "deferred",
+      "updated_at": "2026-11-20",
+      "note": "Issue is open again; active maintainer #523 implements approved icon spec #510 and references closure. Prior source/fallback guidance remains unacknowledged. Do not duplicate implementation."
+    },
+    {
+      "number": 515,
+      "state": "commented",
+      "updated_at": "2026-11-20",
+      "note": "Posted name-status/NUL rename union and exact ci.yml full override; screenshot reuse needs capture/PNG artifact, single worker and head-versus-merge provenance. Static source assessment only; maintenance-only candidate."
+    },
+    {
+      "number": 522,
+      "state": "resolution_recommended",
+      "updated_at": "2026-11-20",
+      "note": "Verified merged #524 at 1d637dcd allows main/release/* and recompiles workflow. Recommended closure of historical base-override rejection; #545 now owns #367. No later publication success claimed."
     }
   ],
   "fixes": [
-    {
-      "issue": 367,
-      "pr": null,
-      "branch": "repo-assist/fix-issue-367-release-v02-44751400904",
-      "status": "open",
-      "updated_at": "2026-11-20",
-      "note": "Replacement for closed #403 prepared at 7023138f against release/v0.2; publication pending. Check/build/fast/integration/race pass; 1003 backend E2E pass. Full verify stops at unchanged security-tool fixture imports and G304 tooling finding. Verify live PR by branch before retrying."
-    },
     {
       "issue": 212,
       "pr": 424,
@@ -305,7 +309,7 @@
       "branch": "repo-assist/fix-issue-416-broker-access-denied-d7b29c16dd0ed650",
       "status": "blocked",
       "updated_at": "2026-11-20",
-      "note": "Live head still 44269352 and dirty. Prior bundle submission failed downstream: 5735 KB changed content exceeds 4096 KB limit. No repeated push/history rewrite. Existing head pipeline passes, not merge validation; approved maintainer publication path needed."
+      "note": "Head 44269352 unchanged and dirty. Prior oversized publication remains blocked; no repeat push/history rewrite. Current head external pipeline passes, not merge validation. Approved maintainer integration path still needed."
     },
     {
       "issue": 244,
@@ -335,9 +339,9 @@
       "issue": 414,
       "pr": 461,
       "branch": "repo-assist/fix-issue-414-request-log-context-2026-11-10-5cdb1bee99b41705",
-      "status": "open",
-      "updated_at": "2026-11-11",
-      "note": "Resolved published draft #461; both checks and statuses read, DCO/pipeline/unit/integration/all E2E passed. No duplicate fix or push needed."
+      "status": "blocked",
+      "updated_at": "2026-11-20",
+      "note": "Non-draft, retargeted release/v0.2; head 0a7db5e unchanged, dirty, five external stages fail. Local merge: six context/message conflicts, ~9169 KiB complete changed content vs known 4096 KiB limit. Aborted clean; no push. Posted approved integration/log-evidence request."
     },
     {
       "issue": 427,
@@ -360,12 +364,6 @@
       "checked_at": "2026-11-10",
       "result": "Inspected in-memory grant pair lookup and agent index: lookups already use maps and return defensive copies. No representative measurement supports an optimization; existing snapshot optimization remains #420.",
       "follow_up": "Task 8 fell back to Task 9; added high-value context logging regressions with #414 instead of speculative optimization."
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-18",
-      "result": "Seven Repo Assist external test pipelines pass; #403/#490 pipeline-start blockers persist. Classifications fail #403/#420/#448. Latest main Security run aborts on vulnerability-data connection reset; previous run reaches OSV and finds fixable fast-xml-parser. Not a clean scan.",
-      "follow_up": "Review existing #464 then rerun complete Security on main; keep #143 open."
     },
     {
       "area": "dependencies",
@@ -392,33 +390,39 @@
       "follow_up": null
     },
     {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-20",
-      "result": "Read nine PRs, reviews/threads and both check types, including #490 page 2. Seven pipelines pass; #403/#490 pipeline-start and #403/#420/#448 classification blockers persist. #403/#432 heads unchanged and dirty. No repeat push/comment.",
-      "follow_up": "Known changed-content publication limit still requires maintainer-approved integration path; no oversized retries or history rewrite."
-    },
-    {
-      "area": "hygiene",
-      "checked_at": "2026-11-20",
-      "result": "72 open issues labelled; inspected 27 PRs and submitted bug for #511. No new pending-comment acknowledgements or monthly check-offs. Closed #497 removed from memory/actions. #505/#507 repeat known publication-size blocker.",
-      "follow_up": null
-    },
-    {
-      "area": "code",
-      "checked_at": "2026-11-20",
-      "result": "Investigated #508 classifiers and #469/#498 generator. Posted ExtProc recovery distinction, configuration vs reconnect advice, first-sentence extraction and per-value completeness tests. No runtime edits/new PR.",
-      "follow_up": "Documentation-only candidate; include current grant-context codes and keep span/key descriptions separate."
-    },
-    {
       "area": "tests",
       "checked_at": "2026-11-20",
       "result": "Four existing classification tests pass uncached with race on release/v0.2 83f266e2 in tokenexchange, oauth2session and ExtProc server via just test override. Restored clean main. Generator/docs, static/full gate and Compose unrun; no source changes.",
       "follow_up": null
     },
     {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-20",
+      "result": "Eight open Repo Assist PRs; read reviews/threads plus both check types. Six external pipelines pass; #490 start blocker persists. #461 now non-draft/release-targeted, dirty and five external stages fail. #432 remains dirty; classifications missing #420/#448.",
+      "follow_up": "#461 local merge abort: six context/message conflicts and ~9169 KiB complete changed-file estimate. No oversized push; approved integration and first failing external logs needed."
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-20",
+      "result": "97 open issues/26 PRs reviewed. Submitted enhancement/performance on #514-#516, enhancement on #517/#518/#520, bug #545, documentation #546. Removed closed #222/#346; restored reopened #497. No monthly human check-offs.",
+      "follow_up": null
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-20",
+      "result": "#515 static review confirms coarse code selector, rename name-only limitation and screenshot handoff gap: CI captures off/two workers/reports-only vs head-based single-worker publisher. #524 fixes base-override rejection; #522 closure recommended.",
+      "follow_up": "Maintain gate dependencies and full fallback; screenshot artifact provenance and privileged publisher separation before eliminating second suite."
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-20",
+      "result": "#367 maintainer replacement #545 targets release/v0.2; no duplicate Repo Assist PR. #461 six local conflict regions require release-normalized messages plus context-aware logs/writers, not wholesale side selection. Merge aborted; clean main restored.",
+      "follow_up": null
+    },
+    {
       "area": "release",
       "checked_at": "2026-11-20",
-      "result": "Latest release remains v0.1.147 (Nov17); release/v0.2 integration and external #511 active. Maintenance-only triage run; no new release PR permitted or justified by this run.",
+      "result": "release/v0.2 integration remains active, including #545 and #461 retarget. No release changes or new PRs permitted in this scheduled maintenance-only run.",
       "follow_up": null
     }
   ],
@@ -435,13 +439,13 @@
   "priorities": [
     {
       "task": 6,
-      "item": "Confirm #367 replacement publication; unblock #432",
-      "note": "Verify #367 replacement publication from repo-assist/fix-issue-367-release-v02-44751400904 targeting release/v0.2 before further action. #432 still needs approved publication path after oversized bundle rejection; do not rewrite existing PR history."
+      "item": "Unblock #461 and #432 approved integration",
+      "note": "#461 release merge exceeds known changed-content budget estimate; six context/message conflicts and failing external stages need approved maintainer integration/log evidence. #432 previous oversize rejection unchanged. Do not retry oversized pushes or rewrite PR history."
     },
     {
       "task": 2,
-      "item": "Resume fresh oldest-first investigation; preserve #508 candidate",
-      "note": "Reached end through #508; cursor reset. Await #500/#501 decisions and #511 merge for #496. #508 needs documentation-only work coordinated with #469/#498 when capacity permits; do not duplicate active fixes."
+      "item": "Resume oldest-first investigation after #515",
+      "note": "New #516/#517 CI work remains available for source-based investigation; #518 has draft #546 and #520 is assigned. #367/#508 have active #545/#549; do not duplicate. Await #500/#501 decisions."
     },
     {
       "task": 3,
