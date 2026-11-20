@@ -27,7 +27,7 @@ func TestReferenceIsCurrent(t *testing.T) {
 		for _, g := range gaps {
 			lines = append(lines, g.Where+": "+g.What)
 		}
-		t.Fatalf("telemetrydoc cannot follow these places (coding-standards/OPENTELEMETRY.md section 9):\n%s",
+		t.Fatalf("telemetrydoc cannot follow these places (coding-standards/OPENTELEMETRY.md section 10):\n%s",
 			strings.Join(lines, "\n"))
 	}
 	var got bytes.Buffer

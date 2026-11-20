@@ -38,7 +38,7 @@ func run(dir string) error {
 		for _, g := range gaps {
 			fmt.Fprintf(os.Stderr, "%s: %s\n", g.Where, g.What)
 		}
-		return fmt.Errorf("cannot follow %d places (coding-standards/OPENTELEMETRY.md section 9)", len(gaps))
+		return fmt.Errorf("cannot follow %d places (coding-standards/OPENTELEMETRY.md section 10)", len(gaps))
 	}
 	var buf bytes.Buffer
 	if err := Write(&buf, ref); err != nil {

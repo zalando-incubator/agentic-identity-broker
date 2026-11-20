@@ -7,7 +7,7 @@ Scope: OpenTelemetry traces and metrics. Log records, including log records expo
 Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
 spec `017-opentelemetry-support` (SR-001 to SR-004), `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
-`docs/reference/telemetry.md` lists each span, metric and attribute that the code emits. `tools/telemetrydoc` generates it (section 9).
+`docs/reference/telemetry.md` lists each span, metric and attribute that the code emits. `tools/telemetrydoc` generates it (section 10).
 
 ## 1. Provider Plumbing
 
@@ -289,7 +289,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 - [ ] Principals are set on spans only through `id.Principal.SpanAttribute` under a `.principal` key, and only where section 4.3 permits. No principal is a metric attribute.
 - [ ] The observability contract lists each new instrument.
 - [ ] A test asserts that credentials on this path are not in span attributes, and asserts each new metric's attribute set.
-- [ ] `docs/reference/telemetry.md` is regenerated with `just telemetry-doc` (section 9).
+- [ ] `docs/reference/telemetry.md` is regenerated with `just telemetry-doc` (section 10).
 
 ## 9. Lint Enforcement
 
@@ -314,7 +314,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 
 A finding that the code cannot avoid carries `//nolint:<linter> // <reason>` at the call. `.golangci.yml` excludes existing violations by path and names the issue that fixes them (#349, #350, #352, #353). Remove the exclusion in the change that fixes the violations, so the rule then holds for the whole repository.
 
-## 9. Telemetry Reference
+## 10. Telemetry Reference
 
 `docs/reference/telemetry.md` is the reference for operators and agents that query traces and metrics. `tools/telemetrydoc` reads the code with `go/packages` and generates the page. It does not run the code.
 
