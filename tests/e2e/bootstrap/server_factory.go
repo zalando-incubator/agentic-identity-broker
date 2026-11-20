@@ -33,8 +33,9 @@ import (
 // - NO test-specific logic or mocks
 // - All wiring uses PRODUCTION adapters
 type ServerFactory struct {
-	config *ports.Config
-	logger *slog.Logger
+	config              *ports.Config
+	logger              *slog.Logger
+	identityReadBarrier *ClientIdentityReadBarrier
 }
 
 func webDistPath() string {
@@ -62,6 +63,11 @@ func NewServerFactory(config *ports.Config, logger *slog.Logger) *ServerFactory 
 		config: config,
 		logger: logger,
 	}
+}
+
+func (f *ServerFactory) WithClientIdentityReadBarrier(barrier *ClientIdentityReadBarrier) *ServerFactory {
+	f.identityReadBarrier = barrier
+	return f
 }
 
 // BuildApp creates a fully-wired application with production dependencies.
@@ -118,7 +124,11 @@ func (f *ServerFactory) BuildApp(storage interface{}) (*app.App, error) {
 		WithLogger(f.logger).
 		WithStaticWebResourcesPath(webDistPath())
 
-	return builder.Build()
+	application, err := builder.Build()
+	if err == nil && f.identityReadBarrier != nil {
+		application.OAuth2SessionService.WithCredentialFileReader(f.identityReadBarrier)
+	}
+	return application, err
 }
 
 // BuildAppWithTracerProvider creates a fully-wired application with a custom

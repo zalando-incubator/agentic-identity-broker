@@ -1549,7 +1549,7 @@ var _ = Describe("Permission Sets (019)", func() {
 			}
 			_, version, err := testStorage.Services().ListProtectedResources(context.Background(), id.MustParseServiceID(googleServiceID))
 			Expect(err).ToNot(HaveOccurred())
-			Expect(testStorage.Services().Update(context.Background(), googleSvcWithPR, &version)).To(Succeed())
+			Expect(providerUpdateError(testStorage.Services().Update(context.Background(), googleSvcWithPR, &version))).To(Succeed())
 
 			// Seed an active google session so the exchange passes step 10 and reaches step 11.
 			Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForService(userPrincipal, googleServiceID))).To(Succeed())

@@ -1,11 +1,39 @@
 package storage
 
 import (
+	"encoding/json"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 )
+
+func TestUserSession_ClientRevision(t *testing.T) {
+	for _, revision := range []int64{0, 7, -1} {
+		session := &UserSession{ID: id.NewSessionID(), Principal: "alice@example.com", ServiceID: id.NewServiceID(), TokenType: "Bearer", EncryptedAccessToken: []byte("ciphertext"), UpstreamClientRevision: revision}
+		if revision < 0 {
+			require.Error(t, session.Validate())
+		} else {
+			require.NoError(t, session.Validate())
+		}
+		body, err := json.Marshal(session)
+		require.NoError(t, err)
+		assert.NotContains(t, string(body), "upstream_client_revision")
+		assert.NotContains(t, string(body), "UpstreamClientRevision")
+		session.UpstreamClientID = new(id.ClientID("reports"))
+		summary := NewUserSessionSummary(session, "Reports", 0)
+		assert.Equal(t, revision, summary.UpstreamClientRevision)
+		require.Equal(t, session.UpstreamClientID, summary.UpstreamClientID)
+		*summary.UpstreamClientID = "other"
+		assert.Equal(t, id.ClientID("reports"), *session.UpstreamClientID)
+		body, err = json.Marshal(summary)
+		require.NoError(t, err)
+		assert.NotContains(t, string(body), "upstream_client")
+		assert.NotContains(t, string(body), "UpstreamClient")
+	}
+}
 
 func TestUserSession_AccessTokenExpiresBy(t *testing.T) {
 	expiry := time.Date(2026, time.October, 8, 12, 0, 0, 0, time.UTC)

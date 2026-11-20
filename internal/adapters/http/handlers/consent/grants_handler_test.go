@@ -17,6 +17,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -332,6 +333,45 @@ func TestCreateGrant_ServiceErrors(t *testing.T) {
 			if errResp.Error != tt.expectedError {
 				t.Errorf("expected error '%s', got '%s'", tt.expectedError, errResp.Error)
 			}
+		})
+	}
+}
+
+func TestCreateGrant_UsabilityFailureLogsAtHTTPBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{name: "source failure", cause: errors.Join(model.NewCredentialSourceError(model.CredentialSourceReasonReadFailed), errors.New("private-source-payload"))},
+		{name: "cancellation", cause: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agentID := id.NewAgentID()
+			var logs bytes.Buffer
+			service := &mockConsentService{grantConsentFunc: func(context.Context, *consent.GrantRequest) (*storage.UserGrant, error) {
+				return nil, &ports.SessionUsabilityError{ServiceID: id.NewServiceID(), Err: tc.cause}
+			}}
+			handler := NewGrantsHandler(service, slog.New(slog.NewJSONHandler(&logs, nil)), newTestSessionTokenValidator())
+			body := GrantRequest{GrantedPermissionSets: map[string][]string{id.NewPermissionSetID().String(): {id.NewServiceID().String()}}}
+			req := newRequestWithPrincipal(http.MethodPost, "/api/consent/agent/"+agentID.String()+"/grants", "owner@example.test", body)
+			route := chi.NewRouteContext()
+			route.URLParams.Add("agent-id", agentID.String())
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, route))
+			response := httptest.NewRecorder()
+			handler.CreateGrant(response, req)
+			assert.Equal(t, http.StatusInternalServerError, response.Code)
+			var result ErrorResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
+			assert.Equal(t, "internal server error", result.Error)
+			if errors.Is(tc.cause, context.Canceled) {
+				assert.Empty(t, logs.String())
+			} else {
+				var record map[string]any
+				require.NoError(t, json.Unmarshal(logs.Bytes(), &record), "one canonical record, not a generic duplicate")
+				assert.Equal(t, "session.oauth2.credential_source_failed", record["event"])
+				assert.Equal(t, "usability_gate", record["operation"])
+			}
+			assert.NotContains(t, response.Body.String(), "private-source-payload")
 		})
 	}
 }

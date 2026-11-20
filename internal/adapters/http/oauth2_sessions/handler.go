@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2session"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 )
@@ -183,10 +184,12 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.logger.ErrorContext(ctx, "failed to initiate OAuth2 flow",
-			"principal", principalValue,
-			"service_id", serviceIDStr,
-			"error", err)
+		if !errors.Is(err, model.ErrCredentialSourceUnavailable) {
+			h.logger.ErrorContext(ctx, "failed to initiate oauth2 flow",
+				"principal", principalValue,
+				"service_id", serviceIDStr,
+				"error", err)
+		}
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to initiate OAuth2 flow")
 		return
 	}
@@ -332,11 +335,12 @@ func (h *Handler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Generic callback error - log and redirect
-		h.logger.ErrorContext(ctx, "failed to handle OAuth2 callback",
-			"principal", principalValue,
-			"service_id", serviceIDStr,
-			"error", err)
+		if !errors.Is(err, model.ErrCredentialSourceUnavailable) {
+			h.logger.ErrorContext(ctx, "failed to handle oauth2 callback",
+				"principal", principalValue,
+				"service_id", serviceIDStr,
+				"error", err)
+		}
 
 		redirectURL := "/sessions?error=callback_failed&error_description=" +
 			url.QueryEscape("Authorization failed - please try again")
@@ -587,6 +591,7 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 
 	summary, err := h.service.ForceRefreshSession(ctx, id.Principal(principalValue), parsedServiceID)
 	if err != nil {
+		var sourceError *model.CredentialSourceError
 		switch {
 		case errors.Is(err, oauth2session.ErrSessionNotFound):
 			h.logger.WarnContext(ctx, "session not found for refresh", "service_id", serviceIDStr, "principal", principalValue)
@@ -598,6 +603,8 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 			})
 		case errors.Is(err, oauth2session.ErrRefreshRejected):
 			writeJSONError(w, http.StatusConflict, "refresh_rejected", "refresh token rejected by provider; reauthentication required")
+		case errors.As(err, &sourceError) && sourceError.Reason.IsIdentity():
+			writeJSONError(w, http.StatusConflict, "refresh_unavailable", "service connection requires reauthentication")
 		case errors.Is(err, oauth2session.ErrRefreshNotAvailable):
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
@@ -617,10 +624,12 @@ func (h *Handler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 				"message": "failed to refresh token with the third-party provider",
 			})
 		default:
-			h.logger.ErrorContext(ctx, "failed to refresh session",
-				"principal", principalValue,
-				"service_id", serviceIDStr,
-				"error", err)
+			if !errors.Is(err, model.ErrCredentialSourceUnavailable) {
+				h.logger.ErrorContext(ctx, "failed to refresh session",
+					"principal", principalValue,
+					"service_id", serviceIDStr,
+					"error", err)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]string{

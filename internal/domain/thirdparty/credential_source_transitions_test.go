@@ -7,6 +7,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -327,6 +328,64 @@ func TestCredentialSourceHistorySurvivesNoopMetadataAndRoundTrip(t *testing.T) {
 				assert.Equal(t, step.source, stored.CredentialSource)
 				assert.Equal(t, step.transitioned, stored.CredentialSourceTransitioned)
 			}
+		})
+	}
+}
+
+func TestCredentialSourceSameIdentityRotationMetadataAndTransitionsPreserveRevision(t *testing.T) {
+	ctx := t.Context()
+	fixture := newCredentialSourceFixture(t)
+	entity := credentialSourceEntity(id.NewServiceID(), model.CredentialSourceStored)
+	require.NoError(t, fixture.service.Create(ctx, entity))
+	currentID := id.ClientID("current-client-after-change")
+	changed := credentialSourceEntity(entity.ID, model.CredentialSourceStored)
+	changed.ClientID = currentID
+	require.NoError(t, fixture.service.Update(ctx, changed, nil))
+	baseline := persistedCredentialSource(t, fixture, entity.ID)
+	require.Equal(t, int64(1), baseline.ClientIdentityRevision, "exercise preservation after a real identity change, not just the default zero")
+
+	for _, step := range []struct {
+		name   string
+		source model.CredentialSource
+		secret string
+	}{
+		{"same-ID secret rotation", model.CredentialSourceStored, "new-rotated-secret"},
+		{"stored metadata and scopes", model.CredentialSourceStored, "new-rotated-secret"},
+		{"same-ID stored to filesystem", model.CredentialSourceFilesystem, ""},
+		{"filesystem metadata", model.CredentialSourceFilesystem, ""},
+		{"same-ID filesystem to stored", model.CredentialSourceStored, "explicit-return-secret"},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			before := persistedCredentialSource(t, fixture, entity.ID)
+			update := credentialSourceEntity(entity.ID, step.source)
+			update.DisplayName = step.name
+			update.Scopes = []model.OAuthScope{{ScopeValue: "read", Description: "Changed scope metadata"}, {ScopeValue: "write", Description: "Write access"}}
+			if step.source == model.CredentialSourceStored {
+				update.ClientID = currentID
+				update.Secret = model.NewPlaintextSecret(step.secret)
+			}
+			require.NoError(t, fixture.service.Update(ctx, update, &before.Version))
+			after := persistedCredentialSource(t, fixture, entity.ID)
+			assert.Equal(t, baseline.ClientIdentity, after.ClientIdentity)
+			assert.Equal(t, baseline.ClientIdentityRevision, after.ClientIdentityRevision)
+			assert.Equal(t, before.Version+1, after.Version)
+			assert.Equal(t, update.Scopes, after.Scopes)
+			if step.source == model.CredentialSourceFilesystem {
+				state, applied, changed, err := fixture.repo.RecordObservedClientIdentity(ctx, entity.ID, currentID, ports.ClientIdentityObservation{
+					ServiceVersion: after.Version, CanonicalID: *after.CanonicalID, Revision: after.ClientIdentityRevision,
+				})
+				require.NoError(t, err)
+				assert.True(t, applied)
+				assert.False(t, changed)
+				assert.Equal(t, baseline.ClientIdentityRevision, state.Revision)
+				assert.True(t, after.Secret.IsAbsent())
+				return
+			}
+			read, err := fixture.service.Get(ctx, entity.ID)
+			require.NoError(t, err)
+			secret, err := read.Secret.GetPlaintext()
+			require.NoError(t, err)
+			assert.Equal(t, step.secret, secret, "the same identity must not prevent committing the rotated secret")
 		})
 	}
 }

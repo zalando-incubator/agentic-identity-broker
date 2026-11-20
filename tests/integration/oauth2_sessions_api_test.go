@@ -1324,12 +1324,26 @@ func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T)
 	grantRepo := memory.NewUserGrantRepository()
 	principal := "user@example.com"
 	serviceUUID := id.NewServiceID()
+	clientID := id.NewClientID("test-client-id")
+	require.NoError(t, serviceRepo.Create(ctx, &model.ThirdpartyOAuth2ProviderEntity{
+		ID:               serviceUUID,
+		DisplayName:      "GitHub",
+		ClientID:         clientID,
+		CredentialSource: model.CredentialSourceStored,
+		Secret:           model.NewEncryptedSecret(encryptSecretForTest(t, serviceUUID.String(), "test-secret")),
+		IssuerURI:        "https://github.com",
+		Endpoints: model.OAuth2Endpoints{
+			AuthorizeEndpoint: "https://github.com/login/oauth/authorize",
+			TokenEndpoint:     "https://github.com/login/oauth/access_token",
+		},
+	}))
 	expiry := time.Now().Add(time.Hour)
 
 	session := &storage.UserSession{
 		ID:                   id.NewSessionID(),
 		Principal:            id.Principal(principal),
 		ServiceID:            serviceUUID,
+		UpstreamClientID:     &clientID,
 		EncryptedAccessToken: encryptSecretForTest(t, serviceUUID.String(), "old-access-token"),
 		TokenType:            "Bearer",
 		Scope:                []string{"repo"},
@@ -1358,6 +1372,16 @@ func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T)
 
 	require.Equal(t, http.StatusConflict, w.Code)
 	assert.Contains(t, w.Body.String(), "refresh_unavailable")
+
+	// A missing refresh token must not hide unavailable current identity metadata.
+	require.NoError(t, serviceRepo.Delete(ctx, serviceUUID))
+	req = httptest.NewRequest(http.MethodPost, "/api/third-party/"+serviceUUID.String()+"/session/refresh", nil)
+	req.Header.Set("X-Remote-User", principal)
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "internal_error")
+	assert.NotContains(t, w.Body.String(), "refresh_unavailable")
 }
 
 func TestRefreshSession_ReturnsConflictWhenProviderRejectedRefreshToken(t *testing.T) {

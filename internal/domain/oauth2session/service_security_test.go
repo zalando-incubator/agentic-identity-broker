@@ -105,7 +105,7 @@ func TestHandleCallbackSecurity_DiscoveredIssuerChangeRejectsOldStateBeforeToken
 	provider.IssuerURI = "https://other-issuer.example.test"
 	completedAt := provider.DiscoveryStatus.LastAttemptAt.Add(time.Microsecond)
 	provider.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-	require.NoError(t, repo.Update(ctx, provider, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, provider, nil)))
 	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
 		ServiceID: serviceID, Code: "old-issuer-code", State: flow.StateToken,
 	})
@@ -144,7 +144,7 @@ func TestHandleCallbackSecurity_DiscoveredAudienceChangeRejectsOldStateBeforeTok
 	provider.ResourceExplicit = true
 	completedAt := provider.DiscoveryStatus.LastAttemptAt.Add(time.Microsecond)
 	provider.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-	require.NoError(t, repo.Update(ctx, provider, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, provider, nil)))
 	result, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
 		ServiceID: serviceID, Code: "old-audience-code", State: flow.StateToken,
 	})
@@ -725,7 +725,7 @@ func TestHandleCallbackSecurity_RejectsPersistedCIMDCredentialBeforeCodeExchange
 	stored, err := repository.Get(context.Background(), serviceID)
 	require.NoError(t, err)
 	stored.Endpoints.TokenEndpoint += "?client_secret=stale-secret"
-	require.NoError(t, repository.Update(context.Background(), stored, nil))
+	require.NoError(t, providerUpdateError(repository.Update(context.Background(), stored, nil)))
 
 	result, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
 		ServiceID: serviceID, Code: "authorization-code", State: flow.StateToken,
@@ -1534,7 +1534,7 @@ func storeSecurityDiscoveryProvider(t *testing.T, repo *memory.InMemoryThirdpart
 		provider.Endpoints.TokenEndpoint = endpoint
 		completedAt := provider.DiscoveryStatus.LastAttemptAt.Add(time.Microsecond)
 		provider.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-		require.NoError(t, repo.Update(context.Background(), provider, nil))
+		require.NoError(t, providerUpdateError(repo.Update(context.Background(), provider, nil)))
 		return
 	}
 	provider := storedDCRSessionProvider(serviceID, endpoint, model.TokenEndpointAuthMethodNone, "", resource, resource)

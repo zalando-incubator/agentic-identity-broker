@@ -144,6 +144,16 @@ func (cp *ConsentPage) NavigateToOverview(ctx context.Context) error {
 	return nil
 }
 
+// OpenAgentFromOverview clicks the display-name heading inside the delegation card.
+func (cp *ConsentPage) OpenAgentFromOverview(ctx context.Context, displayName string) error {
+	if err := cp.page().GetByRole("heading", playwright.PageGetByRoleOptions{
+		Name: displayName, Exact: playwright.Bool(true), Level: playwright.Int(3),
+	}).Click(); err != nil {
+		return fmt.Errorf("failed to open delegation for %q: %w", displayName, err)
+	}
+	return cp.waitForAgentNameHeading(ctx)
+}
+
 // page returns the underlying Playwright page object.
 func (cp *ConsentPage) page() playwright.Page {
 	return cp.GetPlaywrightPage()
@@ -245,6 +255,14 @@ func (cp *ConsentPage) SubmitConsent(ctx context.Context) error {
 	button := cp.getConsentActionButton("Approve & Delegate")
 	if err := button.Click(); err != nil {
 		return fmt.Errorf("failed to click approve and delegate button: %w", err)
+	}
+	return nil
+}
+
+// SaveConsent submits changes to an existing grant.
+func (cp *ConsentPage) SaveConsent(_ context.Context) error {
+	if err := cp.getConsentActionButton("Save").Click(); err != nil {
+		return fmt.Errorf("failed to save consent: %w", err)
 	}
 	return nil
 }
@@ -721,6 +739,83 @@ func (cp *ConsentPage) DelegateService(ctx context.Context, serviceDisplayName s
 	return fmt.Errorf("action button (Login or Delegate) not found for service %q", serviceDisplayName)
 }
 
+func (cp *ConsentPage) IsServiceLoginVisible(_ context.Context, serviceName string) (bool, error) {
+	return cp.serviceLoginButton(serviceName).IsVisible()
+}
+
+func (cp *ConsentPage) GetServiceLoginContrast(_ context.Context, serviceName string) (float64, float64, error) {
+	button := cp.serviceLoginButton(serviceName)
+	readContrast := func() (float64, error) {
+		value, err := button.Evaluate(`async element => {
+			await Promise.all(element.getAnimations().map(animation => animation.finished));
+			const luminance = color => {
+				const channels = color.match(/[\d.]+/g).slice(0, 3).map(Number).map(value => {
+					const channel = value / 255;
+					return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+				});
+				return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+			};
+			const style = getComputedStyle(element);
+			const text = luminance(style.color);
+			const background = luminance(style.backgroundColor);
+			return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+		}`, nil)
+		if err != nil {
+			return 0, err
+		}
+		contrast, ok := value.(float64)
+		if !ok {
+			return 0, fmt.Errorf("service %q login returned invalid contrast %v", serviceName, value)
+		}
+		return contrast, nil
+	}
+	if err := cp.page().Mouse().Move(0, 0); err != nil {
+		return 0, 0, err
+	}
+	normal, err := readContrast()
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := button.Hover(); err != nil {
+		return 0, 0, err
+	}
+	hover, err := readContrast()
+	if err != nil {
+		return 0, 0, err
+	}
+	return normal, hover, cp.page().Mouse().Move(0, 0)
+}
+
+func (cp *ConsentPage) LoginServiceWithKeyboard(_ context.Context, serviceName, key string) error {
+	button := cp.serviceLoginButton(serviceName)
+	if err := button.Focus(); err != nil {
+		return err
+	}
+	focused, err := button.Evaluate(`async element => {
+		await Promise.all(element.getAnimations().map(animation => animation.finished));
+		const style = getComputedStyle(element);
+		return element === document.activeElement && style.boxShadow !== 'none' &&
+			style.getPropertyValue('--tw-ring-shadow').trim() !== '' &&
+			style.getPropertyValue('--tw-ring-shadow').trim() !== '0 0 #0000' &&
+			style.getPropertyValue('--tw-ring-color').trim() !== '';
+	}`, nil)
+	if err != nil {
+		return err
+	}
+	if focused != true {
+		return fmt.Errorf("service %q login did not receive visible keyboard focus", serviceName)
+	}
+	return button.Press(key)
+}
+
+func (cp *ConsentPage) serviceLoginButton(serviceName string) playwright.Locator {
+	return cp.page().GetByRole("article", playwright.PageGetByRoleOptions{
+		Name: "Service: " + serviceName, Exact: playwright.Bool(true),
+	}).GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name: "Login", Exact: playwright.Bool(true),
+	})
+}
+
 // TogglePermissionSet changes an optional permission set's selection by name.
 func (cp *ConsentPage) TogglePermissionSet(_ context.Context, permissionSetName string) error {
 	if permissionSetName == "" {
@@ -760,6 +855,17 @@ func (cp *ConsentPage) ExcludePermissionSetService(_ context.Context, permission
 	return cp.permissionSetCard(permissionSetName).GetByRole("switch", playwright.LocatorGetByRoleOptions{
 		Name: "Exclude " + serviceName,
 	}).Click()
+}
+
+// IsPermissionSetServiceIncluded checks an optional service's selected switch.
+func (cp *ConsentPage) IsPermissionSetServiceIncluded(_ context.Context, permissionSetName, serviceName string) (bool, error) {
+	checked, err := cp.permissionSetCard(permissionSetName).GetByRole("switch", playwright.LocatorGetByRoleOptions{
+		Name: "Exclude " + serviceName,
+	}).GetAttribute("aria-checked")
+	if err != nil {
+		return false, err
+	}
+	return checked == "true", nil
 }
 
 // IsPermissionSetServiceExcluded checks the per-service switch after a selection change.

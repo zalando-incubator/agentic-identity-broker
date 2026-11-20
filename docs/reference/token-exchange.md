@@ -155,13 +155,20 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |
 
-Token exchange returns a still-valid stored access token immediately. If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token, the broker submits background refresh work. The exchange does not wait for that work. A failed or dropped background refresh does not change the response. The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
+Token exchange returns a still-valid access token if the service connection is usable.
 
-After the stored access token expires, the broker waits for an on-demand refresh using the stored refresh token. Concurrent refreshes for the same principal and service share work in one process. Across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
+If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token,
+the broker submits background refresh work. The exchange does not wait for that work.
+A failed or dropped background refresh does not change the response.
+The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
+
+After the access token expires, exchange waits for a refresh if the connection is usable and has a usable refresh token.
 
 Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts and backoff delays of 1s and 2s. It honors `Retry-After` up to 10 seconds; larger values, including numeric overflow, stop retries. It does not retry incomplete response bodies, timeouts, other HTTP 4xx responses, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation. The broker leaves stored credentials unchanged; a later provider rejection can require login.
 
-Refresh commits explicit provider token type and scope with the new credentials. Omitted scope retains the stored scope; an explicit empty scope clears it. Scope narrowing therefore applies to subsequent exchange authorization and responses. Session lists and consent checks consider a connection usable until it requires reauthentication: the provider rejected its refresh token, or its access token expired without a stored refresh token. A recorded rejection stops token exchange immediately, even while the stored access token is still valid. The broker never predicts refresh-token expiry.
+Refresh commits explicit provider token type and scope with the new credentials.
+Omitted scope retains the stored scope. An explicit empty scope clears it.
+Scope narrowing thus applies to subsequent exchange authorization and responses.
 
 During refresh, absent or null `expires_in` metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds.
 
@@ -226,21 +233,26 @@ No service has the requested URI in its `protected_resources`.
 
 ### 400 invalid_grant
 
+If a service changes its client ID, token exchange can return `invalid_grant` even before the access token expires.
+
 ```json
 {
   "error": "invalid_grant",
   "error_description": "User session is unavailable. Please re-authenticate.",
-  "error_uri": "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+  "error_uri": "https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
 }
 ```
 
+The markers represent valid signed test credentials, not literal wire credentials.
+Form-body line breaks are for display only. No new JWT is issued.
+The same denial applies to a token with unknown expiry.
+
 Rejected subject credentials do not require provider-session recovery and have no recovery URI.
-A missing, expired, scope-deficient, or provider-rejected session has a service-specific `error_uri`.
-The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`.
-The configured public URL supplies the origin. The resolved service UUID supplies `{serviceId}`.
-Opening the link starts third-party OAuth with PKCE. The provider callback returns to `/sessions`.
+If the response includes a service-specific `error_uri`, offer the link to the user so they can reconnect in a browser.
 The link is not broker `/oauth2/authorize`, a provider URL, or a direct session-management page.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
+
+After sign-in, the browser returns to `/sessions`. See [browser authorization and reconnect](../api/enduser-api.md#browser-authorization-and-reconnect).
 
 ### 401 invalid_client
 
@@ -275,6 +287,8 @@ CEL compilation or configuration failure instead returns `server_error`.
   "error_description": "An unexpected error occurred"
 }
 ```
+
+If the broker cannot read the current client ID, it returns `500 server_error` without a recovery link. Signing in again does not fix this error.
 
 ### Diagnostic attributes
 

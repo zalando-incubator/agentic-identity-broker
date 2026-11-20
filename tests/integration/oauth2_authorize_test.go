@@ -285,7 +285,7 @@ func TestOAuth2AuthorizeEndpoint_ActiveGrantRedirectsToUpstream(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc()).WithSessionUsabilityEvaluator(unchangedIntegrationSessionUsability{})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -404,7 +404,7 @@ func TestOAuth2AuthorizeEndpoint_WithMiddleware(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc()).WithSessionUsabilityEvaluator(unchangedIntegrationSessionUsability{})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -463,7 +463,7 @@ func TestOAuth2AuthorizeEndpoint_PKCEParametersPreserved(t *testing.T) {
 		ModeStrategy:              oauth2.NewProxyModeStrategy(),
 		UpstreamAuthorizeEndpoint: "https://auth.example.com/authorize",
 		PublicURL:                 "https://broker.example.com",
-	}, nil, newIntegrationSessionTokenSvc())
+	}, nil, newIntegrationSessionTokenSvc()).WithSessionUsabilityEvaluator(unchangedIntegrationSessionUsability{})
 
 	handler := &enduser.OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -768,4 +768,16 @@ func newConnectedSessionRepo(t *testing.T, grant *storage.UserGrant) ports.UserS
 		}
 	}
 	return repo
+}
+
+// These direct-constructor tests isolate consent and redirect behavior from client
+// identity changes while retaining ADR-046's refreshability and rejection checks.
+type unchangedIntegrationSessionUsability struct{}
+
+func (unchangedIntegrationSessionUsability) RequiresReauthentication(_ context.Context, sessions []*storage.UserSession, _ ports.UsabilityMode) (map[id.ServiceID]bool, error) {
+	result := make(map[id.ServiceID]bool, len(sessions))
+	for _, session := range sessions {
+		result[session.ServiceID] = result[session.ServiceID] || session.RequiresReauthentication()
+	}
+	return result, nil
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/storagecontracts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,4 +101,10 @@ func TestSessionSummariesReturnIsolatedSnapshots(t *testing.T) {
 	persisted, err := repo.Get(ctx, session.ID)
 	require.NoError(t, err)
 	assert.Equal(t, session.Scope, persisted.Scope)
+}
+
+func TestSessionClientIdentityRevisionFence(t *testing.T) {
+	sessions := NewInMemoryUserSessionRepository()
+	providers := NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	storagecontracts.SessionClientIdentityRevisionFence(t, providers, providers, sessions, sessions)
 }

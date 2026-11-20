@@ -260,7 +260,7 @@ Source transitions never rewrite established code/session identities. Recorded i
 
 The implemented administrative create/update/read contracts appear in `api/admin/openapi.yaml`, with `info.version: 2.0.0`. Responses report the source. Filesystem responses omit both inline fields, paths, and internal transition evidence. Stored responses retain their client ID and applicable `REDACTED` secret. The user approved the major contract bump on existing routes on 2026-10-08. Published `v0.1.81` remains the released `1.0.0` baseline.
 
-Repository management consumers use the new schema without resolving files. The [Admin API 2.0.0 migration guide](../../docs/guides/manage-agents-and-services.md#migrate-administrative-consumers-to-admin-api-200) records the unreleased breaking change and external consumer migration.
+Repository management consumers use the new schema without resolving files. See the [Admin API contract](../../api/admin/openapi.yaml) for the source-aware schema.
 
 ### 4. Preserve errors and add safe observability
 

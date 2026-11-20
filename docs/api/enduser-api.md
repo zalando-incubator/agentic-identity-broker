@@ -2,6 +2,35 @@
 
 The end-user API serves OAuth2 authorization, token, and metadata requests. The broker serves it on the end-user listener.
 
+See the [End-User API contract](../../api/enduser/openapi.yaml) for request and response schemas.
+
+## Session reauthentication and client identity
+
+If a service changes its client ID, sign in to the service again the next time you use it. Restoring the old ID does not restore your connection. Rotating the secret without changing the client ID does not require sign-in. Your grants and other service connections stay unchanged.
+
+### Session fields
+
+The existing fields apply to session lists, session details, and manual-refresh summaries:
+
+| Field | Meaning |
+| --- | --- |
+| `requires_reauthentication` | True after a recorded terminal refresh rejection, access expiry without a stored refresh token, or unusable client identity or revision. |
+| `is_expired` | Deprecated alias with exactly the same value as `requires_reauthentication`. It is not an independent access-expiry flag. |
+| `access_token_expired` | Whether the recorded access-token expiry passed. Unknown expiry does not establish permanent validity. |
+| `has_refresh_token` | Whether the broker stores a refresh token, including a rejected token. It does not establish refresh usability or lifetime. |
+
+Consent shows the affected service as `not_connected`. Reconnect any required service before submitting the grant.
+
+### Browser authorization and reconnect
+
+In local and hybrid mode, agent authorization opens consent if an included service needs you to sign in again. Use the service’s sign-in action to reconnect. If a sign-in started before the client ID changed, start it again.
+
+If a token exchange returns a [recovery link](../reference/token-exchange.md#400-invalid_grant), open it in a browser to reconnect.
+
+### Manual refresh
+
+Manual refresh returns `409 refresh_unavailable` when a client-ID change requires a new sign-in. A provider rejection of the refresh token still returns `409 refresh_rejected`.
+
 ## CIMD Client Authentication
 
 In local or hybrid mode with CIMD enabled, a pre-registered CIMD client can authenticate at the token endpoint with `private_key_jwt`. The client signs a short-lived assertion with a key from its metadata document. The broker requires a fresh assertion for each authorization-code exchange and refresh request.

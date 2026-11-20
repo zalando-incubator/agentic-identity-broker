@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ServiceRequirementCard } from './ServiceRequirementCard';
 
 describe('ServiceRequirementCard', () => {
@@ -135,6 +136,43 @@ describe('ServiceRequirementCard', () => {
 
       // Should use success variant
       expect(activeBadge.closest('span')).toHaveClass('bg-success-primary');
+    });
+
+    it('replaces a previously connected state with Login and restores it only from new backend state', () => {
+      const props = {
+        serviceId: 'reports-prod',
+        serviceName: 'Reports Production',
+        requirementType: 'mandatory' as const,
+        requiredScopes: mockScopes,
+        onLogin: mockOnLogin,
+        onDisconnect: mockOnDisconnect,
+      };
+      const { rerender } = render(
+        <ServiceRequirementCard {...props} connectionStatus="connected" />,
+      );
+      expect(screen.getByText('Active Session')).toBeInTheDocument();
+
+      rerender(
+        <ServiceRequirementCard {...props} connectionStatus="not_connected" />,
+      );
+
+      expect(screen.getByRole('button', { name: /login/i })).toBeEnabled();
+      expect(screen.queryByText('Active Session')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /disconnect/i })).toBeNull();
+      expect(screen.getByText('Required')).toBeInTheDocument();
+      for (const scope of mockScopes) {
+        expect(screen.getByText(scope.name)).toBeInTheDocument();
+      }
+      expect(mockOnLogin).not.toHaveBeenCalled();
+      expect(mockOnDisconnect).not.toHaveBeenCalled();
+
+      rerender(
+        <ServiceRequirementCard {...props} connectionStatus="connected" />,
+      );
+
+      expect(screen.getByText('Active Session')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /login/i })).toBeNull();
+      expect(screen.getByRole('button', { name: /disconnect/i })).toBeEnabled();
     });
   });
 
@@ -451,6 +489,32 @@ describe('ServiceRequirementCard', () => {
       const loginButton = screen.queryByRole('button', { name: /login/i });
       expect(loginButton).not.toBeInTheDocument();
     });
+
+    it.each([
+      ['not_connected', 'Login', mockOnLogin],
+      ['connected', 'Disconnect', mockOnDisconnect],
+    ] as const)(
+      'supports keyboard activation of %s service actions',
+      async (connectionStatus, action, onAction) => {
+        const user = userEvent.setup();
+        render(
+          <ServiceRequirementCard
+            serviceId="reports-prod"
+            serviceName="Reports Production"
+            requirementType="mandatory"
+            requiredScopes={mockScopes}
+            connectionStatus={connectionStatus}
+            onLogin={mockOnLogin}
+            onDisconnect={mockOnDisconnect}
+          />,
+        );
+
+        await user.tab();
+        expect(screen.getByRole('button', { name: action })).toHaveFocus();
+        await user.keyboard('{Enter}');
+        expect(onAction).toHaveBeenCalledExactlyOnceWith('reports-prod');
+      },
+    );
   });
 
   describe('Edge cases', () => {

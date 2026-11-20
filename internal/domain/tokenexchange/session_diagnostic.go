@@ -51,7 +51,7 @@ func sessionDiagnostic(err error) Diagnostic {
 	case oauth2session.DetailCredentialSourceUnavailable:
 		detail = DetailCredentialSourceUnavailable
 		var sourceErr *model.CredentialSourceError
-		if errors.As(err, &sourceErr) && (sourceErr.Reason == model.CredentialSourceReasonIdentityMismatch || sourceErr.Reason == model.CredentialSourceReasonIdentityMissing) {
+		if errors.As(err, &sourceErr) && sourceErr.Reason.IsIdentity() {
 			detail = DetailCredentialIdentityChanged
 		}
 	case oauth2session.DetailCallerCanceled:

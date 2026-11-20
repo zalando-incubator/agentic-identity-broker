@@ -22,6 +22,7 @@ func TestExchange_PreservesKnownSubsecondExpiry(t *testing.T) {
 			session := &storage.UserSession{EncryptedAccessToken: []byte("access"), TokenType: "Bearer"}
 			repo := &MockSessionRepository{session: session}
 			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: repo, encryption: &MockEncryption{}})
+			session.ServiceID = fixture.serviceID
 			if known {
 				expiry := time.Now().Add(900 * time.Millisecond)
 				session.AccessTokenExpiresAt = &expiry

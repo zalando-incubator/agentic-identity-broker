@@ -158,7 +158,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_OwnershipConflictsAreTypedAn
 	replacement := before.Copy()
 	replacement.DisplayName = "Must not commit"
 	replacement.ProtectedResources = []string{"https://api.example.com/owned"}
-	err = repo.Update(ctx, replacement, &before.Version)
+	err = providerUpdateError(repo.Update(ctx, replacement, &before.Version))
 	requireStorageKind(t, err, storage.ErrorKindConflict)
 	require.ErrorIs(t, err, storage.ErrProtectedResourceOwned)
 	after, err := repo.Get(ctx, contender.ID)
@@ -179,7 +179,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateUsesCASOnlyForResource
 
 	withoutResources := testProvider(provider.ID, "https://ignored.example.com")
 	withoutResources.DisplayName = "Renamed"
-	require.NoError(t, repo.Update(ctx, withoutResources, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, withoutResources, nil)))
 	assert.EqualValues(t, 2, withoutResources.Version)
 	stored, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
@@ -188,11 +188,11 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateUsesCASOnlyForResource
 
 	staleVersion := int64(1)
 	replacement := testProvider(provider.ID, "https://api.example.com/new")
-	err = repo.Update(ctx, replacement, &staleVersion)
+	err = providerUpdateError(repo.Update(ctx, replacement, &staleVersion))
 	requireStorageKind(t, err, storage.ErrorKindConflict)
 
 	currentVersion := int64(2)
-	require.NoError(t, repo.Update(ctx, replacement, &currentVersion))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, replacement, &currentVersion)))
 	assert.EqualValues(t, 3, replacement.Version)
 	stored, err = repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
@@ -317,7 +317,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_CIMDPublicRegistrationRoundT
 	assert.True(t, stored.Secret.IsAbsent())
 
 	provider.DisplayName = "Updated CIMD public provider"
-	require.NoError(t, repo.Update(ctx, provider, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, provider, nil)))
 	stored, err = repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
@@ -395,7 +395,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateToCIMDProviderClearsSe
 	require.NoError(t, repo.Create(ctx, staticProvider))
 
 	cimdProvider := testCIMDProvider(staticProvider.ID)
-	require.NoError(t, repo.Update(ctx, cimdProvider, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, cimdProvider, nil)))
 
 	stored, err := repo.Get(ctx, staticProvider.ID)
 	require.NoError(t, err)
@@ -476,7 +476,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DCRDuplicatePreservesConfide
 	replacement.Secret = model.NewEncryptedSecret([]byte("updated credential"))
 	completedAt := first.DiscoveryStatus.LastAttemptAt.Add(time.Minute)
 	replacement.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-	updateErr := repo.Update(ctx, replacement, nil)
+	updateErr := providerUpdateError(repo.Update(ctx, replacement, nil))
 	requireStorageKind(t, updateErr, storage.ErrorKindConflict)
 	require.ErrorIs(t, updateErr, storage.ErrDuplicateDCRClientIdentity)
 
@@ -607,7 +607,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_UpdateCommitsActiveDiscovery
 		}()
 	}
 	close(start)
-	require.NoError(t, repo.Update(ctx, updated, &expectedVersion))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, updated, &expectedVersion)))
 
 	got, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
@@ -707,7 +707,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_DiscoveryFailureRetainsActiv
 	newSuccess := succeededAt.Add(2 * time.Minute)
 	refreshed := after.Copy()
 	refreshed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &newSuccess, LastSuccessAt: &newSuccess}
-	require.NoError(t, repo.Update(ctx, refreshed, &after.Version))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, refreshed, &after.Version)))
 	requireStorageKind(t, repo.RecordDiscoveryFailure(ctx, provider.ID, after.Version, newSuccess.Add(time.Minute), "resource_metadata_invalid"), storage.ErrorKindConflict)
 	requireStorageKind(t, repo.RecordDiscoveryFailure(ctx, provider.ID, refreshed.Version, failedAt, "resource_metadata_invalid"), storage.ErrorKindConflict)
 	current, err := repo.Get(ctx, provider.ID)
@@ -784,7 +784,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ResourceChangeRequiresNoSess
 				completedAt = completedAt.Add(time.Minute)
 				updated.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
 			}
-			err = repo.Update(ctx, updated, &before.Version)
+			err = providerUpdateError(repo.Update(ctx, updated, &before.Version))
 			requireStorageKind(t, err, storage.ErrorKindConflict)
 			require.ErrorIs(t, err, storage.ErrResourceChangeHasSessions)
 			after, err := repo.Get(ctx, provider.ID)
@@ -820,7 +820,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_PinnedAudienceSurvivesDiscov
 	updated.AuthorizationParams = nil
 	completedAt := updated.DiscoveryStatus.LastAttemptAt.Add(time.Minute)
 	updated.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-	require.NoError(t, repo.Update(ctx, updated, &provider.Version))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, updated, &provider.Version)))
 	stored, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, resourceURL, *stored.Discovery.ResourceURL)
@@ -849,7 +849,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_EqualStoredMicrosecondKeepsF
 	stale.AuthorizationParams["resource"] = resourceURL
 	stale.Endpoints.TokenEndpoint = "https://issuer.example.com/replacement-token"
 	stale.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &completedAt, LastSuccessAt: &completedAt}
-	requireStorageKind(t, repo.Update(ctx, stale, &before.Version), storage.ErrorKindConflict)
+	requireStorageKind(t, providerUpdateError(repo.Update(ctx, stale, &before.Version)), storage.ErrorKindConflict)
 	after, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, failed, after)
@@ -899,7 +899,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_StaleSuccessCannotEraseNewer
 	require.NoError(t, repo.RecordDiscoveryFailure(ctx, provider.ID, before.Version, failedAt, "authorization_server_metadata_invalid"))
 	failed, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
-	requireStorageKind(t, repo.Update(ctx, stale, &before.Version), storage.ErrorKindConflict)
+	requireStorageKind(t, providerUpdateError(repo.Update(ctx, stale, &before.Version)), storage.ErrorKindConflict)
 	unchanged, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, failed, unchanged)
@@ -916,7 +916,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_StaleSuccessCannotEraseNewer
 	refreshed.AuthorizationParams = map[string]string{"resource": newResource}
 	refreshed.Endpoints.TokenEndpoint = "https://issuer.example.com/current-token"
 	refreshed.DiscoveryStatus = model.DiscoveryStatus{LastAttemptAt: &laterSuccessAt, LastSuccessAt: &laterSuccessAt}
-	require.NoError(t, repo.Update(ctx, refreshed, &failed.Version))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, refreshed, &failed.Version)))
 	current, err := repo.Get(ctx, provider.ID)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, current.Version)
@@ -1012,7 +1012,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ManualCutoverClearsDiscovery
 
 	manual := testProvider(discovered.ID)
 	manual.AuthorizationParams = map[string]string{}
-	require.NoError(t, repo.Update(ctx, manual, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, manual, nil)))
 	stored, err := repo.Get(ctx, discovered.ID)
 	require.NoError(t, err)
 	assert.Nil(t, stored.Discovery.ResourceURL)
@@ -1029,7 +1029,7 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ManualCutoverKeepsOmittedPar
 	require.NoError(t, repo.Create(ctx, discovered))
 
 	manual := testProvider(discovered.ID)
-	require.NoError(t, repo.Update(ctx, manual, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, manual, nil)))
 	stored, err := repo.Get(ctx, discovered.ID)
 	require.NoError(t, err)
 	assert.Equal(t, discovered.AuthorizationParams, stored.AuthorizationParams)

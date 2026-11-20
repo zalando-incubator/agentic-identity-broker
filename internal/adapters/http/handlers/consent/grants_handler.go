@@ -2,6 +2,7 @@
 package consent
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -275,6 +276,13 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		var usabilityFailure *ports.SessionUsabilityError
+		if errors.As(err, &usabilityFailure) {
+			h.auditUsabilityFailure(r.Context(), principalValue, err)
+			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			return
+		}
+
 		h.logger.ErrorContext(r.Context(), "failed to grant consent",
 			"agent_id", agentID,
 			"principal", principalValue,
@@ -377,4 +385,22 @@ func (h *GrantsHandler) writeError(w http.ResponseWriter, statusCode int, error 
 		Message: message,
 	}
 	h.writeJSON(w, statusCode, resp)
+}
+
+func (h *GrantsHandler) auditUsabilityFailure(ctx context.Context, owner id.Principal, err error) {
+	var failure *ports.SessionUsabilityError
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || !errors.As(err, &failure) {
+		return
+	}
+	reason, level := failure.ReasonAndLevel()
+	const operation string = "usability_gate"
+	const outcome string = "failed"
+	h.logger.Log(ctx, level, "oauth2 credential source unavailable",
+		"event", "session.oauth2.credential_source_failed",
+		"principal", owner,
+		"service_id", failure.ServiceID,
+		"operation", operation,
+		"outcome", outcome,
+		"reason", reason,
+		"oauth2_session", failure)
 }

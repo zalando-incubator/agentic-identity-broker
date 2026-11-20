@@ -118,7 +118,7 @@ var _ = Describe("Third-Party Sessions Rejected Refresh Token", func() {
 		Expect(sessionsPage.ClickRefreshButton(ctx)).To(Succeed())
 
 		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed(), "a rejected session must offer Login")
-		Expect(sessionsPage.IsTextVisible(ctx, "Login required")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Sign-in required")).To(BeTrue())
 		Expect(sessionsPage.IsTextVisible(ctx, "Log in to reconnect")).To(BeTrue())
 		Expect(sessionsPage.GetRefreshButtonCount(ctx)).To(Equal(0), "a rejected session must not offer Refresh")
 		Expect(sessionsPage.GetTerminateButtonCount(ctx)).To(Equal(1), "a rejected session can still be terminated")
@@ -169,7 +169,7 @@ var _ = Describe("Third-Party Sessions Login Offer", func() {
 		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
 		Expect(sessionsPage.WaitForLoginButton(ctx)).To(Succeed())
 
-		Expect(sessionsPage.IsTextVisible(ctx, "Login required")).To(BeTrue())
+		Expect(sessionsPage.IsTextVisible(ctx, "Sign-in required")).To(BeTrue())
 		Expect(sessionsPage.IsTextVisible(ctx, "Log in to reconnect")).To(BeTrue())
 		Expect(sessionsPage.IsTextVisible(ctx, "Expiring Soon")).To(BeFalse())
 		Expect(sessionsPage.GetTerminateButtonCount(ctx)).To(Equal(1))

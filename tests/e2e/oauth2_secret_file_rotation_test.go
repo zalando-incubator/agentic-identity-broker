@@ -23,6 +23,15 @@ type credentialRotationServiceSnapshot struct {
 	Ciphertext []byte
 }
 
+func expectCredentialServiceIdentity(before, after *model.ThirdpartyOAuth2ProviderEntity, clientID string, revision int64) {
+	GinkgoHelper()
+	expected := *before
+	identity := id.ClientID(clientID)
+	expected.ClientIdentity = &identity
+	expected.ClientIdentityRevision = revision
+	Expect(*after).To(Equal(expected), "only the exact observed identity and revision may change")
+}
+
 var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-file-overrides"), func() {
 	var journey *helpers.OAuth2CredentialJourney
 
@@ -47,13 +56,13 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 		return credentialRotationServiceSnapshot{Record: *record, Ciphertext: ciphertext}
 	}
 
-	expectServiceUnchanged := func(serviceID id.ServiceID, before credentialRotationServiceSnapshot) {
+	expectServiceIdentity := func(serviceID id.ServiceID, before credentialRotationServiceSnapshot, clientID string, revision int64) {
 		after := snapshotService(serviceID)
 		Expect(after.Record.Version).To(Equal(before.Record.Version))
 		Expect(after.Record.CreatedAt).To(Equal(before.Record.CreatedAt))
 		Expect(after.Record.UpdatedAt).To(Equal(before.Record.UpdatedAt))
 		Expect(after.Ciphertext).To(Equal(before.Ciphertext))
-		Expect(after.Record).To(Equal(before.Record))
+		expectCredentialServiceIdentity(&before.Record, &after.Record, clientID, revision)
 	}
 
 	readSession := func(serviceID id.ServiceID) domainstorage.UserSession {
@@ -177,7 +186,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 			})
 
 			// US2-S1 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US2-S1 uses a same-identity replacement secret for a new exchange and the existing session without service writes or restart", func() {
+			It("US2-S1 uses a same-identity replacement secret for a new exchange and the existing session without administrative writes or restart", func() {
 				By("publishing source B's secret with source A's unchanged client identity")
 				Expect(helpers.PublishCredentialPair(binding, fixtures.CredentialClientID, fixtures.RotatedCredentialSecret)).To(Succeed())
 
@@ -198,7 +207,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 				form, err := url.ParseQuery(journey.Upstream.GetTokenRequests()[2].Body)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(form.Get("refresh_token")).To(Equal("mock-refresh-token"))
-				expectServiceUnchanged(serviceID, serviceBefore)
+				expectServiceIdentity(serviceID, serviceBefore, fixtures.CredentialClientID, 0)
 			})
 		})
 
@@ -239,7 +248,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 					{fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret},
 					{fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret},
 				}))
-				expectServiceUnchanged(serviceID, serviceBefore)
+				expectServiceIdentity(serviceID, serviceBefore, fixtures.AlternateCredentialClientID, 1)
 			})
 		})
 
@@ -278,21 +287,51 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 				By("refusing to renew source A's established session as B")
 				response, err = journey.Refresh(serviceID)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(response.StatusCode).To(Equal(http.StatusInternalServerError))
+				Expect(response.StatusCode).To(Equal(http.StatusConflict))
 				body, err := helpers.CredentialResponseObject(response)
 				Expect(err).NotTo(HaveOccurred())
-				Expect(body["error"]).To(Equal("internal_error"))
+				Expect(body["error"]).To(Equal("refresh_unavailable"))
 				Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(tokenRequestsBefore))
 				Expect(journey.Upstream.GetAuthorizationRequestCount()).To(Equal(authorizationsBefore))
 				Expect(readSession(serviceID)).To(Equal(sourceASession))
 
+				By("never reviving either paused code or the A session when prior identities are restored")
+				for index, rollback := range []struct {
+					clientID string
+					callback *url.URL
+				}{
+					{fixtures.CredentialClientID, pausedACallback},
+					{fixtures.AlternateCredentialClientID, pausedBCallback},
+				} {
+					Expect(helpers.PublishCredentialPair(binding, rollback.clientID, fixtures.RotatedCredentialSecret)).To(Succeed())
+					response, err := journey.Refresh(serviceID)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(response.StatusCode).To(Equal(http.StatusConflict))
+					body, err := helpers.CredentialResponseObject(response)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(body["error"]).To(Equal("refresh_unavailable"))
+					response, err = journey.EndUser.AuthenticatedGET(rollback.callback.RequestURI(), journey.Principal)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(response.StatusCode).To(Equal(http.StatusFound))
+					location, err := url.Parse(response.Header.Get("Location"))
+					Expect(err).NotTo(HaveOccurred())
+					Expect(response.Body.Close()).To(Succeed())
+					Expect(location.Path).To(Equal("/sessions"))
+					Expect(location.Query().Get("error")).To(Equal("callback_failed"))
+					Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(tokenRequestsBefore))
+					Expect(journey.Upstream.GetAuthorizationRequestCount()).To(Equal(authorizationsBefore))
+					Expect(readSession(serviceID)).To(Equal(sourceASession))
+					expectServiceIdentity(serviceID, serviceBefore, rollback.clientID, int64(index+2))
+				}
+
 				By("establishing a new B session only through B's new connection")
+				pausedBCallback = pauseAuthorization(serviceID, fixtures.AlternateCredentialClientID)
 				journey.Upstream.WithAccessToken("identity-B-access").WithRefreshToken("identity-B-refresh")
 				sourceBSession := completeCallback(serviceID, pausedBCallback, fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret)
 				Expect(sourceBSession.EncryptedAccessToken).NotTo(Equal(sourceASession.EncryptedAccessToken))
 				Expect(sourceBSession.EncryptedRefreshToken).NotTo(Equal(sourceASession.EncryptedRefreshToken))
 				refresh(serviceID, fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret)
-				expectServiceUnchanged(serviceID, serviceBefore)
+				expectServiceIdentity(serviceID, serviceBefore, fixtures.AlternateCredentialClientID, 3)
 			})
 		})
 	})
@@ -333,8 +372,8 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 			connect(serviceA, "rotated-first-client", "rotated-first-secret")
 			connect(serviceB, fixtures.AlternateCredentialClientID, "independent-service-secret")
 			Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(4))
-			expectServiceUnchanged(serviceA, recordA)
-			expectServiceUnchanged(serviceB, recordB)
+			expectServiceIdentity(serviceA, recordA, "rotated-first-client", 1)
+			expectServiceIdentity(serviceB, recordB, fixtures.AlternateCredentialClientID, 0)
 		})
 	})
 
@@ -365,7 +404,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 			renewed := refresh(serviceID, clientID, clientSecret)
 			Expect(renewed.ID).To(Equal(connected.ID))
 			Expect(renewed.InitiatedAt).To(Equal(connected.InitiatedAt))
-			expectServiceUnchanged(serviceID, serviceBefore)
+			expectServiceIdentity(serviceID, serviceBefore, clientID, 0)
 		})
 	})
 })

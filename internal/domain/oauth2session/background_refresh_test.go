@@ -283,7 +283,7 @@ func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *t
 			service.providerService = thirdparty.NewThirdpartyOAuth2ProviderService(
 				operationProviderRepository{get: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 					providerLookups.Add(1)
-					return nil, errors.New("unexpected provider lookup")
+					return &model.ThirdpartyOAuth2ProviderEntity{ID: session.ServiceID, ClientID: "current-client", CredentialSource: model.CredentialSourceStored, TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Secret: model.NewAbsentSecret()}, nil
 				}}, operationEncryption{}, operationBranchKeyManager{}, nil, false, service.logger,
 			)
 			service.background = newBackgroundRefresher(service, 1)
@@ -301,7 +301,11 @@ func TestGetValidAccessToken_UnusableRefreshTokenDoesNotAdmitBackgroundWork(t *t
 				assert.Equal(t, "old-unrefreshable-user", token)
 			}
 			require.NoError(t, service.Close(context.Background()))
-			assert.Zero(t, providerLookups.Load())
+			if rejected {
+				assert.Zero(t, providerLookups.Load(), "recorded rejection retains precedence over identity reads")
+			} else {
+				assert.Equal(t, int32(1), providerLookups.Load(), "even access-only sessions require a current identity read")
+			}
 			assertBackgroundMetrics(t, reader, map[string]int64{
 				"proactive_refresh_triggered_total": 0,
 				"proactive_refresh_dropped_total":   0,

@@ -28,6 +28,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type credentialIdentityRepository struct{ resolvingServiceRepository }
+
+func (r *credentialIdentityRepository) RecordObservedClientIdentity(ctx context.Context, serviceID id.ServiceID, observed id.ClientID, expected ports.ClientIdentityObservation) (ports.ClientIdentityState, bool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ClientIdentityState{}, false, false, err
+	}
+	service := r.service
+	if service == nil || service.ID != serviceID {
+		return ports.ClientIdentityState{}, false, false, ports.ErrNotFound
+	}
+	state := ports.ClientIdentityState{Identity: service.ClientIdentity, Revision: service.ClientIdentityRevision}
+	if service.CredentialSource != model.CredentialSourceFilesystem || service.CanonicalID == nil || service.Version != expected.ServiceVersion || *service.CanonicalID != expected.CanonicalID || state.Revision != expected.Revision {
+		return state, false, false, nil
+	}
+	changed := state.Identity != nil && *state.Identity != observed
+	if changed {
+		service.ClientIdentityRevision++
+	}
+	service.ClientIdentity = &observed
+	return ports.ClientIdentityState{Identity: service.ClientIdentity, Revision: service.ClientIdentityRevision}, true, changed, nil
+}
+
 func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 	const (
 		fileClientID       = "file-client-selection-sentinel"
@@ -45,6 +67,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 		fileProblem        string
 		missingIdentity    bool
 		mismatchedIdentity bool
+		lookupFailure      bool
 		providerStatus     int
 		providerError      string
 		malformedResponse  bool
@@ -52,14 +75,14 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 		code               string
 		detail             FailureDetail
 	}{
-		{name: "missing binding", sourceReason: model.CredentialSourceReasonMissingBinding, code: "server_error"},
-		{name: "missing client ID file", sourceReason: model.CredentialSourceReasonNotFound, fileProblem: "client_id_missing", code: "server_error"},
+		{name: "missing binding", sourceReason: model.CredentialSourceReasonMissingBinding, lookupFailure: true, code: "server_error"},
+		{name: "missing client ID file", sourceReason: model.CredentialSourceReasonNotFound, fileProblem: "client_id_missing", lookupFailure: true, code: "server_error"},
 		{name: "missing secret file", sourceReason: model.CredentialSourceReasonNotFound, fileProblem: "secret_missing", code: "server_error"},
-		{name: "empty client ID file", sourceReason: model.CredentialSourceReasonEmpty, fileProblem: "client_id_empty", code: "server_error"},
+		{name: "empty client ID file", sourceReason: model.CredentialSourceReasonEmpty, fileProblem: "client_id_empty", lookupFailure: true, code: "server_error"},
 		{name: "empty secret file", sourceReason: model.CredentialSourceReasonEmpty, fileProblem: "secret_empty", code: "server_error"},
 		{name: "secret is a directory", sourceReason: model.CredentialSourceReasonNotRegular, fileProblem: "secret_directory", code: "server_error"},
-		{name: "missing established identity", sourceReason: model.CredentialSourceReasonIdentityMissing, missingIdentity: true, code: "invalid_grant", detail: DetailCredentialIdentityChanged},
-		{name: "established identity mismatch", sourceReason: model.CredentialSourceReasonIdentityMismatch, mismatchedIdentity: true, code: "invalid_grant", detail: DetailCredentialIdentityChanged},
+		{name: "missing established identity", sourceReason: model.CredentialSourceReasonIdentityMissing, missingIdentity: true, lookupFailure: true, code: "invalid_grant", detail: DetailCredentialIdentityChanged},
+		{name: "established identity mismatch", sourceReason: model.CredentialSourceReasonIdentityMismatch, mismatchedIdentity: true, lookupFailure: true, code: "invalid_grant", detail: DetailCredentialIdentityChanged},
 		{name: "usable pair succeeds", providerStatus: http.StatusOK},
 		{name: "usable pair rejected as invalid_client", providerStatus: http.StatusUnauthorized, providerError: "invalid_client", code: "server_error", detail: DetailProviderClientRejected},
 		{name: "usable pair rejected as invalid_grant", providerStatus: http.StatusBadRequest, providerError: "invalid_grant", code: "invalid_grant", detail: DetailRefreshRejected},
@@ -69,6 +92,10 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
+			wantStage, wantOperation, wantLogOperation := StageRefresh, oauth2session.OperationRefresh, "refresh"
+			if tc.lookupFailure {
+				wantStage, wantOperation, wantLogOperation = StageSessionLookup, oauth2session.OperationSessionLookup, "token_acquisition"
+			}
 			directory := t.TempDir()
 			binding := ports.CredentialFileBinding{
 				ClientIDFile:     filepath.Join(directory, "identity-input-sentinel"),
@@ -142,12 +169,12 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 
 			agentID, svcID, psID := id.NewAgentID(), id.NewServiceID(), id.NewPermissionSetID()
 			canonicalID := "filesystem-provider"
-			repo := &resolvingServiceRepository{MockServiceRepository{service: &model.ThirdpartyOAuth2ProviderEntity{
+			repo := &credentialIdentityRepository{resolvingServiceRepository{MockServiceRepository{service: &model.ThirdpartyOAuth2ProviderEntity{
 				ID: svcID, CanonicalID: &canonicalID, DisplayName: "Example Service",
 				CredentialSource: model.CredentialSourceFilesystem, Secret: model.NewAbsentSecret(),
 				ProtectedResources: []string{"https://api.example.com/resource"},
 				Endpoints:          model.OAuth2Endpoints{TokenEndpoint: upstream.URL},
-			}}}
+			}}}}
 			agentRepo := &singleAgentRepo{agentID: agentID, agent: &storagedomain.Agent{
 				ID: agentID, DisplayName: "Test Agent", PermissionSets: []storagedomain.AgentPermissionSetEntry{
 					{PermissionSetID: psID, RequirementType: storagedomain.RequirementTypeOptional},
@@ -188,7 +215,8 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 			logger := slog.New(slog.NewJSONHandler(&logs, nil))
 			thirdpartyService := newTestProviderService(repo)
 			sessionService := oauth2session.NewOAuth2SessionService(thirdpartyService, sessionRepo, sessionRepo, nil, nil,
-				&MockEncryption{}, &http.Client{Timeout: time.Second}, nil, config, logger).WithCredentialFileReader(credentialfile.New())
+				&MockEncryption{}, &http.Client{Timeout: time.Second}, nil, config, logger).
+				WithCredentialFileReader(credentialfile.New()).WithClientIdentityRepository(repo)
 			jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 			require.NoError(t, err)
 			celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
@@ -248,7 +276,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 				}
 				diagnostic := tokenErr.Diagnostic()
 				assert.Equal(t, wantDetail, diagnostic.Detail())
-				assert.Equal(t, StageRefresh, diagnostic.Stage())
+				assert.Equal(t, wantStage, diagnostic.Stage())
 				assert.Equal(t, wantOutcome, diagnostic.Outcome())
 				assert.Equal(t, wantAction, diagnostic.RecoveryAction())
 				assert.Equal(t, wantTarget, diagnostic.RecoveryTarget())
@@ -263,7 +291,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 					}
 					var operationErr *oauth2session.OperationError
 					require.ErrorAs(t, err, &operationErr)
-					assert.Equal(t, oauth2session.OperationRefresh, operationErr.Metadata().Operation())
+					assert.Equal(t, wantOperation, operationErr.Metadata().Operation())
 					assert.Equal(t, oauth2session.DetailCredentialSourceUnavailable, operationErr.Metadata().Detail())
 					assert.Equal(t, oauth2session.KindInfrastructure, operationErr.Metadata().Kind())
 					assert.Equal(t, oauth2session.DependencyCredentialSource, operationErr.Metadata().Dependency())
@@ -316,7 +344,7 @@ func TestExchange_AutomaticRefreshCredentialSourceClassification(t *testing.T) {
 				}
 				eventNames = append(eventNames, event)
 				assert.Equal(t, svcID.String(), entry["service_id"])
-				assert.Equal(t, "refresh", entry["operation"])
+				assert.Equal(t, wantLogOperation, entry["operation"])
 				switch event {
 				case "session.oauth2.credential_files_used":
 					assert.Equal(t, "used", entry["outcome"])

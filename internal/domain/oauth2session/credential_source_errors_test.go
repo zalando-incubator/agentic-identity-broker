@@ -42,8 +42,11 @@ func assertCredentialSourceAudits(t *testing.T, logs string, serviceID id.Servic
 		assert.Equal(t, operation, record["operation"])
 		if event == "session.oauth2.credential_source_failed" {
 			metadataOperation := operation
-			if operation == "authorization_initiation" {
+			switch operation {
+			case "authorization_initiation":
 				metadataOperation = "code_exchange"
+			case "token_acquisition":
+				metadataOperation = "session_lookup"
 			}
 			assert.Equal(t, map[string]any{
 				"operation":        metadataOperation,
@@ -208,19 +211,37 @@ func TestCredentialSourceErrors_CallbackAndRefreshBypassProviderAndPKCECategorie
 				assertCredentialSourceNotProviderFailure(t, err, failure.reason)
 				assert.Equal(t, requestsBefore, h.endpoint.captured(t), "the failed attempt must send zero requests, even after a usable pair previously reached the provider")
 				ids, pairs := h.reader.counts()
-				assert.Equal(t, idsBefore, ids)
-				assert.Equal(t, pairsBefore+1, pairs, "source failures are not provider retry candidates")
+				idReads, pairReads := 1, 0
+				if failure.name == "secret read error" {
+					pairReads = 1
+					if operation == "automatic refresh" {
+						idReads = 2
+					}
+				}
+				assert.Equal(t, idsBefore+idReads, ids, "identity-only gates run before credential acquisition")
+				assert.Equal(t, pairsBefore+pairReads, pairs, "source failures are not provider retry candidates")
 				after, findErr := h.sessions.Get(context.Background(), before.ID)
 				require.NoError(t, findErr)
 				assert.Equal(t, before, after, "failure must preserve encrypted tokens, recorded identity, and session metadata")
 				providerAfter, getErr := h.records.Get(context.Background(), provider.ID)
 				require.NoError(t, getErr)
+				if failure.name == "identity mismatch" {
+					observed := id.ClientID("mismatched-file-client-value")
+					providerBefore.ClientIdentity = &observed
+					providerBefore.ClientIdentityRevision++
+				}
 				assert.Equal(t, providerBefore, providerAfter)
 				eventOperation := "refresh"
 				if operation == "callback" {
 					eventOperation = "code_exchange"
+				} else if operation == "automatic refresh" && failure.name != "secret read error" {
+					eventOperation = "token_acquisition"
 				}
-				assertOperationMetadata(t, err, oauth2session.Operation(eventOperation), oauth2session.DetailCredentialSourceUnavailable)
+				metadataOperation := oauth2session.Operation(eventOperation)
+				if eventOperation == "token_acquisition" {
+					metadataOperation = oauth2session.OperationSessionLookup
+				}
+				assertOperationMetadata(t, err, metadataOperation, oauth2session.DetailCredentialSourceUnavailable)
 				assertCredentialSourceAudits(t, logs.String(), provider.ID, eventOperation, credentialSourceAudit{event: "session.oauth2.credential_source_failed", outcome: "failed", reason: string(failure.reason)})
 				assert.NotContains(t, logs.String(), `"event":"session.oauth2.pkce_validation_failed"`)
 				assert.NotContains(t, logs.String(), `"event":"session.oauth2.refresh_failed"`)

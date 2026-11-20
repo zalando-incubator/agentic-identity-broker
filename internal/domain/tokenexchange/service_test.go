@@ -274,8 +274,8 @@ func (m *MockServiceRepository) Get(ctx context.Context, serviceID id.ServiceID)
 	return nil, nil
 }
 
-func (m *MockServiceRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
-	return nil
+func (m *MockServiceRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
+	return false, nil
 }
 
 func (m *MockServiceRepository) Delete(ctx context.Context, serviceID id.ServiceID) error {
@@ -2122,6 +2122,7 @@ func TestExchange_MapsSessionRetrievalErrors(t *testing.T) {
 			})
 			var before storagedomain.UserSession
 			if tt.session != nil {
+				tt.session.ServiceID = fixture.serviceID
 				before = *tt.session
 			}
 
@@ -2257,6 +2258,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		ID:                 requestedServiceID,
 		DisplayName:        "Requested Service",
 		ClientID:           id.ClientID("service-client"),
+		CredentialSource:   model.CredentialSourceStored,
 		Secret:             model.NewEncryptedSecret([]byte("placeholder")),
 		ProtectedResources: []string{"https://api.example.com/requested"},
 		Endpoints:          model.OAuth2Endpoints{TokenEndpoint: cfg.tokenEndpoint},

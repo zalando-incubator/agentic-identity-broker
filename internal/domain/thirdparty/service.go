@@ -12,6 +12,7 @@ import (
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -558,6 +559,45 @@ func (s *ThirdpartyOAuth2ProviderService) Get(
 	return dec, nil
 }
 
+// GetForIdentityEvaluation returns configuration without decrypting credentials.
+func (s *ThirdpartyOAuth2ProviderService) GetForIdentityEvaluation(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	entity, err := s.repo.Get(ctx, serviceID)
+	if err != nil {
+		return nil, err
+	}
+	if entity == nil || entity.ID != serviceID {
+		return nil, ErrProviderConfiguration
+	}
+	configuration := entity.Copy()
+	configuration.Secret = model.NewAbsentSecret()
+	return configuration, nil
+}
+
+// GetByIDsForIdentityEvaluation batches configuration reads without decrypting credentials.
+func (s *ThirdpartyOAuth2ProviderService) GetByIDsForIdentityEvaluation(ctx context.Context, ids []id.ServiceID) ([]*model.ThirdpartyOAuth2ProviderEntity, error) {
+	entities, err := s.repo.GetByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	requested := make(map[id.ServiceID]struct{}, len(ids))
+	for _, serviceID := range ids {
+		requested[serviceID] = struct{}{}
+	}
+	configurations := make([]*model.ThirdpartyOAuth2ProviderEntity, len(entities))
+	for i, entity := range entities {
+		if entity == nil {
+			return nil, ErrProviderConfiguration
+		}
+		if _, ok := requested[entity.ID]; !ok {
+			return nil, ErrProviderConfiguration
+		}
+		configuration := entity.Copy()
+		configuration.Secret = model.NewAbsentSecret()
+		configurations[i] = configuration
+	}
+	return configurations, nil
+}
+
 // Token acquisition must retain decryption failures; administrative reads may retain ciphertext.
 func (s *ThirdpartyOAuth2ProviderService) GetForTokenAcquisition(ctx context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	entity, err := s.repo.Get(ctx, serviceID)
@@ -854,7 +894,8 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 		entity.ProtectedResources = persisted.ProtectedResources
 		expectedVersion = &persisted.Version
 	}
-	if err := s.repo.Update(ctx, entity, expectedVersion); err != nil {
+	identityChanged, err := s.repo.Update(ctx, entity, expectedVersion)
+	if err != nil {
 		if !discovered && entity.IsCIMDClient() {
 			s.auditCIMD(ctx, entity, "update", "rejected")
 		}
@@ -863,6 +904,16 @@ func (s *ThirdpartyOAuth2ProviderService) Update(
 			return s.recordFailedDiscoveryUpdate(ctx, persistedDiscovery, time.Now().UTC(), err)
 		}
 		return err
+	}
+	if identityChanged {
+		const channel string = "admin_update"
+		operator, _ := principal.FromContext(ctx)
+		s.logger.InfoContext(ctx, "oauth2 client identity changed",
+			"event", "session.oauth2.client_identity_changed",
+			"service_id", entity.ID,
+			"client_identity_revision", entity.ClientIdentityRevision,
+			"channel", channel,
+			"operator_principal", operator)
 	}
 
 	if discovered {

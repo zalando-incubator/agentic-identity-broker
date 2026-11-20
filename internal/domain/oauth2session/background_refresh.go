@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -126,6 +127,10 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 	}
 	span.SetAttributes(attribute.String("oauth2.refresh.outcome", "failed"))
 	p.failed.Add(refreshCtx, 1, metric.WithAttributes(p.trigger, serviceAttr, attribute.String("failure_detail", string(metadata.Detail()))))
+	if errors.Is(err, model.ErrCredentialSourceUnavailable) {
+		p.service.auditCredentialSourceFailure(refreshCtx, serviceID, credentialOperationRefresh, err)
+		return
+	}
 	level := slog.LevelError
 	switch metadata.Kind() {
 	case KindProvider, KindSession, KindConfiguration, KindCanceled:

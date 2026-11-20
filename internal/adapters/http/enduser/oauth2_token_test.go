@@ -2253,8 +2253,8 @@ func (r *oauth2TokenProviderRepo) Get(context.Context, id.ServiceID) (*model.Thi
 	return nil, ports.ErrNotFound
 }
 
-func (r *oauth2TokenProviderRepo) Update(context.Context, *model.ThirdpartyOAuth2ProviderEntity, *int64) error {
-	return nil
+func (r *oauth2TokenProviderRepo) Update(context.Context, *model.ThirdpartyOAuth2ProviderEntity, *int64) (bool, error) {
+	return false, nil
 }
 
 func (r *oauth2TokenProviderRepo) Delete(context.Context, id.ServiceID) error {

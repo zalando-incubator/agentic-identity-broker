@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"sync"
 	"time"
 
@@ -108,6 +109,13 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Create(_ context.Context, e
 		return providerStorageError("CreateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
 	record.entity.CredentialSourceTransitioned = false
+	record.entity.ClientIdentityRevision = 0
+	record.entity.ClientIdentity = nil
+	if record.entity.CredentialSource == model.CredentialSourceStored {
+		record.entity.ClientIdentity = new(record.entity.ClientID)
+	}
+	entity.ClientIdentityRevision = 0
+	entity.ClientIdentity = record.entity.Copy().ClientIdentity
 	entity.CredentialSource = record.entity.CredentialSource
 	entity.ClientRegistration = record.entity.ClientRegistration
 	entity.CredentialSourceTransitioned = false
@@ -175,9 +183,9 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) GetCanonicalIDs(_ context.C
 
 // Update changes provider fields and increments its version. A nil expectedVersion
 // preserves the current child resource set; a non-nil value replaces it atomically.
-func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	if entity == nil {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "entity cannot be nil")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "entity cannot be nil")
 	}
 	r.issuerSessionGate.Lock()
 	defer r.issuerSessionGate.Unlock()
@@ -186,17 +194,17 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 
 	existing, exists := r.providers[entity.ID]
 	if !exists {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
 	}
 	if expectedVersion != nil && existing.entity.Version != *expectedVersion {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version does not match")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider version does not match")
 	}
 	// A failed refresh does not bump the version, so CAS alone cannot prevent an
 	// earlier successful refresh from erasing its newer failure status.
 	if entity.Discovery.ResourceURL != nil && entity.DiscoveryStatus.LastAttemptAt != nil {
 		if lastAttempt := existing.entity.DiscoveryStatus.LastAttemptAt; lastAttempt != nil &&
 			!entity.DiscoveryStatus.LastAttemptAt.Truncate(time.Microsecond).After(lastAttempt.Truncate(time.Microsecond)) {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider discovery attempt is no longer current")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider discovery attempt is no longer current")
 		}
 	}
 	// Resolve the effective audience before deciding whether sessions block this
@@ -225,17 +233,17 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	resourceChanged := proposedResource != existing.entity.AuthorizationParams["resource"]
 	if (issuerChanged || resourceChanged) && (existing.entity.Discovery.ResourceURL != nil || entity.Discovery.ResourceURL != nil) {
 		if r.sessions == nil {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider session state is unavailable")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider session state is unavailable")
 		}
 		count, err := r.sessions.CountByService(ctx, entity.ID)
 		if err != nil {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindUnknown, err, "failed to check provider sessions")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindUnknown, err, "failed to check provider sessions")
 		}
 		if count != 0 {
 			if issuerChanged {
-				return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "provider has user sessions")
+				return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrIssuerChangeHasSessions, "provider has user sessions")
 			}
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrResourceChangeHasSessions, "provider has user sessions")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrResourceChangeHasSessions, "provider has user sessions")
 		}
 	}
 
@@ -248,12 +256,12 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 
 	if canonicalID != nil {
 		if existingID, exists := r.canonicalIndex[*canonicalID]; exists && existingID != entity.ID {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider canonical_id already exists")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider canonical_id already exists")
 		}
 	}
 	if identity, isDCR := providerDCRIdentity(entity); isDCR {
 		if existingID, exists := r.dcrIndex[identity]; exists && existingID != entity.ID {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrDuplicateDCRClientIdentity, "provider DCR issuer and client_id already exist")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrDuplicateDCRClientIdentity, "provider DCR issuer and client_id already exist")
 		}
 	}
 
@@ -262,11 +270,11 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		var err error
 		resourceSet, err = normalizedResourceSet(entity.ProtectedResources)
 		if err != nil {
-			return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "invalid protected resources")
+			return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "invalid protected resources")
 		}
 		for resource := range resourceSet {
 			if owner, claimed := r.resourceOwners[resource]; claimed && owner != entity.ID {
-				return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrProtectedResourceOwned, "protected resource is already owned")
+				return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, storage.ErrProtectedResourceOwned, "protected resource is already owned")
 			}
 		}
 	}
@@ -297,9 +305,26 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	proposed.ProtectedResources = resourceSetSlice(resourceSet)
 	record, err := providerEntityToRecord(&proposed)
 	if err != nil {
-		return providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
+		return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, err, "failed to store provider")
 	}
 	record.entity.CredentialSourceTransitioned = existing.entity.CredentialSourceTransitioned || previousSource != record.entity.CredentialSource
+	record.entity.ClientIdentity = existing.entity.Copy().ClientIdentity
+	record.entity.ClientIdentityRevision = existing.entity.ClientIdentityRevision
+	identityChanged := false
+	if record.entity.CredentialSource == model.CredentialSourceStored {
+		previous := existing.entity.ClientIdentity
+		if previous == nil && previousSource == model.CredentialSourceStored {
+			previous = &existing.entity.ClientID
+		}
+		identityChanged = previous != nil && *previous != record.entity.ClientID
+		if identityChanged {
+			if record.entity.ClientIdentityRevision == math.MaxInt64 {
+				return false, providerStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindValidation, nil, "client identity revision exhausted")
+			}
+			record.entity.ClientIdentityRevision++
+		}
+		record.entity.ClientIdentity = new(record.entity.ClientID)
+	}
 
 	if expectedVersion != nil {
 		for resource := range r.resources[entity.ID] {
@@ -326,8 +351,10 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	proposed.CredentialSource = record.entity.CredentialSource
 	proposed.ClientRegistration = record.entity.ClientRegistration
 	proposed.CredentialSourceTransitioned = record.entity.CredentialSourceTransitioned
+	proposed.ClientIdentity = record.entity.Copy().ClientIdentity
+	proposed.ClientIdentityRevision = record.entity.ClientIdentityRevision
 	*entity = proposed
-	return nil
+	return identityChanged, nil
 }
 
 // Delete removes the provider and releases every resource it owns.

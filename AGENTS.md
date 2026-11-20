@@ -205,6 +205,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 048 | `adrs/048-client-identity-revisions.md` | Monotonic client identity revisions; token/refresh/callback/consent enforcement; guarded continuous rolling upgrade and revision-aware rollback |
 
 ## Domain Glossary
 
@@ -234,6 +235,8 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
 | **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
+| **Effective Client Identity** | Current provider-facing client ID: stored `client_id` or trimmed filesystem client-ID value. |
+| **Client Identity Revision** | Non-negative per-service counter incremented for each recorded differing identity; copied only by winning callbacks into session establishment evidence. Rollback never decreases it. |
 
 ## Development Workflow
 

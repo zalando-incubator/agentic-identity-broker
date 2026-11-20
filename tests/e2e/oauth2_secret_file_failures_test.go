@@ -240,11 +240,16 @@ func expectCredentialSourceFailure(subject *credentialFailureSubject, operation,
 	}
 	if operation == "automatic_refresh" {
 		operation = "refresh"
+		failureStage := "refresh"
+		if subject.fileKey == "client_id_file" {
+			operation = "token_acquisition"
+			failureStage = "session_lookup"
+		}
 		records, err := subject.logs.Records()
 		Expect(err).NotTo(HaveOccurred())
 		Expect(records).To(ContainElement(SatisfyAll(
 			HaveKeyWithValue("token_exchange.failure_detail", "credential_source_unavailable"),
-			HaveKeyWithValue("token_exchange.failure_stage", "refresh"),
+			HaveKeyWithValue("token_exchange.failure_stage", failureStage),
 			HaveKeyWithValue("token_exchange.outcome", "infrastructure_error"),
 		)))
 	}

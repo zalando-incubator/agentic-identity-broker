@@ -22,6 +22,10 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 	synctest.Test(t, func(t *testing.T) {
 		service, provider, stored := newOperationTestService(t, io.Discard)
 		ctx := context.Background()
+		establishedRevision, reconnectRevision := int64(3), int64(4)
+		stored.UpstreamClientID = identityPointer("public-client")
+		stored.UpstreamClientRevision = establishedRevision
+		provider.ClientIdentityRevision = establishedRevision
 		refreshStarted := make(chan struct{})
 		releaseRefresh := make(chan struct{})
 		service.httpClient.Transport = operationTransport(func(*http.Request) (*http.Response, error) {
@@ -41,6 +45,9 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 			current := *stored
 			changed, err := update(ctx, &current)
 			if changed && err == nil {
+				if lockCalls.Load() == 1 {
+					assert.Equal(t, establishedRevision, current.UpstreamClientRevision, "refresh must preserve the establishing revision")
+				}
 				*stored = current
 			}
 			return &current, err
@@ -53,7 +60,7 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 		<-refreshStarted
 		reconnected := make(chan error, 1)
 		go func() {
-			_, err := service.createSession(ctx, stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"}, &OAuth2StateTokenClaims{SessionID: stored.ID, SessionCallbackID: stored.CallbackID})
+			_, err := service.createSession(ctx, stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"}, &OAuth2StateTokenClaims{SessionID: stored.ID, SessionCallbackID: stored.CallbackID, UpstreamClientID: identityPointer("public-client"), UpstreamClientRevision: &reconnectRevision})
 			reconnected <- err
 		}()
 		<-reconnectWaiting
@@ -71,6 +78,8 @@ func TestReconnectWithoutRefreshTokenReplacesConcurrentRotationUnderLock(t *test
 		require.NotNil(t, stored.AccessTokenExpiresAt)
 		assert.Equal(t, time.Now().Add(time.Hour), *stored.AccessTokenExpiresAt)
 		assert.Equal(t, []string{"other-scope"}, stored.Scope)
+		assert.Equal(t, reconnectRevision, stored.UpstreamClientRevision)
+		assert.Equal(t, identityPointer("public-client"), stored.UpstreamClientID)
 	})
 }
 
@@ -84,6 +93,8 @@ func TestReconnectLockedFailurePreservesCredentialsWithoutUpsert(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			service, provider, stored := newOperationTestService(t, io.Discard)
+			stored.UpstreamClientID = identityPointer("public-client")
+			stored.UpstreamClientRevision = 3
 			before := *stored
 			cause := errors.New("sentinel-locked-reconnect-failure")
 			service.refreshRepo = operationRefreshRepository(func(ctx context.Context, _ id.Principal, _ id.ServiceID, update func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error) {
@@ -102,7 +113,8 @@ func TestReconnectLockedFailurePreservesCredentialsWithoutUpsert(t *testing.T) {
 				return nil
 			}}
 
-			session, err := service.createSession(context.Background(), stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"}, &OAuth2StateTokenClaims{SessionID: stored.ID, SessionCallbackID: stored.CallbackID})
+			reconnectRevision := int64(4)
+			session, err := service.createSession(context.Background(), stored.Principal, provider.ID, &oauth2.Token{AccessToken: "other-account-access", Expiry: time.Now().Add(time.Hour)}, []string{"other-scope"}, &OAuth2StateTokenClaims{SessionID: stored.ID, SessionCallbackID: stored.CallbackID, UpstreamClientID: identityPointer("public-client"), UpstreamClientRevision: &reconnectRevision})
 
 			assert.Nil(t, session)
 			assert.Equal(t, before, *stored, "failed reconnect must preserve the stored session")

@@ -177,7 +177,7 @@ func TestManualAndDirectMetadataConnectionsKeepSharedTokenClient(t *testing.T) {
 				require.NoError(t, err)
 				metadataURL := "https://auth.example.test/.well-known/oauth-authorization-server"
 				stored.Discovery = model.DiscoveryConfig{EnableDiscovery: true, MetadataURL: &metadataURL}
-				require.NoError(t, repo.Update(ctx, stored, nil))
+				require.NoError(t, providerUpdateError(repo.Update(ctx, stored, nil)))
 			}
 			principal := id.Principal("user@example.com")
 			flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
@@ -237,6 +237,37 @@ func TestDiscoveredCIMDInvalidTargetDoesNotRetryWithoutResource(t *testing.T) {
 	assert.Nil(t, result)
 	require.Len(t, requests, 1, "invalid_target must not cause a second, unbound exchange")
 	assert.Equal(t, []string{resourceURL}, (<-requests)["resource"])
+}
+
+func TestConfidentialDCRInitiationValidatesStoredCredentials(t *testing.T) {
+	const resource = "https://mcp.example.test/mcp"
+	for _, method := range []model.TokenEndpointAuthMethod{model.TokenEndpointAuthMethodClientSecretBasic, model.TokenEndpointAuthMethodClientSecretPost} {
+		t.Run(string(method), func(t *testing.T) {
+			provider := storedDCRSessionProvider(id.NewServiceID(), "https://issuer.example.test/token", method, "persisted-dcr-secret", resource, resource)
+			service, repo, providers := newStoredDCRSessionService(t, rejectingTokenHTTPClient(), provider)
+			metadata, err := providers.GetForIdentityEvaluation(t.Context(), provider.ID)
+			require.NoError(t, err)
+			require.True(t, metadata.Secret.IsAbsent(), "identity evaluation must not acquire the DCR secret")
+			require.True(t, repo.entities[provider.ID].Secret.IsEncrypted(), "the registered credential starts encrypted at rest")
+			owner := id.Principal("dcr-owner@example.test")
+			flow, err := service.InitiateOAuth2Flow(t.Context(), owner, provider.ID, "https://broker.example.com/sessions")
+			require.NoError(t, err)
+			claims, err := service.ValidateStateToken(flow.StateToken, owner, provider.ID)
+			require.NoError(t, err)
+			require.Equal(t, &provider.ClientID, claims.UpstreamClientID)
+			require.NotNil(t, claims.UpstreamClientRevision)
+			assert.Zero(t, *claims.UpstreamClientRevision)
+			authorization, err := url.Parse(flow.AuthorizationURL)
+			require.NoError(t, err)
+			assert.Equal(t, provider.ClientID.String(), authorization.Query().Get("client_id"))
+			assert.Equal(t, resource, authorization.Query().Get("resource"))
+			assert.Equal(t, "S256", authorization.Query().Get("code_challenge_method"))
+			assert.NotEmpty(t, authorization.Query().Get("code_challenge"))
+			assert.NotContains(t, flow.AuthorizationURL, "persisted-dcr-secret")
+			assert.Zero(t, repo.registrationCalls.Load())
+			assert.Zero(t, repo.createCalls.Load())
+		})
+	}
 }
 
 func TestDCRStoredClientUsesPinnedTokenAuthenticationOnConnectionAndRenewal(t *testing.T) {
@@ -766,7 +797,7 @@ func TestLegacyAuthorizationParamsCannotOverrideBrokerFields(t *testing.T) {
 		"refresh_token":       "attacker-refresh-token",
 		"business_partner_id": "12345",
 	}
-	require.NoError(t, repo.Update(ctx, persisted, nil))
+	require.NoError(t, providerUpdateError(repo.Update(ctx, persisted, nil)))
 
 	flow, err := service.InitiateOAuth2Flow(ctx, id.Principal("user@example.com"), serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
@@ -2187,7 +2218,7 @@ func setupServiceWithHTTPClient(
 		domjwe.New(key),
 		config,
 		logger,
-	)
+	).WithClientIdentityRepository(serviceRepo)
 
 	return svc, serviceRepo, sessionRepo, grantRepo, agentRepo, providerService
 }

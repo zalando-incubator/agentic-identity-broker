@@ -607,6 +607,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	// Create OAuth2 service — mode-specific config drives all decisions.
 	var clientResolver ports.ClientResolver
 	var clientAssertionVerifier *oauth2server.ClientAssertionVerifier
+	var authService *oauth2service.AuthorizationService
 	{
 		oauth2Config := &oauth2service.OAuth2Config{
 			UpstreamAuthorizeEndpoint: ov.upstreamAuthorizeEndpoint,
@@ -697,7 +698,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			clientResolver = oauth2service.NewAgentClientResolver(b.storage.Agents(), b.logger)
 		}
 
-		authService := oauth2service.NewAuthorizationService(
+		authService = oauth2service.NewAuthorizationService(
 			b.storage.UserGrants(),
 			b.storage.UserSessions(),
 			clientResolver,
@@ -788,7 +789,12 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		b.logger,
 	).WithCIMDAssertionSigner(app.CIMDAssertionSigner).
 		WithDiscoveryTokenHTTPClient(discoveryTokenClient).
-		WithCredentialFileReader(credentialfile.New())
+		WithCredentialFileReader(credentialfile.New()).
+		WithClientIdentityRepository(b.storage.ClientIdentities())
+	authService.WithSessionUsabilityEvaluator(app.OAuth2SessionService)
+	if app.ConsentService != nil {
+		app.ConsentService.WithSessionUsabilityEvaluator(app.OAuth2SessionService)
+	}
 
 	// Create agent domain service (used by admin handlers and CEL resolver)
 	agentService := agentsservice.NewService(

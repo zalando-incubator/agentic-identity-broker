@@ -45,11 +45,12 @@ type SessionExpiryGroup struct {
 // This is an aggregate root - it owns the encrypted tokens and manages session lifecycle.
 // One session per (principal, service_id) pair, enforced by database unique constraint.
 type UserSession struct {
-	ID               id.SessionID `json:"id" db:"id"`
-	Principal        id.Principal `json:"principal" db:"principal"`
-	ServiceID        id.ServiceID `json:"service_id" db:"service_id"`
-	CallbackID       string       `json:"-" db:"callback_id"`
-	UpstreamClientID *id.ClientID `json:"-" db:"upstream_client_id"`
+	ID                     id.SessionID `json:"id" db:"id"`
+	Principal              id.Principal `json:"principal" db:"principal"`
+	ServiceID              id.ServiceID `json:"service_id" db:"service_id"`
+	CallbackID             string       `json:"-" db:"callback_id"`
+	UpstreamClientID       *id.ClientID `json:"-" db:"upstream_client_id"`
+	UpstreamClientRevision int64        `json:"-" db:"upstream_client_revision"`
 	// ExpectedIssuerURI binds a discovered callback to the issuer that initiated it.
 	// Repositories check this value before storage; they do not persist it.
 	ExpectedIssuerURI string `json:"-" db:"-"`
@@ -127,6 +128,9 @@ func (s *UserSession) Validate() error {
 	if s.ServiceID.IsZero() {
 		return errors.New("service_id is required")
 	}
+	if s.UpstreamClientRevision < 0 {
+		return errors.New("upstream client revision cannot be negative")
+	}
 	if s.UpstreamClientID != nil && s.UpstreamClientID.IsZero() {
 		return errors.New("upstream client ID cannot be empty")
 	}
@@ -182,6 +186,8 @@ func (s *UserSession) CanRefresh() bool {
 // UserSessionSummary is a read model for displaying session information.
 // Includes computed fields like dependent agent count.
 type UserSessionSummary struct {
+	UpstreamClientID         *id.ClientID `json:"-"`
+	UpstreamClientRevision   int64        `json:"-"`
 	ID                       id.SessionID `json:"id"`
 	ServiceID                id.ServiceID `json:"service_id"`
 	ServiceDisplayName       string       `json:"service_display_name"`
@@ -217,16 +223,21 @@ type UserSessionDetails struct {
 // NewUserSessionSummary creates a summary from a UserSession.
 func NewUserSessionSummary(session *UserSession, serviceDisplayName string, agentCount int) *UserSessionSummary {
 	summary := &UserSessionSummary{
-		ID:                  session.ID,
-		ServiceID:           session.ServiceID,
-		ServiceDisplayName:  serviceDisplayName,
-		TokenType:           session.TokenType,
-		Scope:               session.Scope,
-		InitiatedAt:         session.InitiatedAt,
-		AccessTokenExpired:  !session.HasValidAccessToken(),
-		HasRefreshToken:     len(session.EncryptedRefreshToken) > 0,
-		DependentAgentCount: agentCount,
-		IsEncrypted:         true,
+		UpstreamClientRevision: session.UpstreamClientRevision,
+		ID:                     session.ID,
+		ServiceID:              session.ServiceID,
+		ServiceDisplayName:     serviceDisplayName,
+		TokenType:              session.TokenType,
+		Scope:                  session.Scope,
+		InitiatedAt:            session.InitiatedAt,
+		AccessTokenExpired:     !session.HasValidAccessToken(),
+		HasRefreshToken:        len(session.EncryptedRefreshToken) > 0,
+		DependentAgentCount:    agentCount,
+		IsEncrypted:            true,
+	}
+	if session.UpstreamClientID != nil {
+		identity := *session.UpstreamClientID
+		summary.UpstreamClientID = &identity
 	}
 	summary.SetRequiresReauthentication(session.RequiresReauthentication())
 	return summary

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
 	brokerconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/spf13/cobra"
@@ -30,18 +31,21 @@ type CredentialServerOptions struct {
 }
 
 type CredentialServer struct {
-	AdminURL        string
-	EndUserURL      string
-	ConfigPath      string
-	Principal       string
-	Logs            *BufferedLogCapture
-	admin           *TestServer
-	endUser         *TestServer
-	storage         *storageadapter.Adapter
-	logger          *slog.Logger
-	client          *http.Client
-	adminListener   net.Listener
-	endUserListener net.Listener
+	AdminURL         string
+	EndUserURL       string
+	EndUserPublicURL string
+	ConfigPath       string
+	Principal        string
+	Logs             *BufferedLogCapture
+	admin            *TestServer
+	endUser          *TestServer
+	storage          *storageadapter.Adapter
+	application      *app.App
+	logger           *slog.Logger
+	client           *http.Client
+	adminHost        string
+	adminListener    net.Listener
+	endUserListener  net.Listener
 }
 
 func StartCredentialServer(options CredentialServerOptions) (*CredentialServer, error) {
@@ -86,6 +90,7 @@ func prepareCredentialServer(options CredentialServerOptions) (_ *CredentialServ
 	adminPort := server.adminListener.Addr().(*net.TCPAddr).Port
 	server.AdminURL = "http://127.0.0.1:" + strconv.Itoa(adminPort)
 	server.EndUserURL = "http://127.0.0.1:" + strconv.Itoa(endUserPort)
+	server.EndUserPublicURL = server.EndUserURL
 	instances, ok := options.Document["server"].(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("credential fixture requires server configuration")
@@ -119,7 +124,7 @@ func prepareCredentialServer(options CredentialServerOptions) (_ *CredentialServ
 
 func (s *CredentialServer) start(cfg *ports.Config) error {
 	var err error
-	s.storage, err = NewStorageFactory(s.logger).NewTestStorage()
+	s.storage, err = storageadapter.NewAdapter(&cfg.Storage)
 	if err != nil {
 		return err
 	}
@@ -127,15 +132,9 @@ func (s *CredentialServer) start(cfg *ports.Config) error {
 	if err != nil {
 		return err
 	}
+	s.application = application
 	s.admin, err = NewTestServerV2(application, s.logger, WithServerType(ServerTypeAdmin), WithFixedPort(cfg.Server.Admin.Port), withListener(s.adminListener))
 	if err != nil {
-		if application.Shutdown != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if shutdownErr := application.Shutdown(ctx); shutdownErr != nil {
-				s.logger.Error("credential test application shutdown failed", "error", shutdownErr)
-			}
-		}
 		return err
 	}
 	s.adminListener = nil
@@ -185,6 +184,23 @@ func LoadCredentialConfiguration(path string, environment map[string]string, com
 	return loader.GetConfig(ctx)
 }
 
+// RemoteCredentialServer connects to a released container using its configured admin Host.
+func RemoteCredentialServer(adminURL, endUserURL, adminHost, endUserPublicURL, principal string) *CredentialServer {
+	return &CredentialServer{AdminURL: adminURL, EndUserURL: endUserURL, EndUserPublicURL: endUserPublicURL, Principal: principal, adminHost: adminHost, client: newTestHTTPClient()}
+}
+
+func (s *CredentialServer) EndUserRequestAs(principal, method, path string, body io.Reader) (*http.Response, error) {
+	request, err := http.NewRequest(method, s.EndUserURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("X-Remote-User", principal)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	return s.client.Do(request)
+}
+
 func (s *CredentialServer) AdminJSON(method, path string, body any) (*http.Response, error) {
 	encoded, err := json.Marshal(body)
 	if err != nil {
@@ -201,6 +217,9 @@ func (s *CredentialServer) request(baseURL, method, path, contentType string, bo
 	request, err := http.NewRequest(method, baseURL+path, body)
 	if err != nil {
 		return nil, err
+	}
+	if baseURL == s.AdminURL {
+		request.Host = s.adminHost
 	}
 	request.Header.Set("X-Remote-User", s.Principal)
 	if body != nil {
@@ -219,12 +238,20 @@ func (s *CredentialServer) Close() {
 		s.adminListener = nil
 	}
 	if s.endUser != nil {
-		s.endUser.Close()
+		s.endUser.CloseListener()
 		s.endUser = nil
 	}
 	if s.admin != nil {
-		s.admin.Close()
+		s.admin.CloseListener()
 		s.admin = nil
+	}
+	if s.application != nil && s.application.Shutdown != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.application.Shutdown(ctx); err != nil {
+			s.logger.Error("credential test application shutdown failed", "error", err)
+		}
+		s.application = nil
 	}
 	if s.storage != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

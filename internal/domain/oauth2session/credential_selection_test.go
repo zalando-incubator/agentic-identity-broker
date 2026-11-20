@@ -170,7 +170,7 @@ func newCredentialSessionHarness(t *testing.T, bindings map[string]ports.Credent
 		config.RetryBaseDelay = time.Millisecond
 	}, &http.Client{}, loggers...)
 	reader := &credentialReaderSpy{reader: credentialfile.New()}
-	service.WithCredentialFileReader(reader)
+	service.WithCredentialFileReader(reader).WithClientIdentityRepository(records)
 	return &credentialSessionHarness{service: service, providers: providers, records: records, sessions: sessions, reader: reader, endpoint: newCredentialTokenEndpoint(t)}
 }
 
@@ -325,20 +325,25 @@ func TestCredentialSelection_FilesystemUsesExactPairAndPersistsOnlyVerifiedSessi
 	require.NoError(t, err)
 	require.NotNil(t, claims.UpstreamClientID)
 	assert.Equal(t, id.ClientID("file client"), *claims.UpstreamClientID)
+	require.NotNil(t, claims.UpstreamClientRevision)
+	assert.Zero(t, *claims.UpstreamClientRevision)
 	ids, pairs := h.reader.counts()
 	assert.Equal(t, 1, ids)
 	assert.Zero(t, pairs)
 	session := h.callback(t, principal, provider.ID, flow.StateToken)
 	assert.Equal(t, claims.UpstreamClientID, session.UpstreamClientID)
+	assert.Equal(t, *claims.UpstreamClientRevision, session.UpstreamClientRevision)
 	persisted, err := h.sessions.Get(context.Background(), session.ID)
 	require.NoError(t, err)
 	assert.Equal(t, claims.UpstreamClientID, persisted.UpstreamClientID)
+	assert.Equal(t, *claims.UpstreamClientRevision, persisted.UpstreamClientRevision)
 	_, err = h.service.ForceRefreshSession(context.Background(), principal, provider.ID)
 	require.NoError(t, err)
 	h.expire(t, principal, provider.ID)
 	refreshed, _, err := h.service.GetValidAccessToken(context.Background(), principal, provider.ID)
 	require.NoError(t, err)
 	assert.Equal(t, claims.UpstreamClientID, refreshed.UpstreamClientID)
+	assert.Equal(t, *claims.UpstreamClientRevision, refreshed.UpstreamClientRevision)
 	requests := h.endpoint.captured(t)
 	require.Len(t, requests, 3)
 	for _, request := range requests {
@@ -346,10 +351,14 @@ func TestCredentialSelection_FilesystemUsesExactPairAndPersistsOnlyVerifiedSessi
 		assert.Equal(t, "file secret", request.secret)
 	}
 	ids, pairs = h.reader.counts()
-	assert.Equal(t, 1, ids)
+	assert.Equal(t, 10, ids, "initiation, callback, and refresh gates check identity; the explicit refresh summary adds one Display read")
 	assert.Equal(t, 3, pairs)
 	after, err := h.records.Get(context.Background(), provider.ID)
 	require.NoError(t, err)
+	identity := id.ClientID("file client")
+	before.ClientIdentity = &identity
+	assert.Zero(t, before.ClientIdentityRevision)
+	assert.Zero(t, after.ClientIdentityRevision)
 	assert.Equal(t, before, after)
 	assert.True(t, after.ClientID.IsZero())
 	assert.True(t, after.Secret.IsAbsent())
@@ -365,8 +374,11 @@ func TestCredentialSelection_FilesystemUsesExactPairAndPersistsOnlyVerifiedSessi
 	assert.NotContains(t, string(encoded), "upstream_client_id")
 	assert.NotContains(t, string(encoded), "file client")
 	newIDs, newPairs := h.reader.counts()
-	assert.Equal(t, ids, newIDs)
+	assert.Equal(t, ids+1, newIDs, "session listing performs one live client-ID Display read")
 	assert.Equal(t, pairs, newPairs)
+	afterDisplay, err := h.records.Get(context.Background(), provider.ID)
+	require.NoError(t, err)
+	assert.Equal(t, after, afterDisplay, "a same-identity Display observation changes no service fields")
 }
 
 func TestCredentialSelection_InitiationDoesNotRequireOrReadSecretFile(t *testing.T) {
@@ -383,7 +395,7 @@ func TestCredentialSelection_InitiationDoesNotRequireOrReadSecretFile(t *testing
 	assertCredentialSourceReason(t, err, model.CredentialSourceReasonNotFound)
 	assert.Empty(t, h.endpoint.captured(t))
 	ids, pairs = h.reader.counts()
-	assert.Equal(t, 1, ids)
+	assert.Equal(t, 2, ids, "callback checks identity before acquiring the pair")
 	assert.Equal(t, 1, pairs)
 }
 
@@ -424,5 +436,68 @@ func TestCredentialSelection_MissingExactBindingFailsClosedAtEveryBoundary(t *te
 				assert.Zero(t, pairs)
 			})
 		}
+	}
+}
+
+func TestCredentialSelection_ReselectionKeepsReplacementSecretAtCurrentEndpoint(t *testing.T) {
+	for _, operation := range []string{"code exchange retry", "refresh"} {
+		t.Run(operation, func(t *testing.T) {
+			bindings := map[string]ports.CredentialFileBinding{
+				"retired": credentialPair(t, "same-client", "retired-secret"),
+				"current": credentialPair(t, "same-client", "replacement-secret"),
+			}
+			h := newCredentialSessionHarness(t, bindings)
+			provider := h.register(t, model.CredentialSourceFilesystem, "retired", "", "")
+			principal := id.Principal("snapshot@example.com")
+			flow := h.initiate(t, principal, provider.ID)
+			currentEndpoint := newCredentialTokenEndpoint(t)
+			currentEndpoint.setResponseBody(`{"access_token":"credential-access","refresh_token":"established-refresh","token_type":"Bearer","expires_in":3600,"scope":"repo,user"}`)
+			var updateOnce sync.Once
+			var updateErr error
+			update := func() error {
+				updateOnce.Do(func() {
+					current, err := h.records.Get(context.Background(), provider.ID)
+					if err != nil {
+						updateErr = err
+						return
+					}
+					canonical := "current"
+					current.CanonicalID = &canonical
+					current.Endpoints.TokenEndpoint = currentEndpoint.server.URL
+					current.Flavor = model.OAuth2FlavorGitHub
+					updateErr = h.providers.Update(context.Background(), current, &current.Version)
+				})
+				return updateErr
+			}
+			if operation == "code exchange retry" {
+				h.endpoint.setOnRequest(func(credentialTokenRequest) (int, error) {
+					return http.StatusInternalServerError, update()
+				})
+				h.callback(t, principal, provider.ID, flow.StateToken)
+			} else {
+				h.reader.afterPair = update
+				established := id.ClientID("same-client")
+				h.seedSession(t, principal, provider.ID, &established)
+				_, err := h.service.ForceRefreshSession(context.Background(), principal, provider.ID)
+				require.NoError(t, err)
+			}
+			persisted, err := h.sessions.FindByPrincipalAndService(context.Background(), principal, provider.ID)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, []string{"repo", "user"}, persisted.Scope)
+			for _, request := range h.endpoint.captured(t) {
+				assert.Equal(t, "retired-secret", request.secret, "the retired endpoint must never receive replacement credentials")
+			}
+			requests := currentEndpoint.captured(t)
+			require.NotEmpty(t, requests, "reselection must use the replacement endpoint")
+			for _, request := range requests {
+				assert.Equal(t, "same-client", request.clientID)
+				assert.Equal(t, "replacement-secret", request.secret)
+				if operation == "refresh" {
+					assert.Equal(t, "legacy-refresh", request.form.Get("refresh_token"))
+				} else {
+					assert.Equal(t, "credential-code", request.form.Get("code"))
+				}
+			}
+		})
 	}
 }

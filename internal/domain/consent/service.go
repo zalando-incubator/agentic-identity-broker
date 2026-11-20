@@ -52,14 +52,15 @@ type PermissionSetQuerier interface {
 // This service orchestrates between agent, service, and grant repositories
 // to implement consent workflows following FR-009 through FR-020.
 type Service struct {
-	agentRepo       ports.AgentRepository
-	providerService *thirdparty.ThirdpartyOAuth2ProviderService
-	grantRepo       ports.UserGrantRepository
-	psService       PermissionSetQuerier
-	sessionRepo     ports.UserSessionRepository
-	refreshRepo     ports.RefreshTokenSessionRepository
-	now             func() time.Time
-	logger          *slog.Logger
+	agentRepo        ports.AgentRepository
+	providerService  *thirdparty.ThirdpartyOAuth2ProviderService
+	grantRepo        ports.UserGrantRepository
+	psService        PermissionSetQuerier
+	sessionRepo      ports.UserSessionRepository
+	sessionUsability ports.SessionUsabilityEvaluator
+	refreshRepo      ports.RefreshTokenSessionRepository
+	now              func() time.Time
+	logger           *slog.Logger
 }
 
 // NewService creates a new ConsentService.
@@ -82,6 +83,11 @@ func NewService(
 		logger:          logger,
 		now:             time.Now,
 	}
+}
+
+func (s *Service) WithSessionUsabilityEvaluator(evaluator ports.SessionUsabilityEvaluator) *Service {
+	s.sessionUsability = evaluator
+	return s
 }
 
 // ServiceScopeInfo is an OAuth2 scope with its human-readable description.
@@ -143,9 +149,33 @@ func (s *Service) GetAgentConsentDetail(ctx context.Context, agentID id.AgentID,
 		return nil, err
 	}
 
-	activeSessionServiceIDs, err := s.sessionRepo.ListActiveServiceIDsByPrincipal(ctx, principal)
+	summaries, err := s.sessionRepo.ListSummariesByPrincipal(ctx, principal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions for principal: %w", err)
+	}
+	relevant := make(map[id.ServiceID]bool, len(agent.ServiceRequirements))
+	for _, requirement := range agent.ServiceRequirements {
+		relevant[requirement.ServiceID] = true
+	}
+	for _, entry := range resolvedPermissionSets {
+		for _, serviceScopes := range entry.PermissionSet.ServiceScopes {
+			relevant[serviceScopes.ServiceID] = true
+		}
+	}
+	sessions := make([]*storage.UserSession, 0, len(relevant))
+	for _, summary := range summaries {
+		if !relevant[summary.ServiceID] || summary.RequiresReauthentication {
+			continue
+		}
+		// Summary usability already accounts for expiry and refresh rejection.
+		sessions = append(sessions, &storage.UserSession{
+			ID: summary.ID, Principal: principal, ServiceID: summary.ServiceID,
+			UpstreamClientID: summary.UpstreamClientID, UpstreamClientRevision: summary.UpstreamClientRevision,
+		})
+	}
+	activeSessionServiceIDs, err := s.connectedSessionServiceIDs(ctx, sessions, ports.UsabilityDisplay)
+	if err != nil {
+		return nil, fmt.Errorf("failed to evaluate sessions for consent detail: %w", err)
 	}
 	requirements, err := s.resolveServiceRequirements(ctx, agent, resolvedPermissionSets, activeSessionServiceIDs)
 	if err != nil {
@@ -331,17 +361,24 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 		return nil, err
 	}
 
-	// FR-020: Validate every included service has an active OAuth2 session.
-	if len(req.GrantedPermissionSets) > 0 {
+	// Validate included services and mandatory connections without changing selections.
+	requiredServices := submissionServiceIDs(agent, req.GrantedPermissionSets)
+	if len(requiredServices) > 0 {
 		sessions, sessErr := s.sessionRepo.ListActiveByPrincipal(ctx, req.Principal)
 		if sessErr != nil {
 			return nil, fmt.Errorf("failed to list sessions for submission validation: %w", sessErr)
 		}
-		activeIDs := make([]id.ServiceID, len(sessions))
-		for i, sess := range sessions {
-			activeIDs[i] = sess.ServiceID
+		relevant := make([]*storage.UserSession, 0, len(requiredServices))
+		for _, session := range sessions {
+			if requiredServices[session.ServiceID] {
+				relevant = append(relevant, session)
+			}
 		}
-		if err := s.ValidateSubmission(ctx, agent, req.GrantedPermissionSets, activeIDs); err != nil {
+		activeIDs, usabilityErr := s.connectedSessionServiceIDs(ctx, relevant, ports.UsabilityGate)
+		if usabilityErr != nil {
+			return nil, fmt.Errorf("failed to evaluate sessions for submission validation: %w", usabilityErr)
+		}
+		if err := validateSubmissionServices(requiredServices, activeIDs); err != nil {
 			return nil, err
 		}
 	}
@@ -433,30 +470,15 @@ func grantAuditValidUntil(validUntil *time.Time) any {
 	return validUntil.UTC().Format(time.RFC3339Nano)
 }
 
-// ValidateSubmission validates that every service in the grant's included_service_ids
-// has an active session (FR-020). Returns a descriptive error listing unconnected services if not.
-func (s *Service) ValidateSubmission(ctx context.Context, agent *storage.Agent, grantedPS []storage.GrantedPermissionSetEntry, activeSessionServiceIDs []id.ServiceID) error {
-	if len(grantedPS) == 0 {
-		return nil
-	}
-
+func validateSubmissionServices(requiredServices map[id.ServiceID]bool, activeSessionServiceIDs []id.ServiceID) error {
 	// Build set of active session service IDs for O(1) lookup
 	activeSet := make(map[id.ServiceID]bool, len(activeSessionServiceIDs))
 	for _, svcID := range activeSessionServiceIDs {
 		activeSet[svcID] = true
 	}
 
-	// Collect all unique included service IDs from the grant
-	includedServices := make(map[id.ServiceID]bool)
-	for _, entry := range grantedPS {
-		for _, svcID := range entry.IncludedServiceIDs {
-			includedServices[svcID] = true
-		}
-	}
-
-	// Check each included service has an active session
 	var unconnected []string
-	for svcID := range includedServices {
+	for svcID := range requiredServices {
 		if !activeSet[svcID] {
 			unconnected = append(unconnected, svcID.String())
 		}
@@ -467,6 +489,41 @@ func (s *Service) ValidateSubmission(ctx context.Context, agent *storage.Agent, 
 	}
 
 	return nil
+}
+
+func submissionServiceIDs(agent *storage.Agent, grantedPS []storage.GrantedPermissionSetEntry) map[id.ServiceID]bool {
+	services := make(map[id.ServiceID]bool)
+	for _, requirement := range agent.ServiceRequirements {
+		if requirement.RequirementType == storage.RequirementTypeMandatory {
+			services[requirement.ServiceID] = true
+		}
+	}
+	for _, entry := range grantedPS {
+		for _, serviceID := range entry.IncludedServiceIDs {
+			services[serviceID] = true
+		}
+	}
+	return services
+}
+
+func (s *Service) connectedSessionServiceIDs(ctx context.Context, sessions []*storage.UserSession, mode ports.UsabilityMode) ([]id.ServiceID, error) {
+	if len(sessions) == 0 {
+		return []id.ServiceID{}, nil
+	}
+	if s.sessionUsability == nil {
+		return nil, &ports.SessionUsabilityError{ServiceID: sessions[0].ServiceID, Err: model.NewCredentialSourceError(model.CredentialSourceReasonReadFailed)}
+	}
+	unusable, err := s.sessionUsability.RequiresReauthentication(ctx, sessions, mode)
+	if err != nil {
+		return nil, err
+	}
+	activeIDs := make([]id.ServiceID, 0, len(sessions))
+	for _, session := range sessions {
+		if !session.RequiresReauthentication() && !unusable[session.ServiceID] {
+			activeIDs = append(activeIDs, session.ServiceID)
+		}
+	}
+	return activeIDs, nil
 }
 
 // validateGrantStructureWithResolved validates the structure of granted permission sets

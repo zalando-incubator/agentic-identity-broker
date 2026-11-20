@@ -306,7 +306,7 @@ var _ = Describe("OAuth2 credential source boundaries", func() {
 				// Route only the fixture's authorization endpoint; keep Google enrichment and its credential document intact.
 				service.Endpoints.AuthorizeEndpoint = journey.Upstream.URL() + "/oauth/authorize"
 				version := service.Version
-				Expect(journey.Storage.Services().Update(context.Background(), service, &version)).To(Succeed())
+				Expect(providerUpdateError(journey.Storage.Services().Update(context.Background(), service, &version))).To(Succeed())
 				before = storedService(serviceID)
 				journey.Upstream.WithAccessToken("google-access-initial").WithRefreshToken("google-refresh-initial")
 			})
@@ -532,6 +532,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 				ctx := context.Background()
 				Expect(fixtures.SeedPlaceholderGrantData(ctx, journey.Storage, serviceID)).To(Succeed())
 				agent := fixtures.ValidAgent()
+				agent.ServiceRequirements = []domainstorage.ServiceRequirement{{ServiceID: serviceID, RequirementType: domainstorage.RequirementTypeMandatory}}
 				agentID = agent.ID
 				Expect(journey.Storage.Agents().Create(ctx, agent)).To(Succeed())
 				grant := fixtures.ActiveGrant(journey.Principal, agent.ID.String(), serviceID.String(), []string{"profile"})
@@ -539,32 +540,59 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			})
 
 			// US5-S3 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US5-S3 keeps affected consent and session metadata available while initiation requires only the client ID", func() {
+			It("US5-S3 observes live identity without the secret and preserves metadata during an identity outage", func() {
 				Expect(os.Rename(binding["client_secret_file"], binding["client_secret_file"]+".saved")).To(Succeed())
 				authorized, err := journey.Authorize(serviceID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(authorized.StatusCode).To(Equal(http.StatusFound))
 				Expect(authorized.Body.Close()).To(Succeed())
-				Expect(os.Rename(binding["client_id_file"], binding["client_id_file"]+".saved")).To(Succeed())
-				for _, path := range []string{"/api/consent/agents/" + agentID.String(), "/api/consent/agents/" + agentID.String() + "/grants", "/api/third-party/" + serviceID.String() + "/session"} {
-					response, err := journey.EndUser.AuthenticatedGET(path, journey.Principal)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(response.StatusCode).To(Equal(http.StatusOK))
-					body, err := helpers.ReadResponseBody(response)
-					Expect(err).NotTo(HaveOccurred())
-					Expect(body).To(ContainSubstring(serviceID.String()))
-					for _, marker := range []string{fixtures.CredentialClientID, fixtures.CredentialClientSecret, binding["client_id_file"], binding["client_secret_file"]} {
-						Expect(body).NotTo(ContainSubstring(marker))
+				before, err := journey.Storage.Services().Get(context.Background(), serviceID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(helpers.PublishCredentialPair(binding, fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret)).To(Succeed())
+				_, err = os.Stat(binding["client_secret_file"])
+				Expect(os.IsNotExist(err)).To(BeTrue())
+				tokenCount := len(journey.Upstream.GetTokenRequests())
+				beforeSession, err := journey.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.Principal), serviceID)
+				Expect(err).NotTo(HaveOccurred())
+				for _, identityUnavailable := range []bool{false, true} {
+					if identityUnavailable {
+						Expect(os.Rename(binding["client_id_file"], binding["client_id_file"]+".saved")).To(Succeed())
 					}
+					for _, path := range []string{"/api/consent/agents/" + agentID.String(), "/api/consent/agents/" + agentID.String() + "/grants", "/api/third-party/" + serviceID.String() + "/session"} {
+						response, err := journey.EndUser.AuthenticatedGET(path, journey.Principal)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(response.StatusCode).To(Equal(http.StatusOK))
+						body, err := helpers.ReadResponseBody(response)
+						Expect(err).NotTo(HaveOccurred())
+						Expect(body).To(ContainSubstring(serviceID.String()))
+						var document map[string]any
+						Expect(json.Unmarshal([]byte(body), &document)).To(Succeed())
+						data, ok := document["data"].(map[string]any)
+						Expect(ok).To(BeTrue())
+						if strings.HasSuffix(path, "/session") {
+							Expect(data["session"]).To(HaveKeyWithValue("requires_reauthentication", true))
+						} else if !strings.HasSuffix(path, "/grants") {
+							Expect(data["services"]).To(ContainElement(And(HaveKeyWithValue("serviceId", serviceID.String()), HaveKeyWithValue("connectionStatus", "not_connected"))))
+						}
+						for _, marker := range []string{fixtures.CredentialClientID, fixtures.AlternateCredentialClientID, fixtures.CredentialClientSecret, fixtures.RotatedCredentialSecret, binding["client_id_file"], binding["client_secret_file"]} {
+							Expect(body).NotTo(ContainSubstring(marker))
+						}
+					}
+					after, err := journey.Storage.Services().Get(context.Background(), serviceID)
+					Expect(err).NotTo(HaveOccurred())
+					expectCredentialServiceIdentity(before, after, fixtures.AlternateCredentialClientID, 1)
+					Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(tokenCount))
+					afterSession, err := journey.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.Principal), serviceID)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(afterSession).To(Equal(beforeSession))
 				}
-				before := len(journey.Upstream.GetTokenRequests())
 				authorized, err = journey.Authorize(serviceID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(authorized.StatusCode).To(Equal(http.StatusInternalServerError))
 				body, err := helpers.CredentialResponseObject(authorized)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(body).To(HaveKeyWithValue("error", "internal_error"))
-				Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(before))
+				Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(tokenCount))
 			})
 		})
 
@@ -652,6 +680,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			claims, err := j.Application.OAuth2SessionService.ValidateStateToken(callback.Query().Get("state"), id.Principal(j.Principal), registeredID)
 			Expect(err).NotTo(HaveOccurred())
 			claims.UpstreamClientID = nil
+			claims.UpstreamClientRevision = nil
 			sealed, err := j.Application.OAuth2SessionService.CreateStateToken(claims)
 			Expect(err).NotTo(HaveOccurred())
 			query := callback.Query()
@@ -686,14 +715,18 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 	assertEstablishedContexts := func(tc transitionCase, selectedSecret string) {
 		j := tc.journey
 		before := len(j.Upstream.GetTokenRequests())
+		beforeService, err := j.Storage.Services().Get(context.Background(), tc.serviceID)
+		Expect(err).NotTo(HaveOccurred())
+		beforeSession, err := j.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(j.Principal), tc.serviceID)
+		Expect(err).NotTo(HaveOccurred())
 		response, err := j.Refresh(tc.serviceID)
 		Expect(err).NotTo(HaveOccurred())
 		blocked := tc.missingIdentity || tc.selectedID != fixtures.CredentialClientID
 		if blocked {
-			Expect(response.StatusCode).To(Equal(http.StatusInternalServerError))
+			Expect(response.StatusCode).To(Equal(http.StatusConflict))
 			body, err := helpers.CredentialResponseObject(response)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(body).To(HaveKeyWithValue("error", "internal_error"))
+			Expect(body).To(HaveKeyWithValue("error", "refresh_unavailable"))
 		} else {
 			Expect(response.StatusCode).To(Equal(http.StatusOK))
 			Expect(response.Body.Close()).To(Succeed())
@@ -707,6 +740,9 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 		if blocked {
 			Expect(location.Query().Get("error")).To(Equal("callback_failed"))
 			Expect(j.Upstream.GetTokenRequests()).To(HaveLen(before))
+			afterSession, err := j.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(j.Principal), tc.serviceID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(afterSession).To(Equal(beforeSession))
 		} else {
 			Expect(location.Query().Get("error")).To(BeEmpty())
 			requests := j.Upstream.GetTokenRequests()[before:]
@@ -718,6 +754,13 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 				Expect(secret).To(Equal(selectedSecret))
 			}
 		}
+		afterService, err := j.Storage.Services().Get(context.Background(), tc.serviceID)
+		Expect(err).NotTo(HaveOccurred())
+		revision := int64(0)
+		if tc.selectedID != fixtures.CredentialClientID {
+			revision = 1
+		}
+		expectCredentialServiceIdentity(beforeService, afterService, tc.selectedID, revision)
 	}
 
 	Context("when source transitions retain established identity", func() {
@@ -858,7 +901,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			})
 
 			// US5-S8 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US5-S8 reads upgraded legacy services as stored and preserves never-transitioned authentication", func() {
+			It("US5-S8 preserves revision-zero legacy sessions but rejects callbacks missing an explicit revision", func() {
 				before, err := journey.Storage.Services().Get(context.Background(), serviceID)
 				Expect(err).NotTo(HaveOccurred())
 				body := readService()
@@ -869,11 +912,52 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 				session, err := journey.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.Principal), serviceID)
 				Expect(err).NotTo(HaveOccurred())
 				session.UpstreamClientID = nil
+				session.UpstreamClientRevision = 0
 				Expect(journey.Storage.UserSessions().Create(context.Background(), session)).To(Succeed())
 				response, err := journey.Refresh(serviceID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(response.StatusCode).To(Equal(http.StatusOK))
 				Expect(response.Body.Close()).To(Succeed())
+				preserved, err := journey.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.Principal), serviceID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(preserved.UpstreamClientID).To(BeNil())
+				Expect(preserved.UpstreamClientRevision).To(BeZero())
+				response, err = journey.Authorize(serviceID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.StatusCode).To(Equal(http.StatusFound))
+				callback, err := helpers.ProviderAuthorizationCallback(response.Header.Get("Location"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.Body.Close()).To(Succeed())
+				claims, err := journey.Application.OAuth2SessionService.ValidateStateToken(callback.Query().Get("state"), id.Principal(journey.Principal), serviceID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(claims.UpstreamClientID).NotTo(BeNil())
+				Expect(claims.UpstreamClientID.String()).To(Equal(fixtures.CredentialClientID))
+				Expect(claims.UpstreamClientRevision).NotTo(BeNil())
+				Expect(*claims.UpstreamClientRevision).To(BeZero())
+				claims.UpstreamClientRevision = nil
+				sealed, err := journey.Application.OAuth2SessionService.CreateStateToken(claims)
+				Expect(err).NotTo(HaveOccurred())
+				query := callback.Query()
+				query.Set("state", sealed)
+				callback.RawQuery = query.Encode()
+				tokenCount := len(journey.Upstream.GetTokenRequests())
+				response, err = journey.EndUser.AuthenticatedGET(callback.RequestURI(), journey.Principal)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.StatusCode).To(Equal(http.StatusFound))
+				location, err := url.Parse(response.Header.Get("Location"))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.Body.Close()).To(Succeed())
+				Expect(location.Path).To(Equal("/sessions"))
+				Expect(location.Query().Get("error")).To(Equal("callback_failed"))
+				Expect(location.Query().Get("error_description")).To(Equal("Authorization failed - please try again"))
+				Expect(location.Query().Get("success")).To(BeEmpty())
+				Expect(journey.Upstream.GetTokenRequests()).To(HaveLen(tokenCount))
+				unchanged, err := journey.Storage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(journey.Principal), serviceID)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(unchanged).To(Equal(preserved))
+				records, err := journey.Logs.Records()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(records).To(ContainElement(And(HaveKeyWithValue("event", "session.oauth2.credential_source_failed"), HaveKeyWithValue("service_id", serviceID.String()), HaveKeyWithValue("operation", "code_exchange"), HaveKeyWithValue("reason", "identity_missing"))))
 				after, err := journey.Storage.Services().Get(context.Background(), serviceID)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(after).To(Equal(before))

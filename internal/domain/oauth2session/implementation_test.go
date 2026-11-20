@@ -230,9 +230,11 @@ func TestImplementation_InitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
 
 	result, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, redirectURI)
 
-	assert.Error(t, err, "should return error for non-existent service")
+	require.Error(t, err, "should return error for non-existent service")
 	assert.Nil(t, result, "result should be nil on error")
 	assert.ErrorIs(t, err, oauth2session.ErrServiceNotFound)
+	assert.ErrorIs(t, err, model.ErrCredentialSourceUnavailable)
+	assert.NotContains(t, err.Error(), serviceID.String(), "identity errors must not expose raw repository messages")
 }
 
 func TestImplementation_StateToken_RoundTrip(t *testing.T) {

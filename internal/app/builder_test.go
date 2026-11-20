@@ -233,6 +233,71 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 	}
 }
 
+func TestBuilderSessionUsabilityObservesFilesystemIdentityChanges(t *testing.T) {
+	ctx := context.Background()
+	clientIDFile := t.TempDir() + "/client-id"
+	require.NoError(t, os.WriteFile(clientIDFile, []byte("reports-client-v1\n"), 0600))
+	cfg := &ports.Config{
+		Server: ports.ServerConfig{
+			EndUser: ports.ServerInstanceConfig{Port: 8000, PublicURL: "http://localhost:8000"},
+			Admin:   ports.ServerInstanceConfig{Port: 14000, PublicURL: "http://localhost:14000"},
+		},
+		Storage: ports.StorageConfig{Backend: "memory"},
+		ThirdPartyOAuth2: ports.ThirdPartyOAuth2Config{
+			JWESigningKey: base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")),
+			CredentialFiles: map[string]ports.CredentialFileBinding{
+				"reports": {ClientIDFile: clientIDFile, ClientSecretFile: clientIDFile + ".missing"},
+			},
+		},
+		Encryption: ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
+		OAuth2AuthServer: ports.OAuth2AuthServerConfig{
+			Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour},
+		},
+	}
+	adapter, err := storage.NewAdapter(&cfg.Storage)
+	require.NoError(t, err)
+	app, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).
+		WithLogger(slog.New(slog.DiscardHandler)).Build()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, app.Shutdown(ctx)) })
+
+	canonicalID := "reports"
+	service := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: id.NewServiceID(), CanonicalID: &canonicalID, DisplayName: "Reports",
+		CredentialSource: model.CredentialSourceFilesystem, Secret: model.NewAbsentSecret(),
+		IssuerURI: "https://reports.example.com",
+	}
+	require.NoError(t, adapter.Services().Create(ctx, service))
+	clientID := id.ClientID("reports-client-v1")
+	sessions := []*domstorage.UserSession{{ServiceID: service.ID, UpstreamClientID: &clientID}}
+	var evaluator ports.SessionUsabilityEvaluator = app.OAuth2SessionService
+
+	for _, step := range []struct {
+		name     string
+		clientID string
+		revision int64
+		unusable bool
+	}{
+		{name: "initial observation", clientID: "reports-client-v1"},
+		{name: "changed identity", clientID: "reports-client-v2", revision: 1, unusable: true},
+		{name: "rollback cannot revive session", clientID: "reports-client-v1", revision: 2, unusable: true},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(clientIDFile, []byte(step.clientID+"\n"), 0600))
+			for _, mode := range []ports.UsabilityMode{ports.UsabilityGate, ports.UsabilityDisplay} {
+				result, err := evaluator.RequiresReauthentication(ctx, sessions, mode)
+				require.NoError(t, err)
+				assert.Equal(t, step.unusable, result[service.ID])
+			}
+			persisted, err := adapter.Services().Get(ctx, service.ID)
+			require.NoError(t, err)
+			require.NotNil(t, persisted.ClientIdentity)
+			assert.Equal(t, id.ClientID(step.clientID), *persisted.ClientIdentity)
+			assert.Equal(t, step.revision, persisted.ClientIdentityRevision)
+		})
+	}
+}
+
 func TestBuilderAdminJWTAuthentication(t *testing.T) {
 	newIssuer := func(keyID string) (string, jwk.Key) {
 		t.Helper()

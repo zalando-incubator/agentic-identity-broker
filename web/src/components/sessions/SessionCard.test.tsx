@@ -45,6 +45,9 @@ describe('SessionCard', () => {
 
       // Verify service name
       expect(screen.getByText('Google Drive')).toBeInTheDocument();
+      expect(
+        screen.getByRole('article', { name: 'Session: Google Drive' }),
+      ).toBeInTheDocument();
 
       // Verify component renders
       expect(container).toBeInTheDocument();
@@ -77,14 +80,14 @@ describe('SessionCard', () => {
       expect(screen.getByText('Access Token Expired')).toBeInTheDocument();
     });
 
-    it('renders "Login required" status when the session requires reauthentication', () => {
+    it('renders sign-in-required status when the session requires reauthentication', () => {
       const session = createMockSession({
         requires_reauthentication: true,
       });
 
       render(<SessionCard session={session} onTerminate={vi.fn()} />);
 
-      expect(screen.getByText('Login required')).toBeInTheDocument();
+      expect(screen.getByText('Sign-in required')).toBeInTheDocument();
       expect(screen.getByText('Log in to reconnect')).toBeInTheDocument();
     });
 
@@ -187,7 +190,9 @@ describe('SessionCard', () => {
       );
 
       expect(container).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /view details/i })).toBeNull();
+      expect(
+        screen.queryByRole('button', { name: /view details/i }),
+      ).toBeNull();
     });
 
     it('keeps the Terminate button for a session that requires reauthentication', () => {
@@ -204,7 +209,6 @@ describe('SessionCard', () => {
     });
   });
 
-
   describe('Refresh button', () => {
     it('renders Refresh button when refresh token exists and onRefresh is provided', () => {
       const session = createMockSession({ has_refresh_token: true });
@@ -219,7 +223,9 @@ describe('SessionCard', () => {
         />,
       );
 
-      expect(screen.getByRole('button', { name: /refresh/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /refresh/i }),
+      ).toBeInTheDocument();
     });
 
     it('does not render Refresh button when refresh token is missing', () => {
@@ -282,7 +288,7 @@ describe('SessionCard', () => {
   });
 
   describe('Login button', () => {
-    it('offers Login next to Terminate when the provider rejected the refresh token and access is valid', async () => {
+    it('offers Login next to Terminate when the backend requires reauthentication despite valid access', async () => {
       const user = userEvent.setup();
       const session = createMockSession({
         requires_reauthentication: true,
@@ -300,7 +306,7 @@ describe('SessionCard', () => {
         />,
       );
 
-      expect(screen.getByText('Login required')).toBeInTheDocument();
+      expect(screen.getByText('Sign-in required')).toBeInTheDocument();
       expect(screen.getByText('Log in to reconnect')).toBeInTheDocument();
       expect(screen.queryByText(/expir/i)).toBeNull();
       expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
@@ -475,6 +481,43 @@ describe('SessionCard', () => {
 
       await user.tab();
       expect(screen.getByRole('button', { name: /terminate/i })).toHaveFocus();
+    });
+
+    it('keeps details, Login, and Terminate keyboard-accessible for an invalidated session', async () => {
+      const user = userEvent.setup();
+      const session = createMockSession({ requires_reauthentication: true });
+      const onViewDetails = vi.fn();
+      const onLogin = vi.fn();
+      const onTerminate = vi.fn();
+      const onRefresh = vi.fn();
+
+      render(
+        <SessionCard
+          session={session}
+          onViewDetails={onViewDetails}
+          onLogin={onLogin}
+          onTerminate={onTerminate}
+          onRefresh={onRefresh}
+        />,
+      );
+
+      await user.tab();
+      expect(
+        screen.getByRole('button', { name: /view details/i }),
+      ).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(onViewDetails).toHaveBeenCalledExactlyOnceWith(session.service_id);
+
+      await user.tab();
+      expect(screen.getByRole('button', { name: /login/i })).toHaveFocus();
+      await user.keyboard(' ');
+      expect(onLogin).toHaveBeenCalledExactlyOnceWith(session.service_id);
+
+      await user.tab();
+      expect(screen.getByRole('button', { name: /terminate/i })).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(onTerminate).toHaveBeenCalledExactlyOnceWith(session.service_id);
+      expect(onRefresh).not.toHaveBeenCalled();
     });
   });
 

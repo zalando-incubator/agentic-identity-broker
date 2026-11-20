@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -53,7 +54,7 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 		return nil, errors.New("session cannot be nil")
 	}
 	if err := session.Validate(); err != nil {
-		return nil, err
+		return nil, storage.NewStorageError("CreateUserSession", storage.ErrorKindValidation, err, "invalid session")
 	}
 	if r.issuerSessionGate != nil {
 		r.issuerSessionGate.RLock()
@@ -73,6 +74,13 @@ func (r *InMemoryUserSessionRepository) create(ctx context.Context, session *sto
 		return nil, err
 	}
 	defer r.unlockSession(key, gate)
+	if !replace && r.provider != nil {
+		r.provider.mu.RLock()
+		defer r.provider.mu.RUnlock()
+		if err := r.currentClientRevisionError(session, operation); err != nil {
+			return nil, err
+		}
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -114,6 +122,18 @@ func (r *InMemoryUserSessionRepository) currentDiscoveryStateError(session *stor
 	}
 	if !matches {
 		return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "provider issuer or audience is no longer current")
+	}
+	return nil
+}
+
+// The caller holds the provider read lock through session persistence.
+func (r *InMemoryUserSessionRepository) currentClientRevisionError(session *storage.UserSession, operation string) error {
+	current := r.provider.providers[session.ServiceID]
+	if current == nil {
+		return storage.NewStorageError(operation, storage.ErrorKindNotFound, nil, "service not found")
+	}
+	if current.entity.ClientIdentityRevision != session.UpstreamClientRevision {
+		return storage.NewStorageError(operation, storage.ErrorKindConflict, model.NewCredentialSourceError(model.CredentialSourceReasonIdentitySuperseded), "client identity revision changed")
 	}
 	return nil
 }
@@ -177,6 +197,7 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 		return nil, err
 	}
 	if session.CallbackID == current.CallbackID {
+		session.UpstreamClientRevision = current.UpstreamClientRevision
 		session.UpstreamClientID = upstreamClientID
 		if upstreamClientID != nil {
 			*upstreamClientID = *current.UpstreamClientID
@@ -184,7 +205,14 @@ func (r *InMemoryUserSessionRepository) WithLockedSession(ctx context.Context, p
 	}
 	if updated {
 		if err := session.Validate(); err != nil {
-			return nil, err
+			return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindValidation, err, "invalid session")
+		}
+		if session.CallbackID != current.CallbackID && r.provider != nil {
+			r.provider.mu.RLock()
+			defer r.provider.mu.RUnlock()
+			if err := r.currentClientRevisionError(session, "WithLockedSession"); err != nil {
+				return nil, err
+			}
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -357,21 +385,6 @@ func (r *InMemoryUserSessionRepository) ListSummariesByPrincipal(_ context.Conte
 		}
 	}
 	return summaries, nil
-}
-
-func (r *InMemoryUserSessionRepository) ListActiveServiceIDsByPrincipal(_ context.Context, principal id.Principal) ([]id.ServiceID, error) {
-	if principal.IsZero() {
-		return nil, errors.New("principal required")
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	ids := make([]id.ServiceID, 0)
-	for _, session := range r.sessions {
-		if session.Principal == principal && !session.RequiresReauthentication() {
-			ids = append(ids, session.ServiceID)
-		}
-	}
-	return ids, nil
 }
 
 // ListActiveByPrincipal retrieves only sessions that do not require reauthentication.

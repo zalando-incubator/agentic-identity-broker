@@ -157,14 +157,14 @@ Public, CIMD confidential, and Google services cannot select filesystem mode.
 
 Initiation reads only the current client-ID file. Each exchange attempt and actual refresh reads a fresh, coherent pair.
 Each file must be regular, readable by the broker UID, non-empty after whitespace removal, and at most 65,536 bytes before trimming.
-The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value and reads no files for metadata.
+The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value.
 Configuration has no hot reload. Binding changes require a restart, but file publication takes effect on the next applicable operation.
 
 For rotation, publish fresh immutable targets and switch the complete pair atomically. Do not modify a published target or reuse a retired target during acquisition.
 The reader revalidates both targets after acquisition. A detected replacement returns a safe `generation_changed` error and sends no provider authentication request.
 A pair validated before later publication can finish its in-flight operation. Provider validity overlap must cover that operation.
 
-Secret rotation can retain sessions when the client ID stays the same. A changed client ID requires new connections for old codes and sessions.
+Changing the client ID requires users to reconnect. Rotating the secret without changing the client ID does not.
 Source transitions never rewrite established identities. Removing a binding preserves filesystem mode and makes affected authentication fail with `missing_binding`.
 Administrative responses expose source metadata, not paths, file values, or transition history. Source errors retain generic HTTP responses and closed, credential-free event reasons.
 

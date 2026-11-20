@@ -134,6 +134,8 @@ type ThirdpartyOAuth2ProviderEntity struct {
 	Secret                       Secret
 	CredentialSource             CredentialSource
 	CredentialSourceTransitioned bool
+	ClientIdentity               *id.ClientID `json:"-"`
+	ClientIdentityRevision       int64        `json:"-"`
 	CredentialSourceProvided     bool
 	ClientRegistration           ClientRegistration
 	ClientRegistrationProvided   bool
@@ -270,6 +272,12 @@ func (e *ThirdpartyOAuth2ProviderEntity) Validate() error {
 	}
 	if e.Version < 0 {
 		return errors.New("version cannot be negative")
+	}
+	if e.ClientIdentityRevision < 0 {
+		return errors.New("client identity revision cannot be negative")
+	}
+	if e.ClientIdentity != nil && e.ClientIdentity.IsZero() {
+		return errors.New("client identity cannot be empty")
 	}
 	if err := canonical.Validate(e.CanonicalID); err != nil {
 		return err
@@ -988,6 +996,7 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 		Secret:                       e.Secret, // Value type; internal ciphertext slice independently copied by Secret
 		CredentialSource:             e.CredentialSource,
 		CredentialSourceTransitioned: e.CredentialSourceTransitioned,
+		ClientIdentityRevision:       e.ClientIdentityRevision,
 		CredentialSourceProvided:     e.CredentialSourceProvided,
 		ClientRegistration:           e.ClientRegistration,
 		ClientRegistrationProvided:   e.ClientRegistrationProvided,
@@ -1015,6 +1024,10 @@ func (e *ThirdpartyOAuth2ProviderEntity) Copy() *ThirdpartyOAuth2ProviderEntity 
 	if e.CanonicalID != nil {
 		canonicalID := *e.CanonicalID
 		result.CanonicalID = &canonicalID
+	}
+	if e.ClientIdentity != nil {
+		identity := *e.ClientIdentity
+		result.ClientIdentity = &identity
 	}
 
 	// Deep copy optional MetadataURL pointer

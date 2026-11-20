@@ -27,6 +27,10 @@ func externalIDAdminServer(st *storageadapter.Adapter) *bootstrap.TestServer {
 	canonical := "github-read"
 	permission.CanonicalID = &canonical
 	Expect(st.PermissionSets().Update(ctx, permission)).To(Succeed())
+	return externalIDAdminAppServer(st)
+}
+
+func externalIDAdminAppServer(st *storageadapter.Adapter) *bootstrap.TestServer {
 	logger := bootstrap.TestLogger(slog.LevelWarn)
 	application, err := bootstrap.NewServerFactory(fixtures.LocalConfig(), logger).BuildApp(st)
 	Expect(err).To(Succeed())
@@ -44,11 +48,7 @@ func withExternalIDPostgresBrokers(action func(*bootstrap.TestServer, *bootstrap
 	defer func() { Expect(firstStore.Close(ctx)).To(Succeed()); Expect(secondStore.Close(ctx)).To(Succeed()) }()
 	first := externalIDAdminServer(firstStore)
 	defer first.Close()
-	logger := bootstrap.TestLogger(slog.LevelWarn)
-	application, err := bootstrap.NewServerFactory(fixtures.LocalConfig(), logger).BuildApp(secondStore)
-	Expect(err).To(Succeed())
-	second, err := bootstrap.NewAdminTestServer(application, logger)
-	Expect(err).To(Succeed())
+	second := externalIDAdminAppServer(secondStore)
 	defer second.Close()
 	action(first, second, firstStore)
 }

@@ -961,7 +961,7 @@ var _ = Describe("Agent Permission Requirements", func() {
 		It("should return description field for all configured scopes", func() {
 			// Given: Service with properly configured scopes including descriptions
 			githubService.Scopes = append(githubService.Scopes, model.OAuthScope{ScopeValue: "gist", Description: "Manage gists"})
-			err := testStorage.Services().Update(context.Background(), githubService, nil)
+			err := providerUpdateError(testStorage.Services().Update(context.Background(), githubService, nil))
 			Expect(err).ToNot(HaveOccurred())
 
 			agent.ServiceRequirements[0].RequiredScopes = append(agent.ServiceRequirements[0].RequiredScopes, "gist")

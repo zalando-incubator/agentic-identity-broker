@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,6 +18,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/credentialfile"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -238,6 +240,7 @@ func TestSessionSweepReportsEffectiveConfiguredControls(t *testing.T) {
 
 func TestSessionSweepRequestOverridesBothConfiguredDefaults(t *testing.T) {
 	f := newSweepFixture(t)
+	f.provider(func(http.ResponseWriter, *http.Request) { t.Error("dry run must not contact the provider") })
 	f.resetService(oauth2session.Config{RefreshLookahead: time.Minute, SweepDefaultPageSize: 100}, f.seedEncryption)
 	inside, outside := time.Now().Add(6*time.Minute), time.Now().Add(time.Hour)
 	f.seed(1, &inside, nil, true)
@@ -296,6 +299,7 @@ func TestSessionSweepDryRunClassifiesSnapshotsWithoutSideEffects(t *testing.T) {
 
 func TestSessionSweepFixedThresholdAndCompositeCursorAcrossChangingPages(t *testing.T) {
 	f := newSweepFixture(t)
+	f.provider(func(http.ResponseWriter, *http.Request) { t.Error("dry run must not contact the provider") })
 	soon := time.Now().Add(time.Minute)
 	for n := 1; n <= 5; n++ {
 		f.seed(n, &soon, nil, true)
@@ -429,6 +433,7 @@ func TestSessionSweepEvaluatesMovedSessionOnce(t *testing.T) {
 
 func TestSessionSweepDryRunSkipsMovedCandidateID(t *testing.T) {
 	f := newSweepFixture(t)
+	f.provider(func(http.ResponseWriter, *http.Request) { t.Error("dry run must not contact the provider") })
 	firstExpiry, movedExpiry, secondExpiry := time.Now().Add(time.Minute), time.Now().Add(2*time.Minute), time.Now().Add(3*time.Minute)
 	first := f.seed(1, &firstExpiry, nil, true)
 	second := f.seed(2, &secondExpiry, nil, true)
@@ -662,23 +667,31 @@ func TestSessionSweepExcludesRejectedSessions(t *testing.T) {
 	assert.Equal(t, &rejectedAt, persisted.RefreshRejectedAt)
 }
 
-func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProviderLookup(t *testing.T) {
+func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProviderCredentials(t *testing.T) {
 	reader := sdkmetric.NewManualReader()
 	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	previous := otel.GetMeterProvider()
 	otel.SetMeterProvider(meterProvider)
 	t.Cleanup(func() { otel.SetMeterProvider(previous); _ = meterProvider.Shutdown(context.Background()) })
 	f := newSweepFixture(t)
+	encryption := &sessionDisplayEncryption{EncryptionPort: f.seedEncryption}
 	providerRepo := &countingSweepProviderRepository{
 		ThirdpartyOAuth2ProviderRepository: memory.NewInMemoryThirdpartyOAuth2ProviderRepository(),
 		gets:                               make(map[id.ServiceID]int),
 	}
-	f.providers = thirdparty.NewThirdpartyOAuth2ProviderService(providerRepo, f.seedEncryption, newNoopBranchKeyManager(), nil, false, slog.Default())
-	f.resetService(oauth2session.DefaultConfig(), f.seedEncryption)
+	f.providers = thirdparty.NewThirdpartyOAuth2ProviderService(providerRepo, encryption, newNoopBranchKeyManager(), nil, false, slog.Default())
+	f.resetService(oauth2session.DefaultConfig(), encryption)
 	validServiceID := f.serviceID
-	f.provider(func(w http.ResponseWriter, _ *http.Request) { sweepSuccess(w) })
+	var providerCalls atomic.Int32
+	f.provider(func(w http.ResponseWriter, _ *http.Request) {
+		providerCalls.Add(1)
+		sweepSuccess(w)
+	})
 	failedServiceID := id.NewServiceID()
 	f.serviceID = failedServiceID
+	f.provider(func(http.ResponseWriter, *http.Request) {
+		t.Error("an unrefreshable session must not authenticate to its provider")
+	})
 	accessExpiry := time.Now().Add(-time.Minute)
 	failed := f.seed(1, &accessExpiry, nil, false)
 	failedAccess := bytes.Clone(failed.EncryptedAccessToken)
@@ -696,16 +709,18 @@ func TestSessionSweepReportsUnrefreshableSessionOnEveryInvocationWithoutProvider
 		assert.Equal(t, failedRefresh, persisted.EncryptedRefreshToken)
 		require.NotNil(t, persisted.AccessTokenExpiresAt)
 		assert.True(t, accessExpiry.Equal(*persisted.AccessTokenExpiresAt))
-		assert.Zero(t, providerRepo.gets[failedServiceID], "sessions without a refresh token must not load provider credentials")
+		assert.Equal(t, invocation, providerRepo.gets[failedServiceID], "only the identity metadata lookup is needed for an unrefreshable session")
+		assert.Equal(t, 2, encryption.decryptions, "only the refreshable session may decrypt its provider secret and refresh token")
 	}
-	assert.Equal(t, 1, providerRepo.gets[validServiceID])
+	assert.Equal(t, 3, providerRepo.gets[validServiceID])
+	assert.EqualValues(t, 1, providerCalls.Load())
 	assert.Equal(t, 2, strings.Count(f.logs.String(), `"event":"session.oauth2.refresh_failed"`))
 	refreshed := sweepCounterPoints(t, reader)["session_sweep_refreshed_total"]
 	require.Len(t, refreshed, 1)
 	service, _ := refreshed[0].Attributes.Value("service_id")
 	assert.Equal(t, validServiceID.String(), service.AsString())
 	assert.Equal(t, map[string]int64{failedServiceID.String() + "/" + string(oauth2session.DetailAccessTokenExpired): 2}, sweepFailures(t, reader),
-		"failures without a provider lookup still name their service")
+		"failures without provider credentials still name their service")
 }
 
 func TestSessionSweepCountsUnderCanonicalIDWhereSet(t *testing.T) {
@@ -773,18 +788,22 @@ func TestSessionSweepRepositoryFailuresAbortInsteadOfMiscounting(t *testing.T) {
 		listFails    bool
 		providerRepo bool
 		terminal     bool
+		dryRun       bool
 	}{
-		{"expiry listing unavailable", true, false, false},
-		{"locked update unavailable", false, false, false},
-		{"locked terminal recheck unavailable", false, false, true},
-		{"provider repository unavailable", false, true, false},
+		{"expiry listing unavailable", true, false, false, false},
+		{"locked update unavailable", false, false, false, false},
+		{"locked terminal recheck unavailable", false, false, true, false},
+		{"provider repository unavailable", false, true, false, false},
+		{"dry run expiry listing unavailable", true, false, false, true},
+		{"dry run provider repository unavailable", false, true, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			reader := installMeterReader(t)
 			f := newSweepFixture(t)
 			soon := time.Now().Add(time.Minute)
 			f.seed(1, &soon, nil, !tc.terminal)
 			f.seed(2, &soon, nil, true)
-			failure := errors.New("session repository disconnected")
+			failure := errors.New("repository disconnected at /private/provider/client-secret")
 			if tc.listFails {
 				f.expiry.list = func(context.Context, time.Time, storage.SessionExpiryCursor, int) ([]*storage.UserSession, error) {
 					return nil, storage.NewStorageError("ListExpiringSessions", storage.ErrorKindConnection, failure, "session repository unavailable")
@@ -800,12 +819,15 @@ func TestSessionSweepRepositoryFailuresAbortInsteadOfMiscounting(t *testing.T) {
 					return nil, storage.NewStorageError("WithLockedSession", storage.ErrorKindConnection, failure, "session repository unavailable")
 				}
 			}
-			result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{})
+			result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: tc.dryRun})
 			require.Error(t, err)
 			assert.ErrorIs(t, err, failure)
+			assert.NotContains(t, err.Error(), failure.Error())
+			assert.NotContains(t, f.logs.String(), failure.Error())
+			assert.Empty(t, sweepMetrics(t, reader), "a repository outage must not emit candidate counters")
 			assert.NotErrorIs(t, err, oauth2session.ErrInvalidSweepRequest)
 			assert.Zero(t, result.TotalEvaluated, "a repository outage cannot count a session failure")
-			if tc.listFails {
+			if tc.listFails || tc.dryRun {
 				assert.Zero(t, f.refresh.locks)
 			} else {
 				assert.Equal(t, 1, f.refresh.locks, "do not process the next candidate after storage fails")
@@ -815,6 +837,90 @@ func TestSessionSweepRepositoryFailuresAbortInsteadOfMiscounting(t *testing.T) {
 				dependency = oauth2session.DependencyProviderRepository
 			}
 			assertSweepLogMetadata(t, f.logs.String(), "session.oauth2.sweep_aborted", "ERROR", oauth2session.DetailRepositoryUnavailable, oauth2session.KindInfrastructure, dependency)
+		})
+	}
+}
+
+func TestSessionSweepCredentialFileFailureDoesNotAbort(t *testing.T) {
+	for _, tc := range []struct {
+		dryRun  bool
+		renewed bool
+	}{{dryRun: true}, {}, {renewed: true}} {
+		t.Run(fmt.Sprintf("dry_run=%t/renewed=%t", tc.dryRun, tc.renewed), func(t *testing.T) {
+			dryRun := tc.dryRun
+			f := newSweepFixture(t)
+			records := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
+			f.providers = thirdparty.NewThirdpartyOAuth2ProviderService(records, f.seedEncryption, newNoopBranchKeyManager(), nil, false, slog.Default())
+			binding := credentialPair(t, "filesystem-client", "never-read-secret")
+			require.NoError(t, os.Remove(binding.ClientIDFile))
+			config := oauth2session.DefaultConfig()
+			config.CredentialFiles = map[string]ports.CredentialFileBinding{"filesystem-provider": binding}
+			f.resetService(config, f.seedEncryption)
+			reader := &credentialReaderSpy{reader: credentialfile.New()}
+			f.service.WithCredentialFileReader(reader).WithClientIdentityRepository(records)
+			provider := createTestService(f.serviceID)
+			canonicalID := "filesystem-provider"
+			provider.CanonicalID = &canonicalID
+			provider.CredentialSource = model.CredentialSourceFilesystem
+			provider.ClientID = ""
+			provider.Secret = model.NewAbsentSecret()
+			require.NoError(t, f.providers.Create(context.Background(), provider))
+			soon := time.Now().Add(time.Minute)
+			failed := f.seed(1, &soon, nil, true)
+			if tc.renewed {
+				f.expiry.afterList = func(page int, _ []*storage.UserSession) {
+					if page != 1 {
+						return
+					}
+					later := time.Now().Add(time.Hour)
+					_, err := f.repo.WithLockedSession(context.Background(), failed.Principal, failed.ServiceID, func(_ context.Context, current *storage.UserSession) (bool, error) {
+						current.AccessTokenExpiresAt = &later
+						return true, nil
+					})
+					require.NoError(t, err)
+					failed, err = f.repo.Get(context.Background(), failed.ID)
+					require.NoError(t, err)
+				}
+			}
+			f.serviceID = id.NewServiceID()
+			var providerCalls atomic.Int32
+			f.provider(func(w http.ResponseWriter, _ *http.Request) {
+				providerCalls.Add(1)
+				sweepSuccess(w)
+			})
+			valid := f.seed(2, &soon, nil, true)
+
+			result, err := f.sweeper().Sweep(context.Background(), oauth2session.SweepRequest{DryRun: dryRun, PageSize: 1})
+			require.NoError(t, err, "a credential file failure must not be mistaken for a repository outage")
+			wantFailed, wantSkipped, wantReads := 1, 0, 1
+			if tc.renewed {
+				wantFailed, wantSkipped, wantReads = 0, 1, 0
+			}
+			assertSweepCounts(t, result, 1, wantSkipped, wantFailed, dryRun)
+			ids, pairs := reader.counts()
+			assert.Equal(t, wantReads, ids, "only candidates still due need identity resolution")
+			assert.Zero(t, pairs, "a missing identity must stop before reading the secret")
+			persisted, err := f.repo.Get(context.Background(), failed.ID)
+			require.NoError(t, err)
+			assert.Equal(t, failed, persisted, "credential file failures must not mutate the session")
+			if dryRun {
+				assert.Zero(t, providerCalls.Load())
+				assert.Zero(t, f.refresh.locks)
+				persisted, err := f.repo.Get(context.Background(), valid.ID)
+				require.NoError(t, err)
+				assert.Equal(t, valid, persisted)
+			} else {
+				assert.EqualValues(t, 1, providerCalls.Load(), "later candidates must still refresh")
+			}
+			if tc.renewed {
+				assert.NotContains(t, f.logs.String(), "session.oauth2.credential_source_failed")
+			} else {
+				assert.Contains(t, f.logs.String(), `"reason":"not_found"`)
+			}
+			assert.NotContains(t, f.logs.String(), "session.oauth2.sweep_aborted")
+			assert.NotContains(t, f.logs.String(), binding.ClientIDFile)
+			assert.NotContains(t, f.logs.String(), binding.ClientSecretFile)
+			assert.NotContains(t, f.logs.String(), "never-read-secret")
 		})
 	}
 }

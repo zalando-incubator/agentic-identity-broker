@@ -134,13 +134,8 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 			}
 			seen[candidate.ID] = struct{}{}
 			if req.DryRun {
-				switch {
-				case candidate.RefreshRejected() || !candidate.AccessTokenExpiresBy(threshold):
-					result.Skipped++
-				case !candidate.CanRefresh():
-					result.Failed++
-				default:
-					result.Refreshed++
+				if err := s.evaluateDryRunCandidate(ctx, candidate, threshold, &result); err != nil {
+					return result, err
 				}
 			} else {
 				refreshCtx, cancel := s.sessions.refreshOperationContext(context.WithoutCancel(ctx))
@@ -173,6 +168,10 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 						result.Failed++
 						s.failedCounter.Add(ctx, 1, metric.WithAttributes(sweepTrigger, serviceAttr(candidate.ServiceID),
 							attribute.String("failure_detail", string(metadata.Detail()))))
+						if errors.Is(refreshErr, model.ErrCredentialSourceUnavailable) {
+							s.sessions.auditCredentialSourceFailure(ctx, candidate.ServiceID, credentialOperationRefresh, refreshErr)
+							break
+						}
 						level := slog.LevelWarn
 						if metadata.Kind() == KindInternal || (metadata.Kind() == KindInfrastructure && metadata.Dependency() != DependencyProvider) {
 							level = slog.LevelError
@@ -207,6 +206,32 @@ func (s *SessionSweepService) Sweep(ctx context.Context, req SweepRequest) (Swee
 			return result, nil
 		}
 	}
+}
+
+func (s *SessionSweepService) evaluateDryRunCandidate(ctx context.Context, candidate *storage.UserSession, threshold time.Time, result *SweepResult) error {
+	var identityErr error
+	if !candidate.RefreshRejected() && candidate.AccessTokenExpiresBy(threshold) {
+		identityErr = s.sessions.checkDryRunIdentity(ctx, candidate)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if identityErr != nil && sessionFailureMetadata(identityErr).Dependency() == DependencyProviderRepository {
+			s.logAbort(ctx, *result, identityErr)
+			return identityErr
+		}
+	}
+	switch {
+	case candidate.RefreshRejected() || !candidate.AccessTokenExpiresBy(threshold):
+		result.Skipped++
+	case identityErr != nil:
+		s.sessions.auditCredentialSourceFailure(ctx, candidate.ServiceID, credentialOperationRefresh, identityErr)
+		result.Failed++
+	case !candidate.CanRefresh():
+		result.Failed++
+	default:
+		result.Refreshed++
+	}
+	return nil
 }
 
 func nextSweepCursor(page []*storage.UserSession, previous storage.SessionExpiryCursor) (storage.SessionExpiryCursor, error) {
