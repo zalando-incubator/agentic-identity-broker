@@ -1,0 +1,97 @@
+---
+title: "Telemetry"
+description: Spans, metrics and attributes that the broker and ExtProc emit through OpenTelemetry. Generated from the source code.
+---
+
+# Telemetry
+
+This page lists every span, metric and attribute that the broker and ExtProc create through
+the OpenTelemetry API. `tools/telemetrydoc` generates it from the source code, and a test
+fails when the page is out of date. Do not edit it by hand. The span and attribute
+descriptions are in `docs/reference/telemetry-descriptions.yaml`. After you change a span,
+a metric or an attribute, run `just telemetry-doc`.
+
+The page does not list:
+
+- the HTTP server spans and metrics that `otelchi` creates for each inbound request;
+- metrics that the OpenTelemetry SDK, the Go runtime or a library creates;
+- span events and resource attributes;
+- log records. `coding-standards/LOGGING.md` covers them.
+
+A value list can show more values than one span or metric sets. An attribute with an
+enumerated Go type lists every constant of the type. A variable or a parameter lists every
+constant that the code can assign or pass to it. An attribute that the code sets on the span
+in a context is listed under each span of this module that the context can hold. Rules for
+adding telemetry are in `coding-standards/OPENTELEMETRY.md`.
+
+## Spans
+
+Error status: whether the span can end with status `Error`.
+
+| Span | Kind | Scope | Error status | Description |
+|---|---|---|---|---|
+{{range $name, $s := .Spans -}}
+| [`{{$name}}`](#{{anchor $name}}) | {{or $s.Kind "Internal"}} | `{{$s.Scope}}` | {{if $s.ErrorStatus}}Yes{{else}}No{{end}} | {{text (index $.SpanDescriptions $name)}} |
+{{end}}
+## Metrics
+
+| Metric | Instrument | Unit | Scope | Description |
+|---|---|---|---|---|
+{{range $name, $m := .Metrics -}}
+| [`{{$name}}`](#{{anchor $name}}) | {{$m.Instrument}} | {{code $m.Unit}} | `{{$m.Scope}}` | {{text $m.Desc}} |
+{{end}}
+## Span attributes
+{{range $name, $s := .Spans}}
+### {{$name}}
+
+{{text (index $.SpanDescriptions $name)}}
+
+{{if $s.RenamedFrom -}}
+The `{{$s.RenamedFrom}}` span, renamed while it runs. It has the same attributes.
+{{- else -}}
+Started in {{codes $s.Files}}.
+{{- end}}
+
+{{template "attrs" $s.Attrs}}
+{{- end}}
+## Metric attributes
+{{range $name, $m := .Metrics}}
+### {{$name}}
+
+Created in `{{$m.File}}`.
+
+{{template "attrs" $m.Attrs}}
+{{- end}}
+## Attributes
+
+| Attribute | Description |
+|---|---|
+{{range $key, $desc := .Attributes -}}
+| `{{$key}}` | {{text $desc}} |
+{{end}}
+## Attribute values
+{{range $name, $values := .Enums}}
+### {{$name}}
+
+{{if documented $values -}}
+| Value | Meaning |
+|---|---|
+{{range $values -}}
+| {{code .Value}} | {{text .Doc}} |
+{{end -}}
+{{else -}}
+{{range $i, $e := $values}}{{if $i}}, {{end}}{{code $e.Value}}{{end}}
+{{end -}}
+{{end}}
+
+{{- define "attrs" -}}
+{{if . -}}
+| Attribute | Values |
+|---|---|
+{{range . -}}
+| `{{.Key}}` | {{values .}} |
+{{end -}}
+{{else -}}
+No attributes.
+{{end -}}
+{{end}}

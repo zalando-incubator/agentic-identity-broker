@@ -27,6 +27,7 @@ Read the source that governs the change. The summaries here do not replace the c
 
 `coding-standards/LOGGING.md` | Structured logging: plumbing, record shape, levels, principals, permitted data. Read before you add or change a log call.
 `coding-standards/OPENTELEMETRY.md` | Traces and metrics: plumbing, span names and status, attribute keys, instruments, permitted data. Read before you add or change a span or metric.
+`.golangci.yml`, `tools/telemetrylint/` | Lint enforcement of both standards. Each standard's Lint Enforcement section lists which checklist items lint covers.
 
 ### Section-Specific Agent Context
 
@@ -86,6 +87,8 @@ Check that this selection matches the task. Do not infer the feature from the br
 `docs/STORAGE_EXTENSION_GUIDE.md` | Adding new storage entities
 `docs/STORAGE_TROUBLESHOOTING.md` | Storage debugging
 `docs/configuration.md` | Configuration reference
+`docs/reference/telemetry.md` | Generated span, metric and attribute reference (`just telemetry-doc`)
+`docs/reference/telemetry-descriptions.yaml` | Span and attribute descriptions for the telemetry reference
 `docs/deployment/` | Deployment guides (Kubernetes, IRSA)
 `docs/operations/` | Operations runbooks
 `examples/config/` | Example configuration files
@@ -256,6 +259,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 |---|---|
 | `just check` | Non-mutating format, vet, and lint checks |
 | `just fmt` | Apply Go formatting changes |
+| `just telemetry-doc` | Regenerate `docs/reference/telemetry.md` from the code |
 | `just build` | Build Go binary → `./bin/agentic-identity-broker` |
 | `just test` | Fast Go/package tests (no E2E or integration suites) |
 | `just verify` | Full gate: static checks, security scans, tests, integration, then E2E |
@@ -268,6 +272,8 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just render-wireframes <spec.md>` | Render Wireloom wireframes in a spec to SVG (after `just install-tools`) |
 
 After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
+After a Go change under `internal/` or `cmd/`, run `just telemetry-doc` and commit `docs/reference/telemetry.md` if it changed.
+The page also lists the files that start spans and create metrics, and the doc comments of value constants, so it can change without a telemetry change.
 Do not rely only on editor diagnostics. Before a pull request, run the full gate from `CONTRIBUTING.md`.
 
 ## Code Style

@@ -7,6 +7,8 @@ Scope: OpenTelemetry traces and metrics. Log records, including log records expo
 Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
 spec `017-opentelemetry-support` (SR-001 to SR-004), `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
+`docs/reference/telemetry.md` lists each span, metric and attribute that the code emits. `tools/telemetrydoc` generates it (section 10).
+
 ## 1. Provider Plumbing
 
 | Rule | Reason |
@@ -143,7 +145,7 @@ if err != nil {
 | `oauth2.refresh` | Third-party session refresh | `specs/029-proactive-token-refresh/contracts/observability.md` |
 | `encryption` | Encryption operations | ADR 012 |
 | `impersonation` | OAuth2 impersonation | ADR 032 |
-| `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented` |
+| `storage` | Results of storage repository calls | `docs/configuration.md#what-is-instrumented`, `docs/reference/telemetry.md` |
 
 - Use the canonical keys in this table. Do not make synonyms.
 
@@ -171,7 +173,7 @@ if err != nil {
 
 A principal is personal data (`coding-standards/LOGGING.md` section 5). Spec 017 SR-001, as amended, permits it on spans only under these rules. Span attributes go through the same central principal policy as log records, so a change to redaction or pseudonymisation reaches both signals in one change.
 
-> **Until #356 lands:** `id.Principal.SpanAttribute` and the span principal policy do not exist yet. Do not add a new principal span attribute until they do. The existing `approval.principal` attributes change in #349.
+> **Until #356 lands:** `id.Principal.SpanAttribute` and the span principal policy do not exist yet. Do not add a new principal span attribute until they do. The existing `approval.principal` attributes change in #349. The `telemetrylint` `principal-key` rule rejects each new one (section 9).
 
 1. Set a principal on a span only with `id.Principal.SpanAttribute(key)`. Do not use `attribute.String` with `p.String()` or `string(p)`.
 2. Use a key that ends in `.principal`, for example `approval.principal`. Keys that end in `.principal` are reserved for principals.
@@ -287,3 +289,43 @@ These data classes are prohibited in span names, span attributes, span events, s
 - [ ] Principals are set on spans only through `id.Principal.SpanAttribute` under a `.principal` key, and only where section 4.3 permits. No principal is a metric attribute.
 - [ ] The observability contract lists each new instrument.
 - [ ] A test asserts that credentials on this path are not in span attributes, and asserts each new metric's attribute set.
+- [ ] Each new span and attribute key has a description in `docs/reference/telemetry-descriptions.yaml`, and `docs/reference/telemetry.md` is regenerated with `just telemetry-doc` (section 10).
+
+## 9. Lint Enforcement
+
+`just check` runs `golangci-lint` with `.golangci.yml` and the `telemetrylint` module plugin (`tools/telemetrylint`, built from `.custom-gcl.yml` by `scripts/golangci-lint-custom.sh`). `tools/lintrules/testdata` holds a deliberate violation of each rule, and `just lint` fails when a rule does not report its violation. `telemetrylint` does not check test files. `tools/telemetrylint/analyzer_test.go` covers each `telemetrylint` rule with `analysistest`.
+
+| Checklist item (section 8) | Lint | Still needs review |
+|---|---|---|
+| No provider, exporter, or SDK import outside `internal/adapters/telemetry` and `cmd/` | `depguard` `otel-sdk` rejects SDK, exporter, and contrib imports in `internal/`. `internal/app/builder.go` may import the SDK, because it holds the `TracerProvider` that tests inject (section 7). `domain-otel-api` limits domain packages to the API. `extproc-boundary` enforces ADR 027. | Calls to `telemetry.NewProvider` |
+| The tracer and the meter use the package's scope | `telemetrylint` `scope`: `otel.Tracer` and `otel.Meter` take a constant scope from the section 2 table (`scopes` in `.golangci.yml`). | Which scope a package uses |
+| Span names constant and `<scope>.<operation>[.<entity>]`. Span kind set | `telemetrylint` `span-name` and `span-kind`. A name starts with an allowlisted scope, and with the tracer's scope when the tracer is created in the same function. A helper that forwards its name or options to `Tracer.Start` in the same package is checked at each call site. | — |
+| `codes.Error` with a constant description and `error.type`. No `RecordError` | `forbidigo` rejects `RecordError`. `telemetrylint` `principal-sink` rejects a principal in a status description. | Status on each error path |
+| Background work starts a linked root span | — | All |
+| Canonical attribute keys in a listed namespace. Bounded values | `telemetrylint` `attribute-key`: keys are constants. | Canonical keys, namespaces, value sets |
+| Instruments created one time, with a description and unit, error handled | `telemetrylint` `metric-metadata`. `gocritic` ruleguard rejects a constructor error assigned to `_`. | Created one time |
+| Metric names follow section 5.2. Closed attribute value sets | `telemetrylint` `metric-name`. `principal-sink` rejects a principal in `metric.WithAttributes`. | Value sets and IDs (section 5.3) |
+| No section 6.1 data in a span or a metric | `telemetrylint` `credential` rejects a `credential-types` value as an attribute value. | All other data classes |
+| Principals only through `id.Principal.SpanAttribute` under a `.principal` key | `telemetrylint` `principal-key`: a key that ends in `.principal` takes only a `SpanAttribute` value, and `SpanAttribute` takes only such a key. ExtProc is exempt (section 4.3, rule 4). `principal-sink` rejects a principal in a span name, span event, or metric attribute. `gocritic` ruleguard rejects `attribute.String(k, p.String())` and `string(p)`. | Where section 4.3 permits a principal |
+| The observability contract lists each new instrument | — | All |
+| Tests for credentials and metric attribute sets | — | All |
+| Each new span and attribute key described, `docs/reference/telemetry.md` regenerated | — (`TestReferenceIsCurrent` fails while the page is out of date or a description is missing, section 10) | Whether each description is accurate |
+
+`forbidigo` also rejects the `otelhttp` client transports (section 1).
+
+A finding that the code cannot avoid carries `//nolint:<linter> // <reason>` at the call. `.golangci.yml` excludes existing violations by path and names the issue that fixes them (#349, #350, #352, #353). Remove the exclusion in the change that fixes the violations, so the rule then holds for the whole repository.
+
+## 10. Telemetry Reference
+
+`docs/reference/telemetry.md` is the reference for operators and agents that query traces and metrics. `tools/telemetrydoc` reads the code with `go/packages` and generates the page. It does not run the code. The span and attribute descriptions come from `docs/reference/telemetry-descriptions.yaml`, because the code cannot say what a span is for.
+
+| Rule | Reason |
+|---|---|
+| After you add, rename, or remove a span, a metric, or an attribute, run `just telemetry-doc` and commit the page. `TestReferenceIsCurrent` fails while the page is out of date. | The page stays the same as the code in each pull request. |
+| Give each span and each attribute key a description in `docs/reference/telemetry-descriptions.yaml`. Say what the operation does or what the value means, and do not restate the name. Remove the entry with the span or the key. | Operators need to know what a span is for. The generator fails while a span or a key has no description, or while the file describes one that the code does not have. |
+| Do not edit the page by hand. Change the code, the descriptions file, or `tools/telemetrydoc`. | The next generation overwrites hand edits. |
+| Pass a span name as a constant, or as a constant argument to a span helper that passes it to `Tracer.Start`. Pass an attribute key as a constant to the attribute constructor or to `id.Principal.SpanAttribute`. Pass a metric name to the instrument constructor as a constant. | Sections 3.2 and 4.1 already require constant names, and `telemetrylint` checks them (section 9). The generator cannot list a name it cannot resolve. |
+| Set each attribute, span status, span name, and measurement where the generator can follow it to the span or the instrument. It follows variables, struct fields, closures, the parameters of functions that the module only calls directly, and the span in a context back to its `Start` call. It fails at each call that it cannot follow. | A call that the generator cannot follow would be missing from the page. |
+| Give an enumerated value a typed string constant (section 4.2). | The page lists the constants of the type as the value set. |
+
+The page does not cover the `otelchi` server spans and metrics, metrics that the SDK, the Go runtime, or a library creates, span events, resource attributes, or log records. The generator fails when a span event has attributes.

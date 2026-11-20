@@ -152,7 +152,8 @@ func buildResource(ctx context.Context, cfg ports.TelemetryConfig) (*resource.Re
 		if k == "process.command_args" || k == "process.command" || k == "process.command_line" {
 			continue
 		}
-		attrs = append(attrs, attribute.String(k, v))
+		// Operators choose resource attribute keys (OPENTELEMETRY.md section 6.3).
+		attrs = append(attrs, attribute.String(k, v)) //nolint:telemetrylint // key from telemetry.resource_attributes
 	}
 
 	return resource.New(ctx,
