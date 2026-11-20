@@ -22,6 +22,14 @@ import (
 	"github.com/spf13/viper"
 )
 
+var ledgerEnvPaths = map[string]string{
+	"IDENTITY_BROKER_BUSINESS_EVENTS_ENABLED":              configutil.Key("business_events", "enabled"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_WRITE_TIMEOUT":        configutil.Key("business_events", "write_timeout"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_PERIOD":     configutil.Key("business_events", "retention", "period"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_INTERVAL":   configutil.Key("business_events", "retention", "interval"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_BATCH_SIZE": configutil.Key("business_events", "retention", "batch_size"),
+}
+
 // Loader implements the ConfigPort interface using Viper, Cobra, and godotenv.
 // Each Loader instance has its own Viper instance for proper isolation.
 type Loader struct {
@@ -177,11 +185,9 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("server", "admin", "cors", "max_age"), "IDENTITY_BROKER_SERVER_ADMIN_CORS_MAX_AGE")
 	_ = l.v.BindEnv(configutil.Key("storage", "backend"), "IDENTITY_BROKER_STORAGE_BACKEND")
 	_ = l.v.BindEnv(configutil.Key("storage", "postgres", "connection_url"), "IDENTITY_BROKER_STORAGE_POSTGRES_URL")
-	_ = l.v.BindEnv(configutil.Key("business_events", "enabled"), "IDENTITY_BROKER_BUSINESS_EVENTS_ENABLED")
-	_ = l.v.BindEnv(configutil.Key("business_events", "write_timeout"), "IDENTITY_BROKER_BUSINESS_EVENTS_WRITE_TIMEOUT")
-	_ = l.v.BindEnv(configutil.Key("business_events", "retention", "period"), "IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_PERIOD")
-	_ = l.v.BindEnv(configutil.Key("business_events", "retention", "interval"), "IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_INTERVAL")
-	_ = l.v.BindEnv(configutil.Key("business_events", "retention", "batch_size"), "IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_BATCH_SIZE")
+	for env, path := range ledgerEnvPaths {
+		_ = l.v.BindEnv(path, env)
+	}
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trace", "response_enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
@@ -426,6 +432,11 @@ func (l *Loader) loadEnvFile(filename string) error {
 	for key, value := range envMap {
 		// Set in OS environment (needed for os.Expand() in expandEnvVars phase)
 		_ = os.Setenv(key, value)
+		if path, bound := ledgerEnvPaths[key]; bound {
+			// The environment binding supplies this value at its canonical path.
+			keys = append(keys, strings.ReplaceAll(path, configutil.Delimiter, "."))
+			continue
+		}
 
 		// Strip IDENTITY_BROKER_ prefix and convert to Viper format
 		viperKey := key

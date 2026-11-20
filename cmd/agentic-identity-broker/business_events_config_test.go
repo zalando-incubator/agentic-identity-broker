@@ -117,15 +117,25 @@ func TestBusinessEventsRootConfigurationPrecedence(t *testing.T) {
 	}
 }
 
-func TestBusinessEventsFlagOverridesUnresolvedFileValue(t *testing.T) {
-	t.Setenv("TEST_LEDGER_RETENTION_UNSET", "")
-	require.NoError(t, os.Unsetenv("TEST_LEDGER_RETENTION_UNSET"))
-	const document = "business_events:\n  retention:\n    period: ${TEST_LEDGER_RETENTION_UNSET}\n"
-	_, err := loadBusinessEventsRootConfig(t, document, nil, nil)
-	require.ErrorContains(t, err, "TEST_LEDGER_RETENTION_UNSET")
-	cfg, err := loadBusinessEventsRootConfig(t, document, nil, []string{"--business_events.retention.period=24h"})
-	require.NoError(t, err)
-	require.Equal(t, 24*time.Hour, cfg.BusinessEvents.Retention.Period)
+func TestBusinessEventsFlagOverridesUnresolvedValue(t *testing.T) {
+	for _, source := range []string{"yaml", "dotenv"} {
+		t.Run(source, func(t *testing.T) {
+			t.Setenv("TEST_LEDGER_RETENTION_UNSET", "")
+			require.NoError(t, os.Unsetenv("TEST_LEDGER_RETENTION_UNSET"))
+			var document string
+			if source == "dotenv" {
+				t.Chdir(t.TempDir())
+				require.NoError(t, os.WriteFile(".env", []byte("IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_PERIOD='${TEST_LEDGER_RETENTION_UNSET}'\n"), 0o600))
+			} else {
+				document = "business_events:\n  retention:\n    period: ${TEST_LEDGER_RETENTION_UNSET}\n"
+			}
+			_, err := loadBusinessEventsRootConfig(t, document, nil, nil)
+			require.ErrorContains(t, err, "TEST_LEDGER_RETENTION_UNSET")
+			cfg, err := loadBusinessEventsRootConfig(t, document, nil, []string{"--business_events.retention.period=24h"})
+			require.NoError(t, err)
+			require.Equal(t, 24*time.Hour, cfg.BusinessEvents.Retention.Period)
+		})
+	}
 }
 
 func TestBusinessEventsRootRejectsInvalidExplicitCLIValuesWhileDisabled(t *testing.T) {

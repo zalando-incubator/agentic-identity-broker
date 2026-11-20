@@ -64,7 +64,12 @@ func miskeyedBusinessEvents(info *types.Info, file *ast.File) []ast.Expr {
 		switch n := node.(type) {
 		case *ast.CallExpr:
 			if isAppendToAnySlice(info, n) {
-				checkPairs(n.Args[1:])
+				// An append can start with the value of a key in the destination slice.
+				for i, arg := range n.Args[1:] {
+					if isBusinessEventType(info.TypeOf(arg)) && (i == 0 || !isBusinessEventKey(info, n.Args[i])) {
+						offenders = append(offenders, arg)
+					}
+				}
 			} else if callsSlog(info, n) && !n.Ellipsis.IsValid() {
 				if function, ok := n.Fun.(*ast.SelectorExpr); ok && function.Sel.Name == "AnyValue" {
 					break
@@ -160,6 +165,7 @@ func TestBusinessEventGuardDetectsWrongKeys(t *testing.T) {
 		{"slice", `args := []any{"action", definition}; logger.InfoContext(nil, "record", args...)`, 1},
 		{"append", `args := []any{}; args = append(args, "action", definition); logger.InfoContext(nil, "record", args...)`, 1},
 		{"correct append", `args := []any{}; args = append(args, "event", definition); logger.InfoContext(nil, "record", args...)`, 0},
+		{"split append", `args := []any{"action"}; args = append(args, "a value", "event", definition); logger.InfoContext(nil, "record", args...)`, 0},
 		{"operational string", `logger.InfoContext(nil, "record", "action", "operational.event.recorded")`, 0},
 		{"nonlog definition", `_ = definition`, 0},
 		{"alias", `type Alias = bizevent.Definition; var alias Alias; logger.InfoContext(nil, "record", "action", alias)`, 1},
