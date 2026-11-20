@@ -289,7 +289,7 @@
       "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
       "status": "blocked",
       "updated_at": "2026-11-20",
-      "note": "Live head 71c02faa still dirty; review fixes published. Human-only readiness/observed-refresh integration remains. Prior #432 bundle hit changed-content limit, so transport did not remove size blocker. No oversized retry; pipeline-start/classification blockers persist."
+      "note": "#403 confirmed closed. Requested replacement base release/0.2 does not exist in live branches or local refs; release/v0.2 exists. Awaiting maintainer confirmation of target before conflict resolution/new PR."
     },
     {
       "issue": 212,
