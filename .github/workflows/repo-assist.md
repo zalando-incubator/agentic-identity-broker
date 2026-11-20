@@ -194,6 +194,8 @@ safe-outputs:
     draft: true
     title-prefix: "[repo-assist] "
     labels: [automation, repo-assist]
+    # Lets a maintainer request a pull request against a release branch, for example to backport a fix.
+    allowed-base-branches: [main, "release/*"]
     protected-files:
       policy: request-review
       exclude:
