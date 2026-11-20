@@ -20,12 +20,14 @@ import { Button } from '@design-system/components/primitives/Button';
 import { Stack } from '@design-system/components/layout/Stack';
 import { Badge } from '@design-system/components/primitives/Badge';
 import type { AgentInfo } from '@services/api/sessions';
+import { ServiceIcon } from '@components/services/ServiceIcon';
 
 interface TerminationDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
   serviceName: string;
+  serviceIconSvg?: string | null;
   dependentAgents: AgentInfo[];
   loading: boolean;
   error?: string | null;
@@ -53,6 +55,7 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
   onClose,
   onConfirm,
   serviceName,
+  serviceIconSvg,
   dependentAgents,
   loading,
   error,
@@ -90,6 +93,12 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
             >
               Terminate Session?
             </h2>
+            <div className="mt-3 flex min-w-0 items-center gap-3">
+              <ServiceIcon iconSvg={serviceIconSvg} />
+              <h3 className="min-w-0 break-words text-base font-semibold text-trust">
+                {serviceName}
+              </h3>
+            </div>
             <p
               id="termination-dialog-description"
               className="mt-2 text-sm text-neutral-600"

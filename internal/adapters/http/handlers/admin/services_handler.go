@@ -48,6 +48,7 @@ func NewServicesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderServ
 type ServiceRequest struct {
 	CanonicalID                *string                  `json:"canonical_id,omitempty"`
 	DisplayName                string                   `json:"display_name"`
+	IconSVG                    *string                  `json:"icon_svg,omitempty"`
 	CredentialSource           model.CredentialSource   `json:"credential_source,omitempty"`
 	ClientRegistration         model.ClientRegistration `json:"client_registration,omitempty"`
 	ClientID                   string                   `json:"client_id"`
@@ -66,12 +67,19 @@ type ServiceRequest struct {
 	ClientSecretProvided       bool                     `json:"-"`
 	clearCanonicalID           bool
 	protectedResourcesProvided bool
+	iconSVGProvided            bool
 }
 
 // UnmarshalJSON retains field presence so explicit null values are not omissions.
 func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
-	type request ServiceRequest
+	type requestFields ServiceRequest
+	type request struct {
+		requestFields
+		IconSVG **string `json:"icon_svg"`
+	}
 	var decoded request
+	// Omission leaves a pointer to nil; explicit null clears the outer pointer.
+	decoded.IconSVG = &decoded.requestFields.IconSVG
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
@@ -93,13 +101,20 @@ func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
 	if fields.ClientIDFile != nil || fields.ClientSecretFile != nil || fields.CredentialFiles != nil || fields.CredentialSourceTransitioned != nil {
 		return errors.New("credential file configuration and transition history are not service request fields")
 	}
-	*req = ServiceRequest(decoded)
+	*req = ServiceRequest(decoded.requestFields)
 	req.CredentialSourceProvided = fields.CredentialSource != nil
 	req.ClientRegistrationProvided = fields.ClientRegistration != nil
 	req.ClientIDProvided = fields.ClientID != nil
 	req.ClientSecretProvided = fields.ClientSecret != nil
 	req.clearCanonicalID = isJSONNull(fields.CanonicalID)
 	req.protectedResourcesProvided = fields.ProtectedResources != nil && !isJSONNull(fields.ProtectedResources)
+	if decoded.IconSVG == nil {
+		req.IconSVG = nil
+		req.iconSVGProvided = true
+	} else {
+		req.IconSVG = *decoded.IconSVG
+		req.iconSVGProvided = req.IconSVG != nil
+	}
 	return nil
 }
 
@@ -129,6 +144,7 @@ type ServiceResponse struct {
 	ID                      string                   `json:"id"`
 	CanonicalID             *string                  `json:"canonical_id"`
 	DisplayName             string                   `json:"display_name"`
+	IconSVG                 *string                  `json:"icon_svg,omitempty"`
 	CredentialSource        model.CredentialSource   `json:"credential_source"`
 	ClientRegistration      model.ClientRegistration `json:"client_registration"`
 	ClientID                string                   `json:"client_id,omitempty"`
@@ -267,6 +283,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		ID:                         serviceID,
 		CanonicalID:                req.CanonicalID,
 		DisplayName:                req.DisplayName,
+		IconSVG:                    req.IconSVG,
 		ClientID:                   id.ClientID(req.ClientID),
 		Secret:                     secret,
 		CredentialSource:           req.CredentialSource,
@@ -492,6 +509,8 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		ID:                         parsedSvcID,
 		CanonicalID:                req.CanonicalID,
 		DisplayName:                req.DisplayName,
+		IconSVG:                    req.IconSVG,
+		IconSVGProvided:            req.iconSVGProvided,
 		ClearCanonicalID:           req.clearCanonicalID,
 		ClientID:                   id.ClientID(req.ClientID),
 		Secret:                     secret,
@@ -719,6 +738,7 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		ID:                 entity.ID.String(),
 		CanonicalID:        entity.CanonicalID,
 		DisplayName:        entity.DisplayName,
+		IconSVG:            entity.IconSVG,
 		CredentialSource:   credentialSource,
 		ClientRegistration: entity.ClientRegistration,
 		OAuth2Flavor:       flavor.String(),

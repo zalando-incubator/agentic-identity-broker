@@ -11,6 +11,7 @@
 import React, { useMemo } from 'react';
 import { Badge } from '@design-system/components/primitives/Badge';
 import { Avatar } from '@design-system/components/primitives/Avatar';
+import { ServiceIcon } from '@components/services/ServiceIcon';
 
 export interface ServiceRequirementEntry {
   service_id: string;
@@ -31,7 +32,7 @@ export interface PermissionSetCardProps {
   requirementType: 'mandatory' | 'optional';
   isSelected?: boolean;
   onToggle?: (id: string, selected: boolean) => void;
-  availableServices?: Array<{ id: string; display_name: string }>;
+  availableServices?: Array<{ id: string; display_name: string; iconSvg?: string | null }>;
 
   /** Agent's service requirements — used to filter and classify services in this PS card (FR-008) */
   serviceRequirements?: ServiceRequirementEntry[];
@@ -61,8 +62,8 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
   const isMandatory = requirementType === 'mandatory';
   const isActive = isMandatory || isSelected;
 
-  const serviceNameMap = useMemo(
-    () => new Map(availableServices.map((s) => [s.id, s.display_name])),
+  const serviceMetadataMap = useMemo(
+    () => new Map(availableServices.map((s) => [s.id, s])),
     [availableServices],
   );
 
@@ -145,10 +146,16 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
               </span>
               <div className="flex flex-col gap-1.5">
                 {displayedServices.map((serviceScope) => {
-                  const serviceName =
-                    serviceNameMap.get(serviceScope.service_id) ||
-                    serviceScope.service_id;
+                  const serviceMetadata = serviceMetadataMap.get(serviceScope.service_id);
+                  const serviceName = serviceMetadata?.display_name || serviceScope.service_id;
                   const initial = serviceName.charAt(0).toUpperCase();
+                  const serviceIcon = (
+                    <ServiceIcon
+                      iconSvg={serviceMetadata?.iconSvg}
+                      className="h-6 w-6 [&>img]:inset-1 [&>img]:size-4"
+                      fallback={<Avatar initials={initial} size="xs" shape="circle" className="flex-shrink-0" />}
+                    />
+                  );
                   const isServiceMandatory = serviceScope.srType === 'mandatory' || (isActive && serviceScope.requirement_type === 'mandatory');
                   const isServiceIncluded = includedServiceIds
                     ? includedServiceIds.has(serviceScope.service_id)
@@ -162,12 +169,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
                         className="inline-flex items-center gap-1.5 bg-neutral-100 text-neutral-700 border border-neutral-200 rounded px-1.5 py-0.5 text-xs font-medium w-fit"
                         aria-label={`${serviceName} (required)`}
                       >
-                        <Avatar
-                          initials={initial}
-                          size="xs"
-                          shape="circle"
-                          className="flex-shrink-0"
-                        />
+                        {serviceIcon}
                         {serviceName}
                         <span className="text-neutral-400 text-xs">· required</span>
                       </span>
@@ -186,12 +188,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
                           : 'bg-neutral-100 border-neutral-200 text-neutral-500',
                       ].join(' ')}
                     >
-                      <Avatar
-                        initials={initial}
-                        size="xs"
-                        shape="circle"
-                        className="flex-shrink-0"
-                      />
+                      {serviceIcon}
                       <span>{serviceName}</span>
                       {isActive && (
                         <button

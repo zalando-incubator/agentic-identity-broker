@@ -50,7 +50,6 @@ const mockServices: ThirdpartyService[] = [
     kind: 'scoped',
     serviceId: 'github',
     displayName: 'GitHub',
-    logoUrl: 'https://example.com/github.png',
     scopes: [
       { value: 'read:user', description: 'Read user profile' },
       { value: 'repo', description: 'Access repositories' },
@@ -60,7 +59,6 @@ const mockServices: ThirdpartyService[] = [
     kind: 'scoped',
     serviceId: 'google',
     displayName: 'Google Drive',
-    logoUrl: 'https://example.com/google.png',
     scopes: [
       { value: 'drive.readonly', description: 'Read files' },
       { value: 'drive.file', description: 'Manage files' },

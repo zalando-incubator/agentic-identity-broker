@@ -330,6 +330,8 @@ The [frontend harness](frontend/frontend_suite_test.go) owns browser startup and
 The [frontend instructions](frontend/AGENTS.md) describe page objects, selectors, screenshots, and browser cleanup.
 
 For built assets, use `just test-e2e-frontend` ([recipe](../../justfile)).
+The `migrated-service` browser scenario starts a PostgreSQL container. Start Docker or Podman before you run the full built suite.
+For a focused run without a container runtime, pass `--label-filter='!migrated-service'` to Ginkgo.
 Built mode is recommended until the development identities match.
 The [Vite proxy](../../web/vite.config.ts) sends `dev@example.com`, but consent tests seed sessions for `user@example.com`.
 This mismatch can leave the approval button disabled. A single worker does not fix it.
@@ -347,6 +349,7 @@ GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend-dev
 
 Development mode uses fixed broker port 8000.
 The one-worker override is necessary because the recipe still defaults to two workers ([frontend guidance](frontend/AGENTS.md), [recipe](../../justfile)).
+Development mode excludes `built-frontend` specs. Service Icon journeys need the broker-served bundle, signed browser identities, and production CSP.
 
 The normal recipes disable screenshot capture by default ([configuration](../../justfile)).
 For artifact capture, use the serial configuration from the [frontend instructions](frontend/AGENTS.md#screenshots-and-performance):

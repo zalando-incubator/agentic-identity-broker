@@ -5,6 +5,7 @@
 package e2e_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
@@ -62,9 +64,6 @@ type TestContext struct {
 
 	// Storage is the in-memory storage adapter for this test
 	Storage *storageadapter.Adapter
-
-	// StorageFactory creates fresh test storage instances
-	StorageFactory *bootstrap.StorageFactory
 
 	// MockUpstream is a mock OAuth2 server for this test
 	MockUpstream *helpers.MockUpstreamOAuth2Server
@@ -152,7 +151,15 @@ const browserCoverageInitScript = `(() => {
 // Ginkgo calls this to register and run all tests in this package.
 func TestFrontendE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Frontend E2E Tests")
+	config, reporter := GinkgoConfiguration()
+	if os.Getenv("E2E_FRONTEND_MODE") == "dev" {
+		if config.LabelFilter == "" {
+			config.LabelFilter = "!built-frontend"
+		} else {
+			config.LabelFilter = "(" + config.LabelFilter + ") && !built-frontend"
+		}
+	}
+	RunSpecs(t, "Frontend E2E Tests", config, reporter)
 }
 
 // SynchronizedBeforeSuite builds the shared bundle once, then starts a browser on every worker.
@@ -258,19 +265,41 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 // 3. Create fresh app instance with test config
 // 4. Create fresh test server
 // 5. Create fresh Playwright context and page
+var migrateServiceFixture *bootstrap.PostgresFixture
+
 var _ = BeforeEach(func() {
 	var err error
 
 	// Step 1: Create fresh test storage
 	storageFactory := bootstrap.NewStorageFactory(suiteCtx.Logger)
-	storage, err := storageFactory.NewTestStorage()
-	Expect(err).NotTo(HaveOccurred(), "Failed to create test storage")
+	var storage *storageadapter.Adapter
+	configStorage := ports.StorageConfig{}
+	migrated, err := CurrentSpecReport().MatchesLabelFilter("migrated-service")
+	Expect(err).NotTo(HaveOccurred())
+	if migrated {
+		pg, err := bootstrap.NewPostgresFixture(context.Background())
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() error { return pg.Close(context.Background()) })
+		configStorage = ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: pg.ConnectionURL}, Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second}}
+		AddReportEntry("service migration", "PostgreSQL fixture")
+		migrateServiceFixture = pg
+		DeferCleanup(func() { migrateServiceFixture = nil })
+		storage, err = storageadapter.NewAdapter(&configStorage)
+		Expect(err).NotTo(HaveOccurred())
+	} else {
+		storage, err = storageFactory.NewTestStorage()
+		Expect(err).NotTo(HaveOccurred())
+	}
+	DeferCleanup(func() error { return storageFactory.CloseStorage(storage) })
 
 	// Step 2: Create fresh mock upstream server
 	mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 
 	// Step 3: Create fresh app instance with test config
 	config := fixtures.OAuth2ConfigWithUpstream(mockUpstream.Server.URL)
+	if configStorage.Backend != "" {
+		config.Storage = configStorage
+	}
 	serverFactory := bootstrap.NewServerFactory(config, suiteCtx.Logger)
 	appInstance, err := serverFactory.BuildApp(storage)
 	Expect(err).NotTo(HaveOccurred(), "Failed to build app instance")
@@ -326,7 +355,6 @@ var _ = BeforeEach(func() {
 	testCtx = &TestContext{
 		Suite:           suiteCtx,
 		Storage:         storage,
-		StorageFactory:  storageFactory,
 		MockUpstream:    mockUpstream,
 		Server:          server,
 		ServerFactory:   serverFactory,
@@ -389,11 +417,6 @@ var _ = AfterEach(func() {
 	}
 	if testCtx.Server != nil {
 		testCtx.Server.Close()
-	}
-	if testCtx.Storage != nil && testCtx.StorageFactory != nil {
-		if err := testCtx.StorageFactory.CloseStorage(testCtx.Storage); err != nil {
-			suiteCtx.Logger.Error("Failed to close storage", "error", err)
-		}
 	}
 	if testCtx.MockUpstream != nil {
 		testCtx.MockUpstream.Close()

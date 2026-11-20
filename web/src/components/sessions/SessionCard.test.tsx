@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SessionCard } from './SessionCard';
 import type { SessionSummary } from '@services/api/sessions';
@@ -505,5 +505,37 @@ describe('SessionCard', () => {
         screen.queryByText(/Session might expire after/i),
       ).not.toBeInTheDocument();
     });
+  });
+  it('uses decorative current source and keeps name-only fallback and action nodes through failure, replacement and clear', () => {
+    const source = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>';
+    const replacement = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>';
+    const onTerminate = vi.fn();
+    const onRefresh = vi.fn();
+    const view = (service_icon_svg?: string | null) => (
+      <SessionCard session={createMockSession({ service_icon_svg })} onTerminate={onTerminate} onRefresh={onRefresh} />
+    );
+    const { container, rerender } = render(view(source));
+    const terminate = screen.getByRole('button', { name: 'Terminate' });
+    const refresh = screen.getByRole('button', { name: 'Refresh' });
+    const icon = container.querySelector('img')!;
+    expect(icon).toHaveAttribute('alt', '');
+    expect(icon).toHaveAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`);
+    fireEvent.error(icon);
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Google Drive' })).toBeVisible();
+    expect(screen.queryByText('G')).toBeNull();
+    rerender(view(replacement));
+    const next = container.querySelector('img')!;
+    fireEvent.load(next);
+    expect(next).toBeVisible();
+    rerender(view(null));
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Terminate' })).toBe(terminate);
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBe(refresh);
+    fireEvent.click(terminate);
+    fireEvent.click(refresh);
+    expect(onTerminate).toHaveBeenCalledWith('google');
+    expect(onRefresh).toHaveBeenCalledWith('google');
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });

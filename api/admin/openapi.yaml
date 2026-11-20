@@ -798,6 +798,8 @@ paths:
         Static confidential services return their client ID and `"REDACTED"` secret.
         Static public, CIMD, and DCR services omit the secret. Filesystem services omit inline credentials.
         Listing never reads files or returns paths or file values.
+        Configured `icon_svg` is the exact accepted SVG source. The property is omitted when absent.
+        It uses the existing administrator access boundary, not a separate image endpoint.
       operationId: listServices
       tags:
         - Services
@@ -823,6 +825,7 @@ paths:
                   value:
                     - id: 770e8400-e29b-41d4-a716-446655440002
                       display_name: GitHub Production
+                      icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                       credential_source: stored
                       client_registration: static
                       oauth2_flavor: github
@@ -899,6 +902,9 @@ paths:
         - Filesystem: Rejects either inline field whenever present, including null or empty input
         - Manual `issuer_uri`: Required and HTTPS, subject to existing Google service-account rules; optional for protected-resource discovery with one issuer
         - `scopes`: Optional. Omit it or provide an empty array when the provider does not use OAuth2 scopes.
+        - `icon_svg`: Optional SVG source, not a URL or path. Omission or null creates no icon.
+          Non-null source must satisfy `ServiceIconSvg`, including the 65536-byte decoded UTF-8 limit.
+          Invalid input returns `400` before discovery, credential changes, or persistence. No referenced resource is fetched.
 
         **Filesystem registration** never reads files or requires an available binding.
         Paths belong only to operator configuration and cannot be supplied through this API.
@@ -924,6 +930,9 @@ paths:
 
         **Security**: Static and DCR confidential secrets are encrypted before storage.
         A DCR secret never appears in an Admin API response.
+        Accepted SVG source is returned exactly in create, update, detail, and list responses.
+        It is for URI-encoded `<img>` data images only, not inline SVG or active document embedding.
+        The existing trusted proxy must authenticate and authorize the administrator before forwarding this request.
       operationId: createService
       tags:
         - Services
@@ -934,6 +943,22 @@ paths:
             schema:
               $ref: '#/components/schemas/ServiceCreateRequest'
             examples:
+              service_icon:
+                summary: Create Atlas Files with original SVG artwork
+                value:
+                  display_name: Atlas Files
+                  client_id: atlas-broker-public
+                  token_endpoint_auth_method: none
+                  issuer_uri: https://atlas.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    authorize_endpoint: https://atlas.example.com/authorize
+                    token_endpoint: https://atlas.example.com/token
+                  scopes:
+                    - scope_value: files.read
+                      description: Read files
+                  icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
               github_discovery:
                 summary: GitHub with automatic discovery
                 value:
@@ -1011,6 +1036,28 @@ paths:
               schema:
                 $ref: '#/components/schemas/Service'
               examples:
+                service_icon:
+                  summary: Exact source in the direct service response
+                  value:
+                    id: 880e8400-e29b-41d4-a716-446655440010
+                    display_name: Atlas Files
+                    credential_source: stored
+                    client_registration: static
+                    client_id: atlas-broker-public
+                    token_endpoint_auth_method: none
+                    oauth2_flavor: standard
+                    issuer_uri: https://atlas.example.com
+                    discovery:
+                      enable_discovery: false
+                    endpoints:
+                      authorize_endpoint: https://atlas.example.com/authorize
+                      token_endpoint: https://atlas.example.com/token
+                    scopes:
+                      - scope_value: files.read
+                        description: Read files
+                    icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
+                    created_at: '2026-11-18T10:00:00Z'
+                    updated_at: '2026-11-18T10:00:00Z'
                 static_service:
                   value:
                     id: 770e8400-e29b-41d4-a716-446655440002
@@ -1130,6 +1177,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               examples:
+                invalid_icon:
+                  summary: Invalid SVG fails before side effects without echoing source
+                  value:
+                    error: validation failed
+                    message: icon_svg contains prohibited content
                 issuer_selection_required:
                   value:
                     error: discovery failed
@@ -1192,6 +1244,8 @@ paths:
         Stored responses always include `client_id`. Static confidential secrets return only
         `"REDACTED"`; static public, CIMD, and DCR responses omit the secret.
         Filesystem responses omit both inline credential fields, file paths, and file values.
+        Configured `icon_svg` is the exact accepted source, omitted when absent.
+        The existing proxy administrator access boundary and service ETag semantics are unchanged.
       operationId: getService
       tags:
         - Services
@@ -1217,6 +1271,7 @@ paths:
               example:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
+                icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                 credential_source: stored
                 client_registration: static
                 oauth2_flavor: github
@@ -1264,6 +1319,9 @@ paths:
         - Switching `static` to `cimd` replaces the operator client ID and removes a stored secret only after validation. Switching back requires an operator `client_id`. Static confidential also requires a new secret
         - A switch to `static` makes the hosted document return `404`. Providers can cache the previous document for up to 300 seconds. The broker never falls back to another token authentication method
         - Updating a service to `token_endpoint_auth_method: none` removes the stored credential.
+        - `icon_svg` omitted: preserves the current icon. Explicit null clears it. A permitted string replaces it exactly
+        - Empty, whitespace-only, non-string, URL, path, malformed, oversized, or prohibited SVG input returns `400` without changing any service properties
+        - Icon validation precedes discovery, credential changes, and persistence. The broker never fetches resources referenced by an icon
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
@@ -1310,6 +1368,12 @@ paths:
         - `protected_resources` omitted or `null`: preserves the current protected-resource set
         - `protected_resources` present (including `[]`): replaces the entire set and requires `If-Match`
 
+        **Icon concurrency**: An otherwise valid full replacement that changes only the icon does not require `If-Match`.
+        Omit `protected_resources` or send null to retain that set. Replacing that set still requires its existing precondition.
+        Existing service row-version checks remain active. Concurrent modification returns `409` without partial icon, credential, or metadata changes.
+        The successful response returns the current strong ETag and exact source, or omits cleared source.
+        Existing proxy administrator authorization, not-found errors, and response formats remain unchanged.
+
       operationId: updateService
       tags:
         - Services
@@ -1324,6 +1388,53 @@ paths:
             schema:
               $ref: '#/components/schemas/ServiceUpdateRequest'
             examples:
+              replace_icon:
+                summary: Full replacement changes the icon without requiring If-Match
+                value:
+                  display_name: Atlas Files
+                  client_id: atlas-broker-public
+                  token_endpoint_auth_method: none
+                  issuer_uri: https://atlas.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    authorize_endpoint: https://atlas.example.com/authorize
+                    token_endpoint: https://atlas.example.com/token
+                  scopes:
+                    - scope_value: files.read
+                      description: Read files
+                  icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle fill="currentColor" cx="12" cy="12" r="8"/></svg>'
+              preserve_icon:
+                summary: Full replacement omits icon_svg and preserves its current source
+                value:
+                  display_name: Atlas Files
+                  client_id: atlas-broker-public
+                  token_endpoint_auth_method: none
+                  issuer_uri: https://atlas.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    authorize_endpoint: https://atlas.example.com/authorize
+                    token_endpoint: https://atlas.example.com/token
+                  scopes:
+                    - scope_value: files.read
+                      description: Read files
+              clear_icon:
+                summary: Full replacement clears the icon with explicit null
+                value:
+                  display_name: Atlas Files
+                  client_id: atlas-broker-public
+                  token_endpoint_auth_method: none
+                  issuer_uri: https://atlas.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    authorize_endpoint: https://atlas.example.com/authorize
+                    token_endpoint: https://atlas.example.com/token
+                  scopes:
+                    - scope_value: files.read
+                      description: Read files
+                  icon_svg: null
               rotate_secret:
                 summary: Rotate client secret
                 value:
@@ -1429,6 +1540,7 @@ paths:
               example:
                 id: 770e8400-e29b-41d4-a716-446655440002
                 display_name: GitHub Production
+                icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle fill="currentColor" cx="12" cy="12" r="8"/></svg>'
                 credential_source: stored
                 client_registration: static
                 oauth2_flavor: github
@@ -1458,6 +1570,11 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               examples:
+                invalid_icon:
+                  summary: Invalid SVG leaves all service properties unchanged
+                  value:
+                    error: validation failed
+                    message: icon_svg contains prohibited content
                 discovery_failure:
                   value:
                     error: discovery failed
@@ -3543,6 +3660,37 @@ components:
               nullable: true
               enum: ['', null]
 
+    ServiceIconSvg:
+      type: string
+      nullable: true
+      minLength: 1
+      description: |
+        Optional exact SVG document, not a URL, path, or encoded data URI.
+        After JSON decoding, non-null source must be valid UTF-8 and contain 1–65536 bytes.
+        Empty and whitespace-only strings are invalid. OpenAPI character-length keywords cannot enforce the byte bound or XML rules.
+
+        Strict XML parsing requires one root `svg` in `http://www.w3.org/2000/svg`, properly nested elements, and no trailing non-whitespace content.
+        Malformed XML, duplicate attributes, and unknown entity references are invalid.
+        Ordinary comments, harmless metadata, namespace aliases, and visual content are permitted.
+        One pre-root SVG DOCTYPE is permitted, including an external PUBLIC or SYSTEM identifier, but no internal subset.
+        Internal subsets, entity declarations, other XML directives, and processing instructions are prohibited, except one initial UTF-8 XML declaration.
+        The parser never resolves a DTD, installs an external resolver or custom entity table, or fetches referenced resources.
+
+        On the root and descendants, element local names `script`, `a`, and `foreignObject` are prohibited, ASCII case-insensitively in every namespace.
+        Attribute local names starting with `on` are prohibited, ASCII case-insensitively, including namespaced forms.
+        Decoded attribute values must not start with `javascript:` or `vbscript:` after ASCII control/space removal and ASCII-insensitive comparison.
+        These named checks do not certify all CSS, references, animated values, or arbitrary inline/document use.
+        Styles, text, gradients, masks, filters, patterns, markers, clipping, local reuse, embedded media, and declarative visual animation are not rejection reasons themselves.
+        External references can remain in accepted source. Browser SVG image mode prevents their loads.
+        Missing references, duplicate IDs, unusual geometry, and browser-ignored values are rendering concerns, not automatic upload errors.
+
+        Accepted source is retained exactly, without normalization or sanitization.
+        Render only as URI-encoded exact source in `<img src="data:image/svg+xml;charset=utf-8,...">` with empty alt text.
+        Never insert the source into the page DOM or use object, embed, iframe, or SVG document delivery.
+        No image endpoint exists. Authentication controls receipt of JSON, not reuse of bytes copied by an authorized client.
+        The byte bound is an input limit, not a browser rendering-resource budget.
+      example: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
+
     Service:
       type: object
       description: |
@@ -3550,6 +3698,7 @@ components:
         Stored services always include client_id. Static confidential responses include only REDACTED,
         while static public, CIMD, and DCR responses omit client_secret. Filesystem responses omit both inline fields.
         This representation never resolves files or returns file paths, values, or transition evidence.
+        Configured icon_svg is the exact accepted source. The server omits the property when no icon is configured.
       allOf:
         - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
       oneOf:
@@ -3671,6 +3820,11 @@ components:
           example: GitHub Production
           minLength: 1
           maxLength: 255
+        icon_svg:
+          allOf:
+            - $ref: '#/components/schemas/ServiceIconSvg'
+          readOnly: true
+          description: Exact accepted source in create, update, detail, and list responses. The server omits absent source.
         client_id:
           type: string
           description: |
@@ -3804,6 +3958,8 @@ components:
         Omitted credential_source selects stored. Explicit null and unknown selectors are invalid.
         Filesystem creation requires a valid canonical_id and neither inline credential field.
         Registration never reads files. Missing bindings or files do not prevent registration.
+        Omitted or null icon_svg creates no icon. A permitted string stores exact source.
+        Invalid icon input fails before discovery, credential changes, or persistence.
       allOf:
         - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
       oneOf:
@@ -3855,6 +4011,10 @@ components:
           example: GitHub Production
           minLength: 1
           maxLength: 255
+        icon_svg:
+          allOf:
+            - $ref: '#/components/schemas/ServiceIconSvg'
+          description: Optional SVG source. Omission or null creates no icon. A non-null string must satisfy ServiceIconSvg.
         oauth2_flavor:
           type: string
           enum:
@@ -4000,6 +4160,9 @@ components:
         client_id and client_secret, with encryption before the atomic update. Files never supply them.
         Invalid input or a version conflict preserves the entire previous state. No administrative
         operation reads files. Existing If-Match requirements remain unchanged.
+        Omitted icon_svg preserves the current source. Explicit null clears it. A permitted string replaces it exactly.
+        Invalid icon input preserves all service properties and fails before discovery, credential changes, or persistence.
+        An icon-only change in an otherwise valid full replacement does not require If-Match.
       allOf:
         - $ref: '#/components/schemas/ServiceCredentialMetadataBoundary'
       oneOf:
@@ -4061,6 +4224,10 @@ components:
           example: GitHub Production
           minLength: 1
           maxLength: 255
+        icon_svg:
+          allOf:
+            - $ref: '#/components/schemas/ServiceIconSvg'
+          description: Omission preserves the current icon. Explicit null clears it. A permitted non-null string replaces the exact source.
         oauth2_flavor:
           type: string
           enum:

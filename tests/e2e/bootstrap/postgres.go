@@ -108,13 +108,44 @@ func NewPostgresFixtureAtVersion(ctx context.Context, version uint) (*PostgresFi
 	return fixture, nil
 }
 
-func (f *PostgresFixture) migrationRunner() (*migrate.Migrate, error) {
+func postgresMigrationsDir() (string, error) {
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
-		return nil, fmt.Errorf("locate E2E bootstrap source")
+		return "", fmt.Errorf("locate E2E bootstrap source")
 	}
-	migrationsDir := filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "migrations")
+	return filepath.Join(filepath.Dir(sourceFile), "..", "..", "..", "migrations"), nil
+}
+
+func (f *PostgresFixture) migrationRunner() (*migrate.Migrate, error) {
+	migrationsDir, err := postgresMigrationsDir()
+	if err != nil {
+		return nil, err
+	}
 	return migrate.New("file://"+migrationsDir, f.ConnectionURL)
+}
+
+// ApplyMigrationFile supplies temporary legacy-runtime prerequisites without advancing migration metadata.
+func (f *PostgresFixture) ApplyMigrationFile(ctx context.Context, filename string) error {
+	migrationsDir, err := postgresMigrationsDir()
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(migrationsDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	statement, err := root.ReadFile(filename)
+	if err != nil {
+		return err
+	}
+	db, err := sql.Open("pgx", f.ConnectionURL)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	_, err = db.ExecContext(ctx, string(statement))
+	return err
 }
 
 // MigrateTo uses zero to apply all migrations.
