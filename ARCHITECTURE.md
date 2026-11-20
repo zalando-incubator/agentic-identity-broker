@@ -112,7 +112,7 @@ The [end-user router](internal/adapters/http/routing/enduser.go) reserves `/api`
 It mounts the SPA for browser `GET` and `HEAD` requests.
 
 The [React router](web/src/App.tsx) redirects `/` to `/delegations` with history replacement.
-It also serves `/agents/:agentId`, `/sessions`, `/approvals`, and `/approvals/:id`.
+It also serves `/agents/:agentId`, `/sessions`, `/sessions/:service`, `/approvals`, and `/approvals/:id`.
 The [API client](web/src/services/api/client.ts) uses the relative base URL `/api` and normalizes error responses.
 
 **Development and build**:

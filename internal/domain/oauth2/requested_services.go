@@ -36,14 +36,20 @@ func (s *AuthorizationService) isBrokerScope(scope string) bool {
 // expiry, principal, agent and original request must all match; it never falls back to an
 // unbound fresh resolution.
 func (s *AuthorizationService) authorizationContinuation(ctx context.Context, req *ports.AuthorizationRequest, principal id.Principal, agent *storage.Agent) (*ports.AuthorizationSession, *ports.AuthorizationDecision) {
-	if req.SessionToken == "" {
+	if req.SessionToken == "" && !req.InvalidSessionTokenParameter {
 		return nil, nil
 	}
-	session, err := s.sessionTokenService.ValidateAuthorizationSessionToken(req.SessionToken, agent.ID, principal)
-	if err != nil || session.OriginalURL != withoutSessionToken(req.OriginalURL) {
-		return nil, s.redirectError(ctx, req, "access_denied", descriptionSessionInvalid)
+	if !req.InvalidSessionTokenParameter {
+		session, err := s.sessionTokenService.ValidateAuthorizationSessionToken(req.SessionToken, agent.ID, principal)
+		if err == nil && session.OriginalURL == withoutSessionToken(req.OriginalURL) {
+			return session, nil
+		}
 	}
-	return session, nil
+	if s.logger != nil {
+		s.logger.WarnContext(ctx, "authorization continuation rejected", "event", "oauth2.authorization.continuation_rejected",
+			"agent_id", agent.ID, "principal", principal, "reason", reasonInvalidSession, "error_kind", errorKindDefinitive)
+	}
+	return nil, s.redirectError(ctx, req, "access_denied", descriptionSessionInvalid)
 }
 
 // withoutSessionToken removes only the continuation parameter, keeping every other query
@@ -116,6 +122,10 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 		return nil
 	}
 	if servicescope.AnyTransient(outcomes) {
+		if s.logger != nil {
+			s.logger.WarnContext(ctx, "requested service usability unverifiable", "event", "oauth2.requested_service.unverifiable",
+				"agent_id", agent.ID, "principal", principal, "reason", reasonUnverifiableTransient, "error_kind", errorKindTransient)
+		}
 		return s.redirectError(ctx, req, "temporarily_unavailable", descriptionUsabilityUnverifiable)
 	}
 	if s.logger != nil {
@@ -134,6 +144,8 @@ type serviceLogReason string
 type serviceLogErrorKind string
 
 const (
+	reasonInvalidSession          serviceLogReason    = "invalid_session"
+	reasonUnverifiableTransient   serviceLogReason    = "unverifiable_transient"
 	reasonMalformedScope          serviceLogReason    = "malformed_scope"
 	reasonUnknownService          serviceLogReason    = "unknown_service"
 	reasonServiceNotEligible      serviceLogReason    = "service_not_eligible"

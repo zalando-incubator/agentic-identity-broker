@@ -52,6 +52,7 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 		{"binding", "oauth2.requested_service.scope_rejected", "WARN", "binding_mismatch", "definitive"},
 		{"resolution", "oauth2.requested_service.resolution_failed", "ERROR", "dependency_failed", "transient"},
 		{"evaluation", "oauth2.requested_service.evaluation_failed", "ERROR", "dependency_failed", "transient"},
+		{"unverifiable", "oauth2.requested_service.unverifiable", "WARN", "unverifiable_transient", "transient"},
 		{"missing", "oauth2.authorization.incremental_required", "INFO", "missing", ""},
 		{"not_selected", "oauth2.authorization.incremental_required", "INFO", "not_selected", ""},
 		{"required_scopes_uncovered", "oauth2.authorization.incremental_required", "INFO", "required_scopes_uncovered", ""},
@@ -84,6 +85,8 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 				services = unsafeScopeServices{cause: errors.New(secret)}
 			case "evaluation":
 				permissions = unsafeScopePermissions{cause: errors.New(secret)}
+			case "unverifiable":
+				f.snapshots.snapshot.Usability = servicescope.UsabilityUnverifiableTransient
 			case "missing":
 				f.snapshots.snapshot.Usability = servicescope.UsabilityMissing
 			case "unusable_definitive":
@@ -114,6 +117,9 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 				if tc.kind == "transient" {
 					code, description = "server_error", "server error"
 				}
+				if tc.name == "unverifiable" {
+					code, description = "temporarily_unavailable", descriptionUsabilityUnverifiable
+				}
 				requireAuthorizationError(t, decision, code, description)
 			}
 			for _, sentinel := range secrets {
@@ -135,7 +141,7 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 			assert.Equal(t, f.agent.ID.String(), record["agent_id"])
 			assert.NotContains(t, record, "error")
 			assert.NotContains(t, record, "kind")
-			if tc.kind == "" || tc.name == "evaluation" {
+			if tc.kind == "" || tc.name == "evaluation" || tc.name == "unverifiable" {
 				// The central principal policy is identity; the typed-call policy test
 				// guards against bypassing it with a pre-rendered principal.
 				assert.Equal(t, requestedPrincipal.LogValue().String(), record["principal"])

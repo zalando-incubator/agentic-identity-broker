@@ -52,7 +52,7 @@ service token, distinct `resource` values return `400 invalid_target` per RFC 86
 
 ## Incremental authorization and proxy refresh
 
-End-User API 1.3.0 adds [virtual service scopes](../guides/incremental-authorization.md).
+End-User API 1.4.0 adds [virtual service scopes](../guides/incremental-authorization.md).
 Local refresh rechecks every immutable service binding before rotation, including after scope
 narrowing. Proxy refresh instead validates broker-prefixed scope syntax, current service existence
 and agent eligibility before forwarding. Malformed, unknown or ineligible scopes return

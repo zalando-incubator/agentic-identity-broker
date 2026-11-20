@@ -109,6 +109,7 @@ The full request and response schemas for every endpoint below are in the
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/third-party/sessions` | List third-party services and per-user session status. |
+| GET | `/api/third-party/sessions/{service}` | Service and per-user session detail by canonical ID or UUID; `session: null` when no session exists. |
 | GET | `/api/third-party/{serviceId}/oauth2/authorize` | Start an authorization-code + PKCE flow to the third party. |
 | POST | `/api/third-party/{serviceId}/oauth2/authorize` | Start a PKCE flow with a tab-local `consent_state_id` and clean same-origin return path; the provider-facing state stays under 6,000 bytes. |
 | GET | `/api/third-party/{serviceId}/oauth2/callback` | Complete the third-party flow and, on success, return the sealed selection ID for same-tab restoration. |

@@ -61,16 +61,18 @@ func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	sessionTokens, hasSessionToken := query["session_token"]
 	authReq := &ports.AuthorizationRequest{
-		ClientID:            id.ClientID(rawClientID),
-		RedirectURI:         redirectURI,
-		ResponseType:        responseType,
-		Scope:               query.Get("scope"),
-		State:               query.Get("state"),
-		CodeChallenge:       query.Get("code_challenge"),
-		CodeChallengeMethod: query.Get("code_challenge_method"),
-		OriginalURL:         r.URL.String(),
-		SessionToken:        query.Get("session_token"),
+		ClientID:                     id.ClientID(rawClientID),
+		RedirectURI:                  redirectURI,
+		ResponseType:                 responseType,
+		Scope:                        query.Get("scope"),
+		State:                        query.Get("state"),
+		CodeChallenge:                query.Get("code_challenge"),
+		CodeChallengeMethod:          query.Get("code_challenge_method"),
+		OriginalURL:                  r.URL.String(),
+		SessionToken:                 query.Get("session_token"),
+		InvalidSessionTokenParameter: hasSessionToken && (len(sessionTokens) != 1 || sessionTokens[0] == ""),
 	}
 
 	decision, err := h.Service.HandleAuthorization(r.Context(), authReq, principalValue)

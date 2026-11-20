@@ -21,6 +21,58 @@ var _ = Describe("Incremental Service Authorization", func() {
 	ordinary := "openid offline_access"
 	notPermitted := "requested service scope is not permitted"
 
+	Context("when a failed GitHub exchange challenges the client to step up", func() {
+		var originalToken string
+
+		BeforeEach(func() {
+			journey = newIncrementalJourney("local", nil)
+			grant := journey.currentGrant()
+			grant.GrantedPermissionSets = grant.GrantedPermissionSets[:1]
+			Expect(journey.store.UserGrants().Create(context.Background(), grant)).To(Succeed())
+			originalToken = journey.issue(ordinary)["access_token"].(string)
+		})
+
+		// Journey 1 (US1 S4) from specs/055-incremental-service-authorization/spec.md.
+		It("should exchange the newly issued token after challenged-scope authorization, provider login and consent", func() {
+			status, body := journey.exchange(originalToken)
+			Expect(status).To(Equal(http.StatusForbidden))
+			Expect(body["error"]).To(Equal("access_denied"))
+			Expect(body["scope"]).To(Equal(journey.githubScope()))
+			challengedScope := body["scope"].(string)
+
+			location, verifier := journey.authorize(ordinary + " " + challengedScope)
+			sessionToken := journey.expectConsentRedirect(location)
+			coverage := coverageFor(journey.consentDetail(sessionToken), journey.cast.GitHub.ID)
+			Expect(coverage["usability"]).To(Equal("missing"))
+			Expect(coverage["covering_permission_sets"]).To(HaveLen(2))
+			grant := journey.currentGrant()
+
+			returnURL := journey.config.Server.EndUser.PublicURL + location.RequestURI()
+			returned := journey.connect(journey.cast.GitHub.ID, returnURL)
+			Expect(returned.Scheme + "://" + returned.Host + returned.Path).To(Equal(journey.config.Server.EndUser.PublicURL + location.Path))
+			expectedQuery := location.Query()
+			expectedQuery.Set("success", "true")
+			expectedQuery.Set("service_id", journey.cast.GitHub.ID.String())
+			Expect(returned.Query()).To(Equal(expectedQuery))
+			Expect(coverageFor(journey.consentDetail(sessionToken), journey.cast.GitHub.ID)["usability"]).To(Equal("usable"))
+			status, body = journey.submit(sessionToken, journey.grantSelection(journey.cast.IdentityAccess, journey.cast.GitHubRead), grant.ValidUntil)
+			continuation := journey.expectSaved(status, body, sessionToken)
+			code := journey.expectClientRedirect(journey.follow(continuation)).Get("code")
+			Expect(code).NotTo(BeEmpty())
+			status, body = journey.redeem(code, verifier)
+			Expect(status).To(Equal(http.StatusOK), "OAuth2 error: %v", body)
+			Expect(scopeSet(body["scope"])).To(ConsistOf("openid", "offline_access", challengedScope))
+			newToken := body["access_token"].(string)
+			Expect(newToken).NotTo(Equal(originalToken))
+			Expect(scopeSet(decodeJWTClaims(newToken)["scope"])).To(ContainElement(challengedScope))
+
+			status, body = journey.exchange(newToken)
+			Expect(status).To(Equal(http.StatusOK), "the first post-consent retry must succeed: %v", body)
+			Expect(body["access_token"]).To(Equal("synthetic-github-access"))
+			Expect(body["issued_token_type"]).To(Equal("urn:ietf:params:oauth:token-type:access_token"))
+		})
+	})
+
 	Context("when the agent already holds an ordinary local refresh token and GitHub becomes unusable", func() {
 		var refreshToken string
 

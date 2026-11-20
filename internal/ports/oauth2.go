@@ -92,6 +92,9 @@ type AuthorizationRequest struct {
 	// OPTIONAL: Sealed authorization session JWE carried only by the server-built post-consent
 	// continuation. It is consumed locally and never forwarded upstream or to the client.
 	SessionToken string
+
+	// INTERNAL: The continuation parameter was present but empty or repeated.
+	InvalidSessionTokenParameter bool
 }
 
 // AuthorizationDecision represents the broker's decision for an authorization request.

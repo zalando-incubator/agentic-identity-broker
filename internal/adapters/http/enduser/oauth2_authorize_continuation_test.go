@@ -1,7 +1,9 @@
 package enduser
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -25,7 +27,7 @@ import (
 // FR-011: these regressions preserve existing continuation behavior and redirect precedence.
 func TestAuthorizeContinuationFailureContract(t *testing.T) {
 	for _, withState := range []bool{false, true} {
-		for _, variant := range []string{"forged", "malformed", "expired", "request mismatch", "principal mismatch", "agent mismatch", "binding mismatch", "unregistered callback"} {
+		for _, variant := range []string{"forged", "malformed", "expired", "request mismatch", "principal mismatch", "agent mismatch", "binding mismatch", "unregistered callback", "empty", "bare", "decoy empty", "trailing empty", "repeated"} {
 			t.Run(variant+map[bool]string{true: "/state", false: "/no-state"}[withState], func(t *testing.T) {
 				const callback = "https://client.example.com/callback"
 				service := &model.ThirdpartyOAuth2ProviderEntity{ID: id.NewServiceID(), CanonicalID: ptr.To("github")}
@@ -64,16 +66,37 @@ func TestAuthorizeContinuationFailureContract(t *testing.T) {
 					token = "synthetic-malformed-JWE"
 				}
 				query.Set("session_token", token)
-				svc := oauth2.NewAuthorizationService(newMockGrantRepo(), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agents, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{ModeStrategy: oauth2.NewProxyModeStrategy(), PublicURL: "https://broker.example.com", UpstreamAuthorizeEndpoint: "https://upstream.invalid/authorize"}, nil, tokens).
+				switch variant {
+				case "empty", "bare":
+					query.Set("session_token", "")
+				case "decoy empty":
+					query["session_token"] = []string{"", token}
+				case "trailing empty":
+					query["session_token"] = []string{token, ""}
+				case "repeated":
+					query.Add("session_token", token)
+				}
+				var logs bytes.Buffer
+				logger := slog.New(slog.NewJSONHandler(&logs, nil))
+				svc := oauth2.NewAuthorizationService(newMockGrantRepo(), &noopSessionRepository{}, oauth2.NewAgentClientResolver(agents, slog.New(slog.DiscardHandler)), &oauth2.OAuth2Config{ModeStrategy: oauth2.NewProxyModeStrategy(), PublicURL: "https://broker.example.com", UpstreamAuthorizeEndpoint: "https://upstream.invalid/authorize"}, logger, tokens).
 					WithRequestedServices(servicescope.NewResolver(&proxyScopeService{service: service}, proxyScopePermissions{}, "https://broker.example.com"), nil)
 				proceed := &captureProceedStrategy{}
 				handler := &OAuth2AuthorizeHandler{Service: svc, ProceedHandler: proceed}
-				request := httptest.NewRequest(http.MethodGet, "/oauth2/authorize?"+query.Encode(), nil)
+				requestURI := "/oauth2/authorize?" + query.Encode()
+				if variant == "bare" {
+					query.Del("session_token")
+					requestURI = "/oauth2/authorize?" + query.Encode() + "&session_token"
+				}
+				request := httptest.NewRequest(http.MethodGet, requestURI, nil)
 				request = request.WithContext(principal.WithPrincipal(request.Context(), "alice@example.com"))
 				recorder := httptest.NewRecorder()
 				handler.ServeHTTP(recorder, request)
 				assert.False(t, proceed.called, "no code or upstream authorization on refusal")
 				assert.NotContains(t, recorder.Header().Get("Location"), token)
+				assert.NotContains(t, logs.String(), token)
+				if withState {
+					assert.NotContains(t, logs.String(), query.Get("state"))
+				}
 				if variant == "unregistered callback" {
 					assert.Equal(t, http.StatusBadRequest, recorder.Code)
 					assert.Empty(t, recorder.Header().Get("Location"))
@@ -87,6 +110,14 @@ func TestAuthorizeContinuationFailureContract(t *testing.T) {
 				code, description := "access_denied", "authorization session is invalid or expired"
 				if variant == "binding mismatch" {
 					code, description = "invalid_scope", "requested service scope is not permitted"
+				} else {
+					var record map[string]any
+					require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record), "exactly one audit record")
+					assert.Equal(t, "oauth2.authorization.continuation_rejected", record["event"])
+					assert.Equal(t, "WARN", record["level"])
+					assert.Equal(t, "invalid_session", record["reason"])
+					assert.Equal(t, agent.ID.String(), record["agent_id"])
+					assert.Equal(t, id.Principal("alice@example.com").LogValue().String(), record["principal"])
 				}
 				assert.Equal(t, code, location.Query().Get("error"))
 				assert.Equal(t, description, location.Query().Get("error_description"))
