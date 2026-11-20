@@ -10,7 +10,8 @@
 // measurement, and lists each place on standard error. It also exits with
 // status 1 when a span or an attribute key has no description in
 // docs/reference/telemetry-descriptions.yaml, or the file describes one that
-// the code does not have.
+// the code does not have, and when a constant of an enumerated attribute type
+// has no doc comment.
 package main
 
 import (
@@ -53,6 +54,12 @@ func run(dir string) error {
 			fmt.Fprintf(os.Stderr, "%s: %s\n", descriptionsPath, p)
 		}
 		return fmt.Errorf("%d problems with the descriptions (coding-standards/OPENTELEMETRY.md section 10)", len(problems))
+	}
+	if problems := checkValueDocs(ref); len(problems) > 0 {
+		for _, p := range problems {
+			fmt.Fprintln(os.Stderr, p)
+		}
+		return fmt.Errorf("%d values have no doc comment (coding-standards/OPENTELEMETRY.md section 10)", len(problems))
 	}
 	var buf bytes.Buffer
 	if err := Write(&buf, ref, d); err != nil {

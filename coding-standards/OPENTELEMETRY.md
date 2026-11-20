@@ -289,7 +289,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 - [ ] Principals are set on spans only through `id.Principal.SpanAttribute` under a `.principal` key, and only where section 4.3 permits. No principal is a metric attribute.
 - [ ] The observability contract lists each new instrument.
 - [ ] A test asserts that credentials on this path are not in span attributes, and asserts each new metric's attribute set.
-- [ ] Each new span and attribute key has a description in `docs/reference/telemetry-descriptions.yaml`, and `docs/reference/telemetry.md` is regenerated with `just telemetry-doc` (section 10).
+- [ ] Each new span and attribute key has a description in `docs/reference/telemetry-descriptions.yaml`, each new value constant has a doc comment, and `docs/reference/telemetry.md` is regenerated with `just telemetry-doc` (section 10).
 
 ## 9. Lint Enforcement
 
@@ -309,7 +309,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 | Principals only through `id.Principal.SpanAttribute` under a `.principal` key | `telemetrylint` `principal-key`: a key that ends in `.principal` takes only a `SpanAttribute` value, and `SpanAttribute` takes only such a key. ExtProc is exempt (section 4.3, rule 4). `principal-sink` rejects a principal in a span name, span event, or metric attribute. `gocritic` ruleguard rejects `attribute.String(k, p.String())` and `string(p)`. | Where section 4.3 permits a principal |
 | The observability contract lists each new instrument | — | All |
 | Tests for credentials and metric attribute sets | — | All |
-| Each new span and attribute key described, `docs/reference/telemetry.md` regenerated | — (`TestReferenceIsCurrent` fails while the page is out of date or a description is missing, section 10) | Whether each description is accurate |
+| Each new span, attribute key and value constant described, `docs/reference/telemetry.md` regenerated | — (`TestReferenceIsCurrent` fails while the page is out of date or a description or a value doc comment is missing, section 10) | Whether each description is accurate |
 
 `forbidigo` also rejects the `otelhttp` client transports (section 1).
 
@@ -317,7 +317,7 @@ A finding that the code cannot avoid carries `//nolint:<linter> // <reason>` at 
 
 ## 10. Telemetry Reference
 
-`docs/reference/telemetry.md` is the reference for operators and agents that query traces and metrics. `tools/telemetrydoc` reads the code with `go/packages` and generates the page. It does not run the code. The span and attribute descriptions come from `docs/reference/telemetry-descriptions.yaml`, because the code cannot say what a span is for.
+`docs/reference/telemetry.md` is the reference for operators and agents that query traces and metrics. `tools/telemetrydoc` reads the code with `go/packages` and generates the page. It does not run the code. The span and attribute descriptions come from `docs/reference/telemetry-descriptions.yaml`, because the code cannot say what a span is for. The meaning of each enumerated value comes from the doc comment of its constant.
 
 | Rule | Reason |
 |---|---|
@@ -326,6 +326,6 @@ A finding that the code cannot avoid carries `//nolint:<linter> // <reason>` at 
 | Do not edit the page by hand. Change the code, the descriptions file, or `tools/telemetrydoc`. | The next generation overwrites hand edits. |
 | Pass a span name as a constant, or as a constant argument to a span helper that passes it to `Tracer.Start`. Pass an attribute key as a constant to the attribute constructor or to `id.Principal.SpanAttribute`. Pass a metric name to the instrument constructor as a constant. | Sections 3.2 and 4.1 already require constant names, and `telemetrylint` checks them (section 9). The generator cannot list a name it cannot resolve. |
 | Set each attribute, span status, span name, and measurement where the generator can follow it to the span or the instrument. It follows variables, struct fields, closures, the parameters of functions that the module only calls directly, and the span in a context back to its `Start` call. It fails at each call that it cannot follow. | A call that the generator cannot follow would be missing from the page. |
-| Give an enumerated value a typed string constant (section 4.2). | The page lists the constants of the type as the value set. |
+| Give an enumerated value a typed string constant (section 4.2) with a doc comment. Say when the code sets the value and, where it helps, what an operator can do. | The page lists the constants of the type as the value set, with each comment as the meaning. The generator fails while a constant has no doc comment. |
 
 The page does not cover the `otelchi` server spans and metrics, metrics that the SDK, the Go runtime, or a library creates, span events, resource attributes, or log records. The generator fails when a span event has attributes.

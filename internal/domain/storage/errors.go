@@ -21,28 +21,34 @@ var ErrProtectedResourceOwned = errors.New("protected resource URI already owned
 type ErrorKind string
 
 const (
-	// ErrorKindConnection: Storage backend connection failed or disconnected.
-	// Example: PostgreSQL connection refused, network timeout to database
+	// ErrorKindConnection means the database was not initialized, or a query, the start of a transaction or a
+	// commit failed in a way that the repository does not classify further, so check the database and its
+	// connections. Storage spans record it as `error.type`.
 	ErrorKindConnection ErrorKind = "connection"
 
-	// ErrorKindTimeout: Operation exceeded its timeout deadline.
-	// Example: Query took longer than configured read timeout
+	// ErrorKindTimeout means the operation passed its deadline, from `storage.timeouts.read`,
+	// `storage.timeouts.write` or the caller, or PostgreSQL canceled a statement after its statement timeout.
+	// Storage spans record it as `error.type`.
 	ErrorKindTimeout ErrorKind = "timeout"
 
-	// ErrorKindValidation: Input validation failed.
-	// Example: Invalid connection string format, missing required parameters
+	// ErrorKindValidation means the repository rejected the input, such as an empty ID, a nil entity, a value
+	// that it could not encode as JSON or a value that a check constraint refuses. Storage spans record it as
+	// `storage.outcome`, because the caller handles it.
 	ErrorKindValidation ErrorKind = "validation"
 
-	// ErrorKindNotFound: Requested entity does not exist.
-	// Example: User with given ID not found in database
+	// ErrorKindNotFound means the requested row does not exist, an update or a delete matched no row, or a write
+	// referenced a row that does not exist. Storage spans record it as `storage.outcome`, because the caller
+	// handles it.
 	ErrorKindNotFound ErrorKind = "not_found"
 
-	// ErrorKindConflict: Operation conflicts with existing data.
-	// Example: User ID already exists (duplicate key)
+	// ErrorKindConflict means the write conflicts with stored data: a unique value is already taken, the
+	// transaction failed to serialize, the stored version is newer, or a referenced row is missing or was deleted
+	// concurrently. Storage spans record it as `storage.outcome`, because the caller handles it.
 	ErrorKindConflict ErrorKind = "conflict"
 
-	// ErrorKindUnknown: Error cause is unknown or unexpected.
-	// Used as fallback for unmapped error scenarios.
+	// ErrorKindUnknown means the repository could not classify the failure, such as a stored value that it could
+	// not decode, a row count that it could not read or a broken invariant. Storage spans also record it as
+	// `error.type` for an error that is not a storage error.
 	ErrorKindUnknown ErrorKind = "unknown"
 )
 

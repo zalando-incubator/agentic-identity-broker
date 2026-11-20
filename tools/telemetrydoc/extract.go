@@ -296,9 +296,9 @@ func (x *extractor) indexValues(d *ast.GenDecl, p *packages.Package) {
 		if !ok {
 			continue
 		}
-		doc := firstSentence(commentText(vs.Doc, vs.Comment))
+		doc := commentText(vs.Doc, vs.Comment)
 		if doc == "" && len(d.Specs) == 1 {
-			doc = firstSentence(commentText(d.Doc))
+			doc = commentText(d.Doc)
 		}
 		for i, n := range vs.Names {
 			obj := p.TypesInfo.Defs[n]
@@ -408,14 +408,6 @@ func commentText(groups ...*ast.CommentGroup) string {
 		}
 	}
 	return strings.Join(parts, " ")
-}
-
-func firstSentence(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if i := strings.Index(s, ". "); i >= 0 {
-		return s[:i+1]
-	}
-	return s
 }
 
 // withoutName drops the Go identifier that starts a doc comment, as in
