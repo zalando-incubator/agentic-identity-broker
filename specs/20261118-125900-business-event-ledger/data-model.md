@@ -170,12 +170,7 @@ attribute is not proof of the deletion's exact commit time.
 `recorded_at` and UUIDv7 IDs do not define commit order. A transaction can commit after a consumer advances past its `(recorded_at, id)` position.
 The index alone is therefore not a safe delivery cursor.
 
-Later delivery consumers must use a commit-ordered position, such as PostgreSQL logical decoding's commit LSN plus the insert's ordinal within the transaction.
-They read committed inserts from that stream and persist each position only after successful delivery.
-A consumer checkpoints an entire transaction only after successful delivery of all its business event inserts.
-The `(recorded_at, id)` index remains useful for retention and queries, but consumers must not advance delivery checkpoints from it.
-Timestamp-based delivery instead requires a separately specified, enforced visibility lag that covers transaction-start-to-commit visibility, including commits after handler timeouts.
-The handler's write timeout alone provides no such bound.
+The index remains useful for retention and queries. The consuming feature defines its delivery protocol.
 
 ## Memory adapter
 
