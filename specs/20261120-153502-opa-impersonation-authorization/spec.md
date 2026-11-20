@@ -18,6 +18,19 @@
 >
 > Related to #458
 
+## Clarifications
+
+### Session 2026-11-20
+
+- Q1: Must the first release support policy-time HTTP lookups, managed policy/data bundles only, or both? → A: (Proposed) Managed policy/data bundles only; policy-time network access is prohibited. Failed updates retain the last complete active revision, with no broker-enforced maximum revision age.
+  - Rationale: Dynamic governance snapshots satisfy the requested external-data use case through the requested bootstrap mechanism without exposing credential claims to request-time network destinations or adding a new synchronous availability dependency. This resolves FR-012 and SR-006; operators own bundle polling, distribution security, and acceptable data freshness.
+  - Alternative B: Support bundles plus policy-time lookups, with destination restrictions, credential protection, deadlines, and freshness controls designed and approved before implementation.
+  - Alternative C: Require direct policy-time lookups and make bundles optional; governance-service availability then becomes an issuance dependency.
+- Q2: Must OPA support unsigned subjects and audience-absent roles in this release? → A: (Proposed) No. OPA supports signed, expected-audience client, actor, and subject credentials only; incompatible rule configurations fail startup. Existing CEL exception paths remain unchanged.
+  - Rationale: Startup-enforced CEL predicate bindings cannot be assumed for dynamically updated Rego. Rejecting these OPA combinations preserves the accepted trust controls without requiring a new binding-analysis mechanism. Signed human and signed self-agent OPA issuance remain in scope; this resolves FR-013 and SR-005.
+  - Alternative B: Support all existing exceptional credential modes with enforceable binding controls on every activated policy revision, not operator assertions of safety.
+  - Alternative C: Support a specified subset of exceptional credential modes, with equivalent enforceable binding controls for each included mode.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Enforce organizational governance before issuing a token (Priority: P1)
@@ -61,6 +74,8 @@ An operator uses an OPA bootstrap configuration, comparable to ExtProc's existin
 1. **Scenario 3.1 — Governance update**: **Given** an active revision allowing the target agent, **When** an updated revision marking it unregistered becomes active through the configured OPA bootstrap, **Then** the next otherwise-identical exchange is denied without a broker restart or rebuild.
 2. **Scenario 3.2 — Runtime failure**: **Given** a selected OPA rule followed by an otherwise-permissive rule, **When** its evaluation errors, times out, is cancelled, or returns an undefined or malformed decision, **Then** the broker returns `500 server_error`, issues no token, and does not fall through to the permissive rule.
 3. **Scenario 3.3 — Unusable startup configuration**: **Given** a selected OPA rule whose bootstrap file is missing or invalid, or whose initial policy cannot become ready within the configured startup bound, **When** the operator starts the broker, **Then** startup fails with a credential-free diagnostic identifying the rule and configuration field; token requests are not served using an implicit allow policy.
+4. **Scenario 3.4 — Failed managed update**: **Given** active revision `r1` permitting Journey 1's approved agent, **When** a later bundle fetch fails or a replacement revision is invalid, **Then** `r1` remains active, the same validated request still succeeds under `r1`, and a fresh request with a different, unapproved agent is denied under `r1`; neither a partial revision nor a cached request decision is used. There is no broker-enforced maximum revision age.
+5. **Scenario 3.5 — Policy-time networking rejected**: **Given** an OPA policy revision that uses `http.send` or another network-capable policy built-in, **When** it is offered as the initial revision or as a managed update, **Then** it cannot activate, no policy-time outbound request occurs, initial readiness fails within the startup bound if no usable revision exists, and a later update leaves the last complete revision active as in Scenario 3.4.
 
 ### User Story 4 - Adopt OPA one rule at a time (Priority: P2)
 
@@ -75,6 +90,7 @@ An operator retains existing CEL rules while opting individual impersonation rul
 1. **Scenario 4.1 — Ordered mixed rules**: **Given** a first rule whose OPA policy returns an explicit deny and a later CEL rule authorizing the same validated request, **When** the client requests impersonation, **Then** the later rule may authorize under its own validation and eligibility checks, preserving existing first-match semantics.
 2. **Scenario 4.2 — Existing CEL behavior**: **Given** an unchanged valid CEL-only deployment, **When** the client exercises allowed and denied impersonation requests and ordinary third-party exchange, **Then** the existing observable outcomes remain unchanged and no OPA bootstrap is required.
 3. **Scenario 4.3 — Ambiguous selection rejected**: **Given** an impersonation rule with an unknown engine, both engine configurations populated, or missing configuration for its selected engine, **When** the broker starts, **Then** it fails startup with a rule-specific configuration error rather than choosing an engine implicitly.
+4. **Scenario 4.4 — Exceptional OPA credential modes rejected**: **Given** an OPA rule declaring subject `verification: none` or any role with `audience_requirement: absent`, **When** the broker starts, **Then** startup fails with the rule and incompatible field identified, even when a later CEL rule could authorize; equivalent valid CEL-only exceptional configurations retain their existing acceptance, email-binding, and subject-category behavior.
 
 ### Edge Cases
 
@@ -83,8 +99,8 @@ An operator retains existing CEL rules while opting individual impersonation rul
 - Optional claims remain absent rather than being invented or coerced. Claim arrays, booleans, numbers, and nested objects retain their meaning.
 - Impersonation rejects `resource`; policy context still includes its existing empty-string value rather than repurposing it as the routing audience.
 - No valid initial policy/data revision means no readiness. A failed later update must not partially activate a policy/data revision. Continued use of the last successfully activated revision must be documented distinctly from an evaluation failure; a new request must never reuse a previous request's allow decision.
-- A slow external dependency must not evade the evaluation deadline. External data acquisition and freshness guarantees remain subject to Q1 below.
-- Unsigned subjects, caller-controlled email, audience-absent credentials, and unverified agent classification depend on startup-enforced predicate binding today. OPA must not silently bypass those checks; their support boundary remains Q2 below.
+- A slow bundle source must not enter the request evaluation path or evade the evaluation deadline. Request-time policy networking is prohibited; bundle acquisition is separate from evaluation. Failed fetches or rejected revisions retain the last complete active revision without a broker-enforced maximum age (Q1).
+- OPA rules reject unsigned subjects and audience-absent credentials at startup. Unverified email and unverified agent classification therefore remain CEL-only paths, retaining their existing predicate-binding controls (Q2).
 - ExtProc's `approval_required` action, response-header mutation, and MCP tool parsing do not authorize issuance of an impersonation token.
 
 ## Concrete Example Journeys *(mandatory)*
@@ -143,7 +159,7 @@ bundles:
     resource: bundles/impersonation.tar.gz
 ```
 
-The bundle supplies `company.impersonation.result` and governance data. Its business rule requires method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration for `request.agent_id` assigned to `inventory-api`. The decision is `{"action":"allow"}` only when all checks pass; otherwise it is `{"action":"deny"}`. Bundle authentication, update cadence, and data freshness are operator-owned bootstrap settings, not credentials embedded in this example. Runtime external lookups are not implied by this bundle example (Q1).
+The bundle supplies `company.impersonation.result` and governance data. Its business rule requires method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration for `request.agent_id` assigned to `inventory-api`. The decision is `{"action":"allow"}` only when all checks pass; otherwise it is `{"action":"deny"}`. Bundle authentication, update cadence, and data freshness are operator-owned bootstrap settings, not credentials embedded in this example. Policy-time network access, including `http.send`, is prohibited (Q1). An initial or updated revision using network-capable policy built-ins cannot activate; configured bundle retrieval is not a policy-time lookup.
 
 **Step 2 — Client submits the exchange.** `SYNTHETIC_CLIENT_JWT`, `SYNTHETIC_ACTOR_JWT`, and `SYNTHETIC_SUBJECT_JWT` denote test-issued signed JWTs, not literal wire-valid tokens. All use decoded header `{"alg":"RS256","kid":"identity-test-key","typ":"JWT"}` and have these decoded claims:
 
@@ -269,11 +285,11 @@ Descriptions illustrate credential-free summaries, not new stable diagnostic ide
 }
 ```
 
-No category claim, human grant, or human session is created. This signed, expected-audience flow does not depend on Q2's exceptional-credential decision.
+No category claim, human grant, or human session is created. This signed, expected-audience flow is supported by Q2; unsigned self-agent subjects remain available only through valid CEL rules.
 
 **Observable result**: Alice's approved delegated request and the explicitly eligible signed self-agent request obtain correctly attributed tokens; a governance denial or spoofed transport identity cannot obtain one, and missing human delegation retains its established recovery flow.
 
-### Journey 2 — Change governance without a broker release (User Story 3, Scenarios 3.1–3.3)
+### Journey 2 — Change governance without a broker release (User Story 3, Scenarios 3.1–3.5)
 
 1. The operator starts Journey 1's configuration with bootstrap revision `r1`, which approves the target for `inventory-api`. The Step 2 request succeeds with the displayed `200` response and decoded claims.
 2. The governance team publishes revision `r2`, marking the same agent unregistered. Once `r2` is activated, the identical Step 2 request receives the displayed `403 access_denied` response. No restart, token-claims change, or client change is needed. This changes future issuance, not the validity of already-issued tokens.
@@ -288,9 +304,12 @@ No category claim, human grant, or human session is created. This signed, expect
 
 4. As a startup variant, the operator changes `authorization.opa.policy.config_file` to a nonexistent file, supplies invalid bootstrap content, or provides no usable initial policy within the startup bound. The process exits unsuccessfully with the rule and field identified; there is no token response because this broker does not become ready.
 
-**Observable result**: Activated governance updates change issuance decisions, while unavailable authorization never becomes permission.
+5. For Scenario 3.4, start separately from active `r1` and make the bundle source unavailable or offer an invalid replacement. The Step 2 request still receives Journey 1's `200` response and decoded claims because `r1` remains active. A fresh request for another registered agent, `660e8400-e29b-41d4-a716-446655440001`, not approved in `r1`, receives Journey 1's `403 access_denied` response. For that request change the audience suffix to the second UUID and give Alice active delegation and the agent scope `read`, so governance alone explains the denial. The broker supplies no maximum-age cutoff; operators own the acceptable staleness of distributed governance data.
+6. For Scenario 3.5, offer a revision that attempts `http.send` to `https://cmdb.example.com/agents/550e8400-e29b-41d4-a716-446655440000`. That policy is rejected before activation, without contacting the CMDB. As the initial revision, it prevents readiness within the startup bound; as an update to `r1`, it leaves the preceding Step 5 outcomes unchanged. Bundle polling of `https://policies.example.com` remains allowed through the operator-managed bootstrap.
 
-### Journey 3 — Migrate a rule while keeping CEL behavior (User Story 4, Scenarios 4.1–4.3)
+**Observable result**: Activated governance updates change issuance decisions. Evaluation failures never become permission; bundle-update failures instead retain the last complete revision and its documented staleness risk. Policies cannot initiate network lookups.
+
+### Journey 3 — Migrate a rule while keeping CEL behavior (User Story 4, Scenarios 4.1–4.4)
 
 1. The operator retains Journey 1's credentials, issuer settings, and delegation. They add a later rule named `legacy-approved-client` with the same roles and trust anchors, but with this authorization block:
 
@@ -306,7 +325,12 @@ No category claim, human grant, or human session is created. This signed, expect
 3. In a separate CEL-only deployment, the operator removes the OPA rule and bootstrap entirely. The existing allowed/denied requests and ordinary third-party exchanges keep their established outcomes; no OPA management connection is made.
 4. As an invalid-configuration variant, the operator populates both `authorization.cel` and `authorization.opa` on one rule or chooses an unknown type. Startup fails naming that rule and field; the operator must select exactly one engine.
 
-**Observable result**: Migration is per rule, existing selection semantics remain explicit, and invalid combinations cannot silently change authorization.
+5. For Scenario 4.4, make either of these independent changes to Journey 1's OPA rule:
+   - Set `roles.subject.verification: none`, remove its `expected_audience`, and remove `subject` from the trusted issuer's `signs_roles`, as an otherwise-valid unsigned-subject configuration would require.
+   - Set `roles.actor.audience_requirement: absent` and remove that role's `expected_audience`, as an otherwise-valid audience-absent actor configuration would require.
+   Each OPA configuration fails startup identifying the incompatible field; no token request is served. Repeat the same mode changes on a CEL-only rule with valid existing subject/email or actor predicate bindings and synthetic credentials appropriate to that mode. Its existing outcomes remain unchanged; selecting OPA is not a migration path for those exception modes.
+
+**Observable result**: Migration is per rule, existing selection semantics remain explicit, and invalid combinations cannot silently change authorization. Signed, audience-bound OPA requests coexist with unchanged exceptional CEL flows.
 
 ## Requirements *(mandatory)*
 
@@ -316,15 +340,15 @@ No category claim, human grant, or human session is created. This signed, expect
 - **FR-002**: Exactly one selected authorization engine MUST decide each evaluated rule. Unknown types, conflicting populated engine blocks, and missing selected-engine configuration MUST fail startup with an indexed rule/field diagnostic.
 - **FR-003**: OPA configuration MUST accept an OPA-native bootstrap configuration file comparable to ExtProc's managed-policy configuration, including managed policy/data bundles and a selected decision document. Invalid configuration or no usable initial policy within a bounded startup interval MUST prevent readiness.
 - **FR-004**: A successfully activated managed policy/data update MUST affect subsequent evaluations without rebuilding or restarting the broker. Updates MUST activate consistently; the broker MUST NOT reuse a previous request's allow decision.
-- **FR-005**: The input MUST provide the Envoy OPA plugin-compatible `attributes.request.http` envelope for the token endpoint request and the namespaced `context` fields in Journey 1. For each existing CEL variable `v` among `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, and `request`, `input.context.v` MUST preserve the same semantics and value types. This does not promise identical policy syntax between CEL and Rego.
+- **FR-005**: For supported OPA credential modes (FR-013), the input MUST provide the Envoy OPA plugin-compatible `attributes.request.http` envelope for the token endpoint request and the namespaced `context` fields in Journey 1. For each existing CEL variable `v` among `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, and `request`, `input.context.v` MUST preserve the same semantics and value types. In the supported signed-only OPA modes, `subject_unverified` is always `false`. This does not promise identical policy syntax between CEL and Rego.
 - **FR-006**: Policy context MUST be derived from the same validated per-rule credentials and resolved target used by CEL, not raw request-supplied identity headers. The `request` extension MUST preserve `resource`, `grant_type`, `scope`, and target UUID `agent_id`; it MUST NOT confuse the routing audience with the minted token audience.
 - **FR-007**: A well-formed `{"action":"allow"}` decision MUST satisfy only the selected rule's authorization predicate. `{"action":"deny"}` MUST act as an explicit policy non-match. Other action values, missing/undefined decisions, malformed output, evaluation errors, cancellation, and timeouts MUST issue no token and terminate the request with `500 server_error`, without fallback to another rule or engine. ExtProc approval actions and response mutations are outside this decision contract.
 - **FR-008**: Ordered first-match rules, per-rule credential validation and extraction, category eligibility, human delegation, target/scope validation, and local token issuance MUST retain their established behavior. OPA MUST NOT select the minted subject, alter reserved token claims, or bypass a terminal delegation failure.
 - **FR-009**: CEL MUST remain the engine for role principal/email extraction, local token-claims expressions, and existing third-party agent-subject detection. This feature MUST NOT enable OPA for ordinary third-party exchange or proxy/hybrid impersonation.
 - **FR-010**: OPA evaluations MUST have a bounded, cancellation-aware timeout (proposed default `100ms`, valid range `10ms`–`5s`, matching the existing impersonation evaluation range). Failure MUST NOT fall back to allow.
 - **FR-011**: Operators MUST receive documentation for configuration, the full input/decision contract, credential exclusions, bundle readiness/update behavior, and equivalent CEL/Rego governance examples. Broker examples and the broker Helm configuration contract MUST expose the approved parameters through the normal broker configuration system.
-- **FR-012**: Dynamic external-data acquisition MUST satisfy the approved answer to Q1; the specification does not silently authorize arbitrary runtime network access from policies.
-- **FR-013**: OPA rules using unsigned subjects or audience-absent credentials MUST satisfy the approved answer to Q2. Existing CEL exception behavior MUST remain unchanged; unsupported OPA combinations MUST fail startup rather than lose binding controls.
+- **FR-012**: Dynamic external governance data MUST be acquired through operator-configured managed policy/data bundles, not policy-time network lookups (Q1, Proposed). Network-capable policy built-ins, including `http.send`, MUST be unavailable; an initial or updated revision that uses them MUST NOT activate or perform outbound lookups. A failed fetch or invalid update MUST retain the last complete active revision; there is no broker-enforced maximum revision age. Initial readiness without any usable revision MUST fail within the startup bound. Bundle retrieval remains allowed through the bootstrap and MUST NOT become a synchronous per-request dependency.
+- **FR-013**: OPA rules MUST support only signed client assertions, actors, and subjects with each role's normal `expected_audience` validation (Q2, Proposed). Subject `verification: none` and `audience_requirement: absent` on any role MUST fail startup with a rule/field diagnostic. Signed human and explicitly eligible signed self-agent requests remain supported. Existing CEL unsigned-subject, bound unverified-email, audience-absent, and unverified-agent behavior MUST remain unchanged; this feature MUST NOT introduce a Rego substitute for their binding controls.
 
 ### Domain Model
 
@@ -384,11 +408,11 @@ Approved configuration must be documented in `docs/configuration.md`, illustrate
 ### Security Requirements *(mandatory for security-critical features)*
 
 - **SR-001**: Existing cryptographic verification, role trust, audience, issuer, algorithm, lifetime, extraction, category, scope, and delegation controls MUST remain active. OPA is a policy alternative within a rule, never an authentication replacement or an optional allow-on-error layer.
-- **SR-002**: No startup, policy-loading, evaluation, malformed-decision, timeout, or cancellation failure may mint a token. All cryptographic and policy security primitives MUST use established libraries.
+- **SR-002**: No startup or initial policy-loading failure may permit readiness. Evaluation failures, malformed decisions, timeouts, and cancellations MUST issue no token. A background policy/data update failure MUST NOT activate the failed revision; fresh requests may still be authorized by the last complete active revision under FR-012. All cryptographic and policy security primitives MUST use established libraries.
 - **SR-003**: Raw JWT strings, the credential-bearing token form body, cookies, authorization headers, secrets, and unrelated broker state MUST NOT be included in policy input or authorization diagnostics. Validated claim maps supplied for policy use MUST NOT be copied into logs, spans, metrics, or OPA decision-log exports. Policy/data fetch credentials MUST NOT appear in error responses or diagnostics.
 - **SR-004**: Security decisions MUST retain structured, credential-free auditing consistent with the logging and telemetry coding standards. Policy-produced reasons and external service error bodies MUST NOT be reflected as arbitrary token-endpoint error text.
-- **SR-005**: Existing startup-enforced binding for unverified subjects, unverified emails, absent-audience roles, and unverified agent classification MUST NOT be replaced by an operator assertion that a policy is safe. Q2 must resolve equivalent enforceable controls or explicitly exclude those OPA combinations.
-- **SR-006**: Policy/data bundles and bootstrap settings are trusted operator-managed configuration. Request callers MUST NOT choose policy sources, decision paths, or external lookup destinations. The approved external-data model must bound dependency failures and document freshness behavior.
+- **SR-005**: Existing startup-enforced binding for unverified subjects, unverified emails, absent-audience roles, and unverified agent classification MUST NOT be replaced by an operator assertion that a policy is safe. OPA MUST reject unsigned-subject and audience-absent rule configurations at startup (FR-013); all existing CEL binding controls remain mandatory and unchanged.
+- **SR-006**: Policy/data bundles and bootstrap settings are trusted operator-managed configuration. Request callers MUST NOT choose policy sources or decision paths. Policy-time network access MUST be prohibited across every activated revision (FR-012), including network built-ins invoked from helper policies. Bundle management may contact its configured sources independently of token requests. Documentation MUST state that failed updates retain the last complete revision without a broker-enforced maximum age, so operators can assess governance-data staleness.
 
 ### Key Entities
 
@@ -403,46 +427,18 @@ Agent, UserGrant, Impersonation Rule, Impersonation Policy Input, Impersonation 
 - **SC-003**: After a revoking policy/data revision is activated, the first subsequent equivalent request is denied without a broker restart or rebuild.
 - **SC-004**: Across startup, evaluation, malformed-result, timeout, and cancellation acceptance cases, zero tokens are issued because of an authorization failure, and every failure produces a credential-free operator diagnostic or protocol error as appropriate.
 - **SC-005**: All existing valid CEL-only acceptance cases retain their observable outcomes without configuration changes or an OPA service dependency.
-- **SC-006**: Authorization work stops within the configured evaluation bound, subject only to test-runner scheduling tolerance; a slow governance dependency cannot leave the client waiting indefinitely.
+- **SC-006**: Authorization work stops within the configured evaluation bound, subject only to test-runner scheduling tolerance; a slow bundle source cannot leave the client waiting indefinitely or enter the request evaluation path.
+- **SC-007**: Across initial and updated policy revisions attempting network-capable built-ins, zero policy-time outbound requests occur and zero such revisions activate. Failed update cases preserve the last complete revision's allow and deny outcomes for fresh requests.
+- **SC-008**: Every tested OPA unsigned-subject or audience-absent rule fails startup, while the equivalent existing valid CEL configurations retain their established outcomes.
 
 ## Assumptions
 
 - The feature description supplied to this phase is exactly the issue title, a blank line, and issue body reproduced above. Issue comments and the linked issue #458 are not requirement inputs.
 - Target users are broker operators and organizational policy authors, not end users authoring arbitrary request-time policies. This is a local-mode impersonation feature, not a replacement of every CEL expression in the broker.
-- Managed policy/data bundles through an OPA bootstrap are required. The exact acquisition model for dynamic external data is consequential and remains Q1, rather than silently adding unrestricted request-time network access.
+- Managed policy/data bundles through an OPA bootstrap are the required dynamic external-data model. Q1 proposes excluding policy-time network lookups and retaining the last complete revision after update failures, with no broker-enforced maximum revision age; it is not an approval inferred from the issue.
 - The structured allow/deny decision follows the existing ExtProc convention but excludes approval and response mutation. Exact contract design and any compatibility change require approval before implementation.
 - A failed managed update retains the last complete active revision rather than partially replacing it; this does not imply a newly guaranteed maximum governance-data age. Operators' configured polling and failure/freshness policies must be documented.
 - This feature does not revoke tokens already issued before governance changes. Token revocation, new admin APIs, new persistence, UI changes, MCP parsing, and remote OPA decision servers are outside scope.
 - Dependencies include the existing per-rule credential validators, target resolution, local issuer, human-delegation enforcement, operator-managed policy distribution, and normal broker configuration/deployment contracts.
 - Accepted `009-cel-for-authorization-policies` governs broker authorization and currently reserves OPA. Accepted `028-opa-extproc-authorization` applies to the distinct ExtProc boundary and explicitly does not replace broker CEL. Planning must propose an appropriate superseding ADR for the broker-side extension; neither this document nor issue creation accepts it.
 - Accepted `031-unverified-subject-unsigned-jwt`, `034-audience-absent-impersonation-credentials`, and `045-agent-subject-impersonation` impose predicate-binding requirements. Accepted `032-impersonation-requires-user-delegation` continues to govern human delegation. Any deviation requires an approved superseding decision, not an ad-hoc OPA exception.
-
-### Questions for clarification
-
-#### Q1 — Dynamic external-data access
-
-**Context**: The issue requests dynamic external data, such as a governance registry or CMDB, and an OPA bootstrap comparable to ExtProc.
-
-[NEEDS CLARIFICATION: Must the first release support policy-time HTTP lookups against governance/CMDB services, managed policy/data bundles only, or both? If lookups are required, which destination restrictions, timeout/failure behavior, and freshness guarantees must be approved?]
-
-| Option | Answer | Implications |
-| --- | --- | --- |
-| A | Managed policy/data bundles only | Governance snapshots update through the configured bootstrap; no request-time external lookup is promised. |
-| B | Bundles plus policy-time lookups | Define and approve permitted external destinations, credentials, deadlines, failure handling, and freshness behavior before implementation. |
-| C | Policy-time lookups are essential; bundles are optional | Direct dependency availability and egress controls become part of the primary issuance path. |
-| Custom | Provide the required data acquisition and freshness model | State which sources must be consulted and when a request must deny rather than use older data. |
-
-#### Q2 — Exceptional credential modes and predicate binding
-
-**Context**: Existing unsigned-subject and absent-audience modes depend on compiled authorization-predicate reference checks; unverified email and agent issuance also depend on field binding. Managed Rego updates cannot silently remove these guarantees.
-
-[NEEDS CLARIFICATION: Must OPA support unsigned subjects and audience-absent roles in this release, or may OPA reject those combinations at startup while they remain available through CEL? If support is required, approve a design that enforces the existing binding guarantees across every activated policy revision before implementation.]
-
-| Option | Answer | Implications |
-| --- | --- | --- |
-| A | OPA initially supports signed, expected-audience roles only | Unsupported exceptional OPA combinations fail startup; existing CEL exception paths remain unchanged. |
-| B | Include all existing exceptional credential modes | Planning must define enforceable role/field-binding checks across policy updates and obtain approval for any superseding ADR. |
-| C | Include a specified subset | Name the required modes; each needs its corresponding startup and update-time security controls. |
-| Custom | Provide the required support boundary and binding constraints | Preserve all existing trust controls; operator-declared safety alone is insufficient. |
-
-These questions are an expected clarification handoff. No answer or architectural approval is inferred here.
