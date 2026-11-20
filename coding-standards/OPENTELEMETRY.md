@@ -322,7 +322,7 @@ A finding that the code cannot avoid carries `//nolint:<linter> // <reason>` at 
 |---|---|
 | After you add, rename, or remove a span, a metric, or an attribute, run `just telemetry-doc` and commit the page. `TestReferenceIsCurrent` fails while the page is out of date. | The page stays the same as the code in each pull request. |
 | Do not edit the page by hand. Change the code or `tools/telemetrydoc`. | The next generation overwrites hand edits. |
-| Pass a span name and an attribute key as a constant, or as a constant argument to a function that passes it on, as with `id.Principal.SpanAttribute(key)`. Pass a metric name to the instrument constructor as a constant. | Sections 3.2 and 4.1 already require constant names. The generator cannot list a name it cannot resolve. |
+| Pass a span name as a constant, or as a constant argument to a span helper that passes it to `Tracer.Start`. Pass an attribute key as a constant to the attribute constructor or to `id.Principal.SpanAttribute`. Pass a metric name to the instrument constructor as a constant. | Sections 3.2 and 4.1 already require constant names, and `telemetrylint` checks them (section 9). The generator cannot list a name it cannot resolve. |
 | Set each attribute, span status, span name, and measurement where the generator can follow it to the span or the instrument. It follows variables, struct fields, closures, the parameters of functions that the module only calls directly, and the span in a context back to its `Start` call. It fails at each call that it cannot follow. | A call that the generator cannot follow would be missing from the page. |
 | Give an enumerated value a typed string constant (section 4.2). | The page lists the constants of the type as the value set. |
 
