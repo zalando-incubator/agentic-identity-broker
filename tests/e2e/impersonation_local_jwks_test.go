@@ -131,7 +131,7 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 
 	Context("a trusted issuer with an inline key set", func() {
 		// US4-S1 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("starts without discovery and mints a token whose act claim identifies the gateway's actor", func() {
+		It("starts without discovery and mints a token whose act claim identifies the gateway's actor", example("trust-anchors.impersonation.inline"), func() {
 			boot(localRule("gateway", `client_assertion.sub == "gateway-prod"`, func(c *ports.TrustedTokenIssuerConfig) {
 				c.JWKS = helpers.PublicKeySet(gateway)
 			}))
@@ -152,7 +152,7 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 
 	Context("a trusted issuer with a key-set file", func() {
 		// US4-S2 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("validates credentials signed by the file's keys", func() {
+		It("validates credentials signed by the file's keys", example("trust-anchors.impersonation.file"), func() {
 			path := trust.WriteFile("gateway-jwks.json", helpers.PublicKeySet(gateway))
 			boot(localRule("gateway", `client_assertion.sub == "gateway-prod"`, func(c *ports.TrustedTokenIssuerConfig) {
 				c.JWKSFile = path
@@ -187,7 +187,7 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 
 	Context("two rules that trust the same issuer identifier with different inline keys", func() {
 		// US4-S4 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("verifies each rule only against its own keys", func() {
+		It("verifies each rule only against its own keys", example("trust-anchors.impersonation.per-rule-keys"), func() {
 			keyA := helpers.NewLocalES256Key("rule-a")
 			keyB := helpers.NewLocalES256Key("rule-b")
 			boot(

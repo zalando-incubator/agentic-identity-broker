@@ -112,7 +112,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		})
 
 		// Scenario 1.1 from specs/031-unified-session-token/spec.md
-		It("includes session_token and omits redirect_uri for local agent authorize", func() {
+		It("includes session_token and omits redirect_uri for local agent authorize", example("consent-and-delegation.authorize.sends-to-consent"), func() {
 			principal := fixtures.DefaultPrincipal().String()
 			authorizeURL := fmt.Sprintf(
 				"/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=state123",
@@ -132,7 +132,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		})
 
 		// Scenario 1.2 from specs/031-unified-session-token/spec.md
-		It("session token contains agent ID, principal, original URL, iat, exp with 10min TTL", func() {
+		It("session token contains agent ID, principal, original URL, iat, exp with 10min TTL", example("consent-and-delegation.session-token.claims"), func() {
 			principal := fixtures.DefaultPrincipal().String()
 			originalURL := fmt.Sprintf(
 				"/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=state456",
@@ -166,7 +166,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		})
 
 		// Scenario 1.3 from specs/031-unified-session-token/spec.md
-		It("rejects session token when principal does not match authenticated user", func() {
+		It("rejects session token when principal does not match authenticated user", example("consent-and-delegation.session-token.other-user"), func() {
 			principalA := fixtures.DefaultPrincipal().String()
 			principalB := fixtures.AnotherPrincipal().String()
 
@@ -343,7 +343,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		})
 
 		// Scenario 4.1 from specs/031-unified-session-token/spec.md
-		It("grant response redirect_url preserves original authorization request context", func() {
+		It("grant response redirect_url preserves original authorization request context", example("consent-and-delegation.grant.return-to-agent"), func() {
 			principal := fixtures.DefaultPrincipal().String()
 			state := "originalstate456"
 			redirectURI := "https://client.example.com/cb"
@@ -411,7 +411,7 @@ var _ = Describe("Unified Session Token State Transport", func() {
 		// Scenario 3.2 from specs/031-unified-session-token/spec.md
 		// Without a session_token the grants handler operates in consent-management mode
 		// (user managing grants outside the OAuth2 flow) — no redirect_url is returned.
-		It("grant response omits redirect_url when no session_token is present", func() {
+		It("grant response omits redirect_url when no session_token is present", example("consent-and-delegation.grant.without-authorization-request"), func() {
 			principal := fixtures.DefaultPrincipal().String()
 			grantBody, _ := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{fixtures.PlaceholderPermissionSetID.String(): {fixtures.PlaceholderServiceID.String()}}})
 			grantPath := fmt.Sprintf("/api/consent/agents/%s/grants", agent.ID)

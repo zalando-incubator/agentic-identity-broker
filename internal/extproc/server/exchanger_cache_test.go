@@ -22,6 +22,7 @@ import (
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // ---------------------------------------------------------------------------
@@ -131,6 +132,7 @@ func TestTokenExchanger_CacheHit_ReturnsClonedGrantedPermissionSets(t *testing.T
 
 // Spec: FR-018 — Cache TTL respects max_ttl cap even when expires_in is larger
 func TestTokenExchanger_Cache_MaxTTLCap_AppliedCorrectly(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.cache.max-lifetime")
 	mocks := newMockServers()
 	defer mocks.Close()
 
@@ -863,6 +865,7 @@ func TestTokenExchanger_ReAuthCooldown_PreventsRepeatedBrokerCalls(t *testing.T)
 
 // Stale fallback is bounded by the reported lifetime, not the shorter fresh cache window.
 func TestTokenExchanger_ExpiredCache_TransientError_ServesStaleToken(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.cache.outage-fallback")
 	mocks := newMockServers()
 	defer mocks.Close()
 	synctest.Test(t, func(t *testing.T) {
@@ -931,6 +934,7 @@ func TestTokenExchanger_ExpiredCache_429_ServesStaleToken(t *testing.T) {
 // Spec: When the token cache expires and the broker returns an authoritative 4xx rejection
 // without error_uri, Exchange must propagate the error — not serve the stale cached token.
 func TestTokenExchanger_ExpiredCache_AuthoritativeError_PropagatesError(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.cache.rejection-not-masked")
 	mocks := newMockServers()
 	defer mocks.Close()
 

@@ -385,7 +385,7 @@ var _ = Describe("OAuth2 credential source boundaries", func() {
 			})
 
 			// US4-S4 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US4-S4 rejects filesystem creation and updates for every excluded mode without mutation", Label("oauth2-secret-file-overrides"), func() {
+			It("US4-S4 rejects filesystem creation and updates for every excluded mode without mutation", Label("oauth2-secret-file-overrides"), example("broker-credentials-at-third-party-services.files.excluded-modes"), func() {
 				for _, service := range services {
 					By("rejecting filesystem creation and update for " + service.mode)
 					request := make(map[string]any, len(service.request))
@@ -731,7 +731,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			AfterEach(func() { cases = nil })
 
 			// US5-S5 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US5-S5 atomically removes stored credentials and enforces matching mismatched and legacy identities", func() {
+			It("US5-S5 atomically removes stored credentials and enforces matching mismatched and legacy identities", example("broker-credentials-at-third-party-services.files.switch-to-files"), func() {
 				for _, tc := range cases {
 					By("transitioning an established " + tc.name + " context")
 					body := transition(tc, "filesystem")
@@ -780,7 +780,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 			AfterEach(func() { cases = nil })
 
 			// US5-S6 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US5-S6 requires explicit encrypted reverse credentials and never revives legacy contexts after a round trip", func() {
+			It("US5-S6 requires explicit encrypted reverse credentials and never revives legacy contexts after a round trip", example("broker-credentials-at-third-party-services.files.switch-to-stored"), func() {
 				for _, tc := range cases {
 					By("returning an established " + tc.name + " context to stored mode")
 					if tc.initialSource == "stored" {

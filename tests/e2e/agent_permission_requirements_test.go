@@ -268,7 +268,7 @@ var _ = Describe("Agent Permission Requirements", func() {
 
 		// Scenario 4: spec.md User Story 1, Scenario 4
 		// Spec: GET response includes service_name resolved from service display_name
-		It("should return service_requirements with resolved display names in GET response", func() {
+		It("should return service_requirements with resolved display names in GET response", example("permission-sets.service-requirements.read"), func() {
 			// Given: An agent with service requirements
 			agent := fixtures.ValidAgent()
 			agent.ServiceRequirements = []storage.ServiceRequirement{
@@ -311,7 +311,7 @@ var _ = Describe("Agent Permission Requirements", func() {
 
 		// Scenario 5: spec.md User Story 1, Scenario 5
 		// Spec: PUT replaces entire service requirements array
-		It("should replace entire service requirements on PUT /api/agents/{agent-id}", func() {
+		It("should replace entire service requirements on PUT /api/agents/{agent-id}", example("permission-sets.service-requirements.replace"), func() {
 			// Given: An existing agent with service requirements
 			agent := fixtures.ValidAgent()
 			err := testStorage.Agents().Create(context.Background(), agent)
@@ -349,7 +349,7 @@ var _ = Describe("Agent Permission Requirements", func() {
 		// Scenario 6: spec.md User Story 1, Scenario 6
 		// Spec: Non-existent service_id should be rejected with error
 		Context("with invalid service reference", func() {
-			It("should return HTTP 400 for non-existent service_id reference", func() {
+			It("should return HTTP 400 for non-existent service_id reference", example("permission-sets.agent.none-declared"), func() {
 				// Given: A service requirement referencing a non-existent service_id
 				// When: The request is processed
 				agentPayload := map[string]interface{}{

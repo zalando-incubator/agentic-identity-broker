@@ -183,7 +183,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when protected-resource metadata is absent", func() {
 		// US3-S1 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should reject missing metadata rather than accept manual endpoints", Label("protected-resource-discovery"), func() {
+		It("should reject missing metadata rather than accept manual endpoints", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.no-fallback"), func() {
 			env.provider.SetReply(fixtures.ProtectedResourceReply{Host: "cimd-only.example.test", Method: http.MethodGet, Path: "/.well-known/oauth-protected-resource/mcp", Status: http.StatusNotFound})
 			failure(post(env, request(env, scenario.ResourceURL)), http.StatusBadRequest, "discovery failed", "resource_metadata_not_found")
 			callsBeforeFallback := len(env.provider.Calls())
@@ -215,7 +215,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 			useProductionTransport = true
 		})
 		// US3-S3 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should block a private destination before connecting", Serial, Label("protected-resource-discovery"), func() {
+		It("should block a private destination before connecting", Serial, Label("protected-resource-discovery"), example("third-party-service-registration.discovery.unsafe-destination"), func() {
 			failure(post(env, request(env, env.provider.Server.URL+"/mcp")), http.StatusBadRequest, "discovery failed", "unsafe_destination")
 			const hostname = "private-discovery.example.test"
 			restoreDNS, lookups := useLoopbackDiscoveryDNS(hostname)
@@ -254,7 +254,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 	Context("when protected-resource metadata advertises two issuers", func() {
 		BeforeEach(func() { scenario = fixtures.MultiIssuerProtectedResource() })
 		// US3-S6 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should return validated choices and contact only the selected issuer on retry", Label("protected-resource-discovery"), func() {
+		It("should return validated choices and contact only the selected issuer on retry", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.issuer-selection"), func() {
 			provisionKey(env)
 			choices := failure(post(env, request(env, scenario.ResourceURL)), http.StatusBadRequest, "discovery failed", "issuer_selection_required")
 			Expect(choices["authorization_servers"]).To(Equal([]any{scenario.IssuerURLs[0], scenario.IssuerURLs[1]}))
@@ -359,7 +359,7 @@ var _ = Describe("Protected resource discovery rejection", func() {
 
 	Context("when both protected-resource and direct metadata sources are specified", func() {
 		// US3-S10 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should reject conflicting discovery sources before fetching metadata", Label("protected-resource-discovery"), func() {
+		It("should reject conflicting discovery sources before fetching metadata", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.conflicting-sources"), func() {
 			body := request(env, scenario.ResourceURL)
 			body["discovery"].(map[string]any)["metadata_url"] = scenario.IssuerURLs[0] + "/.well-known/oauth-authorization-server/tenant"
 			response := post(env, body)

@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 )
 
-var boundedHTTPClient = &http.Client{Timeout: 10 * time.Second}
+var boundedHTTPClient = &http.Client{Timeout: 10 * time.Second, Transport: bootstrap.ObserveTransport(http.DefaultTransport)}
 
 // HTTPClient returns the shared bounded client for E2E requests.
 func HTTPClient() *http.Client {

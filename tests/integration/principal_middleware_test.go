@@ -12,6 +12,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,7 @@ import (
 
 // TestPrincipalMiddlewareExtraction tests end-to-end principal extraction through chi router.
 func TestPrincipalMiddlewareExtraction(t *testing.T) {
+	evidence.ForTest(t, "end-user-authentication.header.principal")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	// Create test router with chi
@@ -140,6 +142,7 @@ func TestPrincipalMiddlewareExtraction(t *testing.T) {
 
 // TestPrincipalMiddlewareValidation tests principal validation in chi routes.
 func TestPrincipalMiddlewareValidation(t *testing.T) {
+	evidence.ForTest(t, "end-user-authentication.header.rejected")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	authConfig := ports.AuthenticationConfig{
@@ -312,6 +315,7 @@ func TestPrincipalMiddlewareUnicodeSupport(t *testing.T) {
 
 // TestPrincipalMiddlewareWhitespaceHandling tests whitespace trimming in chi routes.
 func TestPrincipalMiddlewareWhitespaceHandling(t *testing.T) {
+	evidence.ForTest(t, "end-user-authentication.header.trimmed")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	authConfig := ports.AuthenticationConfig{
@@ -402,6 +406,7 @@ func TestPrincipalMiddlewareWhitespaceHandling(t *testing.T) {
 
 // TestPrincipalMiddlewareCustomHeader tests custom header configuration.
 func TestPrincipalMiddlewareCustomHeader(t *testing.T) {
+	evidence.ForTest(t, "end-user-authentication.header.configured-name")
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	authConfig := ports.AuthenticationConfig{

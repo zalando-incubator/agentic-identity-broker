@@ -6,6 +6,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -33,6 +34,7 @@ func initializeSchema(ctx context.Context, connStr string) error {
 }
 
 func TestPostgresAdapter_Initialize_ConnectionFailed(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.startup.database-unreachable")
 	config := &ports.StorageConfig{
 		Backend: "postgres",
 		Postgres: ports.PostgresConfig{
@@ -204,6 +206,7 @@ func TestPostgresAdapter_ContextCancellation(t *testing.T) {
 // In CI, a missing container runtime must fail rather than mask infra coverage.
 
 func TestPostgresAdapter_FullLifecycle_Integration(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.backend.postgres")
 	sharedPostgres := testbootstrap.RequireSharedPostgres(t)
 	_, connStr, cleanupDatabase := sharedPostgres.SetupMigratedDatabase(t)
 	defer cleanupDatabase()

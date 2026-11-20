@@ -32,6 +32,13 @@ Read the governing feature's `spec.md`, `plan.md`, and `tasks.md` under `specs/`
 8. Use reusable factories from `tests/e2e/fixtures/` instead of repeated hardcoded test data.
 9. Declare shared scenario variables at `Describe` or `Context` scope. Initialize them in `BeforeEach`.
 
+## Living Documentation Examples
+
+A scenario with the decorator `example("<id>")` is the evidence for an example on a page under `docs/specification/`.
+`tools/livingdoc` compares the page with the outcome of the scenario and, in the backend suite, with its HTTP exchanges.
+If you change such a scenario or the behavior it covers, run `just living-docs` and update the page in the same change.
+Read `.agents/skills/living-docs/SKILL.md` first. Do not remove or rename an example without the page.
+
 ## Directory Layout
 
 ```
@@ -43,10 +50,12 @@ tests/e2e/
     storage.go                    In-memory storage initialization
     logger.go, telemetry.go       Quiet logging and telemetry helpers for parallel runs
     cimd.go                       CIMD-specific bootstrap helpers
+    exchange_observer.go          Optional observer for TestServer client exchanges
   fixtures/                       Deterministic test data factories
     *.go                          Agents, grants, principals, OAuth2 config, services, sessions,
                                   encryption, and multi-agent fixtures
   helpers/                        Shared HTTP/JWT/upstream/JWKS/PKCE/signing-key utilities
+  livingdoc/                      Example decorator and evidence recorder for docs/specification/
   matchers/                       Custom Gomega matchers for OAuth2, telemetry, and claims
   pages/                          Page objects for frontend E2E tests
     page.go                        Base navigation and screenshot methods

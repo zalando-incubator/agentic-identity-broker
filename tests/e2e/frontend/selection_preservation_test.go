@@ -291,7 +291,7 @@ var _ = Describe("Selection Preservation Across OAuth2 Redirect", func() {
 	})
 
 	// Feature 008 User Story 5 Amendment, Scenario 2: Same-tab restoration
-	It("restores selected permission sets from the captured current-tab reference", func() {
+	It("restores selected permission sets from the captured current-tab reference", example("third-party-sessions.connect.from-agent-page"), func() {
 		Expect(consentPage.NavigateToAgent(ctx, testAgentID)).To(Succeed())
 		selectOptionalPermissionSet(ctx, consentPage)
 

@@ -238,7 +238,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	})
 
 	// Scenario 5.4 from specs/025-oauth2-server/spec.md
-	It("removes a non-current key and invalidates tokens signed with it", func() {
+	It("removes a non-current key and invalidates tokens signed with it", example("token-issuance-and-refresh.signing-keys.removal"), func() {
 		agent := fixtures.LocalAgent()
 		Expect(testStorage.Agents().Create(context.Background(), agent)).ToNot(HaveOccurred())
 		clientSecret := createClientCredentials(agent.ID.String())
@@ -295,7 +295,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	})
 
 	// Scenario 5.4 from specs/025-oauth2-server/spec.md
-	It("returns 409 when removing the grace-period fallback key that is still signing tokens", func() {
+	It("returns 409 when removing the grace-period fallback key that is still signing tokens", example("token-issuance-and-refresh.signing-keys.removal-refused"), func() {
 		agent := fixtures.LocalAgent()
 		Expect(testStorage.Agents().Create(context.Background(), agent)).ToNot(HaveOccurred())
 		clientSecret := createClientCredentials(agent.ID.String())
@@ -325,7 +325,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 	})
 
 	// Scenario 5.5 from specs/025-oauth2-server/spec.md
-	It("cannot remove last key", func() {
+	It("cannot remove last key", example("token-issuance-and-refresh.signing-keys.last-key"), func() {
 		// Only auto-generated key exists; try to delete it
 		listResp, _ := helpers.HTTPClient().Get(adminServer.BaseURL() + "/api/oauth2-server/signing-keys")
 		var listBody map[string]interface{}
@@ -350,7 +350,7 @@ var _ = Describe("US5: Signing Key Management (local mode)", func() {
 
 	// User Story 5 independent rotation journey from specs/025-oauth2-server/spec.md
 	// Scenario 5.3 from specs/025-oauth2-server/spec.md
-	It("keeps existing tokens valid while a promoted key signs new tokens", func() {
+	It("keeps existing tokens valid while a promoted key signs new tokens", example("token-issuance-and-refresh.signing-keys.rotation"), func() {
 		agent := fixtures.LocalAgent()
 		Expect(testStorage.Agents().Create(context.Background(), agent)).ToNot(HaveOccurred())
 		clientSecret := createClientCredentials(agent.ID.String())

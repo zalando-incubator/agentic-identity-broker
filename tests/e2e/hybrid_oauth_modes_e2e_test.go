@@ -436,7 +436,7 @@ var _ = Describe("US2: Hybrid Mode — Local Agent Full Authorization Code Journ
 	})
 
 	// Scenario US2.2 (full journey) from specs/030-hybrid-oauth-modes/spec.md
-	It("local agent in hybrid mode issues JWT via full authorization code flow with PKCE", func() {
+	It("local agent in hybrid mode issues JWT via full authorization code flow with PKCE", example("authorization-server-modes.hybrid.local-agent"), func() {
 		principal := fixtures.DefaultPrincipal().String()
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
@@ -635,7 +635,7 @@ var _ = Describe("US2: Hybrid Mode — Proxy Agent Full Authorization Code Journ
 	})
 
 	// Scenario US2.1 (full journey) from specs/030-hybrid-oauth-modes/spec.md
-	It("proxy agent in hybrid mode forwards authorize to upstream and proxies token response", func() {
+	It("proxy agent in hybrid mode forwards authorize to upstream and proxies token response", example("authorization-server-modes.hybrid.proxy-agent"), func() {
 		principal := fixtures.DefaultPrincipal().String()
 		authorizeURL := "/oauth2/authorize?" + url.Values{
 			"client_id":     {proxyAgent.ID.String()},

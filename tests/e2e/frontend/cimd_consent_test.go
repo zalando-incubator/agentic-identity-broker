@@ -86,7 +86,7 @@ var _ = Describe("CIMD Consent UI", func() {
 	})
 
 	// CS-002: CIMDDomainBadge component — "Verified domain: …"
-	It("should display the verified domain badge for the CIMD client_id URL", func() {
+	It("should display the verified domain badge for the CIMD client_id URL", example("consent-and-delegation.screen.cimd-domain-badge"), func() {
 		// CS-002 from specs/028-cimd-support/spec.md — CIMDDomainBadge component
 		err := consentPage.NavigateToAgentWithSessionToken(ctx, cimdAgent.ID.String(), sessionToken)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to CIMD consent page")
@@ -119,7 +119,7 @@ var _ = Describe("CIMD Consent UI", func() {
 			)
 		})
 
-		It("should show a localhost redirect warning alert", func() {
+		It("should show a localhost redirect warning alert", example("consent-and-delegation.screen.cimd-localhost-warning"), func() {
 			// CS-003 from specs/028-cimd-support/spec.md — CIMDLocalhostWarning component
 			err := consentPage.NavigateToAgentWithSessionToken(ctx, cimdAgent.ID.String(), localhostSessionToken)
 			Expect(err).NotTo(HaveOccurred(), "Failed to navigate to CIMD consent page with localhost session")

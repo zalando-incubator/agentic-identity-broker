@@ -98,7 +98,7 @@ var _ = Describe("Third-Party CIMD Metadata", func() {
 		})
 
 		// US2-S2 from specs/046-cimd-upstream-client/spec.md
-		It("should publish the required callback and authentication fields", Label("cimd-upstream-client"), func() {
+		It("should publish the required callback and authentication fields", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.document"), func() {
 			response := getBrokerDocument(fixtures.CIMDClientIDURL(cimdService.ID))
 			Expect(response.StatusCode).To(Equal(http.StatusOK))
 			document := decodeJSON[map[string]any](response)

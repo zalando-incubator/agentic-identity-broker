@@ -15,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/handlers"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/routing"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/app"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,7 @@ func TestHandleHealth_UsesCurrentServerStartTime(t *testing.T) {
 }
 
 func TestServerServe_HealthRouteRemainsReachableWithRootSPA(t *testing.T) {
+	evidence.ForTest(t, "deployment.health.beside-spa")
 	logger := slog.New(slog.DiscardHandler)
 	staticPath := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(staticPath, "index.html"), []byte("index"), 0o600))

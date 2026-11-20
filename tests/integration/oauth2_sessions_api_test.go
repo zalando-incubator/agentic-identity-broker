@@ -29,6 +29,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 func TestListSessions_Success(t *testing.T) {
@@ -445,6 +446,7 @@ func TestAuthorizeEndpoint_InvalidRedirectURI(t *testing.T) {
 }
 
 func TestAuthorizeEndpoint_VerifyAuthorizationURL(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.connect.authorization-request")
 	ctx := context.Background()
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
@@ -647,6 +649,7 @@ func TestCallbackEndpoint_MissingPrincipal(t *testing.T) {
 }
 
 func TestCallbackEndpoint_InvalidStateToken(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.connect.invalid-state")
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
 	grantRepo := memory.NewUserGrantRepository()
@@ -696,6 +699,7 @@ func TestCallbackEndpoint_PrincipalMismatch(t *testing.T) {
 }
 
 func TestCallbackEndpoint_OAuth2Error(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.connect.provider-denies")
 	tests := []struct {
 		name      string
 		error     string
@@ -1212,6 +1216,7 @@ func TestDeleteSession_VerifiesTokensDeleted(t *testing.T) {
 }
 
 func TestRefreshSession_ReturnsRefreshedSummary(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.refresh.manual")
 	ctx := context.Background()
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
@@ -1318,6 +1323,7 @@ func TestRefreshSession_ReturnsNotFoundWhenSessionDoesntExist(t *testing.T) {
 }
 
 func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.refresh.manual-unavailable")
 	ctx := context.Background()
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
@@ -1361,6 +1367,7 @@ func TestRefreshSession_ReturnsConflictWhenRefreshTokenUnavailable(t *testing.T)
 }
 
 func TestRefreshSession_ReturnsConflictWhenProviderRejectedRefreshToken(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.rejection.api-state")
 	ctx := context.Background()
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	serviceRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository()
@@ -1602,6 +1609,7 @@ func TestGetSession_ReturnsUnauthorizedWhenXRemoteUserMissing(t *testing.T) {
 }
 
 func TestGetSession_ReturnsNotFoundWhenSessionBelongsToAnotherPrincipal(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.sessions.other-user")
 	ctx := context.Background()
 	router, sessionRepo := newSessionTestRouter(t)
 	serviceID := id.NewServiceID()

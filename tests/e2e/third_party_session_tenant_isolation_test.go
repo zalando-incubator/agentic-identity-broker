@@ -68,7 +68,7 @@ var _ = Describe("Third-party session tenant isolation", func() {
 	})
 
 	// US3.S1 — tenant-isolation security regression; public contract: api/enduser/openapi.yaml.
-	It("returns only the authenticated principal's dependent agents", func() {
+	It("returns only the authenticated principal's dependent agents", example("third-party-sessions.sessions.detail"), func() {
 		resp, err := server.AuthenticatedGET("/api/third-party/"+fixtures.PlaceholderServiceID.String()+"/session", principalA)
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()
@@ -93,7 +93,7 @@ var _ = Describe("Third-party session tenant isolation", func() {
 	})
 
 	// US1.S5 — tenant-isolation security regression; public contract: api/enduser/openapi.yaml.
-	It("counts only the authenticated principal's dependent agents", func() {
+	It("counts only the authenticated principal's dependent agents", example("third-party-sessions.sessions.list"), func() {
 		resp, err := server.AuthenticatedGET("/api/third-party/sessions", principalA)
 		Expect(err).ToNot(HaveOccurred())
 		defer func() { _ = resp.Body.Close() }()

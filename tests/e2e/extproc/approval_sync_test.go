@@ -19,7 +19,7 @@ import (
 
 var _ = Describe("ExtProc Approval Cache Sync", func() {
 	// US1-S1 from specs/026-extproc-approval-sync/spec.md.
-	It("creates a pending approval with dual authentication and returns its URL elicitation", func() {
+	It("creates a pending approval with dual authentication and returns its URL elicitation", example("tool-approvals.gateway.elicitation"), func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
 		waitForBootstrap(broker)
@@ -103,7 +103,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US1-S3 from specs/026-extproc-approval-sync/spec.md.
-	It("forwards a cached session approval in its active agent session", func() {
+	It("forwards a cached session approval in its active agent session", example("tool-approvals.gateway.session-approval"), func() {
 		pair := approvalPair("session")
 		sessionID := "agent-session"
 		pair.Approvals[0].AgentSessionID = &sessionID
@@ -120,7 +120,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US1-S4 and SC-004 from specs/026-extproc-approval-sync/spec.md.
-	It("forwards a cached permanent approval in a different agent session without broker calls", func() {
+	It("forwards a cached permanent approval in a different agent session without broker calls", example("tool-approvals.gateway.permanent-approval"), func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v2"`, approvalPair("permanent"))
 		env, _, stop := startApprovalEnvironment(broker, time.Minute)
@@ -134,7 +134,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US1-S5 and SC-006 from specs/026-extproc-approval-sync/spec.md.
-	It("consumes a cached once approval and elicits again on the next matching call", func() {
+	It("consumes a cached once approval and elicits again on the next matching call", example("tool-approvals.gateway.once-approval"), func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v2"`, approvalPair("once"))
 		env, _, stop := startApprovalEnvironment(broker, time.Minute)
@@ -185,7 +185,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US2-S2 from specs/026-extproc-approval-sync/spec.md.
-	It("forwards a policy-allowed tool without approval broker calls", func() {
+	It("forwards a policy-allowed tool without approval broker calls", example("gateway-policy-authorization.permission-sets.granted"), func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
 		waitForBootstrap(broker)
@@ -197,7 +197,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US2-S3 from specs/026-extproc-approval-sync/spec.md.
-	It("enters the approval gate only after the permission-set boundary permits the tool", func() {
+	It("enters the approval gate only after the permission-set boundary permits the tool", example("gateway-policy-authorization.decisions.approval-required"), func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
 
@@ -238,7 +238,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US3-S3 from specs/026-extproc-approval-sync/spec.md.
-	It("reuses the bootstrap ETag in the first long-poll request", func() {
+	It("reuses the bootstrap ETag in the first long-poll request", example("tool-approvals.gateway.long-poll-etag"), func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v42"`)
 		_, _, stop := startApprovalEnvironment(broker, time.Minute)
@@ -254,7 +254,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US3-S4 from specs/026-extproc-approval-sync/spec.md.
-	It("performs the first unknown-pair lookup before creating an approval", func() {
+	It("performs the first unknown-pair lookup before creating an approval", example("tool-approvals.gateway.read-before-create"), func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
 		waitForBootstrap(broker)
@@ -327,7 +327,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// US4-S4 from specs/026-extproc-approval-sync/spec.md.
-	It("replaces a stale full snapshot so a revoked approval cannot survive", func() {
+	It("replaces a stale full snapshot so a revoked approval cannot survive", example("tool-approvals.gateway.snapshot-replaces"), func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetSnapshot(`"v1"`, approvalPair("permanent"))
 		env, _, stop := startApprovalEnvironment(broker, time.Minute)
@@ -363,7 +363,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// Edge case from specs/026-extproc-approval-sync/spec.md.
-	It("never fabricates an elicitation when approval creation fails", func() {
+	It("never fabricates an elicitation when approval creation fails", example("tool-approvals.gateway.create-fails"), func() {
 		broker := bootstrap.NewMockApprovalBroker()
 		broker.SetCreateResponse(http.StatusServiceUnavailable, "")
 		env, _, stop := startApprovalEnvironment(broker, time.Minute)
@@ -399,7 +399,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// Edge case from specs/026-extproc-approval-sync/spec.md.
-	It("denies batched approval-required calls and instructs a standalone retry", func() {
+	It("denies batched approval-required calls and instructs a standalone retry", example("gateway-policy-authorization.batch.approval-required"), func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
 		body := []byte(`[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_issue","arguments":{"repo":"acme/app"}}}]`)
@@ -413,7 +413,7 @@ var _ = Describe("ExtProc Approval Cache Sync", func() {
 	})
 
 	// Edge case from specs/026-extproc-approval-sync/spec.md.
-	It("denies deferred CIBA decisions without creating an approval", func() {
+	It("denies deferred CIBA decisions without creating an approval", example("tool-approvals.gateway.ciba-denied"), example("gateway-policy-authorization.decisions.ciba-required"), func() {
 		env, broker, stop := startApprovalEnvironment(nil, time.Minute)
 		defer stop()
 

@@ -43,7 +43,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S1 from specs/051-private-key-jwt-auth/spec.md
-	It("should reject code exchange and refresh without assertions", func() {
+	It("should reject code exchange and refresh without assertions", example("client-registration-and-authentication.assertion.required"), func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())
@@ -75,6 +75,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 
 	// Scenario US2-S2 from specs/051-private-key-jwt-auth/spec.md
 	DescribeTable("rejects each invalid client assertion without identifying the cause",
+		example("client-registration-and-authentication.assertion.invalid"),
 		func(build invalidCIMDAssertionBuilder) {
 			Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 			code, verifier, err := fixture.AuthorizeCode("read offline_access")
@@ -241,7 +242,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S5 from specs/051-private-key-jwt-auth/spec.md
-	It("should require authentication after the client document downgrades", func() {
+	It("should require authentication after the client document downgrades", example("client-registration-and-authentication.assertion.document-downgrade"), func() {
 		Expect(fixture.SetDocument("private_key_jwt", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())
@@ -288,7 +289,7 @@ var _ = Describe("CIMD private_key_jwt downgrade protection", func() {
 	})
 
 	// Scenario US2-S7 from specs/051-private-key-jwt-auth/spec.md
-	It("should reject assertions from none clients on both grants", func() {
+	It("should reject assertions from none clients on both grants", example("client-registration-and-authentication.assertion.public-client-sends-one"), func() {
 		Expect(fixture.SetDocument("none", nil)).To(Succeed())
 		code, verifier, err := fixture.AuthorizeCode("read offline_access")
 		Expect(err).To(Succeed())

@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"testing"
 	"time"
 
@@ -89,6 +90,7 @@ func TestEncryptionConfigBackend_MemoryBackend(t *testing.T) {
 
 // TestEncryptionConfigBackend_BothBackends verifies validation fails when both backends are specified
 func TestEncryptionConfigBackend_BothBackends(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.one-backend")
 	cfg := &ports.Config{
 		Log:      ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 		Server:   createValidServerConfig(),
@@ -126,6 +128,7 @@ func TestEncryptionConfigBackend_BothBackends(t *testing.T) {
 
 // TestEncryptionConfigBackend_NoBackends verifies validation fails when neither backend is specified
 func TestEncryptionConfigBackend_NoBackends(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.backend-required")
 	cfg := &ports.Config{
 		Log:      ports.LogConfig{Level: ports.LogLevelInfo, Format: ports.LogFormatText},
 		Server:   createValidServerConfig(),
@@ -503,6 +506,7 @@ func TestValidateEncryptionConfigInvalidMemoryKey(t *testing.T) {
 
 // TestValidateEncryptionConfigWrongMemoryKeyLength verifies validation fails for non-32-byte Memory key
 func TestValidateEncryptionConfigWrongMemoryKeyLength(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.memory-key-length")
 	// Create a 16-byte key (not 32-byte)
 	invalidKey := generateBase64EncodedString(t, 16)
 

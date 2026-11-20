@@ -60,7 +60,7 @@ var _ = Describe("Third-Party Sessions Refresh Button", func() {
 	})
 
 	// Scenario 1.2 from specs/008-thirdparty-oauth2-sessions/spec.md (extended by approved force-refresh plan)
-	It("shows Refresh for multiple refreshable sessions and refreshes the first", func() {
+	It("shows Refresh for multiple refreshable sessions and refreshes the first", example("third-party-sessions.page.refresh"), func() {
 		err := sessionsPage.NavigateToSessions(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to third-party sessions page")
 
@@ -113,7 +113,7 @@ var _ = Describe("Third-Party Sessions Rejected Refresh Token", func() {
 	})
 
 	// Scenario 1.6 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("shows the session as requiring login after the provider rejects its refresh token", func() {
+	It("shows the session as requiring login after the provider rejects its refresh token", example("third-party-sessions.page.login-required"), func() {
 		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
 		Expect(sessionsPage.ClickRefreshButton(ctx)).To(Succeed())
 
@@ -160,7 +160,7 @@ var _ = Describe("Third-Party Sessions Login Offer", func() {
 	})
 
 	// Scenario 1.7 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("offers Login next to Terminate when the provider rejected the refresh token but the access token is valid", func() {
+	It("offers Login next to Terminate when the provider rejected the refresh token but the access token is valid", example("third-party-sessions.page.rejected-with-valid-token"), func() {
 		session := fixtures.SessionForService(principal, serviceID.String())
 		rejectedAt := time.Now().Add(-time.Minute)
 		session.RefreshRejectedAt = &rejectedAt
@@ -179,7 +179,7 @@ var _ = Describe("Third-Party Sessions Login Offer", func() {
 	})
 
 	// Scenario 1.8 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("offers neither Login nor Refresh for a usable session without a refresh token", func() {
+	It("offers neither Login nor Refresh for a usable session without a refresh token", example("third-party-sessions.page.access-only"), func() {
 		Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionWithoutRefreshToken(principal, serviceID.String()))).To(Succeed())
 
 		Expect(sessionsPage.NavigateToSessions(ctx)).To(Succeed())
@@ -191,7 +191,7 @@ var _ = Describe("Third-Party Sessions Login Offer", func() {
 	})
 
 	// Scenario 1.9 from specs/008-thirdparty-oauth2-sessions/spec.md
-	It("tells the user to log in after the provider rejects the refresh token", func() {
+	It("tells the user to log in after the provider rejects the refresh token", example("third-party-sessions.page.rejection-banner"), func() {
 		GetMockUpstream().WithErrorResponse("invalid_grant")
 		Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForService(principal, serviceID.String()))).To(Succeed())
 

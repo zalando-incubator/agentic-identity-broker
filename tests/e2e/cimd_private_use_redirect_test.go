@@ -104,7 +104,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 
 	Context("when the Agent allowlists github-app://oauth/callback", func() {
 		// Scenario US7.1 from specs/028-cimd-support/spec.md
-		It("accepts the published document and redirects to consent", func() {
+		It("accepts the published document and redirects to consent", example("client-registration-and-authentication.private-use.cimd-accepted"), func() {
 			resp, err := server.AuthenticatedGET(authorizeURL(clientURL, fixtures.GitHubAppCallback), principal)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -134,7 +134,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 		})
 
 		// Scenario US7.5 from specs/028-cimd-support/spec.md
-		It("completes consent, code issuance, and public-client token exchange", func() {
+		It("completes consent, code issuance, and public-client token exchange", example("client-registration-and-authentication.private-use.cimd-flow"), func() {
 			code, verifier := completeAuthorizationCodeFlow(server, testStorage, principal, clientURL, fixtures.GitHubAppCallback, func(data map[string]any) {
 				assertCIMDConsentContext(data, fixtures.GitHubAppCallback, fakeHost)
 			})
@@ -206,7 +206,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 		BeforeEach(func() { agentRedirectURIs = nil })
 
 		// Scenario US7.2 from specs/028-cimd-support/spec.md
-		It("rejects the entire document even for its loopback callback", func() {
+		It("rejects the entire document even for its loopback callback", example("client-registration-and-authentication.private-use.cimd-not-allow-listed"), func() {
 			resp, err := server.AuthenticatedGET(authorizeURL(clientURL, "http://127.0.0.1/callback"), principal)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -220,7 +220,7 @@ var _ = Describe("CIMD Private-Use Redirect URIs", func() {
 		BeforeEach(func() { documentRedirectURIs = []string{"http://127.0.0.1/callback"} })
 
 		// Scenario US7.4 from specs/028-cimd-support/spec.md
-		It("rejects a native callback absent from the document", func() {
+		It("rejects a native callback absent from the document", example("client-registration-and-authentication.private-use.cimd-not-in-document"), func() {
 			resp, err := server.AuthenticatedGET(authorizeURL(clientURL, fixtures.GitHubAppCallback), principal)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()

@@ -193,7 +193,7 @@ var _ = Describe("Tool Approval API", func() {
 	// =========================================================================
 	Describe("US1: User Approves a Pending Tool Call", func() {
 		// Scenario US1-S1: View pending approval with full context
-		It("returns enriched approval details with agent context and canonical risk level (US1-S1)", func() {
+		It("returns enriched approval details with agent context and canonical risk level (US1-S1)", example("tool-approvals.review.detail"), func() {
 			createResp := createPendingApprovalWithRequest(server, machineAuth, alicePrincipal, helpers.CreateApprovalRequest{
 				Metadata: helpers.CreateApprovalMetadata{
 					MCPSessionID:     "mcp-123",
@@ -272,7 +272,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US1-S2: Approve once
-		It("transitions to approved with persistence=once (US1-S2)", func() {
+		It("transitions to approved with persistence=once (US1-S2)", example("tool-approvals.approve.once"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "once"})
@@ -285,7 +285,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US1-S3: Approve for session
-		It("transitions to approved with persistence=session (US1-S3)", func() {
+		It("transitions to approved with persistence=session (US1-S3)", example("tool-approvals.approve.session"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "run_tests", map[string]any{"suite": "unit"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "session"})
@@ -296,7 +296,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US1-S4: Approve permanently
-		It("transitions to approved with persistence=permanent (US1-S4)", func() {
+		It("transitions to approved with persistence=permanent (US1-S4)", example("tool-approvals.approve.permanent"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "list_files", map[string]any{"dir": "/src"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "permanent"})
@@ -307,7 +307,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US1-S5: 403 on principal mismatch
-		It("returns 403 when principal does not match approval owner (US1-S5)", func() {
+		It("returns 403 when principal does not match approval owner (US1-S5)", example("tool-approvals.approve.other-user"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "delete_branch", map[string]any{"branch": "feature"})
 			// Bob tries to approve Alice's approval
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
@@ -317,7 +317,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US1-S6: Expired approval returns 410
-		It("returns 410 for expired approval (US1-S6)", func() {
+		It("returns 410 for expired approval (US1-S6)", example("tool-approvals.review.expired"), func() {
 			// Create approval with expired TTL — we need to go through storage directly
 			// since the API enforces the configured TTL
 			approvalIDVal := id.NewApprovalID()
@@ -366,7 +366,7 @@ var _ = Describe("Tool Approval API", func() {
 	// =========================================================================
 	Describe("US2: User Denies a Pending Tool Call", func() {
 		// Scenario US2-S1: Deny
-		It("transitions to denied state (US2-S1)", func() {
+		It("transitions to denied state (US2-S1)", example("tool-approvals.deny.once"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "delete_repo", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/deny", createResp.Data.ID),
 				alicePrincipal, map[string]any{})
@@ -395,7 +395,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US2-S3: Denied records are not deduplicated
-		It("creates new approval after previous denial (US2-S3)", func() {
+		It("creates new approval after previous denial (US2-S3)", example("tool-approvals.deny.new-request"), func() {
 			// Create and deny
 			create1 := createPendingApproval(server, machineAuth, alicePrincipal, "dangerous_tool", map[string]any{"action": "destroy"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/deny", create1.Data.ID),
@@ -410,7 +410,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US2-S4: Deny permanently
-		It("transitions to denied with persistence=permanent (US2-S4)", func() {
+		It("transitions to denied with persistence=permanent (US2-S4)", example("tool-approvals.deny.permanent"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "blocked_tool", map[string]any{})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/deny", createResp.Data.ID),
 				alicePrincipal, helpers.DenyRequest{Persistence: "permanent"})
@@ -428,7 +428,7 @@ var _ = Describe("Tool Approval API", func() {
 	// =========================================================================
 	Describe("US3: ExtProc Creates a Pending Approval", func() {
 		// Scenario US3-S1: Create pending approval
-		It("creates pending approval with approval_url (US3-S1)", func() {
+		It("creates pending approval with approval_url (US3-S1)", example("tool-approvals.create.pending"), func() {
 			createResp := createPendingApprovalWithTraceparent(server, machineAuth, alicePrincipal,
 				"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 				helpers.CreateApprovalRequest{
@@ -455,7 +455,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US3-S2: Idempotent create
-		It("returns existing pending approval for duplicate request (US3-S2)", func() {
+		It("returns existing pending approval for duplicate request (US3-S2)", example("tool-approvals.create.idempotent"), func() {
 			args := map[string]any{"repo": "acme/app", "title": "Fix bug"}
 			create1 := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", args)
 			create2 := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", args)
@@ -493,7 +493,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US3-S5: 401 without subject token
-		It("returns 401 without Authorization header (US3-S5)", func() {
+		It("returns 401 without Authorization header (US3-S5)", example("tool-approvals.create.subject-token-required"), func() {
 			req := helpers.CreateApprovalRequest{
 				Metadata:  helpers.CreateApprovalMetadata{Description: "test"},
 				ToolName:  "tool",
@@ -509,7 +509,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US3-S6: 401 invalid client assertion
-		It("returns 401 for invalid client assertion on create (US3-S6)", func() {
+		It("returns 401 for invalid client assertion on create (US3-S6)", example("tool-approvals.create.client-assertion-required"), func() {
 			req := helpers.CreateApprovalRequest{
 				Metadata:  helpers.CreateApprovalMetadata{Description: "test"},
 				ToolName:  "tool",
@@ -550,7 +550,7 @@ var _ = Describe("Tool Approval API", func() {
 	// =========================================================================
 	Describe("US4: ExtProc Syncs Approval State via Long-Poll", func() {
 		// Scenario US4-S1: Initial sync without If-None-Match
-		It("returns 200 with pairs and ETag on initial sync (US4-S1)", func() {
+		It("returns 200 with pairs and ETag on initial sync (US4-S1)", example("tool-approvals.sync.snapshot"), func() {
 			createPendingApproval(server, machineAuth, alicePrincipal, "sync_test_tool", map[string]any{})
 			resp, err := server.DirectRequest(http.MethodGet, "/api/approvals", "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
 			Expect(err).NotTo(HaveOccurred())
@@ -561,7 +561,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US4-S2: 304 when no changes within timeout
-		It("returns 304 when no changes within timeout (US4-S2)", func() {
+		It("returns 304 when no changes within timeout (US4-S2)", example("tool-approvals.sync.not-modified"), func() {
 			createPendingApproval(server, machineAuth, alicePrincipal, "timeout_test_tool", map[string]any{})
 
 			resp, err := server.DirectRequest(http.MethodGet, "/api/approvals", "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
@@ -580,7 +580,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US4-S3: Wake on approval state change
-		It("returns 200 with updated data when approval changes (US4-S3)", func() {
+		It("returns 200 with updated data when approval changes (US4-S3)", example("tool-approvals.sync.wake"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "wake_test_tool", map[string]any{})
 
 			resp, err := server.DirectRequest(http.MethodGet, "/api/approvals", "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
@@ -655,7 +655,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US4-S4: Invalid client assertion
-		It("returns 401 for invalid client assertion on sync endpoint (US4-S4)", func() {
+		It("returns 401 for invalid client assertion on sync endpoint (US4-S4)", example("tool-approvals.sync.client-assertion-required"), func() {
 			resp, err := server.DirectRequest(http.MethodGet, "/api/approvals", "", helpers.ApprovalSyncHeaders(machineAuth.InvalidClientAssertion), nil)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(resp.StatusCode).To(Equal(http.StatusUnauthorized))
@@ -683,7 +683,7 @@ var _ = Describe("Tool Approval API", func() {
 	// =========================================================================
 	Describe("US5: One-Time Approval Consumed After Use", func() {
 		// Scenario US5-S1: Consume once-persistence approval
-		It("marks once-persistence approval as consumed (US5-S1)", func() {
+		It("marks once-persistence approval as consumed (US5-S1)", example("tool-approvals.consume.once"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "consume_tool", map[string]any{})
 
 			// Approve with once
@@ -701,7 +701,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Security scenario from ADR 018: Subject token principal must own the approval.
-		It("returns 403 when another principal consumes an approval", func() {
+		It("returns 403 when another principal consumes an approval", example("tool-approvals.consume.owner"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "consume_owner_tool", map[string]any{})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "once"})
@@ -750,7 +750,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US5-S3: Cannot consume session/permanent
-		It("returns 422 for non-once persistence (US5-S3)", func() {
+		It("returns 422 for non-once persistence (US5-S3)", example("tool-approvals.consume.not-once"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "permanent_no_consume", map[string]any{})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "permanent"})
@@ -768,7 +768,7 @@ var _ = Describe("Tool Approval API", func() {
 	// =========================================================================
 	Describe("US6: Permanent Approvals Visible and Revocable", func() {
 		// Scenario US6-S1: List permanent approvals
-		It("lists permanent approvals on consent management page (US6-S1)", func() {
+		It("lists permanent approvals on consent management page (US6-S1)", example("tool-approvals.permanent.list"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "create_issue", map[string]any{})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "permanent"})
@@ -785,7 +785,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// Scenario US6-S2: Revoke permanent approval
-		It("revokes permanent approval (US6-S2)", func() {
+		It("revokes permanent approval (US6-S2)", example("tool-approvals.permanent.revoke"), func() {
 			createResp := createPendingApproval(server, machineAuth, alicePrincipal, "revocable_tool", map[string]any{})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", createResp.Data.ID),
 				alicePrincipal, helpers.ApproveRequest{Persistence: "permanent"})
@@ -804,7 +804,7 @@ var _ = Describe("Tool Approval API", func() {
 
 	Describe("when a user scopes an approval decision", func() {
 		// US7-S2 from specs/024-approval-api-ui/spec.md
-		It("should persist an edited parameter glob and expose it through sync", func() {
+		It("should persist an edited parameter glob and expose it through sync", example("tool-approvals.scope.params-pattern"), func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{
 				"persistence": "permanent", "params_pattern": map[string]string{"repo": "acme/*"},
@@ -830,7 +830,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// US7-S1 from specs/024-approval-api-ui/spec.md
-		It("should store exact coverage when pattern fields are omitted", func() {
+		It("should store exact coverage when pattern fields are omitted", example("tool-approvals.scope.exact-default"), func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent"})
 			Expect(err).NotTo(HaveOccurred())
@@ -856,7 +856,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// US7-S4 from specs/024-approval-api-ui/spec.md
-		It("should reject a non-covering parameter pattern and leave the approval pending", func() {
+		It("should reject a non-covering parameter pattern and leave the approval pending", example("tool-approvals.scope.non-covering"), func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "params_pattern": map[string]string{"repo": "other/*"}})
 			Expect(err).NotTo(HaveOccurred())
@@ -870,7 +870,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// US7-S5 from specs/024-approval-api-ui/spec.md
-		It("should reject a tool pattern and leave the approval pending", func() {
+		It("should reject a tool pattern and leave the approval pending", example("tool-approvals.scope.tool-pattern-rejected"), func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app", "title": "Fix bug"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "permanent", "tool_pattern": "*"})
 			Expect(err).NotTo(HaveOccurred())
@@ -885,7 +885,7 @@ var _ = Describe("Tool Approval API", func() {
 		})
 
 		// US7-S7 from specs/024-approval-api-ui/spec.md
-		It("should reject a one-time scoped approval and leave it pending", func() {
+		It("should reject a one-time scoped approval and leave it pending", example("tool-approvals.scope.once-rejected"), func() {
 			create := createPendingApproval(server, machineAuth, alicePrincipal, "create_pull_request", map[string]any{"repo": "acme/app"})
 			resp, err := postJSON(server, fmt.Sprintf("/api/approvals/%s/approve", create.Data.ID), alicePrincipal, map[string]any{"persistence": "once", "params_pattern": map[string]string{}})
 			Expect(err).NotTo(HaveOccurred())

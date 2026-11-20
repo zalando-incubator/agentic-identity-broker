@@ -44,6 +44,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // testLogger returns a discard logger for unit tests.
@@ -1039,6 +1040,7 @@ func TestServer_Process_ErrorResponse_DoesNotLeakTokenDetails(t *testing.T) {
 
 // Spec: FR-006 — expired client assertion → 503 ImmediateResponse
 func TestServer_Process_ExpiredAssertion_Returns503(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.errors.assertion-expired")
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, server.ErrAssertionExpired
@@ -1884,6 +1886,7 @@ func TestServer_Process_BrokerErrorWithURI_ChallengeIgnoresProtocol(t *testing.T
 // the exchange cache is empty (cache miss). Transient errors must never surface
 // a spurious re-auth URL.
 func TestServer_Process_5xxBrokerErrorWithURI_Returns500WithoutChallenge(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.reauth.server-error-no-challenge")
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, &server.BrokerExchangeError{
@@ -1916,6 +1919,7 @@ func TestServer_Process_5xxBrokerErrorWithURI_Returns500WithoutChallenge(t *test
 // Spec: FR-003 — when OPA is enabled and agentgateway protocol metadata is absent,
 // the request MUST be rejected with 403 without calling the exchanger or authorizer.
 func TestServer_OPA_AbsentProtocolMetadata_Returns403(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.fail-closed.missing-protocol")
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, _ authorization.OPAInput) (*authorization.OPADecision, error) {
 			t.Fatal("Evaluate must not be called when protocol metadata is absent")
@@ -2054,6 +2058,7 @@ func TestServer_OPA_BodyPhase_RequestTooLarge_DeniesWithoutAuthorizerCall(t *tes
 
 // Spec: A batch where every element is allowed must evaluate each element and echo the full body.
 func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.batch.all-allowed")
 	var seenToolNames, seenElementBodies []string
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
@@ -2094,6 +2099,7 @@ func TestServer_OPA_BatchBodyPhase_Allow_EchoesBody(t *testing.T) {
 
 // Spec: A denied batch must aggregate reasons from every denying element into one 403.
 func TestServer_OPA_BatchBodyPhase_Deny_AggregatesReasons(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.batch.any-denied")
 	var evaluateCalls int
 	auth := &mockAuthorizer{
 		evaluateFunc: func(_ context.Context, input authorization.OPAInput) (*authorization.OPADecision, error) {
@@ -2476,6 +2482,7 @@ func TestServer_OPA_AmbiguousArgumentsCannotUseCachedApproval(t *testing.T) {
 }
 
 func TestServer_OPA_ApprovalRequired_WithoutGateDenies(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.decisions.approval-without-gate")
 	auth := &mockAuthorizer{evaluateFunc: func(context.Context, authorization.OPAInput) (*authorization.OPADecision, error) {
 		return &authorization.OPADecision{Action: authorization.ActionApprovalRequired}, nil
 	}}

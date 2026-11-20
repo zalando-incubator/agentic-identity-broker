@@ -291,7 +291,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 	// Given OPA is enabled and the policy does not match any rule for the incoming tool,
 	// When the request is evaluated,
 	// Then the default deny decision applies and the request is rejected with 403.
-	It("should deny unmatched tool call by default", NodeTimeout(time.Minute), func(ctx SpecContext) {
+	It("should deny unmatched tool call by default", NodeTimeout(time.Minute), example("gateway-policy-authorization.policy.default-deny"), func(ctx SpecContext) {
 		// US1 Scenario 3 from specs/020-extproc-opa-authorization/spec.md
 
 		// "unknown_tool" is not in allow or deny sets — default deny applies
@@ -384,7 +384,7 @@ var _ = Describe("OPA Authorization via Agentgateway", Ordered, func() {
 
 	// FR-024 fail-closed path: when the broker omits granted_permission_sets,
 	// permission-dependent policies must see unavailable context and deny.
-	It("should deny permission-gated tool calls when permission-set context is unavailable", NodeTimeout(time.Minute), func(ctx SpecContext) {
+	It("should deny permission-gated tool calls when permission-set context is unavailable", NodeTimeout(time.Minute), example("gateway-policy-authorization.permission-sets.unavailable"), func(ctx SpecContext) {
 		mockTokenExchangeSvr.withExchangedToken(opaAgentgwExchangedToken)
 		mockTokenExchangeSvr.withGrantedPermissionSets(nil)
 

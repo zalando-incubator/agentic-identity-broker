@@ -156,7 +156,7 @@ var _ = Describe("Request Trace Context", func() {
 
 	Context("US4 S1 — propagated trace_id", func() {
 		// Scenario 4.1 from specs/033-request-security-context/spec.md
-		It("reuses an inbound traceparent across the OPA-disabled and OPA-enabled paths", func() {
+		It("reuses an inbound traceparent across the OPA-disabled and OPA-enabled paths", example("observability-and-audit.extproc.log-trace-id"), func() {
 			const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
 			const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
@@ -214,7 +214,7 @@ var _ = Describe("Request Trace Context", func() {
 
 	Context("US4 S3 — actor and optional calling_peer semantics", func() {
 		// Scenario 4.3 from specs/033-request-security-context/spec.md
-		It("records actor=anonymous and omits calling_peer consistently across the OPA-disabled and OPA-enabled paths", func() {
+		It("records actor=anonymous and omits calling_peer consistently across the OPA-disabled and OPA-enabled paths", example("observability-and-audit.extproc.anonymous-actor"), func() {
 			directEnv, directClient, directConn, directLogs := startDirectTraceEnvironment()
 			defer directConn.Close() //nolint:errcheck
 			defer directEnv.Stop()

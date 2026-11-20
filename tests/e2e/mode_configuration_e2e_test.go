@@ -125,7 +125,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 			Expect(loc).To(ContainSubstring("/agents/" + agent.ID.String()))
 		})
 
-		It("rejects URL-format client_id since CIMD is not available in proxy mode", func() {
+		It("rejects URL-format client_id since CIMD is not available in proxy mode", example("authorization-server-modes.client-id.url-without-cimd"), func() {
 			resp, err := server.AuthenticatedGET(
 				"/oauth2/authorize?client_id=https://agent.example.com/client&redirect_uri=https://example.com/cb&response_type=code&state=xyz",
 				fixtures.DefaultPrincipal().String(),
@@ -197,7 +197,7 @@ var _ = Describe("Mode Configuration: Proxy vs Local vs Local+CIMD", func() {
 			Expect(body).To(HaveKey("jwks_uri"))
 		})
 
-		It("redirects authorization to local consent page", func() {
+		It("redirects authorization to local consent page", example("authorization-server-modes.local.authorize"), func() {
 			now := time.Now()
 			agent := &storage.Agent{
 				ID:             id.NewAgentID(),

@@ -519,7 +519,8 @@ func NewTestServerV2(app *app.App, logger *slog.Logger, opts ...TestServerOption
 
 func newTestHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:   5 * time.Second,
+		Transport: observingTransport{next: http.DefaultTransport},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

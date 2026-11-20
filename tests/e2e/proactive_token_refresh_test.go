@@ -238,7 +238,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US1-S2 from specs/029-proactive-token-refresh/spec.md
-			It("should return the old token before committing background renewal", func() {
+			It("should return the old token before committing background renewal", example("third-party-sessions.refresh.near-expiry"), example("token-exchange.refresh.near-expiry"), func() {
 				original := storedSession(principal)
 				oldExpiry := *original.AccessTokenExpiresAt
 				Expect(proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusOK)["access_token"]).To(Equal("github-token-xyz"))
@@ -334,7 +334,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			BeforeEach(func() { seedSession(fixtures.ExpiredGitHubSessionForPrincipal(principal)) })
 
 			// US2-S1 from specs/029-proactive-token-refresh/spec.md
-			It("should synchronously renew once and log success after persistence", func() {
+			It("should synchronously renew once and log success after persistence", example("third-party-sessions.refresh.expired"), func() {
 				body := proactiveExchangeBody(proactiveExchange(enduser, proactiveExchangeForm(upstream, principal, agent)), http.StatusOK)
 				Expect(body["access_token"]).To(Equal("renewed-github-token"))
 				Expect(upstream.GetTokenRequests()).To(HaveLen(1))
@@ -353,7 +353,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			BeforeEach(func() { seedSession(fixtures.FullyExpiredSessionForPrincipal(principal, serviceID.String())) })
 
 			// US2-S2 from specs/029-proactive-token-refresh/spec.md
-			It("should require reauthentication without contacting the provider", func() {
+			It("should require reauthentication without contacting the provider", example("third-party-sessions.rejection.remembered"), func() {
 				before := storedSession(principal)
 				oldAccess := bytes.Clone(before.EncryptedAccessToken)
 				oldRefresh := bytes.Clone(before.EncryptedRefreshToken)
@@ -375,7 +375,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US2-S3 from specs/029-proactive-token-refresh/spec.md
-			It("should require reauthentication and preserve encrypted session tokens", func() {
+			It("should require reauthentication and preserve encrypted session tokens", example("third-party-sessions.rejection.observed"), func() {
 				before := storedSession(principal)
 				access, refresh := bytes.Clone(before.EncryptedAccessToken), bytes.Clone(before.EncryptedRefreshToken)
 				expiry := *before.AccessTokenExpiresAt
@@ -426,7 +426,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US3-S1 from specs/029-proactive-token-refresh/spec.md
-			It("should paginate only due sessions and exclude healthy and timeless rows", func() {
+			It("should paginate only due sessions and exclude healthy and timeless rows", example("third-party-sessions.sweep.due-sessions"), func() {
 				oldDue := bytes.Clone(storedSession(due).EncryptedAccessToken)
 				healthyExpiry := *storedSession(healthy).AccessTokenExpiresAt
 				healthyRefresh := bytes.Clone(storedSession(healthy).EncryptedRefreshToken)
@@ -481,7 +481,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US3-S2 from specs/029-proactive-token-refresh/spec.md
-			It("should count unrefreshable sessions as failures and continue the sweep", func() {
+			It("should count unrefreshable sessions as failures and continue the sweep", example("third-party-sessions.sweep.no-refresh-token"), func() {
 				oldFailedRefresh := bytes.Clone(storedSession(failed).EncryptedRefreshToken)
 				oldFailedExpiry := *storedSession(failed).AccessTokenExpiresAt
 				oldFailed := bytes.Clone(storedSession(failed).EncryptedAccessToken)
@@ -538,7 +538,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US3-S5 from specs/029-proactive-token-refresh/spec.md
-			It("should not treat a rejected session as a sweep candidate", func() {
+			It("should not treat a rejected session as a sweep candidate", example("third-party-sessions.sweep.rejected-skipped"), func() {
 				before := storedSession(rejected)
 				oldAccess := bytes.Clone(before.EncryptedAccessToken)
 				oldRefresh := bytes.Clone(before.EncryptedRefreshToken)
@@ -578,7 +578,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US3-S3 from specs/029-proactive-token-refresh/spec.md
-			It("should refresh a shared session only once across concurrent replicas", func() {
+			It("should refresh a shared session only once across concurrent replicas", example("third-party-sessions.sweep.two-replicas"), func() {
 				// Check the route before the first replica waits on the provider gate.
 				preview := proactiveSweepBody(proactiveSweep(admin, `{"lookahead_duration":"PT10M","dry_run":true}`))
 				Expect(preview).To(Equal(proactiveSweepSummary{Refreshed: 1, TotalEvaluated: 1, DryRun: true}))
@@ -617,7 +617,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 			})
 
 			// US3-S4 from specs/029-proactive-token-refresh/spec.md
-			It("should count due sessions without provider calls or writes", func() {
+			It("should count due sessions without provider calls or writes", example("third-party-sessions.sweep.dry-run"), func() {
 				principals := []string{first, second, healthy}
 				before := make(map[string]storagedomain.UserSession, len(principals))
 				for _, principal := range principals {

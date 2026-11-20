@@ -94,7 +94,7 @@ var _ = Describe("OAuth2 Authorization Server Metadata Discovery", func() {
 		})
 
 		// Scenario 3.1: Returns valid RFC 8414 metadata document
-		It("should return RFC 8414 compliant JSON metadata document", func() {
+		It("should return RFC 8414 compliant JSON metadata document", example("authorization-server-modes.discovery.proxy"), func() {
 			// Verify response body is valid JSON and contains issuer
 			// RFC 8414 requires issuer field as the minimum requirement
 			Expect(metadata).To(HaveKey("issuer"))
@@ -425,7 +425,7 @@ var _ = Describe("OAuth2 Authorization Server Metadata Discovery", func() {
 			}
 		})
 
-		It("advertises the refresh_token grant type", func() {
+		It("advertises the refresh_token grant type", example("authorization-server-modes.discovery.local"), func() {
 			grantTypes, ok := metadata["grant_types_supported"].([]interface{})
 			Expect(ok).To(BeTrue())
 			Expect(grantTypes).To(ContainElement("refresh_token"))

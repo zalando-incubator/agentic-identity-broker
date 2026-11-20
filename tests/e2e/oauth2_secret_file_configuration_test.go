@@ -234,7 +234,7 @@ var _ = Describe("OAuth2 credential-file configuration", Label("oauth2-secret-fi
 
 	Context("when operators configure valid bindings through established sources", func() {
 		// US6-S1 from specs/051-oauth2-secret-file-overrides/spec.md
-		It("[US6-S1] connects using the exact pair from a YAML configuration file", func() {
+		It("[US6-S1] connects using the exact pair from a YAML configuration file", example("broker-credentials-at-third-party-services.files.binding"), func() {
 			process := start(configuration("YAML", map[string]map[string]string{"Config.One_1": pairA}))
 			serviceID := register(process, "Config.One_1", "filesystem")
 			connect(process, serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)

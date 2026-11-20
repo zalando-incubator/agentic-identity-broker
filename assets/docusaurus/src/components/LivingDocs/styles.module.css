@@ -1,0 +1,105 @@
+.badge,
+.pill {
+  border-radius: 999px;
+  display: inline-block;
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.5;
+  padding: 0 0.5rem;
+  white-space: nowrap;
+}
+
+.badge {
+  border: 1px solid currentColor;
+  vertical-align: 0.1em;
+}
+
+a.badge:hover {
+  text-decoration: none;
+  filter: brightness(0.85);
+}
+
+.passed {
+  background: var(--ifm-color-success-contrast-background);
+  color: var(--ifm-color-success-contrast-foreground);
+}
+
+.refused {
+  background: var(--ifm-color-warning-contrast-background);
+  color: var(--ifm-color-warning-contrast-foreground);
+}
+
+.failed {
+  background: var(--ifm-color-danger-contrast-background);
+  color: var(--ifm-color-danger-contrast-foreground);
+}
+
+.neutral {
+  background: var(--ifm-color-secondary-contrast-background);
+  color: var(--ifm-color-secondary-contrast-foreground);
+}
+
+.method {
+  background: var(--ifm-color-info-contrast-background);
+  color: var(--ifm-color-info-contrast-foreground);
+}
+
+.exchange {
+  border: 1px solid var(--ifm-color-emphasis-300);
+  border-radius: var(--ifm-global-radius);
+  margin-bottom: var(--ifm-leading);
+  overflow: hidden;
+}
+
+.message {
+  padding: 0.75rem 1rem;
+}
+
+.message + .message {
+  background: var(--ifm-color-emphasis-100);
+  border-top: 1px solid var(--ifm-color-emphasis-300);
+}
+
+.startLine {
+  align-items: baseline;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.target {
+  background: none;
+  border: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  padding: 0;
+}
+
+.reason {
+  font-weight: 600;
+}
+
+.headers {
+  color: var(--ifm-color-emphasis-700);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+  margin: 0.4rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.headers dt,
+.headers dd {
+  display: inline;
+  font-weight: normal;
+  margin: 0;
+}
+
+.body {
+  margin: 0.6rem 0 0;
+}
+
+.body pre,
+.body code {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}

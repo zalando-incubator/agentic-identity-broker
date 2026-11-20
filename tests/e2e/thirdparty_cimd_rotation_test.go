@@ -234,7 +234,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 		})
 
 		// US4-S1 from specs/046-cimd-upstream-client/spec.md
-		It("should keep the public key location stable before use", Label("cimd-upstream-client"), func() {
+		It("should keep the public key location stable before use", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.rotation.stable-location"), func() {
 			metadataBefore := readCIMDMetadata()
 			rotatedKey := createCIMDKey(adminServer, "ES256")
 			metadataAfter := readCIMDMetadata()
@@ -273,7 +273,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 		})
 
 		// US4-S4 from specs/046-cimd-upstream-client/spec.md
-		It("should publish a grace key while the previous key signs", Label("cimd-upstream-client"), func() {
+		It("should publish a grace key while the previous key signs", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.rotation.grace-key"), func() {
 			metadata := readCIMDMetadata()
 			previousKeyIDs := keyIDs(readCIMDJWKS(metadata.JWKSURI))
 			pendingKey := createCIMDKey(adminServer, "ES256")
@@ -289,7 +289,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 		})
 
 		// US4-S5 from specs/046-cimd-upstream-client/spec.md
-		It("should sign with an immediately promoted key", Label("cimd-upstream-client"), func() {
+		It("should sign with an immediately promoted key", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.rotation.promote"), func() {
 			candidate := createCIMDKey(adminServer, "ES256")
 			Expect(upstream.RefreshClientMetadata(context.Background(), service.ClientID.String())).To(Succeed())
 			Expect(upstream.Observations().CachedKeyIDs).To(ContainElement(candidate.KID))
@@ -313,7 +313,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 		})
 
 		// US4-S3 from specs/046-cimd-upstream-client/spec.md
-		It("should fail closed without sending a token request", Label("cimd-upstream-client"), func() {
+		It("should fail closed without sending a token request", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.rotation.no-usable-key"), func() {
 			Expect(listCIMDKeys(adminServer)).To(BeEmpty())
 			pendingKeyID := seedCIMDClientAuthenticationKey(testStorage)
 			_, err := testStorage.SigningKeys().SetCurrentInDomain(
@@ -409,7 +409,7 @@ var _ = Describe("CIMD client-authentication key rotation", func() {
 		})
 
 		// US4-S7 from specs/046-cimd-upstream-client/spec.md
-		It("should isolate CIMD key routes in every server mode", Label("cimd-upstream-client"), func() {
+		It("should isolate CIMD key routes in every server mode", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.key-domain"), func() {
 			for _, mode := range modeServers {
 				var tokenSigningKeysBefore []cimdKeyMetadata
 				if mode.name != "proxy" {

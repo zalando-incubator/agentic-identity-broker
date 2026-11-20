@@ -177,7 +177,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 			})
 
 			// US2-S1 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US2-S1 uses a same-identity replacement secret for a new exchange and the existing session without service writes or restart", func() {
+			It("US2-S1 uses a same-identity replacement secret for a new exchange and the existing session without service writes or restart", example("broker-credentials-at-third-party-services.files.rotation.secret"), func() {
 				By("publishing source B's secret with source A's unchanged client identity")
 				Expect(helpers.PublishCredentialPair(binding, fixtures.CredentialClientID, fixtures.RotatedCredentialSecret)).To(Succeed())
 
@@ -255,7 +255,7 @@ var _ = Describe("Filesystem OAuth2 credential rotation", Label("oauth2-secret-f
 			})
 
 			// US2-S5 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US2-S5 refuses source A's code and session before provider authentication after identity B is published, then completes a new B connection", func() {
+			It("US2-S5 refuses source A's code and session before provider authentication after identity B is published, then completes a new B connection", example("broker-credentials-at-third-party-services.files.rotation.client-id"), func() {
 				By("publishing source B and starting a fresh authorization with B")
 				Expect(helpers.PublishCredentialPair(binding, fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret)).To(Succeed())
 				pausedBCallback := pauseAuthorization(serviceID, fixtures.AlternateCredentialClientID)

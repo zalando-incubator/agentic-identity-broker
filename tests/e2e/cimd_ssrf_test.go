@@ -49,7 +49,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 
 	// Scenario US2.1 from specs/028-cimd-support/spec.md
 	Describe("when client_id resolves to a private RFC 1918 address", func() {
-		It("rejects the request before establishing any outbound connection", func() {
+		It("rejects the request before establishing any outbound connection", example("client-registration-and-authentication.fetch.private-address"), func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
 			serverFactory = bootstrap.NewServerFactory(config, logger)
 
@@ -268,7 +268,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 			}
 		})
 
-		It("aborts the download and rejects the authorization request with invalid_client", func() {
+		It("aborts the download and rejects the authorization request with invalid_client", example("client-registration-and-authentication.fetch.size-limit"), func() {
 			resp, err := server.AuthenticatedGET(
 				fmt.Sprintf(
 					"/oauth2/authorize?client_id=%s&redirect_uri=%s/cb&response_type=code&state=xyz",
@@ -344,7 +344,7 @@ var _ = Describe("CIMD SSRF Protection", func() {
 			}
 		})
 
-		It("terminates the connection and rejects the authorization request with server_error", func() {
+		It("terminates the connection and rejects the authorization request with server_error", example("client-registration-and-authentication.fetch.timeout"), func() {
 			resp, err := server.AuthenticatedGET(
 				fmt.Sprintf(
 					"/oauth2/authorize?client_id=%s&redirect_uri=%s/cb&response_type=code&state=xyz",

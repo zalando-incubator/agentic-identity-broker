@@ -153,13 +153,13 @@ var _ = Describe("Continuing consent for local refresh", func() {
 				})
 
 				// S1 from specs/049-fix-refresh-consent/spec.md.
-				It("rejects refresh after grant deletion", func() {
+				It("rejects refresh after grant deletion", example("token-issuance-and-refresh.consent.grant-deleted"), func() {
 					revokeGrant()
 					expectDenied()
 				})
 
 				// S2 from specs/049-fix-refresh-consent/spec.md.
-				It("does not resurrect the old chain after re-grant", func() {
+				It("does not resurrect the old chain after re-grant", example("token-issuance-and-refresh.consent.regrant"), func() {
 					revokeGrant()
 					payload := `{"granted_permission_sets":{"` + fixtures.PlaceholderPermissionSetID.String() + `":["` + fixtures.PlaceholderServiceID.String() + `"]}}`
 					resp, err := enduser.AuthenticatedPOST("/api/consent/agents/"+agent.ID.String()+"/grants", principal, "application/json", strings.NewReader(payload))
@@ -171,7 +171,7 @@ var _ = Describe("Continuing consent for local refresh", func() {
 				})
 
 				// S3 from specs/049-fix-refresh-consent/spec.md.
-				It("rejects refresh after grant expiration", func() {
+				It("rejects refresh after grant expiration", example("token-issuance-and-refresh.consent.grant-expired"), func() {
 					past := time.Now().Add(-time.Hour)
 					grant.ValidUntil = &past
 					Expect(store.UserGrants().Update(context.Background(), grant)).To(Succeed())
@@ -179,14 +179,14 @@ var _ = Describe("Continuing consent for local refresh", func() {
 				})
 
 				// S4 from specs/049-fix-refresh-consent/spec.md.
-				It("rejects the old chain when credential deletion makes the client public", func() {
+				It("rejects the old chain when credential deletion makes the client public", example("token-issuance-and-refresh.consent.credentials-deleted"), func() {
 					deleteAt(admin, "/api/agents/"+agent.ID.String()+"/client-credentials", "")
 					secret = ""
 					expectDenied()
 				})
 
 				// S5 from specs/049-fix-refresh-consent/spec.md.
-				It("cannot mint tokens after agent deletion", func() {
+				It("cannot mint tokens after agent deletion", example("token-issuance-and-refresh.consent.agent-deleted"), func() {
 					deleteAt(admin, "/api/agents/"+agent.ID.String(), "")
 					status, body := refresh(token)
 					Expect(status).To(BeNumerically(">=", http.StatusBadRequest))
@@ -199,7 +199,7 @@ var _ = Describe("Continuing consent for local refresh", func() {
 				BeforeEach(startChain)
 
 				// S6 from specs/049-fix-refresh-consent/spec.md.
-				It("ends public-client refresh authority when consent is deleted", func() {
+				It("ends public-client refresh authority when consent is deleted", example("token-issuance-and-refresh.consent.public-client"), func() {
 					revokeGrant()
 					expectDenied()
 				})

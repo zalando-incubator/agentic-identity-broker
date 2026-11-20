@@ -42,7 +42,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 		})
 
 		// Scenario US3-S1 from specs/051-private-key-jwt-auth/spec.md
-		It("should reject a second use of the same assertion", func() {
+		It("should reject a second use of the same assertion", example("client-registration-and-authentication.assertion.replay"), func() {
 			code, verifier, err := fixture.AuthorizeCode("read offline_access")
 			Expect(err).To(Succeed())
 			assertion, assertionType, err := fixture.SignAssertion(helpers.ClientAssertionOptions{JTI: "single-use-assertion"})
@@ -126,7 +126,7 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 	})
 
 	// Scenario US3-S2 from specs/051-private-key-jwt-auth/spec.md
-	It("should accept one concurrent assertion across two PostgreSQL brokers", Label("docker"), func() {
+	It("should accept one concurrent assertion across two PostgreSQL brokers", Label("docker"), example("client-registration-and-authentication.assertion.replay-two-brokers"), func() {
 		Expect(bootstrap.CanAccessContainerRuntime()).To(Succeed())
 		ctx := context.Background()
 		postgres, err := bootstrap.NewPostgresFixture(ctx)

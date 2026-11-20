@@ -185,6 +185,7 @@ func newCIMDEndUserHandler(appInstance *brokerapp.App) http.Handler {
 
 func cimdTestServerClient(server *httptest.Server) *http.Client {
 	client := server.Client()
+	client.Transport = ObserveTransport(client.Transport)
 	client.Timeout = 5 * time.Second
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse

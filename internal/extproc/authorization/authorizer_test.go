@@ -22,6 +22,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 type capturedLogContext struct {
@@ -440,6 +441,7 @@ func TestOPAAuthorizer_Deny(t *testing.T) {
 }
 
 func TestOPAAuthorizer_PermissionSetContextAvailability(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.permission-sets.policy")
 	path := writePolicy(t, permissionSetPolicy)
 	cfg := authzConfig(path)
 
@@ -499,6 +501,7 @@ func TestOPAAuthorizer_PermissionSetContextAvailability(t *testing.T) {
 }
 
 func TestOPAAuthorizer_UndefinedResult_Deny(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.fail-closed.undefined-result")
 	// Scenario: policy does not define result → default_decision (deny) is returned
 	path := writePolicy(t, undefinedPolicy)
 	cfg := authzConfig(path)
@@ -579,6 +582,7 @@ func TestOPAAuthorizer_ApprovalRequired_IsPreserved(t *testing.T) {
 }
 
 func TestOPAAuthorizer_CIBARequiredIsDeniedAndWarned(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.decisions.ciba-reason")
 	path := writePolicy(t, cibaRequiredPolicy)
 	var logBuf bytes.Buffer
 	auth, err := authorization.NewOPAAuthorizer(authzConfig(path), slog.New(slog.NewJSONHandler(&logBuf, nil)))
@@ -609,6 +613,7 @@ func TestOPAAuthorizer_UndefinedActionWarnsAndDenies(t *testing.T) {
 }
 
 func TestOPAAuthorizer_AuditLog_UsesRequestContext(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.audit.decision-log")
 	handler := &contextCaptureHandler{}
 	logger := slog.New(handler)
 

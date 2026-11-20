@@ -61,6 +61,8 @@ Read the source that governs the change. The summaries here do not replace the c
 `.specify/templates/overrides/spec-template.md` | Spec template: required sections, including concrete example journeys (Principle XIV)
 `.specify/examples/specification-by-example.md` | Worked example journey and Wireloom render command (Principle XIV)
 `.specify/templates/overrides/tasks-template.md` | Tasks template: mandatory Phase 2 design and Phase N compliance tasks
+`specs/capability-map.md` | Capability map: every feature spec grouped by the capability it describes today, with replaced parts. Update it when you add a spec.
+`docs/specification/` | Living documentation: capability pages checked against acceptance evidence (pilot). Read `.agents/skills/living-docs/SKILL.md` before you change a page or a test that carries `example(...)` or `evidence.ForTest`.
 
 New feature directories use a `YYYYMMDD-HHMMSS` timestamp prefix; older ones use a three-digit `NNN` prefix.
 For feature work, read its `spec.md`, `plan.md`, and `tasks.md` before implementation.
@@ -205,6 +207,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 20261116-182420 | `adrs/20261116-182420-living-documentation.md` | Proposed: living documentation checked against acceptance evidence |
 
 ## Domain Glossary
 
@@ -252,6 +255,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just test-integration-infra` | Infra-backed integration suites (Docker/Podman required) |
 | `just test-integration-all` | Both integration layers |
 | `just cdk-test` | CDK unit tests |
+| `just living-docs` | Check `docs/specification/` pages against the tests bound to their examples |
 | `just render-wireframes <spec.md>` | Render Wireloom wireframes in a spec to SVG (after `just install-tools`) |
 
 After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.

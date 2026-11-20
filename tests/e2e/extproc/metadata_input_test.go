@@ -94,7 +94,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 
 	Context("US1: Exchange From Dynamic Metadata", func() {
 		// 043-extproc-metadata-input: US1-S2 — specs/043-extproc-metadata-input/spec.md
-		It("uses only metadata values when raw HTTP attributes conflict", func() {
+		It("uses only metadata values when raw HTTP attributes conflict", example("gateway-token-exchange.input.metadata-only"), func() {
 			env.MockTokenExchange.WithExchangedToken(fixtures.FreshExchangedToken)
 			req := rawAttributeRequest().
 				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
@@ -108,7 +108,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 		})
 
 		// 043-extproc-metadata-input: US1-S3 — specs/043-extproc-metadata-input/spec.md
-		It("rejects the request and forwards no credential when the exchange fails", func() {
+		It("rejects the request and forwards no credential when the exchange fails", example("gateway-token-exchange.exchange.failure-rejected"), func() {
 			env.MockTokenExchange.WithError(http.StatusForbidden, "access_denied")
 			req := helpers.NewRequestHeaders().
 				WithoutAuthorizationHeader().
@@ -168,7 +168,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 
 	Context("US2: Configure Instance Resource", func() {
 		// 043-extproc-metadata-input: US2-S2 — specs/043-extproc-metadata-input/spec.md
-		It("returns invalid_resource for missing, empty, non-string, or invalid resource metadata", func() {
+		It("returns invalid_resource for missing, empty, non-string, or invalid resource metadata", example("gateway-token-exchange.input.invalid-resource"), func() {
 			testCases := []struct {
 				name    string
 				request *extprocv3.ProcessingRequest
@@ -211,7 +211,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 
 	Context("US3: Remove Raw Attribute Dependency", func() {
 		// 043-extproc-metadata-input: US3-S1 — specs/043-extproc-metadata-input/spec.md
-		It("returns invalid_subject_token for missing, empty, scheme-prefixed, or non-string subject metadata", func() {
+		It("returns invalid_subject_token for missing, empty, scheme-prefixed, or non-string subject metadata", example("gateway-token-exchange.input.invalid-subject-token"), func() {
 			testCases := []struct {
 				name    string
 				request *extprocv3.ProcessingRequest
@@ -252,7 +252,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 		})
 
 		// 043-extproc-metadata-input: US3-S2 — specs/043-extproc-metadata-input/spec.md
-		It("returns invalid_subject_token for a raw-attribute-only request", func() {
+		It("returns invalid_subject_token for a raw-attribute-only request", example("gateway-token-exchange.input.raw-request-rejected"), func() {
 			resp := helpers.SendRequestHeaders(context.Background(), client, rawAttributeRequest().Build())
 
 			expectMetadataRejection(resp, invalidSubjectTokenResponse)
@@ -324,7 +324,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 		})
 
 		// 043-extproc-metadata-input: Edge case — resource URL is not absolute HTTP(S) with a host; specs/043-extproc-metadata-input/spec.md
-		It("rejects resource values that are not absolute HTTP or HTTPS URLs with a host", func() {
+		It("rejects resource values that are not absolute HTTP or HTTPS URLs with a host", example("gateway-token-exchange.input.resource-absolute-url"), func() {
 			for _, resourceURI := range []string{
 				fixtures.RelativePathResourceURI,
 				fixtures.InvalidSchemeResourceURI,
@@ -343,7 +343,7 @@ var _ = Describe("ExtProc Metadata Input", func() {
 		})
 
 		// 043-extproc-metadata-input: Edge case — both required metadata values are invalid; specs/043-extproc-metadata-input/spec.md
-		It("returns invalid_subject_token when both required metadata values are invalid", func() {
+		It("returns invalid_subject_token when both required metadata values are invalid", example("gateway-token-exchange.input.subject-checked-first"), func() {
 			req := rawAttributeRequest().
 				WithTokenExchangeMetadata("Bearer "+fixtures.ValidBearerToken, fixtures.RelativePathResourceURI).
 				BuildWithMetadata()

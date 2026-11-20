@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"log/slog"
 	"strings"
 	"testing"
@@ -36,6 +37,7 @@ import (
 
 // TestMigrationLifecycle verifies the complete migration lifecycle: apply, rollback, and reapply
 func TestMigrationLifecycle(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.migrations.lifecycle")
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 
@@ -1207,6 +1209,7 @@ func requireSessionExpiryIndex(t *testing.T, f *MigrationTestFramework, valid bo
 }
 
 func TestMigration037SessionExpiryIndexLifecycle(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.migrations.session-expiry-index")
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
 	require.NoError(t, f.Up(t, 36))

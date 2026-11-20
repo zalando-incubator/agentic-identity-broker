@@ -139,7 +139,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 		})
 
 		// US1-S1 from specs/042-thirdparty-public-pkce/spec.md
-		It("creates the service and reports method none with no credential", func() {
+		It("creates the service and reports method none with no credential", example("broker-credentials-at-third-party-services.public.create"), func() {
 			request := serviceRequest("")
 			request["token_endpoint_auth_method"] = "none"
 			delete(request, "client_secret")
@@ -153,7 +153,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 		})
 
 		// US1-S2 from specs/042-thirdparty-public-pkce/spec.md
-		It("rejects the contradiction and creates no service", func() {
+		It("rejects the contradiction and creates no service", example("broker-credentials-at-third-party-services.public.secret-rejected"), func() {
 			request := serviceRequest("")
 			request["token_endpoint_auth_method"] = "none"
 			request["client_secret"] = "must-not-be-stored"
@@ -171,7 +171,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 		})
 
 		// US1-S3 from specs/042-thirdparty-public-pkce/spec.md
-		It("creates a confidential service with unchanged credential requirements", func() {
+		It("creates a confidential service with unchanged credential requirements", example("broker-credentials-at-third-party-services.secret.create"), func() {
 			response := postJSON(adminServer, "/api/services", principal, serviceRequest(""))
 			Expect(response.StatusCode).To(Equal(http.StatusCreated))
 			service := decodeJSON[map[string]any](response)
@@ -300,7 +300,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 		})
 
 		// US2-S2 from specs/042-thirdparty-public-pkce/spec.md
-		It("sends client_id and code_verifier with no client_secret in the body", func() {
+		It("sends client_id and code_verifier with no client_secret in the body", example("third-party-sessions.connect.public-client"), example("broker-credentials-at-third-party-services.public.connect"), func() {
 			service := publicService
 			response := completeFlow(enduserServer, principal, service.ID)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -324,7 +324,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 			credentialFreeTokenRequests(upstream)
 		})
 		// US2-S4 from specs/042-thirdparty-public-pkce/spec.md
-		It("stores an encrypted session exactly as for a confidential service", func() {
+		It("stores an encrypted session exactly as for a confidential service", example("third-party-sessions.connect.tokens-encrypted"), func() {
 			service := publicService
 			response := completeFlow(enduserServer, principal, service.ID)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
@@ -588,7 +588,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 		})
 
 		// US4-S1 from specs/042-thirdparty-public-pkce/spec.md
-		It("removes the stored credential when the service becomes public", func() {
+		It("removes the stored credential when the service becomes public", example("broker-credentials-at-third-party-services.switch.secret-removed"), func() {
 			created := create(serviceRequest(upstream.URL()))
 			request := serviceRequest(upstream.URL())
 			request["token_endpoint_auth_method"] = "none"
@@ -606,7 +606,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 		})
 
 		// US4-S2 from specs/042-thirdparty-public-pkce/spec.md
-		It("rejects the update and leaves the public service intact", func() {
+		It("rejects the update and leaves the public service intact", example("broker-credentials-at-third-party-services.switch.secret-required"), func() {
 			publicRequest := serviceRequest(upstream.URL())
 			publicRequest["token_endpoint_auth_method"] = "none"
 			delete(publicRequest, "client_secret")
@@ -668,7 +668,7 @@ var _ = Describe("Public Client Support for Third-Party OAuth2 Services", func()
 		})
 
 		// US4-S5 from specs/042-thirdparty-public-pkce/spec.md
-		It("keeps stored sessions valid and uses the new setting on the next refresh", func() {
+		It("keeps stored sessions valid and uses the new setting on the next refresh", example("broker-credentials-at-third-party-services.switch.sessions-kept"), func() {
 			created := create(serviceRequest(upstream.URL()))
 			serviceID := id.MustParseServiceID(created["id"].(string))
 			flow := completeFlow(enduserServer, principal, serviceID)

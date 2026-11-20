@@ -161,7 +161,7 @@ var _ = Describe("CIMD Authorization", func() {
 			}
 		})
 
-		It("resolves the agent, redirects to the consent page, and embeds an opaque session_token", func() {
+		It("resolves the agent, redirects to the consent page, and embeds an opaque session_token", example("client-registration-and-authentication.cimd.authorize"), func() {
 			resp, err := server.AuthenticatedGET(
 				fmt.Sprintf(
 					"/oauth2/authorize?client_id=%s&redirect_uri=%s&response_type=code&state=xyz",
@@ -238,7 +238,7 @@ var _ = Describe("CIMD Authorization", func() {
 			}
 		})
 
-		It("rejects the request with invalid_client", func() {
+		It("rejects the request with invalid_client", example("client-registration-and-authentication.cimd.document-id-mismatch"), func() {
 			resp, err := server.AuthenticatedGET(
 				fmt.Sprintf(
 					"/oauth2/authorize?client_id=%s&redirect_uri=%s/callback&response_type=code&state=xyz",
@@ -375,7 +375,7 @@ var _ = Describe("CIMD Authorization", func() {
 			}
 		})
 
-		It("rejects the request with invalid_request", func() {
+		It("rejects the request with invalid_request", example("client-registration-and-authentication.cimd.redirect-not-in-document"), func() {
 			// Use a redirect URI that is NOT registered in the CIMD document.
 			resp, err := server.AuthenticatedGET(
 				fmt.Sprintf(
@@ -394,7 +394,7 @@ var _ = Describe("CIMD Authorization", func() {
 
 	// FR-027 from specs/028-cimd-support/spec.md
 	Describe("when the client_id URL is not pre-registered on any Agent", func() {
-		It("rejects the authorization request with invalid_client before any CIMD fetch", func() {
+		It("rejects the authorization request with invalid_client before any CIMD fetch", example("client-registration-and-authentication.cimd.unregistered-url"), func() {
 			config := fixtures.OAuth2ConfigWithCIMD(mockUpstream.Server.URL)
 			serverFactory = bootstrap.NewServerFactory(config, logger)
 			cimdFetcher := &countingCIMDFetcher{}
@@ -478,7 +478,7 @@ var _ = Describe("CIMD Authorization", func() {
 			}
 		})
 
-		It("rejects the authorization request with invalid_client", func() {
+		It("rejects the authorization request with invalid_client", example("client-registration-and-authentication.cimd.shared-secret-method"), func() {
 			// FR-022: CIMD clients are always public clients — any auth method other than
 			// "none" is rejected, even if the document is otherwise structurally valid.
 			resp, err := server.AuthenticatedGET(

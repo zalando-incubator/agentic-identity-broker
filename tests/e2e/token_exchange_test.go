@@ -214,12 +214,12 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Entry("identical resources", []string{"https://api.github.com", "https://api.github.com"}, ""),
 			Entry("normalized identical resources", []string{"https://api.github.com/", "https://api.github.com"}, ""),
 			Entry("empty resource omitted", []string{"", "https://api.github.com"}, ""),
-			Entry("distinct resources rejected", []string{"https://api.github.com", "https://other.example.com"}, "invalid_target"),
+			Entry("distinct resources rejected", example("token-exchange.resource.distinct"), []string{"https://api.github.com", "https://other.example.com"}, "invalid_target"),
 			Entry("invalid resource rejected", []string{"https://api.github.com", "not a uri"}, "invalid_request"),
 		)
 
 		// Spec Reference: US1-S3 from specs/013-token-exchange/spec.md
-		It("[US1-S3] should return RFC 8693 response with access_token and token_type", func() {
+		It("[US1-S3] should return RFC 8693 response with access_token and token_type", example("token-exchange.exchange.success"), func() {
 			// Given: Token exchange request is valid
 			mockUpstream.WithSuccessfulTokenResponse().
 				WithAccessToken("github-token-xyz").
@@ -249,7 +249,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US1-S4 from specs/013-token-exchange/spec.md
-		It("[US1-S4] should auto-refresh expired token if refresh_token valid", func() {
+		It("[US1-S4] should auto-refresh expired token if refresh_token valid", example("token-exchange.refresh.expired-access-token"), func() {
 			// Given: Session exists with expired access_token but valid refresh_token
 			// Replace the default active session with an expired one
 			// Create() uses upsert semantics, so this replaces the existing session
@@ -285,7 +285,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US1-S5 from specs/013-token-exchange/spec.md
-		It("[US1-S5] should return 401 invalid_client without valid client_assertion", func() {
+		It("[US1-S5] should return 401 invalid_client without valid client_assertion", example("token-exchange.gateway.invalid-assertion"), func() {
 			// Given: Request with invalid client_assertion
 			data := url.Values{
 				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
@@ -312,7 +312,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US1-S6 from specs/013-token-exchange/spec.md
-		It("[US1-S6] should return 400 invalid_grant with invalid subject_token", func() {
+		It("[US1-S6] should return 400 invalid_grant with invalid subject_token", example("token-exchange.subject.invalid"), func() {
 			// Given: Request with malformed subject_token (not a valid JWT structure)
 			data := url.Values{
 				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
@@ -449,7 +449,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US2-S4 from specs/013-token-exchange/spec.md
-		It("[US2-S4] should return 400 invalid_target when no service matches", func() {
+		It("[US2-S4] should return 400 invalid_target when no service matches", example("token-exchange.resource.unknown"), func() {
 			// Given: Request for resource not in any protected_resources
 			data := url.Values{
 				"grant_type":            {"urn:ietf:params:oauth:grant-type:token-exchange"},
@@ -532,7 +532,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US3-S2 from specs/013-token-exchange/spec.md
-		It("[US3-S2] should return 403 access_denied without user grant", func() {
+		It("[US3-S2] should return 403 access_denied without user grant", example("token-exchange.grant.missing"), func() {
 			// Given: User without grant for agent+service
 			// Delete the grant that was created in BeforeEach so this principal has no grant
 			ctx := context.Background()
@@ -612,7 +612,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US3-S5 from specs/013-token-exchange/spec.md
-		It("[US3-S5] should deny a grant that excludes the service before token-vault access and supply the consent URI", func() {
+		It("[US3-S5] should deny a grant that excludes the service before token-vault access and supply the consent URI", example("token-exchange.grant.excludes-service"), func() {
 			// Given: The user's only grant for the agent covers a different service, and the
 			// stored GitHub session would need a refresh if it were ever read.
 			ctx := context.Background()
@@ -651,7 +651,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US3-S4 from specs/013-token-exchange/spec.md
-		It("[US3-S4] should return 403 access_denied when grant expired", func() {
+		It("[US3-S4] should return 403 access_denied when grant expired", example("token-exchange.grant.expired"), func() {
 			// Given: User with expired grant
 			ctx := context.Background()
 			// First delete the active grant created in BeforeEach
@@ -783,7 +783,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US4-S4 from specs/013-token-exchange/spec.md
-		It("[US4-S4] should fail startup with invalid CEL syntax", func() {
+		It("[US4-S4] should fail startup with invalid CEL syntax", example("token-exchange.policy.invalid-expression"), func() {
 			// Given: Configuration has invalid CEL expression syntax in authorization policy
 			invalidConfig := fixtures.TokenExchangeConfigWithInvalidCELSyntax("claims.invalid syntax here!@#$")
 
@@ -868,7 +868,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		}
 
 		// Spec Reference: US5-S1 from specs/013-token-exchange/spec.md
-		It("[US5-S1] should return 400 invalid_grant when no session exists", func() {
+		It("[US5-S1] should return 400 invalid_grant when no session exists", example("token-exchange.session.missing"), func() {
 			// Given: Another principal has a grant but no session for the resolved service.
 			ctx := context.Background()
 			anotherPrincipal := fixtures.AnotherPrincipal().String()
@@ -1071,12 +1071,12 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 			Expect(refreshForm.Get("grant_type")).To(Equal("refresh_token"))
 			Expect(refreshForm.Get("refresh_token")).To(Equal("replacement-github-refresh"))
 		},
-			Entry("missing session", false),
-			Entry("rejected existing session", true),
+			Entry("missing session", example("token-exchange.session.recovery"), false),
+			Entry("rejected existing session", example("token-exchange.session.recovery-after-rejection"), true),
 		)
 
 		// Spec Reference: US5-S4 from specs/013-token-exchange/spec.md
-		It("[US5-S4] should return re-authentication when the provider rejects the refresh token and stop reusing it", func() {
+		It("[US5-S4] should return re-authentication when the provider rejects the refresh token and stop reusing it", example("token-exchange.refresh.rejected"), func() {
 			// Given: The stored access token has expired and the provider rejects the refresh
 			// token with invalid_grant and a secret-bearing description.
 			ctx := context.Background()
@@ -1144,7 +1144,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US5-S5 from specs/013-token-exchange/spec.md
-		It("[US5-S5] should return server_error without a recovery URI when the provider rejects the client", func() {
+		It("[US5-S5] should return server_error without a recovery URI when the provider rejects the client", example("token-exchange.refresh.provider-client-rejected"), func() {
 			// Given: The stored access token has expired and the provider rejects the refresh
 			// request with invalid_client.
 			ctx := context.Background()
@@ -1238,7 +1238,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		})
 
 		// Spec Reference: US6-S2 from specs/013-token-exchange/spec.md
-		It("[US6-S2] should accept protected_resources in PUT /api/services/{id}", func() {
+		It("[US6-S2] should accept protected_resources in PUT /api/services/{id}", example("third-party-service-registration.protected-resources.replace-set"), func() {
 			// Given: Admin wants to update service protected_resources via PUT
 			// Use the GitHub service that was already created in BeforeEach
 			updateData := map[string]interface{}{
@@ -1729,7 +1729,7 @@ var _ = Describe("RFC 8693 Token Exchange E2E Tests", func() {
 		Expect(tokenResponse.AgentID).To(Equal(agent.ID.String()))
 	},
 		Entry("from canonical subject agent ID", false),
-		Entry("from equivalent uppercase subject agent ID", true),
+		Entry("from equivalent uppercase subject agent ID", example("token-exchange.exchange.identity"), true),
 	)
 
 	// Specification Reference

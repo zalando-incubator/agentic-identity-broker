@@ -318,14 +318,14 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(act["iss"]).To(Equal(issuer.URL()))
 			Expect(claims["scope"]).To(Equal(""))
 		},
-			Entry("optional parameters absent", url.Values{}),
+			Entry("optional parameters absent", example("impersonation.issue.signed-subject"), url.Values{}),
 			Entry("empty resource omitted", url.Values{"resource": {""}}),
 			Entry("empty requested token type omitted", url.Values{"requested_token_type": {""}}),
 			Entry("repeated empty optional parameters omitted", url.Values{"resource": {"", ""}, "requested_token_type": {"", ""}}),
 		)
 
 		// Scenario US1.1 from specs/037-oauth2-user-impersonation/spec.md
-		It("should mint an equivalent token when the audience addresses the target by canonical ID", func() {
+		It("should mint an equivalent token when the audience addresses the target by canonical ID", example("impersonation.audience.canonical-id"), func() {
 			req := baseRequest()
 			req.Set("audience", canonicalAudience)
 			resp := postImpersonation(req)
@@ -337,7 +337,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US1.1 from specs/037-oauth2-user-impersonation/spec.md
-		It("mints the requested scope allowed by the target agent", func() {
+		It("mints the requested scope allowed by the target agent", example("impersonation.scope.allowed"), func() {
 			req := baseRequest()
 			req.Set("scope", "read")
 			resp := postImpersonation(req)
@@ -348,7 +348,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US1.2 from specs/037-oauth2-user-impersonation/spec.md
-		It("rejects a scope outside the target allow list", func() {
+		It("rejects a scope outside the target allow list", example("impersonation.scope.outside-allow-list"), func() {
 			req := baseRequest()
 			req.Set("scope", "admin")
 			resp := postImpersonation(req)
@@ -390,7 +390,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US1.3 from specs/037-oauth2-user-impersonation/spec.md
-		It("issues local-policy base claims and the subject email, without credential leakage", func() {
+		It("issues local-policy base claims and the subject email, without credential leakage", example("impersonation.issue.claims"), func() {
 			resp := postImpersonation(baseRequest())
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
 			claims := decodeJWTClaims(decodeBody(resp)["access_token"].(string))
@@ -404,7 +404,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US1.4 from specs/037-oauth2-user-impersonation/spec.md
-		It("does not activate impersonation for a different audience", func() {
+		It("does not activate impersonation for a different audience", example("impersonation.audience.other"), func() {
 			req := baseRequest()
 			req.Set("audience", "https://example.com/other")
 			resp := postImpersonation(req)
@@ -424,7 +424,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Edge case (target resolution) from specs/037-oauth2-user-impersonation/spec.md
-		It("rejects malformed and unknown audience targets without token exchange", func() {
+		It("rejects malformed and unknown audience targets without token exchange", example("impersonation.audience.unknown-target"), func() {
 			for _, tc := range []struct {
 				audience string
 				code     string
@@ -472,7 +472,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US3.1 from specs/037-oauth2-user-impersonation/spec.md
-		It("rejects an unsigned subject token submitted under the RFC 8693 JWT type", func() {
+		It("rejects an unsigned subject token submitted under the RFC 8693 JWT type", example("impersonation.unsigned-subject.signed-rule-rejects"), func() {
 			req := baseRequest()
 			unsigned, err := helpers.CreateUnsignedJWT(map[string]any{
 				"iss": issuer.URL(), "sub": "user-1", "aud": imperAudience,
@@ -504,7 +504,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US3.3 from specs/037-oauth2-user-impersonation/spec.md
-		It("returns access_denied when no rule predicate permits the client", func() {
+		It("returns access_denied when no rule predicate permits the client", example("impersonation.rules.predicate-denies"), func() {
 			req := baseRequest()
 			req.Set("client_assertion", signCred("gateway-untrusted", "", imperAudience, now.Add(time.Hour)))
 			resp := postImpersonation(req)
@@ -559,7 +559,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US2.3 from specs/037-oauth2-user-impersonation/spec.md
-		It("rejects a client assertion from an issuer the rule does not trust", func() {
+		It("rejects a client assertion from an issuer the rule does not trust", example("impersonation.rules.untrusted-issuer"), func() {
 			untrusted := helpers.NewMockJWKSServer()
 			defer untrusted.Close()
 			req := baseRequest()
@@ -575,7 +575,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US4.3 from specs/037-oauth2-user-impersonation/spec.md
-		It("never records any submitted or issued token value in the audit event", func() {
+		It("never records any submitted or issued token value in the audit event", example("impersonation.audit.no-credentials"), func() {
 			req := baseRequest()
 			resp := postImpersonation(req)
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
@@ -634,7 +634,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 
 	Context("first-match rule evaluation", func() {
 		// Scenario US2.5 from specs/037-oauth2-user-impersonation/spec.md
-		It("falls through the first rule and applies the second, sharing an issuer", func() {
+		It("falls through the first rule and applies the second, sharing an issuer", example("impersonation.rules.fall-through"), func() {
 			config := validConfig()
 			// Rule 1 only permits gateway-A; rule 2 permits gateway-prod; both trust the same issuer.
 			config.OAuth2AuthServer.Impersonation.Rules = []ports.ImpersonationRuleConfig{
@@ -649,7 +649,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US2.5 from specs/037-oauth2-user-impersonation/spec.md
-		It("applies only the first fully matching rule", func() {
+		It("applies only the first fully matching rule", example("impersonation.rules.first-match"), func() {
 			config := validConfig()
 			second := imperSignedRule("rule-second", issuer.URL(), issuer.JWKSURL(), "true")
 			secondSubject := second.Roles["subject"]
@@ -693,7 +693,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 
 	Context("user delegation enforcement", func() {
 		// Scenario US5.2 from specs/037-oauth2-user-impersonation/spec.md
-		It("should reject a rule-authorized subject without a delegation and provide the consent URL", func() {
+		It("should reject a rule-authorized subject without a delegation and provide the consent URL", example("impersonation.delegation.missing"), func() {
 			config := validConfig()
 			Expect(boot(config)).To(Succeed())
 			req := baseRequest()
@@ -709,7 +709,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US5.3 from specs/037-oauth2-user-impersonation/spec.md
-		It("should reject an expired subject delegation without revealing its prior existence", func() {
+		It("should reject an expired subject delegation without revealing its prior existence", example("impersonation.delegation.expired"), func() {
 			config := validConfig()
 			Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ExpiredGrant(
 				"expired-user", targetAgent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
@@ -819,7 +819,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 
 	Context("proxy mode boundary", func() {
 		// Scenario US1.5 from specs/037-oauth2-user-impersonation/spec.md
-		It("rejects impersonation configuration outside local mode", func() {
+		It("rejects impersonation configuration outside local mode", example("impersonation.mode.local-only"), func() {
 			upstream := helpers.NewMockUpstreamOAuth2Server()
 			defer upstream.Close()
 			config := fixtures.HybridConfig(upstream.URL())
@@ -883,7 +883,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		}
 
 		// Scenario US1.6 from specs/037-oauth2-user-impersonation/spec.md
-		It("mints a token from an unsigned unverified subject carrying principal id and email", func() {
+		It("mints a token from an unsigned unverified subject carrying principal id and email", example("impersonation.unsigned-subject.issue"), func() {
 			Expect(boot(unverifiedConfig())).To(Succeed())
 			seedDelegation("chat-user-1")
 			resp := postImpersonation(unverifiedRequest(unverifiedSubjectToken("chat-user-1", "chat-user-1@example.com")))
@@ -926,7 +926,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// FR-007a/CR-005a from specs/037-oauth2-user-impersonation/spec.md
-		It("fails startup when an unverified rule's predicate does not reference subject_token", func() {
+		It("fails startup when an unverified rule's predicate does not reference subject_token", example("impersonation.unsigned-subject.predicate-must-bind"), func() {
 			config := unverifiedConfig()
 			config.OAuth2AuthServer.Impersonation.Rules[0].Authorization.CEL.Expression = `client_assertion.sub == "gateway-prod"`
 			err := boot(config)
@@ -950,7 +950,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 
 		// Scenario US5.4 from specs/037-oauth2-user-impersonation/spec.md
-		It("should reject an unverified subject without a delegation", func() {
+		It("should reject an unverified subject without a delegation", example("impersonation.unsigned-subject.delegation-missing"), func() {
 			config := unverifiedConfig()
 			Expect(boot(config)).To(Succeed())
 			resp := postImpersonation(unverifiedRequest(unverifiedSubjectToken("unconsented-chat-user", "unconsented-chat-user@example.com")))

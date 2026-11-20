@@ -20,6 +20,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // Only the read barrier is artificial; both writes run the production atomic upsert.
@@ -64,6 +65,7 @@ func (r *absentGrantLookupBarrier) Create(ctx context.Context, grant *storage.Us
 }
 
 func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
+	evidence.ForTest(t, "observability-and-audit.audit.grant-records")
 	for _, identical := range []bool{false, true} {
 		name := "distinct submissions"
 		if identical {

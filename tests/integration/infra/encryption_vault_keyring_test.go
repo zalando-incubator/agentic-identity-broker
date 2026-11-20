@@ -5,6 +5,7 @@ package integration
 
 import (
 	"context"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -82,6 +83,7 @@ func TestEncryption_Roundtrip(t *testing.T) {
 
 // TestEncryption_ContextBinding verifies that decryption fails when the wrong service_id is supplied.
 func TestEncryption_ContextBinding(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.kms-context")
 	ctx := context.Background()
 	adapter := newAdapter(t)
 

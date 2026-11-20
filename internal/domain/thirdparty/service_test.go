@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"log/slog"
 	"strings"
 	"sync/atomic"
@@ -513,6 +514,7 @@ func TestThirdpartyOAuth2ProviderService_Create_BranchKeyFailure_AbortCreate(t *
 }
 
 func TestThirdpartyOAuth2ProviderService_Create_EncryptionFailure(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.no-plaintext-fallback")
 	mockRepo := new(MockRepository)
 	mockEnc := new(MockEncryption)
 	svc := NewThirdpartyOAuth2ProviderService(mockRepo, mockEnc, newNoopBranchKeyManager(), nil, false, slog.Default())

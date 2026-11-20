@@ -78,7 +78,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 		})
 
 		// Scenario 1.1 from specs/032-aggregated-jwks/spec.md
-		It("returns only local signing keys", func() {
+		It("returns only local signing keys", example("authorization-server-modes.jwks.local"), func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -170,7 +170,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 		})
 
 		// Scenario 1.2 from specs/032-aggregated-jwks/spec.md
-		It("republishes only upstream keys", func() {
+		It("republishes only upstream keys", example("authorization-server-modes.jwks.proxy"), func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -251,7 +251,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 		})
 
 		// Scenario 1.3 from specs/032-aggregated-jwks/spec.md
-		It("returns union of local and upstream keys", func() {
+		It("returns union of local and upstream keys", example("authorization-server-modes.jwks.hybrid"), func() {
 			resp, err := helpers.HTTPClient().Get(server.BaseURL() + "/oauth2/jwks.json")
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -370,7 +370,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 		})
 
 		// Scenario 2.2 from specs/032-aggregated-jwks/spec.md
-		It("proxy mode discovery includes jwks_uri pointing to broker endpoint", func() {
+		It("proxy mode discovery includes jwks_uri pointing to broker endpoint", example("authorization-server-modes.discovery.jwks-uri-proxy"), func() {
 			mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 			defer mockUpstream.Close()
 
@@ -401,7 +401,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 		})
 
 		// Scenario 2.3 from specs/032-aggregated-jwks/spec.md
-		It("hybrid mode discovery includes jwks_uri", func() {
+		It("hybrid mode discovery includes jwks_uri", example("authorization-server-modes.discovery.jwks-uri-hybrid"), func() {
 			mockUpstream := helpers.NewMockUpstreamOAuth2Server()
 			defer mockUpstream.Close()
 
@@ -474,7 +474,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 
 	Describe("upstream unavailability", func() {
 		// Scenario 3.1 from specs/032-aggregated-jwks/spec.md
-		It("proxy mode fails startup when upstream metadata is unreachable", func() {
+		It("proxy mode fails startup when upstream metadata is unreachable", example("authorization-server-modes.startup.upstream-unreachable"), func() {
 			testStorage, err := storageFactory.NewTestStorage()
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = storageFactory.CloseStorage(testStorage) }()
@@ -549,7 +549,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 
 		// Scenario 3.4 from specs/032-aggregated-jwks/spec.md
 		// Full-stack test: hybrid mode does not serve partial key set when upstream fails.
-		It("hybrid mode returns 503 when upstream JWKS endpoint returns errors (no partial set)", func() {
+		It("hybrid mode returns 503 when upstream JWKS endpoint returns errors (no partial set)", example("authorization-server-modes.jwks.upstream-unavailable"), func() {
 			brokenUpstream := helpers.NewMockUpstreamWithBrokenJWKS()
 			defer brokenUpstream.Close()
 
@@ -648,7 +648,7 @@ var _ = Describe("Aggregated JWKS Endpoint", func() {
 		// Scenario 4.1 from specs/032-aggregated-jwks/spec.md
 		// Full-stack test: provision a local signing key, then build a hybrid app with
 		// a mock upstream serving the same kid. The real service detects the conflict.
-		It("hybrid mode returns 503 when kid conflict is detected", func() {
+		It("hybrid mode returns 503 when kid conflict is detected", example("authorization-server-modes.jwks.kid-conflict"), func() {
 			testStorage, err := storageFactory.NewTestStorage()
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = storageFactory.CloseStorage(testStorage) }()

@@ -162,7 +162,7 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 	})
 
 	// Scenario 2: Mandatory permission set card (locked, pre-selected, no checkbox)
-	It("should display mandatory permission set card as locked and pre-selected", func() {
+	It("should display mandatory permission set card as locked and pre-selected", example("consent-and-delegation.screen.mandatory-locked"), func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
@@ -236,7 +236,7 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 	})
 
 	// Scenario 5: Dynamic service connections update when optional PS toggled on/off
-	It("should update service connections section when optional PS is toggled", func() {
+	It("should update service connections section when optional PS is toggled", example("consent-and-delegation.screen.optional-adds-providers"), func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
@@ -318,7 +318,7 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 	})
 
 	// Scenario 7: Approve button disabled until all displayed services connected
-	It("should disable approve button when mandatory services are not connected", func() {
+	It("should disable approve button when mandatory services are not connected", example("consent-and-delegation.screen.approve-disabled"), func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
@@ -354,7 +354,7 @@ var _ = Describe("Permission Sets on Consent Screen", func() {
 	})
 
 	// Scenario 8: Save action enabled when all services connected
-	It("should enable Save when all mandatory services are connected", func() {
+	It("should enable Save when all mandatory services are connected", example("consent-and-delegation.screen.existing-grant"), func() {
 		principal := fixtures.DefaultPrincipal().String()
 
 		// Create user session for GitHub (the mandatory service)

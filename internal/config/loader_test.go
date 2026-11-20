@@ -13,12 +13,14 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/configutil"
 	domainconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestConfigurationDefaults(t *testing.T) {
+	evidence.ForTest(t, "end-user-authentication.configuration.method-required")
 	// Set valid JWESigningKey for all tests
 
 	t.Run("missing authentication config fails validation", func(t *testing.T) {
@@ -78,6 +80,7 @@ func TestDefaultServerConfig(t *testing.T) {
 }
 
 func TestConfigurationPrecedence(t *testing.T) {
+	evidence.ForTest(t, "end-user-authentication.configuration.per-server")
 	t.Run("environment variable sets principal header", func(t *testing.T) {
 		t.Setenv("IDENTITY_BROKER_JWE_SIGNING_KEY", generateBase64EncodedString(t, 32))
 		t.Setenv("IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY", generateBase64EncodedString(t, 32))
@@ -471,6 +474,7 @@ func TestConfigLoader_UpstreamTimeout(t *testing.T) {
 	}
 
 	t.Run("bare numeric YAML upstream timeout is rejected", func(t *testing.T) {
+		evidence.ForTest(t, "configuration.validation.duration-string")
 		assertLoaderRejectsInvalidUpstreamTimeout(t, "30")
 	})
 
@@ -746,6 +750,7 @@ func TestConfigLoaderRejectsNestedTelemetryMaps(t *testing.T) {
 }
 
 func TestConfigLoaderTelemetryMapInterpolation(t *testing.T) {
+	evidence.ForTest(t, "configuration.substitution.resolved")
 	tests := []struct {
 		name      string
 		namespace string
@@ -889,6 +894,7 @@ server:
 }
 
 func TestConfigLoaderCLIFlagsPreservePublicNames(t *testing.T) {
+	evidence.ForTest(t, "configuration.flags.recorded-as-source")
 	setMinimalConfigEnv(t)
 	setConfigYAML(t, "{}\n")
 	cmd := &cobra.Command{Use: "test"}
@@ -932,6 +938,7 @@ func TestConfigLoaderCLIFlagsPreservePublicNames(t *testing.T) {
 }
 
 func TestConfigLoaderFalseAndZeroOverrides(t *testing.T) {
+	evidence.ForTest(t, "configuration.precedence.false-and-zero")
 	tests := []struct {
 		name        string
 		yaml        string
@@ -980,6 +987,7 @@ func TestConfigLoaderFalseAndZeroOverrides(t *testing.T) {
 
 func TestConfigLoaderSourceMetadataRemainsDotReadable(t *testing.T) {
 	t.Run("YAML keys preserve readable structural and literal dots", func(t *testing.T) {
+		evidence.ForTest(t, "configuration.summary.yaml-keys")
 		setMinimalConfigEnv(t)
 		setConfigYAML(t, `log:
   level: warn
@@ -1013,6 +1021,7 @@ telemetry:
 	})
 
 	t.Run("env file paths use internal delimiter and readable metadata", func(t *testing.T) {
+		evidence.ForTest(t, "configuration.env-file.loaded")
 		t.Setenv("IDENTITY_BROKER_LOG_LEVEL", "")
 		t.Setenv("IDENTITY_BROKER_SERVER_ENDUSER_PORT", "")
 		t.Setenv("CUSTOM_VALUE", "")
@@ -1242,6 +1251,7 @@ func TestThirdPartyOAuth2ClientNameConfiguration(t *testing.T) {
 	})
 
 	t.Run("missing name does not block configuration", func(t *testing.T) {
+		evidence.ForTest(t, "configuration.yaml.optional")
 		setMinimalConfigEnv(t)
 		t.Setenv("IDENTITY_BROKER_CONFIG_PATH", filepath.Join(t.TempDir(), "absent.yaml"))
 		t.Setenv(envName, "")

@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 func validTokenRefreshConfig() ports.TokenRefreshConfig {
@@ -87,6 +88,7 @@ func validTestConfig() *ports.Config {
 }
 
 func TestValidateLogLevel(t *testing.T) {
+	evidence.ForTest(t, "configuration.log.level")
 	tests := []struct {
 		name    string
 		level   ports.LogLevel
@@ -112,6 +114,7 @@ func TestValidateLogLevel(t *testing.T) {
 }
 
 func TestValidateLogFormat(t *testing.T) {
+	evidence.ForTest(t, "configuration.log.format")
 	tests := []struct {
 		name    string
 		format  ports.LogFormat

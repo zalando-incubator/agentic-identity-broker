@@ -180,7 +180,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 	Context("signed self-agent credentials", func() {
 		BeforeEach(func() { boot(configFor([]string{"agent"}), false) })
 		// US1.1 from specs/054-agent-subject-impersonation/spec.md
-		It("issues an attributable signed target token without creating human state", func() {
+		It("issues an attributable signed target token without creating human state", example("impersonation.agent-subject.issue"), func() {
 			assertNoState(target.ID.String())
 			claims := decodeJWTClaims(mint(target.ID.String()))
 			Expect(claims["sub"]).To(Equal(target.ID.String()))
@@ -243,7 +243,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			return form
 		}
 
-		It("issues an agent token only when the predicate binds subject_token.sub and the target is a registered agent", func() {
+		It("issues an agent token only when the predicate binds subject_token.sub and the target is a registered agent", example("impersonation.agent-subject.unsigned"), func() {
 			boot(unsignedRule("client_assertion.sub == 'gateway-prod' && subject_token.sub in ['"+target.ID.String()+"']"), false)
 			status, body := post(unsignedRequest(target.ID.String(), target.ID.String()))
 			Expect(status).To(Equal(http.StatusOK), "%v", body)
@@ -269,7 +269,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 
 	Context("category eligibility and human consent", func() {
 		// US2.1 from specs/054-agent-subject-impersonation/spec.md
-		It("enforces all six category-rule combinations, including same-text delegation", func() {
+		It("enforces all six category-rule combinations, including same-text delegation", example("impersonation.agent-subject.categories"), func() {
 			seedGrant("alice@example.com", false)
 			seedGrant(target.ID.String(), false)
 			for _, categories := range [][]string{{"human"}, {"agent"}, {"human", "agent"}} {
@@ -303,7 +303,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			assertDenied(requestFor("alice@example.com"), true)
 		})
 		// US2.4 from specs/054-agent-subject-impersonation/spec.md
-		It("keeps omission human-only but rejects signed exact-target collisions", func() {
+		It("keeps omission human-only but rejects signed exact-target collisions", example("impersonation.agent-subject.human-only-rule"), func() {
 			boot(configFor(nil), false)
 			assertDenied(requestFor("alice@example.com"), true)
 			seedGrant("expired@example.com", true)
@@ -315,7 +315,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			assertDenied(requestFor(target.ID.String()), false)
 		})
 		// US2.6 from specs/054-agent-subject-impersonation/spec.md
-		It("denies a signed subject naming a different registered agent without human fallback", func() {
+		It("denies a signed subject naming a different registered agent without human fallback", example("impersonation.agent-subject.other-agent"), func() {
 			for _, categories := range [][]string{nil, {"human"}, {"human", "agent"}} {
 				boot(configFor(categories), false)
 				seedGrant(other.ID.String(), false)
@@ -572,7 +572,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 				Expect(err).NotTo(HaveOccurred())
 				Expect(storedSession).To(Equal(session))
 			},
-			Entry("default detector rejects", "", rejected, false),
+			Entry("default detector rejects", example("impersonation.agent-subject.no-third-party-exchange"), "", rejected, false),
 			Entry("default detector rejects despite same-text human state", "", rejected, true),
 			Entry("compliant replacement rejects", compliantDetector, rejected, false),
 			Entry("compliant replacement rejects despite same-text human state", compliantDetector, rejected, true),
@@ -583,7 +583,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		)
 
 		// US3.5 from specs/054-agent-subject-impersonation/spec.md
-		It("rejects agent-subject tokens on approval endpoints without creating approvals", func() {
+		It("rejects agent-subject tokens on approval endpoints without creating approvals", example("impersonation.agent-subject.no-approvals"), func() {
 			boot(configure(""), false)
 			agentToken := mint(target.ID.String())
 			gateway := sign("gateway-prod", fixtures.ImpersonationAudience)

@@ -23,6 +23,7 @@ import (
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // ---------------------------------------------------------------------------
@@ -184,6 +185,7 @@ func TestTokenExchanger_ExchangeRejectsRedirects(t *testing.T) {
 
 // Spec: FR-003, FR-005 — Exchange sends RFC 8693 form-encoded request
 func TestTokenExchanger_Exchange_SendsCorrectRFC8693Request(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.exchange.rfc8693-request")
 	mocks := newMockServers()
 	defer mocks.Close()
 
@@ -217,6 +219,7 @@ func TestTokenExchanger_Exchange_SendsCorrectRFC8693Request(t *testing.T) {
 
 // Spec: FR-006 — client_assertion comes from id_token (not access_token)
 func TestTokenExchanger_Exchange_UsesIDTokenAsClientAssertion(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.broker-auth.id-token-assertion")
 	mocks := newMockServers()
 	defer mocks.Close()
 	mocks.clientCredsIDToken = "specific-id-token-for-assertion"
