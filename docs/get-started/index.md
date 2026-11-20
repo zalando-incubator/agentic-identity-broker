@@ -26,9 +26,9 @@ git clone https://github.com/zalando-incubator/agentic-identity-broker.git
 cd agentic-identity-broker
 ```
 
-You do not need Go, Node.js, PostgreSQL, or cloud credentials on your host.
-The stack uses an in-memory store and generates local encryption keys at startup.
-This development stack trusts a simulated user identity. Do not expose it to other machines.
+The default stack uses in-memory storage and does not require PostgreSQL on the host. Pass `postgres` to a Compose startup command to use a local PostgreSQL container.
+That mode stores data in a named volume. `just compose-down` preserves it; `just compose-down-volumes` deletes it.
+The PostgreSQL mode keeps its encryption key in ignored `.env.compose.key`. Keep that file while the database volume exists.
 
 ## Step 1: Start the stack
 
@@ -47,7 +47,9 @@ IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$(./scripts/generate-jwe-key.sh)" \
   docker compose --env-file .env.compose -f docker-compose.yml up -d --build --wait --wait-timeout 600
 ```
 
-The first run builds eight service images, including the Go backend and Vite frontend.
+For persistent PostgreSQL storage, use `just compose-up-detached postgres` instead.
+
+The first run builds the application and mock-service images. PostgreSQL mode also builds the migration image.
 Startup depends on your machine, network, and build cache. A clean-machine cold-start time is not yet measured.
 Startup waits for service health, including the frontend. The frontend runs `npm ci` to synchronize its dependency volume before Vite starts.
 Broker health alone does not mean that sample-data seeding has finished.
@@ -160,7 +162,7 @@ Without `just`:
 docker compose --env-file .env.compose -f docker-compose.yml down
 ```
 
-The in-memory store discards the seeded data, provider sessions, and grants when the broker stops.
+The default in-memory store loses data when the broker stops. PostgreSQL mode preserves broker data across `just compose-down`; `just compose-down-volumes` deletes the database and other Compose volumes.
 
 ## Where to go next
 

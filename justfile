@@ -22,6 +22,7 @@ E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false"
 
 COMPOSE_CMD := "docker compose"
 COMPOSE_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml"
+COMPOSE_POSTGRES_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml -f docker-compose.postgres.yml"
 
 
 # Default recipe (shown when running `just` with no args)
@@ -705,7 +706,7 @@ docker-build-all: docker-build-broker docker-build-migrate docker-build-extproc
 # Docker Compose - Development (Hot Reload)
 # =============================================================================
 
-# Create .env.compose from .env.compose.example if it doesn't exist
+# Create .env.compose if it doesn't exist
 compose-env:
     @if [ -f .env.compose ]; then \
         echo ".env.compose already exists"; \
@@ -714,15 +715,26 @@ compose-env:
         echo "✓ Created: .env.compose (customize as needed)"; \
     fi
 
-# Validate docker-compose.yml syntax
-compose-validate:
-    @echo "Validating docker-compose.yml..."
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} config > /dev/null && echo "✓ Syntax valid" || echo "✗ Syntax error"
+# Create a stable local encryption key for the PostgreSQL setup
+compose-env-postgres: compose-env
+    @if [ ! -s .env.compose.key ]; then \
+        umask 077; \
+        ./scripts/generate-jwe-key.sh > .env.compose.key; \
+        echo "✓ Created persistent database encryption key"; \
+    fi
+    @chmod 600 .env.compose.key
 
-# Start all services with logs streaming (foreground)
-compose-up: compose-env
-    @echo "Generating JWE signing key..."
-    @echo "Generating encryption key..."
+
+# Validate default and PostgreSQL Compose configurations
+compose-validate:
+    @echo "Validating default and PostgreSQL Compose configurations..."
+    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} config > /dev/null && {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} config > /dev/null && echo "✓ Both Compose configs are valid" || (echo "✗ Compose configuration error" >&2; exit 1)
+
+# Start all services with logs streaming; pass `postgres` for persistent storage
+compose-up storage="memory":
+    @if [ "{{storage}}" != "memory" ] && [ "{{storage}}" != "postgres" ]; then echo "Usage: just compose-up [memory|postgres]" >&2; exit 2; fi
+    @if [ "{{storage}}" = "postgres" ]; then just compose-env-postgres; else just compose-env; fi
+    @if [ "{{storage}}" = "postgres" ]; then echo "Starting PostgreSQL-backed development stack..."; else echo "Starting in-memory development stack..."; fi
     @echo "Starting docker-compose services with hot reload..."
     @echo "Services:"
     @echo "  - Identity Broker (8000, 14000) with Air hot reload"
@@ -732,14 +744,33 @@ compose-up: compose-env
     @echo "  - Sample Agent (9002)"
     @echo "  - Seed data will auto-run once broker is healthy"
     @echo ""
+    @echo "Service URLs:"
+    @echo "  - Browser UI (Vite proxy includes development identity): http://localhost:3000/"
+    @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
+    @echo "  - Admin API: http://localhost:14000/api/agents"
+    @echo "  - Admin health: http://localhost:14000/health"
+    @echo "  - Sample OAuth2 client: http://localhost:9002/"
+    @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
+    @if [ "{{storage}}" = "postgres" ]; then echo "  - PostgreSQL: localhost:5433 by default (see .env.compose for overrides)"; fi
+    @echo ""
     @echo "Press Ctrl+C to stop"
-    IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --build
+    @if [ "{{storage}}" = "postgres" ]; then \
+        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(cat .env.compose.key) {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} up --build; \
+    else \
+        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(./scripts/generate-jwe-key.sh) {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --build; \
+    fi
 
-# Start all services in background
-compose-up-detached: compose-env
-    @echo "Generating JWE signing key..."
+# Start all services in background; pass `postgres` for persistent storage
+compose-up-detached storage="memory":
+    @if [ "{{storage}}" != "memory" ] && [ "{{storage}}" != "postgres" ]; then echo "Usage: just compose-up-detached [memory|postgres]" >&2; exit 2; fi
+    @if [ "{{storage}}" = "postgres" ]; then just compose-env-postgres; else just compose-env; fi
+    @if [ "{{storage}}" = "postgres" ]; then echo "Starting PostgreSQL-backed development stack in background..."; else echo "Starting in-memory development stack in background..."; fi
     @echo "Starting docker-compose services in background..."
-    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build --wait --wait-timeout 600
+    @if [ "{{storage}}" = "postgres" ]; then \
+        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(cat .env.compose.key) {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} up -d --build --wait --wait-timeout 600; \
+    else \
+        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(./scripts/generate-jwe-key.sh) {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build --wait --wait-timeout 600; \
+    fi
     @just compose-health
     @echo ""
     @echo "Service URLs:"
@@ -749,19 +780,21 @@ compose-up-detached: compose-env
     @echo "  - Admin health: http://localhost:14000/health"
     @echo "  - Sample OAuth2 client: http://localhost:9002/"
     @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
+    @if [ "{{storage}}" = "postgres" ]; then echo "  - PostgreSQL: localhost:5433 by default (see .env.compose for overrides)"; fi
     @echo ""
     @echo "View logs: just compose-logs"
     @echo "Stop services: just compose-down"
 
+
 # Stop all services
 compose-down:
     @echo "Stopping docker-compose services..."
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} down
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} down
 
 # Stop all services and remove volumes
 compose-down-volumes:
-    @echo "Stopping docker-compose services and removing volumes..."
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} down -v
+    @echo "Stopping services and removing volumes, including PostgreSQL data..."
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} down -v
 
 # View logs from all services (tail -f)
 compose-logs:
@@ -967,7 +1000,7 @@ mock-mcp-server-start:
     cd mocks/mcp-server && go run cmd/mcp-server/main.go
 
 # Start the full ExtProc + agentgateway + MCP integration stack
-compose-extproc-up:
+compose-extproc-up: compose-env
     @echo "Starting ExtProc integration stack..."
     @echo "Services:"
     @echo "  - extproc-token-exchange (50051, container-internal)"
@@ -975,7 +1008,7 @@ compose-extproc-up:
     @echo "  - agentgateway (4000, 15000)"
     @echo ""
     @echo "Requires identity-broker and upstream-oauth2 to be running."
-    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} -f docker-compose.yml up extproc-token-exchange mcp-server-mock agentgateway
+    IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(./scripts/generate-jwe-key.sh) {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up extproc-token-exchange mcp-server-mock agentgateway
 
 # Stop ExtProc integration services only
 compose-extproc-down:
