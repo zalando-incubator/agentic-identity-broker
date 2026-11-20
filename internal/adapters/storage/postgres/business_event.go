@@ -85,6 +85,10 @@ func (a *Adapter) DeleteRecordedBefore(ctx context.Context, cutoff time.Time, li
 	}
 	execCtx, cancel := context.WithTimeout(ctx, a.timeouts.Write)
 	defer cancel()
+	// Stored timestamps are whole microseconds. Round up to preserve the strict comparison.
+	if floor := cutoff.Truncate(time.Microsecond); !floor.Equal(cutoff) {
+		cutoff = floor.Add(time.Microsecond)
+	}
 	result, err := a.db.ExecContext(execCtx, `DELETE FROM business_events WHERE id IN (
 		SELECT id FROM business_events WHERE recorded_at < $1 ORDER BY recorded_at, id LIMIT $2
 	)`, cutoff, limit)

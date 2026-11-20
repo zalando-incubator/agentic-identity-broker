@@ -16,9 +16,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	testbootstrap "github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 )
 
@@ -212,6 +214,35 @@ func TestBusinessEventPostgresAppend(t *testing.T) {
 	}
 }
 
+func TestBusinessEventPostgresAppendHonorsWriteTimeout(t *testing.T) {
+	pg := testbootstrap.RequireSharedPostgres(t)
+	_, connectionURL, cleanup := pg.SetupMigratedDatabase(t)
+	t.Cleanup(cleanup)
+	store, err := postgres.NewAdapter(&ports.StorageConfig{
+		Backend:  "postgres",
+		Postgres: ports.PostgresConfig{ConnectionURL: connectionURL},
+		Timeouts: ports.StorageTimeouts{Write: 150 * time.Millisecond},
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.Initialize(t.Context()))
+	t.Cleanup(func() { require.NoError(t, store.Close(context.Background())) })
+	db, err := sqlx.Connect("pgx", connectionURL)
+	require.NoError(t, err)
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	tx, err := db.BeginTxx(ctx, nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `LOCK TABLE business_events IN SHARE MODE`)
+	require.NoError(t, err)
+
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, store.Append(ctx, postgresBusinessEvent()), &storageErr)
+	require.Equal(t, storage.ErrorKindTimeout, storageErr.Kind)
+	require.NoError(t, ctx.Err(), "append must use its own shorter deadline")
+}
+
 func TestBusinessEventPostgresRetentionOrderAndLimit(t *testing.T) {
 	store, db := newBusinessEventStorage(t)
 	const period = 24 * time.Hour
@@ -248,6 +279,13 @@ func TestBusinessEventPostgresRetentionOrderAndLimit(t *testing.T) {
 	var remaining []string
 	require.NoError(t, db.Select(&remaining, `SELECT id FROM business_events ORDER BY id`))
 	assert.Equal(t, []string{ids[2].String(), ids[3].String()}, remaining)
+
+	deleted, err = store.BusinessEventRetention().DeleteRecordedBefore(t.Context(), cutoff.Add(time.Nanosecond), 1000)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, deleted)
+	remaining = nil
+	require.NoError(t, db.Select(&remaining, `SELECT id FROM business_events ORDER BY id`))
+	assert.Equal(t, []string{ids[3].String()}, remaining)
 }
 
 func TestBusinessEventPostgresConcurrentRetentionShortBatch(t *testing.T) {

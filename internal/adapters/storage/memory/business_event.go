@@ -24,11 +24,10 @@ func (a *Adapter) Append(ctx context.Context, event *model.BusinessEvent) error 
 		return storage.NewStorageError(operation, storage.ErrorKindValidation, err, "invalid business event")
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := a.ledgerLock.Acquire(ctx, 1); err != nil {
 		return storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 	}
+	defer a.ledgerLock.Release(1)
 	for _, stored := range a.businessEvents {
 		if stored.ID == event.ID {
 			return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "business event already exists")
@@ -63,11 +62,10 @@ func (a *Adapter) DeleteRecordedBefore(ctx context.Context, cutoff time.Time, li
 	if limit <= 0 {
 		return 0, storage.NewStorageError(operation, storage.ErrorKindValidation, nil, "limit must be positive")
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if err := ctx.Err(); err != nil {
+	if err := a.ledgerLock.Acquire(ctx, 1); err != nil {
 		return 0, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 	}
+	defer a.ledgerLock.Release(1)
 	slices.SortFunc(a.businessEvents, func(left, right *model.BusinessEvent) int {
 		if ordering := left.RecordedAt.Compare(right.RecordedAt); ordering != 0 {
 			return ordering

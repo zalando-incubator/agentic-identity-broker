@@ -179,6 +179,25 @@ func TestBusinessEventOperationsRejectExpiredContexts(t *testing.T) {
 	assert.Zero(t, deleted)
 }
 
+func TestBusinessEventAppendTimesOutWhileStorageIsLocked(t *testing.T) {
+	adapter := NewAdapter()
+	require.True(t, adapter.ledgerLock.TryAcquire(1))
+	defer adapter.ledgerLock.Release(1)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- adapter.Append(ctx, memoryBusinessEvent()) }()
+	select {
+	case err := <-result:
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		require.Equal(t, storage.ErrorKindTimeout, storageErr.Kind)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(time.Second):
+		t.Fatal("append waited for the lock after its deadline")
+	}
+}
+
 func memoryBusinessEventIDs(adapter *Adapter) []id.BusinessEventID {
 	ids := make([]id.BusinessEventID, len(adapter.businessEvents))
 	for index, event := range adapter.businessEvents {

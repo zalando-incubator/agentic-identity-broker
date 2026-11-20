@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sync"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -19,6 +21,7 @@ import (
 type Adapter struct {
 	mu             sync.RWMutex
 	users          map[id.UserID]*ports.User
+	ledgerLock     *semaphore.Weighted
 	businessEvents []*model.BusinessEvent
 }
 
@@ -26,7 +29,8 @@ type Adapter struct {
 // Returns immediately (no I/O or initialization required).
 func NewAdapter() *Adapter {
 	return &Adapter{
-		users: make(map[id.UserID]*ports.User),
+		users:      make(map[id.UserID]*ports.User),
+		ledgerLock: semaphore.NewWeighted(1),
 	}
 }
 
@@ -63,6 +67,11 @@ func (a *Adapter) Close(ctx context.Context) error {
 		return ctx.Err()
 	default:
 	}
+
+	if err := a.ledgerLock.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer a.ledgerLock.Release(1)
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
