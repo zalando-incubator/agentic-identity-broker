@@ -977,7 +977,7 @@ This can exceed reported expiry. The fresh-cache margin does not guarantee valid
 
 **Approval Gate**: The request-path component that handles standalone `approval_required` MCP tool calls. It matches the cache, performs a targeted broker read on a miss, and creates an approval only after that read succeeds. It denies on every broker or identity error.
 
-**Long-Poll Syncer**: One background ExtProc goroutine that receives broker approval snapshots. It uses ETags, replaces returned pair state, and retries with bounded backoff.
+**Long-Poll Syncer**: One background ExtProc goroutine that receives broker approval snapshots. It uses ETags, replaces returned pair state, and retries with bounded backoff. Per-pair snapshot reconciliation indexes the previous records by approval ID, preserving local consumption and reservations in O(incoming + previous) time with O(previous) temporary index space while holding the cache write lock.
 
 **Three policy gates on one request chain**:
 
