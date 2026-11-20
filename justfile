@@ -719,24 +719,31 @@ compose-env:
 compose-env-postgres: compose-env
     @if [ ! -s .env.compose.key ]; then \
         umask 077; \
-        ./scripts/generate-jwe-key.sh > .env.compose.key; \
+        ./scripts/generate-jwe-key.sh > .env.compose.key || { rm -f .env.compose.key; exit 1; }; \
         echo "✓ Created persistent database encryption key"; \
     fi
     @chmod 600 .env.compose.key
-
 
 # Validate default and PostgreSQL Compose configurations
 compose-validate:
     @echo "Validating default and PostgreSQL Compose configurations..."
     @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} config > /dev/null && {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} config > /dev/null && echo "✓ Both Compose configs are valid" || (echo "✗ Compose configuration error" >&2; exit 1)
 
-# Start all services with logs streaming; pass `postgres` for persistent storage
-compose-up storage="memory":
-    @if [ "{{storage}}" != "memory" ] && [ "{{storage}}" != "postgres" ]; then echo "Usage: just compose-up [memory|postgres]" >&2; exit 2; fi
+_compose-urls storage:
+    @echo "Service URLs:"
+    @echo "  - Browser UI (Vite proxy includes development identity): http://localhost:3000/"
+    @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
+    @echo "  - Admin API: http://localhost:14000/api/agents"
+    @echo "  - Admin health: http://localhost:14000/health"
+    @echo "  - Sample OAuth2 client: http://localhost:9002/"
+    @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
+    @if [ "{{storage}}" = "postgres" ]; then echo "  - PostgreSQL: localhost:5433 by default (see .env.compose for overrides)"; fi
+    @echo ""
+
+_compose-start storage detached:
+    @if [ "{{storage}}" != "memory" ] && [ "{{storage}}" != "postgres" ]; then echo "Usage: just compose-up[-detached] [memory|postgres]" >&2; exit 2; fi
     @if [ "{{storage}}" = "postgres" ]; then just compose-env-postgres; else just compose-env; fi
-    @if [ "{{storage}}" = "postgres" ]; then echo "Starting PostgreSQL-backed development stack..."; else echo "Starting in-memory development stack..."; fi
-    @echo "Starting docker-compose services with hot reload..."
-    @echo "Services:"
+    @echo "Starting Docker Compose services with hot reload..."
     @echo "  - Identity Broker (8000, 14000) with Air hot reload"
     @echo "  - Frontend (3000) with Vite HMR"
     @echo "  - Upstream OAuth2 (9001)"
@@ -744,47 +751,31 @@ compose-up storage="memory":
     @echo "  - Sample Agent (9002)"
     @echo "  - Seed data will auto-run once broker is healthy"
     @echo ""
-    @echo "Service URLs:"
-    @echo "  - Browser UI (Vite proxy includes development identity): http://localhost:3000/"
-    @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
-    @echo "  - Admin API: http://localhost:14000/api/agents"
-    @echo "  - Admin health: http://localhost:14000/health"
-    @echo "  - Sample OAuth2 client: http://localhost:9002/"
-    @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
-    @if [ "{{storage}}" = "postgres" ]; then echo "  - PostgreSQL: localhost:5433 by default (see .env.compose for overrides)"; fi
-    @echo ""
-    @echo "Press Ctrl+C to stop"
-    @if [ "{{storage}}" = "postgres" ]; then \
-        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(cat .env.compose.key) {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} up --build; \
-    else \
-        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(./scripts/generate-jwe-key.sh) {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --build; \
-    fi
+    @if [ "{{detached}}" = "false" ]; then just _compose-urls {{storage}}; echo "Press Ctrl+C to stop"; fi
+    @set -eu; \
+        if [ "{{storage}}" = "postgres" ]; then \
+            set -- {{COMPOSE_POSTGRES_FILE_ARGS}}; \
+            encryption_key=$(cat .env.compose.key); \
+        else \
+            set -- {{COMPOSE_FILE_ARGS}}; \
+            encryption_key=$(./scripts/generate-jwe-key.sh); \
+        fi; \
+        signing_key=$(./scripts/generate-jwe-key.sh); \
+        set -- "$@" up --build; \
+        if [ "{{detached}}" = "true" ]; then set -- "$@" -d --wait --wait-timeout 600; fi; \
+        IDENTITY_BROKER_JWE_SIGNING_KEY="$signing_key" IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$encryption_key" {{COMPOSE_CMD}} "$@"
+
+# Start all services with logs streaming; pass `postgres` for persistent storage
+compose-up storage="memory":
+    @just _compose-start {{storage}} false
 
 # Start all services in background; pass `postgres` for persistent storage
 compose-up-detached storage="memory":
-    @if [ "{{storage}}" != "memory" ] && [ "{{storage}}" != "postgres" ]; then echo "Usage: just compose-up-detached [memory|postgres]" >&2; exit 2; fi
-    @if [ "{{storage}}" = "postgres" ]; then just compose-env-postgres; else just compose-env; fi
-    @if [ "{{storage}}" = "postgres" ]; then echo "Starting PostgreSQL-backed development stack in background..."; else echo "Starting in-memory development stack in background..."; fi
-    @echo "Starting docker-compose services in background..."
-    @if [ "{{storage}}" = "postgres" ]; then \
-        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(cat .env.compose.key) {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} up -d --build --wait --wait-timeout 600; \
-    else \
-        IDENTITY_BROKER_JWE_SIGNING_KEY=$(./scripts/generate-jwe-key.sh) IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=$(./scripts/generate-jwe-key.sh) {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build --wait --wait-timeout 600; \
-    fi
+    @just _compose-start {{storage}} true
     @just compose-health
-    @echo ""
-    @echo "Service URLs:"
-    @echo "  - Browser UI (Vite proxy includes development identity): http://localhost:3000/"
-    @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
-    @echo "  - Admin API: http://localhost:14000/api/agents"
-    @echo "  - Admin health: http://localhost:14000/health"
-    @echo "  - Sample OAuth2 client: http://localhost:9002/"
-    @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
-    @if [ "{{storage}}" = "postgres" ]; then echo "  - PostgreSQL: localhost:5433 by default (see .env.compose for overrides)"; fi
-    @echo ""
+    @just _compose-urls {{storage}}
     @echo "View logs: just compose-logs"
     @echo "Stop services: just compose-down"
-
 
 # Stop all services
 compose-down:
@@ -798,19 +789,19 @@ compose-down-volumes:
 
 # View logs from all services (tail -f)
 compose-logs:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f
 
 # View logs from backend only
 compose-logs-backend:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f identity-broker
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f identity-broker
 
 # View logs from frontend only
 compose-logs-frontend:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f frontend
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f frontend
 
 # View logs from specific service
 compose-logs-service SERVICE:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f {{SERVICE}}
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f {{SERVICE}}
 
 # Restart backend and its namespace-sharing sample agent (after code changes)
 compose-restart-backend:
@@ -825,11 +816,11 @@ compose-restart-frontend:
 # Show service status and connectivity
 compose-health:
     @echo "Checking service health..."
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps
+    @{{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} ps --all
     @echo ""
     @echo "Testing connectivity..."
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} exec -T identity-broker curl -s http://localhost:8000/health && echo "✓ Backend health OK" || echo "✗ Backend not ready"
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} exec -T frontend curl -s http://localhost:3000 > /dev/null && echo "✓ Frontend responding" || echo "✗ Frontend not ready"
+    @{{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} exec -T identity-broker curl -s http://localhost:8000/health && echo "✓ Backend health OK" || echo "✗ Backend not ready"
+    @{{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} exec -T frontend curl -s http://localhost:3000 > /dev/null && echo "✓ Frontend responding" || echo "✗ Frontend not ready"
     @echo ""
 
 # Clean up: stop containers, remove volumes, clean tmp directories
