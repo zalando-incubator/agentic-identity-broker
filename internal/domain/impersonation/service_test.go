@@ -37,25 +37,25 @@ func (s *stubIssuer) IssueImpersonationToken(_ context.Context, input ports.Impe
 	return "minted.jwt.token", nil
 }
 
-type allowDelegationVerifier struct{}
+type allowReadinessVerifier struct{}
 
-func (allowDelegationVerifier) VerifyUserDelegation(context.Context, id.Principal, id.AgentID) (ports.UserDelegationStatus, error) {
-	return ports.UserDelegationActive, nil
+func (allowReadinessVerifier) EvaluateAuthorizationReadiness(context.Context, id.Principal, *storage.Agent) (ports.AuthorizationReadiness, error) {
+	return ports.AuthorizationReadiness{}, nil
 }
 
-type recordingDelegationVerifier struct {
-	status    ports.UserDelegationStatus
+type recordingReadinessVerifier struct {
+	status    ports.AuthorizationReadinessReason
 	err       error
 	calls     int
 	principal id.Principal
 	agentID   id.AgentID
 }
 
-func (v *recordingDelegationVerifier) VerifyUserDelegation(_ context.Context, principal id.Principal, agentID id.AgentID) (ports.UserDelegationStatus, error) {
+func (v *recordingReadinessVerifier) EvaluateAuthorizationReadiness(_ context.Context, principal id.Principal, agent *storage.Agent) (ports.AuthorizationReadiness, error) {
 	v.calls++
 	v.principal = principal
-	v.agentID = agentID
-	return v.status, v.err
+	v.agentID = agent.ID
+	return ports.AuthorizationReadiness{Reason: v.status}, v.err
 }
 
 type stubAgentRepository struct {
@@ -115,7 +115,7 @@ func newTestService(t *testing.T, cfg *ports.ImpersonationConfig) (*Service, *st
 	factory := func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return stubJWKSProvider{}, nil
 	}
-	svc, err := NewService(cfg, factory, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+	svc, err := NewService(cfg, factory, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 	require.NoError(t, err)
 	return svc, issuer
 }
@@ -125,7 +125,7 @@ type uuidOnlyAgentRepository struct{ ports.AgentRepository }
 func TestNewService_RequiresCanonicalIDResolution(t *testing.T) {
 	_, err := NewService(testImpersonationConfig(), func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return stubJWKSProvider{}, nil
-	}, uuidOnlyAgentRepository{}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+	}, uuidOnlyAgentRepository{}, &stubIssuer{}, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "canonical ID resolution")
 }
@@ -135,8 +135,8 @@ func TestNewService_CompilesRules(t *testing.T) {
 	assert.Equal(t, "https://broker/impersonation", svc.audiencePrefix)
 }
 
-func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
-	newService := func(t *testing.T, verifier ports.UserDelegationVerifier, expression string) (*Outcome, *stubIssuer, *Target, error) {
+func TestImpersonate_HumanConsentReadiness(t *testing.T) {
+	newService := func(t *testing.T, verifier ports.AuthorizationReadinessVerifier, expression string) (*Outcome, *stubIssuer, *Target, error) {
 		t.Helper()
 		signingKey, keySet := signedValidationKey(t, "delegation")
 		cfg := testImpersonationConfig("first", "second")
@@ -157,8 +157,8 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 		return outcome, issuer, target, err
 	}
 
-	t.Run("active delegation mints", func(t *testing.T) {
-		verifier := &recordingDelegationVerifier{status: ports.UserDelegationActive}
+	t.Run("active authorization mints", func(t *testing.T) {
+		verifier := &recordingReadinessVerifier{status: ports.ReadinessReady}
 		outcome, issuer, target, err := newService(t, verifier, "true")
 		require.NoError(t, err)
 		require.NotNil(t, outcome.Response)
@@ -170,21 +170,28 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 
 	for _, tc := range []struct {
 		name   string
-		status ports.UserDelegationStatus
+		status ports.AuthorizationReadinessReason
 		detail tokenexchange.FailureDetail
+		stage  tokenexchange.FailureStage
 	}{
-		{name: "missing delegation", status: ports.UserDelegationMissing, detail: tokenexchange.DetailGrantMissing},
-		{name: "expired delegation", status: ports.UserDelegationExpired, detail: tokenexchange.DetailGrantExpired},
+		{name: "missing delegation", status: ports.ReadinessGrantMissing, detail: tokenexchange.DetailGrantMissing, stage: tokenexchange.StageGrantAuthorization},
+		{name: "expired delegation", status: ports.ReadinessGrantExpired, detail: tokenexchange.DetailGrantExpired, stage: tokenexchange.StageGrantAuthorization},
+		{name: "stale permission set", status: ports.ReadinessPermissionSetUndeclared, detail: tokenexchange.DetailGrantPermissionSetUndeclared, stage: tokenexchange.StageGrantAuthorization},
+		{name: "included session missing", status: ports.ReadinessIncludedSessionMissing, detail: tokenexchange.DetailConsentIncludedSessionMissing, stage: tokenexchange.StageSessionLookup},
+		{name: "included session unusable", status: ports.ReadinessIncludedSessionUnusable, detail: tokenexchange.DetailConsentIncludedSessionUnusable, stage: tokenexchange.StageSessionLookup},
+		{name: "mandatory session missing", status: ports.ReadinessMandatorySessionMissing, detail: tokenexchange.DetailConsentMandatorySessionMissing, stage: tokenexchange.StageSessionLookup},
+		{name: "mandatory session unusable", status: ports.ReadinessMandatorySessionUnusable, detail: tokenexchange.DetailConsentMandatorySessionUnusable, stage: tokenexchange.StageSessionLookup},
+		{name: "mandatory scope insufficient", status: ports.ReadinessMandatoryScopeInsufficient, detail: tokenexchange.DetailConsentMandatoryScopeInsufficient, stage: tokenexchange.StageScopeValidation},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			verifier := &recordingDelegationVerifier{status: tc.status}
+			verifier := &recordingReadinessVerifier{status: tc.status}
 			outcome, issuer, target, err := newService(t, verifier, "true")
 			var tokenErr *tokenexchange.TokenExchangeError
 			require.ErrorAs(t, err, &tokenErr)
 			assert.Equal(t, tokenexchange.AccessDeniedError, tokenErr.Code())
 			assert.Equal(t, "https://broker.example.com/agents/"+target.Agent.ID.String(), tokenErr.ErrorURI())
 			assert.Nil(t, outcome.Response)
-			assert.Equal(t, tokenexchange.StageGrantAuthorization, tokenErr.Diagnostic().Stage())
+			assert.Equal(t, tc.stage, tokenErr.Diagnostic().Stage())
 			assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
 			assert.Equal(t, tokenexchange.RecoveryReconsent, tokenErr.Diagnostic().RecoveryAction())
 			assert.Equal(t, tokenexchange.TargetConsent, tokenErr.Diagnostic().RecoveryTarget())
@@ -195,7 +202,7 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 	}
 
 	t.Run("verifier error fails closed", func(t *testing.T) {
-		verifier := &recordingDelegationVerifier{err: assert.AnError}
+		verifier := &recordingReadinessVerifier{err: assert.AnError}
 		outcome, issuer, _, err := newService(t, verifier, "true")
 		var tokenErr *tokenexchange.TokenExchangeError
 		require.ErrorAs(t, err, &tokenErr)
@@ -212,8 +219,23 @@ func TestImpersonate_RequiresActiveUserDelegation(t *testing.T) {
 		assert.Equal(t, 1, verifier.calls)
 	})
 
+	t.Run("session repository error fails closed without recovery", func(t *testing.T) {
+		verifier := &recordingReadinessVerifier{status: ports.ReadinessSessionLookupFailed, err: assert.AnError}
+		outcome, issuer, _, err := newService(t, verifier, "true")
+		var tokenErr *tokenexchange.TokenExchangeError
+		require.ErrorAs(t, err, &tokenErr)
+		assert.Equal(t, tokenexchange.ServerErrorCode, tokenErr.Code())
+		assert.Empty(t, tokenErr.ErrorURI())
+		assert.Nil(t, outcome.Response)
+		assert.ErrorIs(t, err, assert.AnError)
+		assert.Equal(t, tokenexchange.StageSessionLookup, tokenErr.Diagnostic().Stage())
+		assert.Equal(t, tokenexchange.DetailSessionRepositoryUnavailable, tokenErr.Diagnostic().Detail())
+		assert.False(t, issuer.called)
+		assert.Equal(t, 1, verifier.calls)
+	})
+
 	t.Run("predicate denial does not query delegation", func(t *testing.T) {
-		verifier := &recordingDelegationVerifier{status: ports.UserDelegationActive}
+		verifier := &recordingReadinessVerifier{status: ports.ReadinessReady}
 		outcome, issuer, _, err := newService(t, verifier, "false")
 		var tokenErr *tokenexchange.TokenExchangeError
 		require.ErrorAs(t, err, &tokenErr)
@@ -233,7 +255,7 @@ func TestNewService_RejectsSymmetricAlgorithm(t *testing.T) {
 	factory := func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return stubJWKSProvider{}, nil
 	}
-	_, err := NewService(cfg, factory, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+	_, err := NewService(cfg, factory, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "allowed_algorithms")
 }
@@ -282,7 +304,7 @@ func TestNewService_RejectsUnverifiedWithoutSubjectBinding(t *testing.T) {
 	factory := func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return stubJWKSProvider{}, nil
 	}
-	_, err := NewService(cfg, factory, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+	_, err := NewService(cfg, factory, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "subject_token")
 }
@@ -357,7 +379,7 @@ func TestImpersonate_DispatchesCredentialsByRole(t *testing.T) {
 		issuer := &stubIssuer{}
 		svc, err := NewService(cfg, func(issuer ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 			return configurableJWKSProvider{set: signersByIssuer[issuer.IssuerURI].keySet}, nil
-		}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+		}, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 		require.NoError(t, err)
 		return svc, issuer
 	}
@@ -435,7 +457,7 @@ func TestImpersonate_AttributesActorAndSubjectFromTheirRoles(t *testing.T) {
 	cfg.Rules[0].TrustedIssuers[0].AllowedAlgorithms = []string{"ES256"}
 	svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return configurableJWKSProvider{set: keySet}, nil
-	}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+	}, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 	require.NoError(t, err)
 
 	token := func(subject string) string {
@@ -461,7 +483,7 @@ func TestImpersonate_TargetScopeValidation(t *testing.T) {
 		cfg.Rules[0].TrustedIssuers[0].AllowedAlgorithms = []string{"ES256"}
 		svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 			return configurableJWKSProvider{set: keySet}, nil
-		}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+		}, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 		require.NoError(t, err)
 		target := testTarget()
 		target.Agent.AllowedScopes = []string{"read"}
@@ -542,7 +564,7 @@ func TestImpersonate_NoMatchPrecedence(t *testing.T) {
 			issuer := &stubIssuer{}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keySet}, nil
-			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 			require.NoError(t, err)
 
 			outcome, err := svc.Impersonate(context.Background(), &Request{
@@ -575,7 +597,7 @@ func TestImpersonate_SelectsFirstMatchingRule(t *testing.T) {
 	issuer := &stubIssuer{}
 	svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return configurableJWKSProvider{set: keySet}, nil
-	}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+	}, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 	require.NoError(t, err)
 
 	valid := signedValidationToken(t, jwa.ES256(), signingKey, "https://idp.example.com", "aud", time.Now().Add(time.Hour), time.Now().Add(-time.Minute))
@@ -639,7 +661,7 @@ func TestNewService_RejectsInvalidConfigs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testImpersonationConfig()
 			tc.mutate(cfg)
-			_, err := NewService(cfg, factory, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			_, err := NewService(cfg, factory, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 			require.Error(t, err)
 		})
 	}
@@ -660,7 +682,7 @@ func TestNewService_AudienceRequirementAbsent(t *testing.T) {
 	t.Run("compiles an audience-less client assertion rule", func(t *testing.T) {
 		_, err := NewService(newConfig(), func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 			return stubJWKSProvider{}, nil
-		}, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+		}, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 		require.NoError(t, err)
 	})
 
@@ -669,7 +691,7 @@ func TestNewService_AudienceRequirementAbsent(t *testing.T) {
 		issuer := &stubIssuer{}
 		svc, err := NewService(newConfig(), func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 			return configurableJWKSProvider{set: keySet}, nil
-		}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+		}, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 		require.NoError(t, err)
 
 		validAudience := "aud"
@@ -690,7 +712,7 @@ func TestNewService_AudienceRequirementAbsent(t *testing.T) {
 		cfg.Rules[0].Authorization.CEL.Expression = `actor_token.sub == "subject"`
 		_, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 			return stubJWKSProvider{}, nil
-		}, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+		}, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "audience_requirement")
 		assert.ErrorContains(t, err, "client_assertion")
@@ -729,7 +751,7 @@ func TestNewService_RejectsInvalidAudienceRequirement(t *testing.T) {
 			tc.mutate(cfg)
 			_, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return stubJWKSProvider{}, nil
-			}, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{}, &stubIssuer{}, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "audience_requirement")
 		})
@@ -776,7 +798,7 @@ func TestImpersonate_VerificationReuseRespectsRuleTrust(t *testing.T) {
 					set = otherSet
 				}
 				return &configurableJWKSProvider{set: set}, nil
-			}, stubAgentRepository{}, issuer, 0, nil, allowDelegationVerifier{}, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, nil, allowReadinessVerifier{}, "https://broker.example.com")
 			require.NoError(t, err)
 			outcome, err := svc.Impersonate(context.Background(), req, testTarget())
 			if tc.wantMinted {

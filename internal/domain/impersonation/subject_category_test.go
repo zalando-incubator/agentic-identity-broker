@@ -103,7 +103,7 @@ func TestImpersonateAgentSubject(t *testing.T) {
 				rule.Authorization.CEL.Expression = "subject_token.sub != '' && request.agent_id != ''"
 			}
 			issuer := &stubIssuer{}
-			verifier := &recordingDelegationVerifier{status: ports.UserDelegationMissing}
+			verifier := &recordingReadinessVerifier{status: ports.ReadinessGrantMissing}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
 			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com")

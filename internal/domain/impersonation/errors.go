@@ -44,7 +44,7 @@ func categoryIneligible() *tokenexchange.TokenExchangeError {
 		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageClientAuthorization, tokenexchange.DetailSubjectCategoryIneligible))
 }
 
-const consentRequiredDescription = "user delegation is required before impersonation"
+const consentRequiredDescription = "user authorization requires consent before impersonation"
 
 // consentRequired builds a credential-free access_denied error directing the user to the
 // existing consent-management page for the target agent.

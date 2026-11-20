@@ -108,16 +108,16 @@ Output of signed validation or unverified parse.
 
 Invariant: actor == subject permitted; yields `act.sub == sub` (FR-006, clarification).
 
-### UserDelegationVerification
-After rule authorization succeeds, `Subject` is converted without alteration to `id.Principal` and checked with `ports.UserDelegationVerifier` against the resolved target AgentID. The port reports `active`, `missing`, or `expired`; an error means the result is unknown.
+### AuthorizationReadiness
+After rule authorization, a human subject is converted without alteration to `id.Principal`. The resolved target agent is passed to `ports.AuthorizationReadinessVerifier` without another agent lookup. The shared consent evaluator checks the grant, declared permission sets, selected service sessions, and mandatory service sessions and scopes. An eligible agent-category subject skips this evaluation.
 
 | Result | Effect |
 |---|---|
-| Active | Continue to `ImpersonationMintInput`. |
-| Missing / Expired | Terminal `access_denied` with generic description and `<end-user-public-url>/consent/agent/<target-agent-id>` as `error_uri`; audit distinguishes the statuses. |
-| Error | Terminal `server_error` with no `error_uri`. |
+| Ready | Continue to `ImpersonationMintInput`. |
+| Consent required | Terminal `403 access_denied`, body `error_uri` at `<end-user-public-url>/agents/<target-uuid>`, and Bearer `insufficient_scope` challenge with the URI when RFC 6750-safe. |
+| Repository error | Terminal `500 server_error` with no recovery signals. |
 
-The check is mandatory for signed and unverified subjects, never creates or modifies a `UserGrant`, and never falls through to later rules.
+The human check is mandatory for signed and unverified subjects. It never creates or modifies a `UserGrant` and never falls through to later rules.
 
 ### RuleMatchResult
 Per-rule evaluation outcome, feeding first-match selection and no-match precedence (FR-004a).
@@ -177,7 +177,7 @@ sequenceDiagram
     participant S as ImpersonationService
     participant V as SignedValidator
     participant E as CEL Evaluator
-    participant D as User Delegation Verifier
+    participant D as Consent Readiness Verifier
     participant I as Local Issuer
     C->>H: POST /oauth2/token (audience=<audience_prefix>/<agent UUID or canonical ID>)
     H->>H: resolve registered Target{Agent}; reject a suffix matching neither identifier form or a missing target
@@ -187,19 +187,25 @@ sequenceDiagram
         S->>S: parse unverified subject if applicable
         S->>E: evaluate predicate with target request context
         alt all valid AND predicate true
-            S->>D: VerifyUserDelegation(subject, target agent)
-            alt active delegation
-                S->>I: IssueImpersonationToken(sub, act.iss/act.sub, target agent, email?, scopes)
-                I-->>S: normal local-policy signed token (granted scope; aud policy-owned)
+            alt eligible agent category
+                S->>I: IssueImpersonationToken(target UUID, act.iss/act.sub, target agent, scopes)
+                I-->>S: normal local-policy signed token
                 S-->>H: success
-            else missing or expired delegation
-                S-->>H: access_denied + consent error_uri (terminal)
-            else verifier error
-                S-->>H: server_error (terminal)
+            else human category
+                S->>D: EvaluateAuthorizationReadiness(subject, target agent)
+                alt grant and sessions ready
+                    S->>I: IssueImpersonationToken(sub, act.iss/act.sub, target agent, email?, scopes)
+                    I-->>S: normal local-policy signed token
+                    S-->>H: success
+                else consent required
+                    S-->>H: access_denied + consent error_uri (terminal)
+                else repository error
+                    S-->>H: server_error (terminal)
+                end
             end
         else non-match
             S->>S: record outcome, fall through
         end
     end
-    H-->>C: RFC 8693 response OR error (precedence) + audit event
+    H-->>C: RFC 8693 response OR error (consent denial includes safe Bearer challenge) + audit event
 ```

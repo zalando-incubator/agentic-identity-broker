@@ -20,6 +20,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
+	storagedomain "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
@@ -180,8 +181,12 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		targetAudience = imperAudience + "/" + targetAgent.ID.String()
 		canonicalAudience = imperAudience + "/" + canonicalID
 		Expect(testStorage.Agents().Create(context.Background(), targetAgent)).To(Succeed())
+		Expect(fixtures.SeedPlaceholderGrantData(context.Background(), testStorage)).To(Succeed())
 		Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
 			"user-1", targetAgent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
+		))).To(Succeed())
+		Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForServiceWithScopes(
+			"user-1", fixtures.PlaceholderServiceID.String(), []string{"read"},
 		))).To(Succeed())
 	})
 
@@ -282,6 +287,9 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 	seedDelegation := func(subject string) {
 		Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
 			subject, targetAgent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
+		))).To(Succeed())
+		Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForServiceWithScopes(
+			subject, fixtures.PlaceholderServiceID.String(), []string{"read"},
 		))).To(Succeed())
 	}
 
@@ -725,6 +733,97 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			Expect(body["error_uri"]).To(Equal(config.Server.EndUser.PublicURL + "/agents/" + targetAgent.ID.String()))
 			Expect(body).ToNot(HaveKey("access_token"))
 			Expect(logBuf.String()).To(ContainSubstring(`"token_exchange.failure_detail":"grant_expired"`))
+		})
+	})
+
+	Context("when an active human grant includes a mandatory service without a usable session", func() {
+		const redirectURI = "https://client.example.com/cb"
+		var (
+			principal     string
+			authorizePath string
+			recoveryURI   string
+		)
+
+		BeforeEach(func() {
+			principal = fixtures.DefaultPrincipal().String()
+			targetAgent.ClientID = nil
+			targetAgent.RedirectURIs = []string{redirectURI}
+			targetAgent.ServiceRequirements = []storagedomain.ServiceRequirement{{
+				ServiceID:       fixtures.PlaceholderServiceID,
+				RequirementType: storagedomain.RequirementTypeMandatory,
+				RequiredScopes:  []string{"read"},
+			}}
+			Expect(testStorage.Agents().Update(context.Background(), targetAgent)).To(Succeed())
+			Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
+				principal, targetAgent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
+			))).To(Succeed())
+			authorizePath = "/oauth2/authorize?" + url.Values{
+				"client_id":             {targetAgent.ID.String()},
+				"redirect_uri":          {redirectURI},
+				"response_type":         {"code"},
+				"state":                 {"readiness-journey"},
+				"code_challenge":        {helpers.GenerateCodeChallenge(helpers.PKCEVerifier())},
+				"code_challenge_method": {"S256"},
+			}.Encode()
+			config := validConfig()
+			recoveryURI = config.Server.EndUser.PublicURL + "/agents/" + targetAgent.ID.String()
+			Expect(boot(config)).To(Succeed())
+		})
+
+		// Scenario US5 S6 from specs/037-oauth2-user-impersonation/spec.md (User Story 5).
+		It("should deny impersonation and redirect browser consent until the mandatory service is connected", func() {
+			By("redirecting the browser with sealed consent state while the active grant has no service session")
+			browserResp, err := enduserServer.AuthenticatedGET(authorizePath, principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(browserResp.StatusCode).To(Equal(http.StatusFound))
+			consentURL, err := url.Parse(browserResp.Header.Get("Location"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(consentURL.Path).To(Equal("/agents/" + targetAgent.ID.String()))
+			sealedState := consentURL.Query().Get("session_token")
+			Expect(strings.Split(sealedState, ".")).To(HaveLen(5), "consent state must be a compact JWE")
+			Expect(browserResp.Body.Close()).To(Succeed())
+
+			By("returning terminal consent recovery instead of minting an impersonation token")
+			request := baseRequest()
+			request.Set("subject_token", signCred(principal, "", imperAudience, now.Add(time.Hour)))
+			denied := postImpersonation(request)
+			Expect(denied.StatusCode).To(Equal(http.StatusForbidden))
+			Expect(denied.Header.Get("WWW-Authenticate")).To(Equal(
+				`Bearer error="insufficient_scope", error_uri="` + recoveryURI + `"`,
+			))
+			denialBody := decodeBody(denied)
+			Expect(denialBody["error"]).To(Equal("access_denied"))
+			Expect(denialBody["error_uri"]).To(Equal(recoveryURI))
+			Expect(denialBody).NotTo(HaveKey("access_token"))
+
+			By("connecting the mandatory service with its required scopes and retrying both paths")
+			Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForServiceWithScopes(
+				principal, fixtures.PlaceholderServiceID.String(), []string{"read"},
+			))).To(Succeed())
+			browserResp, err = enduserServer.AuthenticatedGET(authorizePath, principal)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(browserResp.StatusCode).To(Equal(http.StatusFound))
+			codeURL, err := url.Parse(browserResp.Header.Get("Location"))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(codeURL.Scheme + "://" + codeURL.Host + codeURL.Path).To(Equal(redirectURI))
+			Expect(codeURL.Query().Get("state")).To(Equal("readiness-journey"))
+			Expect(codeURL.Query().Get("code")).NotTo(BeEmpty())
+			Expect(codeURL.Query().Get("session_token")).To(BeEmpty())
+			Expect(browserResp.Body.Close()).To(Succeed())
+
+			minted := postImpersonation(request)
+			Expect(minted.StatusCode).To(Equal(http.StatusOK))
+			Expect(minted.Header.Get("WWW-Authenticate")).To(BeEmpty())
+			mintBody := decodeBody(minted)
+			Expect(mintBody["token_type"]).To(Equal("Bearer"))
+			Expect(mintBody["issued_token_type"]).To(Equal(imperAccessTyp))
+			accessToken, ok := mintBody["access_token"].(string)
+			Expect(ok).To(BeTrue())
+			Expect(accessToken).NotTo(BeEmpty())
+			claims := decodeJWTClaims(accessToken)
+			Expect(claims["sub"]).To(Equal(principal))
+			Expect(claims["agent_id"]).To(Equal(targetAgent.ID.String()))
+			Expect(claims["act"].(map[string]any)["sub"]).To(Equal("actor-1"))
 		})
 	})
 
