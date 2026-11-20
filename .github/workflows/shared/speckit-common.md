@@ -150,6 +150,15 @@ plans, tasks, checklists, and decisions that their skills produce.
 observed. A feature's `implementation-log.md` holds evidence from earlier
 runs; do not read or extend it.
 
+Only the `implement`, `remediate-review`, and `apply-review` phases change
+code, and only their jobs install the Go toolchain and development tools. Every
+other phase changes only feature documents, and the pull request's CI owns the
+repository gates for them: do not run `just check`, `just verify`, or the other
+checks that `CONTRIBUTING.md` requires before a pull request, and do not report
+their absence as a blocker. Still run the checks that the phase's skill or
+these instructions require, such as `just render-wireframes` for changed
+wireframes.
+
 For PR phases, switch to `context.head` **inside the agent sandbox**, before
 reading or executing feature code. Fetch only that exact SHA from `origin`,
 then create a local branch at that SHA. Do not execute PR code outside the
