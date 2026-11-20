@@ -309,6 +309,7 @@ These data classes are prohibited in span names, span attributes, span events, s
 | Principals only through `id.Principal.SpanAttribute` under a `.principal` key | `telemetrylint` `principal-key`: a key that ends in `.principal` takes only a `SpanAttribute` value, and `SpanAttribute` takes only such a key. ExtProc is exempt (section 4.3, rule 4). `principal-sink` rejects a principal in a span name, span event, or metric attribute. `gocritic` ruleguard rejects `attribute.String(k, p.String())` and `string(p)`. | Where section 4.3 permits a principal |
 | The observability contract lists each new instrument | — | All |
 | Tests for credentials and metric attribute sets | — | All |
+| `docs/reference/telemetry.md` regenerated | — (`TestReferenceIsCurrent` fails while the page is out of date, section 10) | — |
 
 `forbidigo` also rejects the `otelhttp` client transports (section 1).
 
