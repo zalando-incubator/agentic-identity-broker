@@ -92,7 +92,11 @@ describe('ThirdPartySessionDetailPage', () => {
     const user = userEvent.setup();
     vi.mocked(sessionsApi.getServiceSessionDetail)
       .mockResolvedValueOnce(detail(activeSession))
-      .mockResolvedValueOnce(detail(activeSession))
+      .mockResolvedValueOnce(detail({
+        ...activeSession,
+        access_token_expires_at: '2099-10-28T12:00:00Z',
+        scope: ['repo', 'read:org'],
+      }))
       .mockResolvedValue(detail(null));
     vi.mocked(sessionsApi.refreshSession).mockResolvedValue({} as never);
     vi.mocked(sessionsApi.terminateSession).mockResolvedValue();
@@ -105,10 +109,17 @@ describe('ThirdPartySessionDetailPage', () => {
     expect(status).toHaveTextContent('Refresh rejection');
     expect(status).toHaveTextContent('Not observed');
     expect(status).toHaveTextContent('user:email');
+    expect(status).toHaveTextContent(new Date(activeSession.access_token_expires_at!).toLocaleString());
+    expect(status).not.toHaveTextContent('read:org');
 
     await user.click(screen.getByRole('button', { name: 'Refresh' }));
     expect(await screen.findByText('Session token refreshed successfully.')).toBeInTheDocument();
     expect(sessionsApi.refreshSession).toHaveBeenCalledWith(serviceID);
+    const refreshedStatus = screen.getByTestId('service-session-status');
+    expect(refreshedStatus).toHaveTextContent('read:org');
+    expect(refreshedStatus).not.toHaveTextContent('user:email');
+    expect(refreshedStatus).toHaveTextContent(new Date('2099-10-28T12:00:00Z').toLocaleString());
+    expect(refreshedStatus).not.toHaveTextContent(new Date(activeSession.access_token_expires_at!).toLocaleString());
 
     await user.click(screen.getByRole('button', { name: 'Terminate' }));
     await user.click(await screen.findByRole('button', { name: 'Terminate session with GitHub Production' }));

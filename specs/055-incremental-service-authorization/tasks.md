@@ -279,8 +279,8 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 ### Acceptance assertion completion
 
-- [ ] T120 [US3] Strengthen the existing US3 S4 owner in `tests/e2e/incremental_authorization_test.go` to revoke the grant before refreshing an unconsumed successor token, so `invalid_grant` proves revocation rather than replay. Preserve exact-scope, scope-less refresh and non-consumption coverage and one acceptance owner. Run `just check` and `just test-e2e-backend` (FR-012, FR-020; US3 S4; T098; Principles VIII, XIII).
-- [ ] T121 [US2] Strengthen the existing US2 S2 owner in `tests/e2e/frontend/incremental_authorization_test.go` and `web/src/pages/ThirdPartySessionDetailPage.test.tsx` to assert changed session details after refresh using distinct pre/post-refresh data and existing page objects. Preserve login, confirmation and termination coverage and one acceptance owner. Run `just web-test` and `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend` (FR-016; US2 S2; T098–T109; Principles VIII, XIII).
+- [X] T120 [US3] Strengthen the existing US3 S4 owner in `tests/e2e/incremental_authorization_test.go` to revoke the grant before refreshing an unconsumed successor token, so `invalid_grant` proves revocation rather than replay. Preserve exact-scope, scope-less refresh and non-consumption coverage and one acceptance owner. Run `just check` and `just test-e2e-backend` (FR-012, FR-020; US3 S4; T098; Principles VIII, XIII).
+- [X] T121 [US2] Strengthen the existing US2 S2 owner in `tests/e2e/frontend/incremental_authorization_test.go` and `web/src/pages/ThirdPartySessionDetailPage.test.tsx` to assert changed session details after refresh using distinct pre/post-refresh data and existing page objects. Preserve login, confirmation and termination coverage and one acceptance owner. Run `just web-test` and `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend` (FR-016; US2 S2; T098–T109; Principles VIII, XIII).
 
 ## Acceptance Scenario → Task Mapping
 

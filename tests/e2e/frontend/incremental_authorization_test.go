@@ -196,8 +196,10 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 
 	Context("when Alice has a usable GitHub session", func() {
 		BeforeEach(func() {
-			Expect(GetTestStorage().UserSessions().Create(ctx, fixtures.SessionForServiceWithScopes(principal, cast.GitHub.ID.String(), []string{"repo", "user:email"}))).To(Succeed())
-			GetMockUpstream().WithAccessToken("synthetic-github-refreshed")
+			session := fixtures.SessionForServiceWithScopes(principal, cast.GitHub.ID.String(), []string{"repo", "user:email"})
+			session.AccessTokenExpiresAt = ptr.To(time.Date(2099, time.October, 27, 10, 0, 0, 0, time.UTC))
+			Expect(GetTestStorage().UserSessions().Create(ctx, session)).To(Succeed())
+			GetMockUpstream().WithAccessToken("synthetic-github-refreshed").WithExpiresIn(7200).WithTokenScope("repo read:org")
 		})
 
 		// US2 S2 from specs/055-incremental-service-authorization/spec.md.
@@ -208,6 +210,8 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(status).To(ContainSubstring("Active"))
 			Expect(status).To(ContainSubstring("user:email"))
+			Expect(status).To(ContainSubstring("2099"))
+			Expect(status).NotTo(ContainSubstring("read:org"))
 			Expect(sessionsPage.DependentAgentNames(ctx)).To(ConsistOf("Data Analysis Assistant"))
 			Expect(sessionsPage.VerifyServiceKeyboardOrder(ctx, true)).To(Succeed())
 			Expect(sessionsPage.VerifyTerminationCancellation(ctx)).To(Succeed())
@@ -216,7 +220,15 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 
 			Expect(sessionsPage.KeyboardRefreshService(ctx)).To(Succeed())
 			Expect(sessionsPage.WaitForSuccessMessage(ctx, "Session token refreshed successfully.")).To(Succeed())
-			Expect(GetMockUpstream().GetTokenRequests()).NotTo(BeEmpty())
+			Expect(GetMockUpstream().GetTokenRequestsForGrant("refresh_token")).To(HaveLen(1))
+			refreshedStatus, err := sessionsPage.ServiceSessionStatus(ctx)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(refreshedStatus).To(ContainSubstring("Active"))
+			Expect(refreshedStatus).To(ContainSubstring("repo"))
+			Expect(refreshedStatus).To(ContainSubstring("read:org"))
+			Expect(refreshedStatus).NotTo(ContainSubstring("user:email"))
+			Expect(refreshedStatus).NotTo(ContainSubstring("2099"))
+			Expect(sessionsPage.TakeScreenshot(ctx, "service_session_refreshed")).To(Succeed())
 
 			Expect(sessionsPage.TerminateAndConfirm(ctx, "GitHub Production")).To(Succeed())
 			Eventually(func() string {
