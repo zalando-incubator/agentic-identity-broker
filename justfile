@@ -729,11 +729,10 @@ compose-env-postgres: compose-env
     @chmod 600 .env.compose.key
 
 _compose-postgres-credentials:
-    @for name in IDENTITY_BROKER_POSTGRES_DB IDENTITY_BROKER_POSTGRES_USER IDENTITY_BROKER_POSTGRES_PASSWORD; do \
-        value=$(awk -F= -v name="$name" '$1 == name { value = substr($0, index($0, "=") + 1) } END { print value }' .env.compose); \
-        if printenv "$name" >/dev/null; then value=$(printenv "$name"); fi; \
-        case "$value" in *[!A-Za-z0-9._~-]*) echo "$name must use only letters, digits, dots, underscores, tildes, or hyphens" >&2; exit 1 ;; esac; \
-    done
+    @command -v jq >/dev/null || { echo "jq is required for PostgreSQL Compose mode" >&2; exit 1; }
+    @config=$({{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} config --format json) || exit 1; \
+        printf '%s\n' "$config" | jq -e '.services.postgres.environment | [.POSTGRES_DB, .POSTGRES_USER, .POSTGRES_PASSWORD] | all(.[]; type == "string" and test("^[A-Za-z0-9._~-]+$"))' >/dev/null || \
+        { echo "PostgreSQL database, user, and password must use only letters, digits, dots, underscores, tildes, or hyphens" >&2; exit 1; }
 
 # Validate default and PostgreSQL Compose configurations
 compose-validate:
@@ -1013,6 +1012,14 @@ compose-extproc-up: compose-env
     @echo "Requires identity-broker, upstream-oauth2, and opa-bundle-server to be running."
     @for service in identity-broker upstream-oauth2 opa-bundle-server; do \
         {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps --services --status running "$service" | grep -qx "$service" || { echo "$service is not running" >&2; exit 1; }; \
+    done
+    @command -v jq >/dev/null || { echo "jq is required for ExtProc Compose mode" >&2; exit 1; }
+    @attempt=0; while :; do \
+        status=$({{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps --format json upstream-oauth2) || exit 1; \
+        if printf '%s\n' "$status" | jq -e 'any(.[]; .Service == "upstream-oauth2" and .Health == "healthy")' >/dev/null; then break; fi; \
+        attempt=$((attempt + 1)); \
+        if [ "$attempt" -ge 60 ]; then echo "upstream-oauth2 did not become healthy within 120 seconds" >&2; exit 1; fi; \
+        sleep 2; \
     done
     @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --no-deps --wait --wait-timeout 120 extproc-token-exchange mcp-server-mock
     {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --no-deps agentgateway
