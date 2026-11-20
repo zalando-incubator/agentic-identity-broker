@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -65,13 +66,19 @@ func TestProxyTokenGrantStrategy_ServiceScopeFailureTelemetry(t *testing.T) {
 				require.NoError(t, provider.Shutdown(context.Background()))
 			})
 			var logs bytes.Buffer
-			strategy := NewProxyTokenGrantStrategy("https://idp.example.com/token", failingTokenOutcomes{failure: tc.failure, err: fmt.Errorf("%s: %w", strings.Join(secrets, " "), tc.cause)}, slog.New(slog.NewJSONHandler(&logs, nil)))
-			form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {secrets[0]}, "access_token": {secrets[1]}, "subject_token": {secrets[2]}, "client_secret": {secrets[3]}, "client_assertion": {secrets[4]}, "code": {secrets[5]}, "code_verifier": {secrets[6]}, "state": {secrets[7]}, "session_token": {secrets[8]}, "scope": {secrets[9]}}
+			logger := slog.New(slog.NewJSONHandler(&logs, nil))
+			const publicURL = "https://broker.example.com"
+			agentID := id.NewAgentID()
+			agents := newStubAgentRepo(agentID, "upstream-client")
+			services := &proxyScopeService{err: fmt.Errorf("%s: %w", strings.Join(secrets, " "), tc.cause)}
+			outcomes := oauth2.NewTokenOutcomeService(nil, nil, logger).WithServiceScopeStripping(publicURL).
+				WithServiceScopeValidation(agents, servicescope.NewResolver(services, proxyScopePermissions{}, publicURL))
+			strategy := NewProxyTokenGrantStrategy("https://idp.example.com/token", outcomes, logger)
+			form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {secrets[0]}, "access_token": {secrets[1]}, "subject_token": {secrets[2]}, "client_secret": {secrets[3]}, "client_assertion": {secrets[4]}, "code": {secrets[5]}, "code_verifier": {secrets[6]}, "state": {secrets[7]}, "session_token": {secrets[8]}, "scope": {publicURL + "/sessions/" + secrets[9]}}
 			request := httptest.NewRequest(http.MethodPost, "/oauth2/token", strings.NewReader(form.Encode()))
 			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			response := httptest.NewRecorder()
-			agentID := id.NewAgentID()
-			strategy.HandleTokenGrant(response, request, "refresh_token", form, &ports.TokenGrantResolution{AgentID: agentID})
+			strategy.HandleTokenGrant(response, request, "refresh_token", form, &ports.TokenGrantResolution{AgentID: agentID, ClientID: agents.agent.ClientID})
 			assert.Equal(t, tc.status, response.Code)
 			assert.Contains(t, response.Body.String(), `"error":"`+tc.oauthError+`"`)
 			var record map[string]any

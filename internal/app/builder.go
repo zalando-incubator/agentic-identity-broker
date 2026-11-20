@@ -1136,7 +1136,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	// Used in both "proxy" and "hybrid" modes.
 	buildProxyStrategies := func(upstreamTokenEndpoint string) (enduser.TokenGrantStrategy, enduser.AuthorizationProceedStrategy) {
 		transport := enduser.NewOAuth2TokenProxy(upstreamTokenEndpoint, upstreamClient)
-		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier).
+		outcomes := oauth2service.NewTokenOutcomeService(transport, multiAgentVerifier, b.logger).
 			WithServiceScopeStripping(b.config.Server.EndUser.PublicURL).
 			WithServiceScopeValidation(b.storage.Agents(), serviceScopes)
 		grant := enduser.NewProxyTokenGrantStrategy(upstreamTokenEndpoint, outcomes, b.logger)

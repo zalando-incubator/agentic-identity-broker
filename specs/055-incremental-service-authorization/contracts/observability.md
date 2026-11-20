@@ -48,7 +48,18 @@ The existing challenge record adds only `token_exchange.challenge_scope_present`
 
 ## Traces and metrics
 
-No new metric instruments, span names, span-attribute families, instrumentation scopes or namespaces are introduced. Reuse production HTTP, storage, session-refresh, token-exchange and ExtProc instrumentation. Pure scope parsing/coverage adds no spans. Existing `token_exchange.*` attributes keep the value sets in `docs/reference/token-exchange.md#diagnostic-attributes`.
+No new metric instruments, span-attribute families, instrumentation scopes or namespaces are introduced. Reuse production HTTP, storage, session-refresh, token-exchange and ExtProc instrumentation. Pure scope parsing/coverage adds no spans. Existing `token_exchange.*` attributes keep the value sets in `docs/reference/token-exchange.md#diagnostic-attributes`.
+
+The existing `oauth2.token_proxy` span (`upstream` scope, `Internal` kind) records proxy-refresh scope refusals before forwarding:
+
+| Outcome | `error.type` | `http.response.status_code` | Span status |
+|---|---|---|---|
+| Malformed, unknown or ineligible broker scope | `definitive` | `400` (`invalid_scope`) | `codes.Error` |
+| Scope-validation dependency unavailable | `transient` | `500` (`server_error`) | `codes.Error` |
+
+These are the closed scope-refusal `error.type` values on this span. The client-caused 400 still marks this `Internal` operation as failed; it does not mark the inbound HTTP `Server` span as an error. Status descriptions are constant; no scope, request field, credential or wrapped cause is recorded. `TokenOutcomeService.Proxy` emits the corresponding bounded audit record using the shared domain reason classifier; the HTTP adapter retains response mapping and span status, without a second audit.
+
+`RefreshTokenSessionRepo.CreateSuccessor` adds `storage.create_successor.refresh_token_session` in the existing `storage` scope, with `Client` kind, `db.system=postgresql` and `db.operation=RefreshTokenSessionRepo.CreateSuccessor`. It wraps predecessor lookup, inheritance validation and the existing child Create call. `startStorageSpan` records normal not-found/validation outcomes as `storage.outcome`, dependency failures as bounded `error.type` with `codes.Error`, and caller cancellation as an outcome, following the storage standard. Neither refresh signatures nor binding/scope values are recorded.
 
 Any modification of a feature-owned existing span must satisfy the OpenTelemetry review checklist: constant name, correct kind, bounded status/error metadata and no credential values. Do not add principal span attributes until the policy and `id.Principal.SpanAttribute` required by #356 exist. Principals never belong in metrics. No coding-standard amendment or registry addition is required by this design.
 

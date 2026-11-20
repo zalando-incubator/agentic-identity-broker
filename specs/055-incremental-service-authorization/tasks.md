@@ -1,7 +1,7 @@
 # Tasks: Incremental Service Authorization
 
 **Input**: `specs/055-incremental-service-authorization/` — `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`, and `quickstart.md`.
-**Backlog**: 121 stable task IDs; preserve existing completion markers when resuming. T069/T077 require lookup-failure coverage at domain and handler level, never an E2E lookup-failure variant or production-bootstrap failure-injection seam. T112 validates WCAG in the existing light theme only. Narrowing these obligations does not itself complete them; verify the remaining applicable conditions. Container-backed validation is deferred to pushed-commit container tests, not a sandbox blocker.
+**Backlog**: 127 stable task IDs; preserve existing completion markers when resuming. T069/T077 require lookup-failure coverage at domain and handler level, never an E2E lookup-failure variant or production-bootstrap failure-injection seam. T112 validates WCAG in the existing light theme only. Narrowing these obligations does not itself complete them; verify the remaining applicable conditions. Container-backed validation is deferred to pushed-commit container tests, not a sandbox blocker.
 **Tests**: Mandatory red → green → refactor under Principles VIII and XIII. Write each test first, make it compile with only minimal structural scaffolding, and observe a semantic failure before implementing its behavior. Never use pending/skip markers, vacuous assertions, or red-phase annotations in test files. Red-green cycles are a working discipline, not a reporting obligation: recorded red/green output, logs, CI links and retrospective historical-red replay are not required. Container-backed suites without a local runtime may first run in CI on the pushed commit.
 **Organization**: Setup → mandatory design preconditions → shared foundations → US1 (P1) → US3 (P1) → US2 (P1) → US4 (P2) → mandatory compliance. The three P1 stories share priority; this order follows the plan's dependency order, not a change to their priorities.
 
@@ -281,6 +281,17 @@ Use production `bootstrap.ServerFactory` and fresh storage/server per `It`, fixt
 
 - [X] T120 [US3] Strengthen the existing US3 S4 owner in `tests/e2e/incremental_authorization_test.go` to revoke the grant before refreshing an unconsumed successor token, so `invalid_grant` proves revocation rather than replay. Preserve exact-scope, scope-less refresh and non-consumption coverage and one acceptance owner. Run `just check` and `just test-e2e-backend` (FR-012, FR-020; US3 S4; T098; Principles VIII, XIII).
 - [X] T121 [US2] Strengthen the existing US2 S2 owner in `tests/e2e/frontend/incremental_authorization_test.go` and `web/src/pages/ThirdPartySessionDetailPage.test.tsx` to assert changed session details after refresh using distinct pre/post-refresh data and existing page objects. Preserve login, confirmation and termination coverage and one acceptance owner. Run `just web-test` and `E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend` (FR-016; US2 S2; T098–T109; Principles VIII, XIII).
+
+## Approved Architecture Review Remediation
+
+Scope: [selected proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7040265475). These tasks do not cover the separate F5 transient-usability question.
+
+- [X] T122 [F1] Move proxy scope-refusal audits into `TokenOutcomeService.Proxy` using domain `scopeRejectionReason` and error-kind constants; inject the builder logger through the constructor, remove the adapter reason taxonomy and duplicate audits, and retain response/span behavior. Extend domain audit tests and exercise the real domain service in the handler safety test with all existing classification, credential-exclusion and exactly-once assertions (SR-005; Principles VI, VIII, XII, XV).
+- [X] T123 [F2] Correct `docs/guides/token-exchange-gateway.md` to describe supported `scope` and optional `resource_metadata`, retain the absence of `realm`, and show a service-page recovery return with `scope` in the challenge example (FR-005–FR-006, FR-017).
+- [X] T124 [F3] Align `initiateOAuth2Flow` in `api/enduser/openapi.yaml`, `docs/guides/manage-agents-and-services.md` and the root `AGENTS.md` recovery ADR row with `049-service-session-recovery-return`: encoded same-origin `/sessions/<identifier>`, current canonical ID or UUID fallback (FR-006; Principles II, IV, X).
+- [X] T125 [F4] Add `startStorageSpan` with a named error return to PostgreSQL `RefreshTokenSessionRepo.CreateSuccessor`; add a span regression covering its validation outcome, operation, kind and credential exclusion without changing persistence behavior (Principles VIII, XV).
+- [X] T126 [F6] Document the existing `oauth2.token_proxy` Internal span's scope-refusal `error.type` values `definitive`/`transient`, HTTP statuses and `codes.Error`, including client-caused 400 refusals, in `contracts/observability.md`; document the F4 storage span alongside it (SR-005; Principle XV).
+- [X] T127 [F7] Add Grant Coverage to the `ARCHITECTURE.md` glossary, distinguish configured required-scope ceilings from effective selected scopes, record domain/log-to-consent-API usability mapping, and index the already accepted `050-virtual-service-scopes-revision-1` in §10 (FR-003, FR-008; Principles II, V).
 
 ## Acceptance Scenario → Task Mapping
 

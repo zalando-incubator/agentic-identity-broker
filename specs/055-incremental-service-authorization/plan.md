@@ -50,6 +50,17 @@ Two ADRs record the decisions, and one Proposed revision draft amends the second
 - [ADR 049 Revision 1](./adrs/049-virtual-service-scopes-revision-1.md) (Proposed) adds proxy-refresh
   pre-forward validation and records the dot-segment limitation.
 
+## Approved architecture-review remediation
+
+The [selected proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7040265475) limits this remediation to F1, F2, F3, F4, F6 and F7. It does not expand functional behavior or resolve F5.
+
+- Inject the builder logger into `TokenOutcomeService` through its constructor. `Proxy` emits scope-refusal audits with the existing domain `scopeRejectionReason` and error-kind constants. Remove the adapter reason taxonomy and duplicate audits; preserve HTTP responses and `oauth2.token_proxy` status/attributes. Domain tests own audit classification, and handler tests exercise the real domain service to assert exactly one safe audit plus the unchanged span/response.
+- Align the gateway guide, service-management guide, `initiateOAuth2Flow` description and root ADR index row with `049-service-session-recovery-return`: encoded same-origin `/sessions/<identifier>` using the current canonical ID or UUID fallback. The gateway example includes `scope`; optional valid `resource_metadata` remains supported, and `realm` is not supplied.
+- Wrap PostgreSQL `CreateSuccessor` with `startStorageSpan` and a named error return. Document `storage.create_successor.refresh_token_session` and the existing `oauth2.token_proxy` refusal values/status in `contracts/observability.md`. No metric, instrumentation scope or namespace is added.
+- Document Grant Coverage and the domain/log-to-consent-API usability mapping in the architecture glossary, and index the already accepted `050-virtual-service-scopes-revision-1`. No ADR is accepted or revised by this remediation.
+
+Validation uses test-first domain audit and storage-span regressions, `just check`, `just test`, `just test-integration`, and complete backend/frontend feature acceptance journeys. Container-backed validation remains assigned to pushed-commit container tests.
+
 ## Technical Context
 
 **Language/Version**: Go 1.27.3 for the broker and ExtProc. TypeScript and React 19 with Vite 7 and
@@ -163,7 +174,7 @@ The approved API items also cover these mechanical consequences:
 | Frontend screenshots | Designed; evidence review pending | Four screenshots correspond to the spec's Wireloom states; the active state follows ADR 046 and contains no predicted refresh expiry. |
 | Concrete example journeys (Principle XIV) | Pass (design) | Journeys 1–4 cover configuration, HTTP, Wireloom and JWT claims. The task-generation reconciliation aligns Journey 2 with merged ADR 046; implementation still verifies the examples against approved contracts. |
 | Design system (Principle XI) | Pass | Both new compositions are application-specific and reuse existing primitives and semantic tokens; no design-system component or story is added. WCAG 2.1 AA is validated in the existing light theme; the application has no dark theme on the default branch, a pre-existing gap outside this feature. |
-| Observability (Principle XV) | Pass (design); safety evidence pending | `contracts/observability.md` defines feature-owned log events and required credential/principal tests. No new metrics, spans or namespaces are proposed. |
+| Observability (Principle XV) | Pass (design); safety evidence pending | `contracts/observability.md` defines feature-owned log events and required credential/principal tests, the approved successor-creation storage span and existing proxy-span refusal metadata. No new metrics or namespaces are proposed. |
 
 ### Implementation considerations
 
@@ -340,7 +351,8 @@ domain imports stay narrow. Handlers stay thin. ExtProc changes stay inside
     and credential/principal-policy tests. Use constant lowercase message phrases rather than event
     names as messages. Reconcile the feature's pre-merge underscore labels with the binding logging
     grammar; do not rename unrelated records. Existing session-rejection telemetry stays unchanged.
-    This feature adds no metric instrument, span name or span-attribute namespace.
+    This feature adds no metric instrument or span-attribute namespace. The approved review
+    remediation adds the standard successor-creation storage span documented in the observability contract.
 
 ## Implementation Phase Overview
 

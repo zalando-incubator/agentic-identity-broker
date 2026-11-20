@@ -137,12 +137,12 @@ If a non-transient broker error contains `error_uri`, the sidecar returns HTTP 4
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/json
-WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="User session is unavailable. Please re-authenticate.", error_uri="https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub", scope="https://broker.example.com/sessions/github"
 
-{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions","message":"User session is unavailable. Please re-authenticate."}]}}}
+{"jsonrpc":"2.0","id":null,"error":{"code":-32042,"message":"User session is unavailable. Please re-authenticate.","data":{"elicitations":[{"mode":"url","elicitationId":"<fresh uuid v4>","url":"https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub","message":"User session is unavailable. Please re-authenticate."}]}}}
 ```
 
-The challenge always has `error="insufficient_scope"`. It adds `error_description` and `error_uri` only when each value uses its RFC 6750 §3 character set. It does not provide `scope`, `resource_metadata`, or `realm`. Generic failures have no `WWW-Authenticate` header. Expired assertions and open circuits also have no challenge and keep their 503 responses.
+The challenge always has `error="insufficient_scope"`. It adds `error_description` and `error_uri` only when each value uses its RFC 6750 §3 character set. It does not provide `realm`. Generic failures have no `WWW-Authenticate` header. Expired assertions and open circuits also have no challenge and keep their 503 responses.
 
 An mcp-go client can read the URL from a tool-call error after initialization, but not from an `initialize` error.
 

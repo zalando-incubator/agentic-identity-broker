@@ -10,6 +10,17 @@
 
 ## Clarifications
 
+### Architecture review remediation — 2026-11-20
+
+The [selected remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7040265475) covers F1, F2, F3, F4, F6 and F7 only. These corrections preserve the existing functional requirements and acceptance journeys:
+
+- **F1 / SR-005**: Proxy-refresh refusal audits belong to `TokenOutcomeService.Proxy`, using the existing domain `scopeRejectionReason`; the HTTP adapter retains response mapping and span status, not a duplicate reason classifier or audit. *Reason*: the selected proposal keeps one domain owner for the taxonomy.
+- **F2–F3 / FR-005–FR-006**: Recovery documentation and `initiateOAuth2Flow` describe `/sessions/<identifier>` (current canonical ID, UUID when absent), as specified by `049-service-session-recovery-return`. Gateway examples carry the service `scope`; valid optional `resource_metadata` is supported, while `realm` is not supplied. *Reason*: the selected proposal aligns stale text with the existing approved recovery/challenge behavior.
+- **F4, F6 / SR-005**: PostgreSQL successor creation uses `startStorageSpan`; the observability contract describes its storage span and the existing `oauth2.token_proxy` Internal span's refusal `error.type` values `definitive`/`transient` and `codes.Error` status, including 400 refusals. *Reason*: the selected proposal requires storage trace parity and an accurate telemetry contract.
+- **F7 / FR-003, FR-008**: The architecture glossary distinguishes Grant Coverage, configured required-scope ceilings and effective selected scopes, and records the domain/log-to-consent-API usability mapping. Its ADR index includes the already accepted `050-virtual-service-scopes-revision-1`. *Reason*: the selected proposal makes the shared domain vocabulary and existing revision discoverable.
+
+Each clarification above is limited to the linked proposal; it does not decide the separate unselected-service transient-usability question (F5) or approve unrelated historical planning items.
+
 ### Session 2026-10-29
 
 - Q: When a service canonical ID is renamed, must previously issued canonical-ID scopes keep resolving through aliases, or is only the UUID scope durable? → A: Only UUID scopes are durable (FR-019). **Proposed approval item DEC-001 (compatibility)**: no historical aliases in this release; clients obtain a fresh challenge and authorize the new canonical scope after a rename. Rationale: UUIDs already provide stable identity without adding alias ownership, retention and storage policy. Main alternative: preserve every old canonical ID as a reserved alias, expanding lifecycle and persistence scope. This resolves Q1 and replaces its open requirement; it does not authorize implementation.

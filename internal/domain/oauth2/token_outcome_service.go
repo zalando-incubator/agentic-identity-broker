@@ -3,6 +3,7 @@ package oauth2
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -20,6 +21,7 @@ type TokenOutcomeService struct {
 	proxy     ports.OAuth2TokenProxy
 	verifier  ports.MultiAgentVerifier
 	publicURL string
+	logger    *slog.Logger
 	agents    tokenScopeAgentLookup
 	resolver  *servicescope.Resolver
 }
@@ -28,11 +30,22 @@ type tokenScopeAgentLookup interface {
 	Get(context.Context, id.AgentID) (*storage.Agent, error)
 }
 
-func NewTokenOutcomeService(proxy ports.OAuth2TokenProxy, verifier ports.MultiAgentVerifier) *TokenOutcomeService {
-	return &TokenOutcomeService{proxy: proxy, verifier: verifier}
+func NewTokenOutcomeService(proxy ports.OAuth2TokenProxy, verifier ports.MultiAgentVerifier, logger *slog.Logger) *TokenOutcomeService {
+	return &TokenOutcomeService{proxy: proxy, verifier: verifier, logger: logger}
 }
 
-func (s *TokenOutcomeService) Proxy(ctx context.Context, form url.Values, contentType string, resolution *ports.TokenGrantResolution) (ports.TokenProxyResponse, ports.TokenProxyFailure, error) {
+func (s *TokenOutcomeService) Proxy(ctx context.Context, form url.Values, contentType string, resolution *ports.TokenGrantResolution) (_ ports.TokenProxyResponse, failure ports.TokenProxyFailure, err error) {
+	defer func() {
+		switch failure {
+		case ports.TokenProxyScopeNotPermitted:
+			s.logger.WarnContext(ctx, "requested service scope rejected", "event", "oauth2.requested_service.scope_rejected",
+				"agent_id", resolution.AgentID, "reason", scopeRejectionReason(err), "error_kind", errorKindDefinitive)
+		case ports.TokenProxyScopeLookupFailed:
+			s.logger.ErrorContext(ctx, "requested service resolution failed", "event", "oauth2.requested_service.resolution_failed",
+				"agent_id", resolution.AgentID, "reason", reasonDependencyFailed, "error_kind", errorKindTransient)
+		}
+	}()
+
 	if resolution.ClientID == nil {
 		return nil, ports.TokenProxyClientMissing, errProxyClientMissing
 	}

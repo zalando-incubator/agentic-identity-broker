@@ -912,8 +912,10 @@ paths:
         `/oauth2/authorize` endpoint. A successful provider callback returns
         to the validated `redirect_uri`. RFC 8693 recoverable session errors
         link to this GET with `redirect_uri` set to the configured public URL's
-        `/sessions` page. For example:
-        `https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions`.
+        `/sessions/<identifier>` service page, where the identifier is the service's
+        current canonical ID or its UUID when absent (049-service-session-recovery-return).
+        For example:
+        `https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub`.
 
         The broker seals the principal, PKCE verifier, service ID, and return URI
         in JWE state. The return URI must have the configured public origin.

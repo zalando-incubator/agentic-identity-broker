@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -127,7 +128,7 @@ func TestProxyTokenGrantRejectsInvalidServiceScopeBeforeUpstream(t *testing.T) {
 			if tc.ineligible {
 				agents.agent.ServiceRequirements[0].ServiceID = id.NewServiceID()
 			}
-			outcomes := oauth2.NewTokenOutcomeService(NewOAuth2TokenProxy(server.URL, server.Client()), nil).
+			outcomes := oauth2.NewTokenOutcomeService(NewOAuth2TokenProxy(server.URL, server.Client()), nil, slog.New(slog.DiscardHandler)).
 				WithServiceScopeStripping(publicURL).WithServiceScopeValidation(agents, servicescope.NewResolver(services, permissions, publicURL))
 			strategy := NewProxyTokenGrantStrategy(server.URL, outcomes, nil)
 			resolution, err := ports.NewTokenGrantResolution(agents.agent.ID, agents.agent.ClientID, storage.ProxyClient)

@@ -1,9 +1,13 @@
 package oauth2
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -36,7 +40,7 @@ func TestTokenOutcomeServiceStripsVirtualScopes(t *testing.T) {
 	f := newRequestedFixture(t, nil, true)
 	agents := NewMockAgentRepository()
 	require.NoError(t, agents.Create(context.Background(), f.agent))
-	svc := NewTokenOutcomeService(proxy, nil).WithServiceScopeStripping(requestedPublicURL).
+	svc := NewTokenOutcomeService(proxy, nil, slog.New(slog.DiscardHandler)).WithServiceScopeStripping(requestedPublicURL).
 		WithServiceScopeValidation(agents, servicescope.NewResolver(f.services, requestedPermissionSets{}, requestedPublicURL))
 	resolution, err := ports.NewTokenGrantResolution(f.agent.ID, ptr.To(id.ClientID("upstream-client")), storage.ProxyClient)
 	require.NoError(t, err)
@@ -95,6 +99,7 @@ func (r *tokenScopePermissions) GetByIDs(ctx context.Context, ids []id.Permissio
 
 // FR-002/FR-021: proxy validation never reads grants or provider sessions.
 func TestTokenOutcomeServiceValidatesBeforeForwarding(t *testing.T) {
+	secrets := []string{"synthetic-refresh-token", "synthetic-access-token", "synthetic-subject-token", "synthetic-client-secret", "synthetic-client-assertion", "synthetic-code", "synthetic-verifier", "synthetic-state", "synthetic-sealed-jwe", "synthetic-rejected-scope"}
 	for _, tc := range []struct {
 		name, scope                         string
 		agentErr, serviceErr, permissionErr bool
@@ -127,20 +132,21 @@ func TestTokenOutcomeServiceValidatesBeforeForwarding(t *testing.T) {
 			permissions := &tokenScopePermissions{}
 			var services servicescope.ServiceLookup = f.services
 			if tc.agentErr {
-				agents.err = errors.New("synthetic lookup failure")
+				agents.err = errors.New(strings.Join(secrets, " "))
 			}
 			if tc.permissionErr {
-				permissions.err = errors.New("synthetic lookup failure")
+				permissions.err = errors.New(strings.Join(secrets, " "))
 			}
 			if tc.serviceErr {
 				services = failingServices{}
 			}
 			proxy := &recordingTokenProxy{}
-			svc := NewTokenOutcomeService(proxy, nil).WithServiceScopeStripping(requestedPublicURL).
+			var logs bytes.Buffer
+			svc := NewTokenOutcomeService(proxy, nil, slog.New(slog.NewJSONHandler(&logs, nil))).WithServiceScopeStripping(requestedPublicURL).
 				WithServiceScopeValidation(agents, servicescope.NewResolver(services, permissions, requestedPublicURL))
 			resolution, err := ports.NewTokenGrantResolution(f.agent.ID, ptr.To(id.ClientID("upstream-client")), storage.ProxyClient)
 			require.NoError(t, err)
-			form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"synthetic-refresh"}, "scope": {tc.scope}, "extension": {"a & b", "second"}}
+			form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"synthetic-refresh"}, "scope": {tc.scope}, "extension": {"a & b", "second"}, "access_token": {secrets[1]}, "subject_token": {secrets[2]}, "client_secret": {secrets[3]}, "client_assertion": {secrets[4]}, "code": {secrets[5]}, "code_verifier": {secrets[6]}, "state": {secrets[7]}, "session_token": {secrets[8]}}
 			_, failure, err := svc.Proxy(context.Background(), form, "application/x-www-form-urlencoded", resolution)
 			assert.Equal(t, tc.want, failure)
 			if tc.want != ports.TokenProxyNoFailure {
@@ -154,6 +160,25 @@ func TestTokenOutcomeServiceValidatesBeforeForwarding(t *testing.T) {
 					assert.ErrorIs(t, err, servicescope.ErrServiceNotEligible)
 				}
 				assert.Empty(t, proxy.forms, "refusal cannot consume upstream credentials")
+				var record map[string]any
+				require.NoError(t, json.Unmarshal(logs.Bytes(), &record), "exactly one domain audit record")
+				assert.Equal(t, f.agent.ID.String(), record["agent_id"])
+				if tc.want == ports.TokenProxyScopeNotPermitted {
+					assert.Equal(t, "oauth2.requested_service.scope_rejected", record["event"])
+					assert.Equal(t, "WARN", record["level"])
+					assert.Equal(t, "definitive", record["error_kind"])
+					reasons := map[string]string{"malformed": "malformed_scope", "malformed before lookup": "malformed_scope", "unknown": "unknown_service", "ineligible": "service_not_eligible"}
+					assert.Equal(t, reasons[tc.name], record["reason"])
+				} else {
+					assert.Equal(t, "oauth2.requested_service.resolution_failed", record["event"])
+					assert.Equal(t, "ERROR", record["level"])
+					assert.Equal(t, "transient", record["error_kind"])
+					assert.Equal(t, "dependency_failed", record["reason"])
+				}
+				for _, secret := range append(secrets, "synthetic-refresh") {
+					assert.NotContains(t, logs.String(), secret)
+				}
+				logs.Reset()
 				_, failure, err = svc.Proxy(context.Background(), url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"synthetic-refresh"}, "scope": {"openid"}}, "application/x-www-form-urlencoded", resolution)
 				require.NoError(t, err)
 				assert.Equal(t, ports.TokenProxyNoFailure, failure)
@@ -164,6 +189,7 @@ func TestTokenOutcomeServiceValidatesBeforeForwarding(t *testing.T) {
 				assert.Equal(t, servicescope.StripVirtual(tc.scope, requestedPublicURL), proxy.forms[0].Get("scope"))
 				assert.Equal(t, []string{"a & b", "second"}, proxy.forms[0]["extension"])
 			}
+			assert.Empty(t, logs.String(), "successful forwarding emits no refusal audit")
 			if tc.name == "ordinary" || tc.name == "external lookalike" {
 				assert.Zero(t, agents.calls)
 				assert.Zero(t, f.services.calls)
@@ -178,7 +204,7 @@ func TestTokenOutcomeServiceMissingAgentFailsClosed(t *testing.T) {
 		agents := &tokenScopeAgents{err: lookupErr}
 		services := &requestedServices{services: map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity{}}
 		proxy := &recordingTokenProxy{}
-		svc := NewTokenOutcomeService(proxy, nil).WithServiceScopeStripping(requestedPublicURL).
+		svc := NewTokenOutcomeService(proxy, nil, slog.New(slog.DiscardHandler)).WithServiceScopeStripping(requestedPublicURL).
 			WithServiceScopeValidation(agents, servicescope.NewResolver(services, requestedPermissionSets{}, requestedPublicURL))
 		resolution, err := ports.NewTokenGrantResolution(id.NewAgentID(), ptr.To(id.ClientID("upstream-client")), storage.ProxyClient)
 		require.NoError(t, err)

@@ -47,7 +47,7 @@ import (
 
 func newProxyTokenGrantStrategyForTest(endpoint string, verifier ports.MultiAgentVerifier) *proxyTokenGrantStrategy {
 	transport := NewOAuth2TokenProxy(endpoint, nil)
-	outcomes := oauth2.NewTokenOutcomeService(transport, verifier)
+	outcomes := oauth2.NewTokenOutcomeService(transport, verifier, slog.New(slog.DiscardHandler))
 	return NewProxyTokenGrantStrategy(endpoint, outcomes, nil)
 }
 

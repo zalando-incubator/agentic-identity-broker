@@ -55,7 +55,10 @@ func (r *RefreshTokenSessionRepo) Create(ctx context.Context, session *storage.R
 	return nil
 }
 
-func (r *RefreshTokenSessionRepo) CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, previousSignature string) error {
+func (r *RefreshTokenSessionRepo) CreateSuccessor(ctx context.Context, session *storage.RefreshTokenSession, previousSignature string) (err error) {
+	ctx, endSpan := startStorageSpan(ctx, "storage.create_successor.refresh_token_session", "RefreshTokenSessionRepo.CreateSuccessor")
+	defer func() { endSpan(err) }()
+
 	tx, ok := storageTransaction(ctx)
 	if !ok {
 		return storage.NewStorageError("RefreshTokenSessionRepo.CreateSuccessor", storage.ErrorKindValidation, nil, "rotation transaction required")
