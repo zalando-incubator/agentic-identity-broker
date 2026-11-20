@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 501
+    "investigation_after": null
   },
   "issues": [
     {
@@ -252,12 +252,6 @@
       "note": "Verified merged #415 on release/v0.2, not main: messages/events and sloglint rules land there. Posted release-delivery boundary and event migration release-note request. Three focused race tests pass; no duplicate fix."
     },
     {
-      "number": 497,
-      "state": "awaiting_clarification",
-      "updated_at": "2026-11-18",
-      "note": "Existing static source-policy/plumbing comment remains unacknowledged. Live #510 now implements service icons; do not duplicate or assume closure while that PR is open."
-    },
-    {
       "number": 347,
       "state": "commented",
       "updated_at": "2026-11-19",
@@ -265,9 +259,9 @@
     },
     {
       "number": 496,
-      "state": "commented",
-      "updated_at": "2026-11-19",
-      "note": "Posted shared frontend hostname + explicit PDP plan; internal token endpoint can stay. Preserve Vite exact host allowlist, same-origin proxy/preauth, callback origins and matching principal. Existing explicit-PDP subtest passes with race; Compose/DNS/browser not run."
+      "state": "deferred",
+      "updated_at": "2026-11-20",
+      "note": "External PR #511 now implements shared aib.localhost origin, explicit PDP and /access proxy on release/v0.2 with regression coverage. Read body/diff; submitted bug label. Keep issue open pending merge; no duplicate fix or independent Compose validation."
     },
     {
       "number": 500,
@@ -280,6 +274,12 @@
       "state": "awaiting_clarification",
       "updated_at": "2026-11-19",
       "note": "Static shared GrantResolver/GetByIDs cache review. Asked new broker reads vs already-issued permit freshness and referenced-update policy. LISTEN/NOTIFY alone cannot guarantee immediate invalidation. Fresh domain/port read candidate; no stale-authorization reproduction."
+    },
+    {
+      "number": 508,
+      "state": "commented",
+      "updated_at": "2026-11-20",
+      "note": "Posted distinct ExtProc/broker meanings and per-constant first-sentence plan. Guard every EnumValue.Doc, not documented(any); coordinate #469/#498. Four classification race tests pass on release/v0.2; generator/docs unrun. Maintenance-only candidate."
     }
   ],
   "fixes": [
@@ -288,7 +288,7 @@
       "pr": 403,
       "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
       "status": "blocked",
-      "updated_at": "2026-11-19",
+      "updated_at": "2026-11-20",
       "note": "Live head 71c02faa still dirty; review fixes published. Human-only readiness/observed-refresh integration remains. Prior #432 bundle hit changed-content limit, so transport did not remove size blocker. No oversized retry; pipeline-start/classification blockers persist."
     },
     {
@@ -304,7 +304,7 @@
       "pr": 432,
       "branch": "repo-assist/fix-issue-416-broker-access-denied-d7b29c16dd0ed650",
       "status": "blocked",
-      "updated_at": "2026-11-19",
+      "updated_at": "2026-11-20",
       "note": "Live head still 44269352 and dirty. Prior bundle submission failed downstream: 5735 KB changed content exceeds 4096 KB limit. No repeated push/history rewrite. Existing head pipeline passes, not merge validation; approved maintainer publication path needed."
     },
     {
@@ -393,32 +393,32 @@
     },
     {
       "area": "repo_assist_prs",
-      "checked_at": "2026-11-19",
-      "result": "Read nine live PR details/comments/reviews/threads and both check types. Seven pipelines pass; #403/#490 pipeline-start and #403/#420/#448 classification blockers persist. #403/#432 heads unchanged and dirty; existing publication-size blocker remains. No repeated push/comment.",
-      "follow_up": "Approved maintainer publication path needed for integrations; no oversized retries or history rewrite."
+      "checked_at": "2026-11-20",
+      "result": "Read nine PRs, reviews/threads and both check types, including #490 page 2. Seven pipelines pass; #403/#490 pipeline-start and #403/#420/#448 classification blockers persist. #403/#432 heads unchanged and dirty. No repeat push/comment.",
+      "follow_up": "Known changed-content publication limit still requires maintainer-approved integration path; no oversized retries or history rewrite."
     },
     {
       "area": "hygiene",
-      "checked_at": "2026-11-19",
-      "result": "Reviewed 73 open issues and 26 open PRs; only #508 unlabelled, submitted documentation label. Submitted bug for #500 and bug/security for #501. Monthly has no new check-offs; merged #464 removed from pending actions.",
+      "checked_at": "2026-11-20",
+      "result": "72 open issues labelled; inspected 27 PRs and submitted bug for #511. No new pending-comment acknowledgements or monthly check-offs. Closed #497 removed from memory/actions. #505/#507 repeat known publication-size blocker.",
       "follow_up": null
     },
     {
       "area": "code",
-      "checked_at": "2026-11-19",
-      "result": "Static release/v0.2 review of #500/#501 producer, consumer, storage validation, grant resolver and cache. Posted encoded-response-budget and authoritative-read/freshness plans with precise compatibility questions. No security reproduction or runtime change.",
-      "follow_up": "Clarify existing oversized grants and immediate broker-read versus cached-permit consistency requirements."
+      "checked_at": "2026-11-20",
+      "result": "Investigated #508 classifiers and #469/#498 generator. Posted ExtProc recovery distinction, configuration vs reconnect advice, first-sentence extraction and per-value completeness tests. No runtime edits/new PR.",
+      "follow_up": "Documentation-only candidate; include current grant-context codes and keep span/key descriptions separate."
     },
     {
       "area": "tests",
-      "checked_at": "2026-11-19",
-      "result": "This run was static investigation only. Inspected producer schema/validation, exact ExtProc body bound and existing evaluation test inventory. No tests, benchmarks, builds, lint or full gate were run; no source changes.",
-      "follow_up": "Future #500 encoded boundary/maximal-grant coverage; #501 two-instance shared-repository consistency coverage after contract agreement."
+      "checked_at": "2026-11-20",
+      "result": "Four existing classification tests pass uncached with race on release/v0.2 83f266e2 in tokenexchange, oauth2session and ExtProc server via just test override. Restored clean main. Generator/docs, static/full gate and Compose unrun; no source changes.",
+      "follow_up": null
     },
     {
       "area": "release",
-      "checked_at": "2026-11-19",
-      "result": "Latest release remains v0.1.147 (Nov17); release/v0.2 integration work is active. Triage-only maintenance run with no new release PR permitted or justified by changes in this run.",
+      "checked_at": "2026-11-20",
+      "result": "Latest release remains v0.1.147 (Nov17); release/v0.2 integration and external #511 active. Maintenance-only triage run; no new release PR permitted or justified by this run.",
       "follow_up": null
     }
   ],
@@ -440,8 +440,8 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first investigation after #501",
-      "note": "#500/#501 static findings and compatibility questions posted. #508 labelled documentation. Review new human input and active #510 before revisiting icon work; no duplicate implementation in maintenance-only mode."
+      "item": "Resume fresh oldest-first investigation; preserve #508 candidate",
+      "note": "Reached end through #508; cursor reset. Await #500/#501 decisions and #511 merge for #496. #508 needs documentation-only work coordinated with #469/#498 when capacity permits; do not duplicate active fixes."
     },
     {
       "task": 3,
