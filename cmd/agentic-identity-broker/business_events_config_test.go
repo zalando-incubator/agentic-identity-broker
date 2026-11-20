@@ -117,6 +117,17 @@ func TestBusinessEventsRootConfigurationPrecedence(t *testing.T) {
 	}
 }
 
+func TestBusinessEventsFlagOverridesUnresolvedFileValue(t *testing.T) {
+	t.Setenv("TEST_LEDGER_RETENTION_UNSET", "")
+	require.NoError(t, os.Unsetenv("TEST_LEDGER_RETENTION_UNSET"))
+	const document = "business_events:\n  retention:\n    period: ${TEST_LEDGER_RETENTION_UNSET}\n"
+	_, err := loadBusinessEventsRootConfig(t, document, nil, nil)
+	require.ErrorContains(t, err, "TEST_LEDGER_RETENTION_UNSET")
+	cfg, err := loadBusinessEventsRootConfig(t, document, nil, []string{"--business_events.retention.period=24h"})
+	require.NoError(t, err)
+	require.Equal(t, 24*time.Hour, cfg.BusinessEvents.Retention.Period)
+}
+
 func TestBusinessEventsRootRejectsInvalidExplicitCLIValuesWhileDisabled(t *testing.T) {
 	for _, tc := range []struct {
 		key   string

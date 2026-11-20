@@ -558,6 +558,11 @@ func (l *Loader) expandEnvVars() error {
 		if key == credentialFilesKey || strings.HasPrefix(key, credentialFilesPrefix) {
 			continue
 		}
+		// Explicit ledger flags are bound after expansion and already carry typed values.
+		if l.cmd != nil && strings.HasPrefix(key, "business_events"+configutil.Delimiter) &&
+			l.cmd.Flags().Changed(strings.ReplaceAll(key, configutil.Delimiter, ".")) {
+			continue
+		}
 		value := l.v.GetString(key)
 		if value == "" {
 			continue
