@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -70,6 +71,48 @@ var _ = Describe("Incremental Service Authorization", func() {
 			Expect(status).To(Equal(http.StatusOK), "the first post-consent retry must succeed: %v", body)
 			Expect(body["access_token"]).To(Equal("synthetic-github-access"))
 			Expect(body["issued_token_type"]).To(Equal("urn:ietf:params:oauth:token-type:access_token"))
+		})
+	})
+
+	Context("when a saved authorization continuation is altered", func() {
+		BeforeEach(func() {
+			journey = newIncrementalJourney("local", nil)
+		})
+
+		// FR-011: continuation rejection after provider login and successful Save.
+		It("rejects tampered and repeated session tokens without issuing a code", func() {
+			location, verifier := journey.authorize(ordinary + " " + journey.githubScope())
+			sessionToken := journey.expectConsentRedirect(location)
+			journey.consentDetail(sessionToken)
+			journey.connect(journey.cast.GitHub.ID, journey.config.Server.EndUser.PublicURL+location.RequestURI())
+			grant := journey.currentGrant()
+			status, body := journey.submit(sessionToken, journey.grantSelection(journey.cast.IdentityAccess, journey.cast.GitHubRead), grant.ValidUntil)
+			continuation := journey.expectSaved(status, body, sessionToken)
+			before := journey.currentGrant()
+			providerRequests := journey.provider.GetAuthorizationRequestCount()
+
+			parts := strings.Split(sessionToken, ".")
+			Expect(parts).To(HaveLen(5))
+			if parts[3][0] == 'A' {
+				parts[3] = "B" + parts[3][1:]
+			} else {
+				parts[3] = "A" + parts[3][1:]
+			}
+			for _, tokens := range [][]string{{strings.Join(parts, ".")}, {sessionToken, sessionToken}} {
+				request, err := url.Parse(continuation)
+				Expect(err).NotTo(HaveOccurred())
+				query := request.Query()
+				query["session_token"] = tokens
+				request.RawQuery = query.Encode()
+				journey.expectAuthorizationError(journey.follow(request.RequestURI()), "access_denied", "authorization session is invalid or expired")
+				Expect(journey.currentGrant()).To(Equal(before))
+				Expect(journey.provider.GetAuthorizationRequestCount()).To(Equal(providerRequests))
+			}
+
+			code := journey.expectClientRedirect(journey.follow(continuation)).Get("code")
+			Expect(code).NotTo(BeEmpty())
+			status, body = journey.redeem(code, verifier)
+			Expect(status).To(Equal(http.StatusOK), "rejections must preserve the original continuation: %v", body)
 		})
 	})
 

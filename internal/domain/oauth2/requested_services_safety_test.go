@@ -141,11 +141,7 @@ func TestRequestedServiceSecurityRecords(t *testing.T) {
 			assert.Equal(t, f.agent.ID.String(), record["agent_id"])
 			assert.NotContains(t, record, "error")
 			assert.NotContains(t, record, "kind")
-			if tc.kind == "" || tc.name == "evaluation" || tc.name == "unverifiable" {
-				// The central principal policy is identity; the typed-call policy test
-				// guards against bypassing it with a pre-rendered principal.
-				assert.Equal(t, requestedPrincipal.LogValue().String(), record["principal"])
-			}
+			assert.Equal(t, requestedPrincipal.LogValue().String(), record["principal"])
 			if tc.kind == "" {
 				assert.Equal(t, requestedGitHubID.String(), record["service_id"])
 				assert.NotContains(t, record, "error_kind")

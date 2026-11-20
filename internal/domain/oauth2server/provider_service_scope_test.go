@@ -345,7 +345,7 @@ func TestProviderRefreshRecheckAuditAndFastPath(t *testing.T) {
 		assert.Contains(t, output, `"error_kind":"definitive"`)
 		assert.Contains(t, output, `"error_kind":"transient"`)
 		assert.Contains(t, output, `"reason":"unusable_definitive"`)
-		assert.Contains(t, output, `"reason":"usability_unverifiable"`)
+		assert.Contains(t, output, `"reason":"unverifiable_transient"`)
 		assert.Contains(t, output, `"level":"ERROR"`)
 		assert.NotContains(t, output, issued.RefreshToken)
 		assert.NotContains(t, output, issued.AccessToken)

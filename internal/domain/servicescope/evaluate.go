@@ -56,6 +56,27 @@ type Outcome struct {
 	Failure               CoverageFailure
 }
 
+// Reason is the shared authorization and refresh classification of a service outcome.
+type Reason string
+
+const (
+	ReasonNotSelected             Reason = "not_selected"
+	ReasonRequiredScopesUncovered Reason = "required_scopes_uncovered"
+	ReasonUnverifiableTransient   Reason = Reason(UsabilityUnverifiableTransient)
+)
+
+// Reason preserves selection and coverage precedence over session usability.
+func (o Outcome) Reason() Reason {
+	switch {
+	case !o.Selected:
+		return ReasonNotSelected
+	case !o.RequiredScopesCovered:
+		return ReasonRequiredScopesUncovered
+	default:
+		return Reason(o.Usability)
+	}
+}
+
 // Evaluate checks one requested service against the selected grant entries and a session
 // snapshot. sets must contain every selected and declared permission set the caller resolved;
 // declared sets absent from sets are not candidates.

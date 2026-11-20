@@ -207,7 +207,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	if rejected != nil {
 		return rejected, nil
 	}
-	requested, rejected := s.resolveRequestedServices(ctx, req, agent, continuation)
+	requested, rejected := s.resolveRequestedServices(ctx, req, principal, agent, continuation)
 	if rejected != nil {
 		return rejected, nil
 	}

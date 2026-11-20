@@ -91,7 +91,7 @@ func TestRefreshScopeSecurityRecordClassifications(t *testing.T) {
 		{"service_lookup_failed", "ERROR", "transient", "server_error"},
 		{"grant_lookup_failed", "ERROR", "transient", "server_error"},
 		{"permission_set_lookup_failed", "ERROR", "transient", "server_error"},
-		{"usability_unverifiable", "ERROR", "transient", "server_error"},
+		{"unverifiable_transient", "ERROR", "transient", "server_error"},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			var logs bytes.Buffer
@@ -125,7 +125,7 @@ func TestRefreshScopeSecurityRecordClassifications(t *testing.T) {
 				f.provider.fositeStorage.verifier = &unsafeRefreshRecheckGrant{grantVerifier: f.provider.fositeStorage.verifier, cause: cause}
 			case "permission_set_lookup_failed":
 				permissions = unsafeRefreshScopePermissions{cause: cause}
-			case "usability_unverifiable":
+			case "unverifiable_transient":
 				f.snapshots.snapshot.Usability = servicescope.UsabilityUnverifiableTransient
 			}
 			f.provider.WithServiceScopes(servicescope.NewResolver(lookup, scopePermissionSets{}, scopePublicURL), servicescope.NewEvaluator(permissions, f.snapshots))

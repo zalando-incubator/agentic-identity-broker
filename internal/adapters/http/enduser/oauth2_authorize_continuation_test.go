@@ -115,7 +115,7 @@ func TestAuthorizeContinuationFailureContract(t *testing.T) {
 					require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record), "exactly one audit record")
 					assert.Equal(t, "oauth2.authorization.continuation_rejected", record["event"])
 					assert.Equal(t, "WARN", record["level"])
-					assert.Equal(t, "invalid_session", record["reason"])
+					assert.Equal(t, "invalid_authorization_session", record["reason"])
 					assert.Equal(t, agent.ID.String(), record["agent_id"])
 					assert.Equal(t, id.Principal("alice@example.com").LogValue().String(), record["principal"])
 				}

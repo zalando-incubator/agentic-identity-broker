@@ -126,12 +126,16 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// FR-029: Validate JWE session_token when present.
-	sessionToken := r.URL.Query().Get("session_token")
+	sessionToken, parameterErr := sessionTokenParameter(r.URL.Query())
 	var sessionRedirectURI string
 	var requestedServiceIDs []id.ServiceID
 	var serviceScopeBindings map[string]id.ServiceID
-	if sessionToken != "" {
-		claims, err := h.sessionTokenValidator.ValidateAuthorizationSessionToken(sessionToken, parsedAgentID, id.Principal(principalValue))
+	if sessionToken != "" || parameterErr != nil {
+		var claims *ports.AuthorizationSession
+		err := ports.ErrSessionInvalidToken
+		if parameterErr == nil {
+			claims, err = h.sessionTokenValidator.ValidateAuthorizationSessionToken(sessionToken, parsedAgentID, id.Principal(principalValue))
+		}
 		if err != nil {
 			switch {
 			case errors.Is(err, ports.ErrSessionExpired):

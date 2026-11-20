@@ -293,6 +293,17 @@ Scope: [selected proposal](https://github.com/zalando-incubator/agentic-identity
 - [X] T126 [F6] Document the existing `oauth2.token_proxy` Internal span's scope-refusal `error.type` values `definitive`/`transient`, HTTP statuses and `codes.Error`, including client-caused 400 refusals, in `contracts/observability.md`; document the F4 storage span alongside it (SR-005; Principle XV).
 - [X] T127 [F7] Add Grant Coverage to the `ARCHITECTURE.md` glossary, distinguish configured required-scope ceilings from effective selected scopes, record domain/log-to-consent-API usability mapping, and index the already accepted `050-virtual-service-scopes-revision-1` in §10 (FR-003, FR-008; Principles II, V).
 
+## Selected Review Remediation — 2026-11-20
+
+Scope: [maintainer-approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7047148239), F2–F7 only. The separate unselected-service transient-usability question remains outside these tasks.
+
+- [X] T128 [F2] Add continuation-rejection and requested-service-unverifiability records and their closed reason sets to `contracts/observability.md`, using the final F3/F7 vocabulary (SR-005; Principle XV).
+- [X] T129 [F3] Define `Outcome.Reason` once in `internal/domain/servicescope/evaluate.go`, use it in authorization and local refresh, and use `unverifiable_transient` for both transient-usability records. Preserve selection/coverage precedence; cover the mapping and refresh reason with tests (SR-005; Principles V, VIII, XV).
+- [X] T130 [F4] Pass `id.Principal` through authorize requested-service resolution; include it in scope-rejection and resolution-failure audits and assert it for every authorize security-record case (SR-005; Principles VIII, XV).
+- [X] T131 [F5] Add an FR-011 running-broker continuation-rejection journey in `tests/e2e/incremental_authorization_test.go`: provider login and Save, tampered/repeated JWE denial with `302 access_denied` and no code, preserved grant and original valid continuation (FR-011; Principles I, VIII, XIII).
+- [X] T132 [F6] Reject empty/repeated `session_token` values in consent agent-detail and grant submission through shared parsing and existing invalid-token handling; add handler regressions and align FR-011, the feature API contract, OpenAPI and `docs/api/enduser-api.md`. Preserve absent-token standalone consent (FR-011; Principles IV, VIII, X).
+- [X] T133 [F7] Define Authorization Continuation and baseline/candidate usability in `ARCHITECTURE.md`; rename the continuation-denial reason to `invalid_authorization_session` and align tests and the observability contract (FR-009–FR-011, SR-005; Principles V, VIII, XV).
+
 ## Acceptance Scenario → Task Mapping
 
 The plan's exact `It` descriptions remain authoritative. The following assigns one owning test to every scenario; unit/integration tests add depth without duplicating acceptance ownership.

@@ -67,7 +67,7 @@ Outcomes once `redirect_uri` is validated. All are redirects to the client's `re
 | A requested service's usability cannot be verified (transient provider or storage failure) | `error=temporarily_unavailable` |
 | All requested services satisfied, local or CIMD agent | Existing code issuance. The code records the granted virtual scopes and their bindings. |
 | All requested services satisfied, proxy agent | Existing upstream `302`. The upstream `scope` has every virtual scope removed and is omitted when empty. |
-| Continuation `session_token` is forged, malformed, expired, or request/principal/agent-mismatched | `302` to the validated client `redirect_uri` with `error=access_denied`, `error_description=authorization session is invalid or expired`, and the request's original `state`; no code or upstream redirect. |
+| Continuation `session_token` is empty, repeated, forged, malformed, expired, or request/principal/agent-mismatched | `302` to the validated client `redirect_uri` with `error=access_denied`, `error_description=authorization session is invalid or expired`, and the request's original `state`; no code or upstream redirect. |
 | Continuation `session_token` is valid but a virtual scope no longer resolves to its sealed UUID | `302` to the validated client `redirect_uri` with `error=invalid_scope`, `error_description=requested service scope is not permitted`, and the original `state`; no code or upstream redirect. |
 
 **Consent continuation parameter (Proposed, API-CONSENT)**: `session_token` is an optional opaque
@@ -161,6 +161,8 @@ not attest that any broker-managed service is usable.
 
 ## 5. `GET /api/consent/agents/{agent-id}`: requested services (API-CONSENT)
 
+Empty or repeated `session_token` query values return `400 invalid_token`. Only an absent parameter denotes standalone consent management; existing malformed/expired/mismatched token errors are unchanged.
+
 `GetAgentDetailResponse.data` gains two properties:
 
 ```yaml
@@ -231,6 +233,8 @@ submission rechecks fresh server-side state rather than trusting these flags.
 an arbitrary unsaved selection or all candidates. The enum does not change.
 
 ## 6. `POST /api/consent/agents/{agent-id}/grants`: requested-service enforcement (API-CONSENT)
+
+Empty or repeated `session_token` query values return `400 invalid_token` before grant mutation, even when one repeated value is a valid JWE. Only an absent parameter denotes standalone consent management; existing malformed/expired/mismatched token errors are unchanged.
 
 A new `400` case applies only when `session_token` seals requested services:
 

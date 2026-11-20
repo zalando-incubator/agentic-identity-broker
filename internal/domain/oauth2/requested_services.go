@@ -47,7 +47,7 @@ func (s *AuthorizationService) authorizationContinuation(ctx context.Context, re
 	}
 	if s.logger != nil {
 		s.logger.WarnContext(ctx, "authorization continuation rejected", "event", "oauth2.authorization.continuation_rejected",
-			"agent_id", agent.ID, "principal", principal, "reason", reasonInvalidSession, "error_kind", errorKindDefinitive)
+			"agent_id", agent.ID, "principal", principal, "reason", reasonInvalidAuthorizationSession, "error_kind", errorKindDefinitive)
 	}
 	return nil, s.redirectError(ctx, req, "access_denied", descriptionSessionInvalid)
 }
@@ -75,7 +75,7 @@ func withoutSessionToken(originalURL string) string {
 
 // resolveRequestedServices resolves the request's virtual scopes. A continuation must resolve
 // every virtual scope to its sealed binding.
-func (s *AuthorizationService) resolveRequestedServices(ctx context.Context, req *ports.AuthorizationRequest, agent *storage.Agent, continuation *ports.AuthorizationSession) (*servicescope.RequestedServiceSet, *ports.AuthorizationDecision) {
+func (s *AuthorizationService) resolveRequestedServices(ctx context.Context, req *ports.AuthorizationRequest, principal id.Principal, agent *storage.Agent, continuation *ports.AuthorizationSession) (*servicescope.RequestedServiceSet, *ports.AuthorizationDecision) {
 	if s.requestedServices == nil {
 		return &servicescope.RequestedServiceSet{}, nil
 	}
@@ -91,13 +91,13 @@ func (s *AuthorizationService) resolveRequestedServices(ctx context.Context, req
 		if servicescope.IsPermissionFailure(err) {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx, "requested service scope rejected", "event", "oauth2.requested_service.scope_rejected",
-					"agent_id", agent.ID, "reason", scopeRejectionReason(err), "error_kind", errorKindDefinitive)
+					"agent_id", agent.ID, "principal", principal, "reason", scopeRejectionReason(err), "error_kind", errorKindDefinitive)
 			}
 			return nil, s.redirectError(ctx, req, "invalid_scope", descriptionServiceScopeNotPermitted)
 		}
 		if s.logger != nil {
 			s.logger.ErrorContext(ctx, "requested service resolution failed", "event", "oauth2.requested_service.resolution_failed",
-				"agent_id", agent.ID, "reason", reasonDependencyFailed, "error_kind", errorKindTransient)
+				"agent_id", agent.ID, "principal", principal, "reason", reasonDependencyFailed, "error_kind", errorKindTransient)
 		}
 		return nil, s.redirectError(ctx, req, "server_error", "server error")
 	}
@@ -124,7 +124,7 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 	if servicescope.AnyTransient(outcomes) {
 		if s.logger != nil {
 			s.logger.WarnContext(ctx, "requested service usability unverifiable", "event", "oauth2.requested_service.unverifiable",
-				"agent_id", agent.ID, "principal", principal, "reason", reasonUnverifiableTransient, "error_kind", errorKindTransient)
+				"agent_id", agent.ID, "principal", principal, "reason", servicescope.ReasonUnverifiableTransient, "error_kind", errorKindTransient)
 		}
 		return s.redirectError(ctx, req, "temporarily_unavailable", descriptionUsabilityUnverifiable)
 	}
@@ -133,7 +133,7 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 			if !outcome.Satisfied {
 				s.logger.InfoContext(ctx, "incremental authorization required", "event", "oauth2.authorization.incremental_required",
 					"agent_id", agent.ID, "principal", principal, "service_id", outcome.ServiceID,
-					"reason", unsatisfiedReason(outcome))
+					"reason", outcome.Reason())
 			}
 		}
 	}
@@ -144,19 +144,16 @@ type serviceLogReason string
 type serviceLogErrorKind string
 
 const (
-	reasonInvalidSession          serviceLogReason    = "invalid_session"
-	reasonUnverifiableTransient   serviceLogReason    = "unverifiable_transient"
-	reasonMalformedScope          serviceLogReason    = "malformed_scope"
-	reasonUnknownService          serviceLogReason    = "unknown_service"
-	reasonServiceNotEligible      serviceLogReason    = "service_not_eligible"
-	reasonBindingMismatch         serviceLogReason    = "binding_mismatch"
-	reasonDependencyFailed        serviceLogReason    = "dependency_failed"
-	reasonRedirectBuildFailed     serviceLogReason    = "redirect_build_failed"
-	reasonNotSelected             serviceLogReason    = "not_selected"
-	reasonRequiredScopesUncovered serviceLogReason    = "required_scopes_uncovered"
-	errorKindDefinitive           serviceLogErrorKind = "definitive"
-	errorKindTransient            serviceLogErrorKind = "transient"
-	errorKindInternal             serviceLogErrorKind = "internal"
+	reasonInvalidAuthorizationSession serviceLogReason    = "invalid_authorization_session"
+	reasonMalformedScope              serviceLogReason    = "malformed_scope"
+	reasonUnknownService              serviceLogReason    = "unknown_service"
+	reasonServiceNotEligible          serviceLogReason    = "service_not_eligible"
+	reasonBindingMismatch             serviceLogReason    = "binding_mismatch"
+	reasonDependencyFailed            serviceLogReason    = "dependency_failed"
+	reasonRedirectBuildFailed         serviceLogReason    = "redirect_build_failed"
+	errorKindDefinitive               serviceLogErrorKind = "definitive"
+	errorKindTransient                serviceLogErrorKind = "transient"
+	errorKindInternal                 serviceLogErrorKind = "internal"
 )
 
 func scopeRejectionReason(err error) serviceLogReason {
@@ -169,16 +166,5 @@ func scopeRejectionReason(err error) serviceLogReason {
 		return reasonServiceNotEligible
 	default:
 		return reasonBindingMismatch
-	}
-}
-
-func unsatisfiedReason(outcome servicescope.Outcome) serviceLogReason {
-	switch {
-	case !outcome.Selected:
-		return reasonNotSelected
-	case !outcome.RequiredScopesCovered:
-		return reasonRequiredScopesUncovered
-	default:
-		return serviceLogReason(outcome.Usability)
 	}
 }

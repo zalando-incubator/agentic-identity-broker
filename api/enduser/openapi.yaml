@@ -373,7 +373,8 @@ paths:
             decrypted token (agent_id, principal, original_url). For CIMD agents, also
             includes CIMD metadata (client_id_url, redirect_uri, verified_domain,
             requested_scopes, logo_uri). Present whenever the user arrived via an
-            OAuth2 authorization redirect.
+            OAuth2 authorization redirect. Empty or repeated values return 400 invalid_token;
+            only an absent parameter denotes standalone consent management.
           schema:
             type: string
             minLength: 1
@@ -549,7 +550,8 @@ paths:
         - Returns HTTP 201 with `redirect_url` containing the sealed original authorization URL (original `state`, `redirect_uri`, PKCE, and `client_id` intact) plus the same `session_token` JWE, without renewing its expiry
         - Authorization re-entry independently verifies the request, principal, agent, expiry and scope-to-service bindings before code issuance or upstream redirect; the continuation token is never forwarded
         - Frontend must navigate to `redirect_url` using `window.location.href` to resume the OAuth2 flow
-        - Returns `400 Bad Request` with error code `session_expired` if the token is invalid or expired
+        - Returns `400 Bad Request` with error code `invalid_token` for empty, repeated or malformed tokens
+        - Returns `400 Bad Request` with error code `session_expired` if the token is expired
         - Returns `400 Bad Request` if the session agent does not match the agent in the URL path
         - Returns `403 Forbidden` if the session principal does not match the authenticated user
 
@@ -584,7 +586,7 @@ paths:
         - $ref: "#/components/parameters/AgentIdParam"
         - name: session_token
           in: query
-          description: "JWE authorization session token (FR-029). When present, the grant endpoint decrypts the token to resolve the redirect target. Returns 400 if the token is invalid or expired; 400 if the session agent does not match the requested agent; 403 if the session principal does not match the authenticated caller."
+          description: "JWE authorization session token (FR-029). When present, the grant endpoint decrypts the token to resolve the redirect target. Empty or repeated values return 400 invalid_token; only absence denotes standalone consent management. Returns 400 if the token is invalid or expired; 400 if the session agent does not match the requested agent; 403 if the session principal does not match the authenticated caller."
           required: false
           schema:
             type: string
@@ -1469,7 +1471,8 @@ paths:
           original request (excluding only the continuation `session_token`), then re-resolves
           every binding before issuance or upstream redirect. Identity reassignment returns
           `302 invalid_scope` with `requested service scope is not permitted`.
-          Forged, malformed, expired or request/principal/agent-mismatched context returns
+          Empty or repeated session_token values, or forged, malformed, expired or
+          request/principal/agent-mismatched context, return
           `302 access_denied` with `authorization session is invalid or expired`.
           Both use only the validated client callback and echo the request's original state;
           state is omitted if absent. No code, PKCE material or JWE reaches that callback,
@@ -1542,7 +1545,8 @@ paths:
           description: |
             Opaque JWE for server-built post-Save continuation. The server independently
             authenticates expiry, principal, agent, original request and scope-to-service
-            bindings. Consumed locally; never forwarded upstream or to the client callback.
+            bindings. Empty or repeated values return 302 access_denied after redirect validation.
+            Consumed locally; never forwarded upstream or to the client callback.
           schema:
             type: string
             minLength: 1

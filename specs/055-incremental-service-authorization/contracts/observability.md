@@ -13,6 +13,8 @@ Use injected loggers and request-context methods. Messages are constant lowercas
 | `refresh_service_recheck_failed` | Security audit / `oauth2_server.service.recheck_failed` | Warn for definitive refusal; Error for dependency failure requiring operator action | `agent_id`, policy-rendered `principal`, known `service_id`, `reason`, `error_kind` |
 | `requested_service_scope_rejected` | Security audit / `oauth2.requested_service.scope_rejected` | Warn: malformed, unknown, ineligible or binding-mismatched scope refused before issuance/forwarding | `agent_id`, known `service_id`, policy-rendered `principal` when available, `reason`, `error_kind=definitive` |
 | `requested_service_resolution_failed` | Security audit / `oauth2.requested_service.resolution_failed` | Error: resolver dependency failure handled as fail-closed `server_error` | `agent_id`, known `service_id`, policy-rendered `principal` when available, `reason=dependency_failed`, `error_kind=transient` |
+| `authorization_continuation_rejected` | Security audit / `oauth2.authorization.continuation_rejected` | Warn: empty, repeated, forged, malformed, expired or request/principal/agent-mismatched authorization session refused before issuance/forwarding | `agent_id`, policy-rendered `principal`, `reason=invalid_authorization_session`, `error_kind=definitive` |
+| `requested_service_unverifiable` | Security audit / `oauth2.requested_service.unverifiable` | Warn: transient inability to verify requested-service usability; redirect with `temporarily_unavailable` | `agent_id`, policy-rendered `principal`, `reason=unverifiable_transient`, `error_kind=transient` |
 | `requested_service_evaluation_failed` | Security audit / `oauth2.requested_service.evaluation_failed` | Error: evaluator dependency failure handled as fail-closed `server_error` | `agent_id`, known `service_id`, policy-rendered `principal`, `reason=dependency_failed`, `error_kind=transient` |
 
 Broker principals are `id.Principal` under the reserved `principal` key; never render them manually. `error_kind` replaces the pre-merge `kind` discriminator with the canonical key and has the closed set `definitive`, `transient`. Log errors once at the handling layer and only as typed safe metadata, never a wrapped cause or provider description.
@@ -25,7 +27,11 @@ Closed reason sets:
   Map typed/sentinel permission errors; never use `err.Error()` or echo the requested scope.
 - Resolution/evaluation failure: `dependency_failed`. This safe coarse classification is sufficient;
   do not parse a wrapped cause to invent a more detailed reason or record its text.
-- Local refresh refusal: `binding_unresolved`, `not_selected`, `required_scopes_uncovered`, `missing`, `unusable_definitive`, `service_lookup_failed`, `grant_lookup_failed`, `permission_set_lookup_failed`, `usability_unverifiable`.
+- Authorization continuation rejection: `invalid_authorization_session` (the AuthorizationSessionClaims JWE, not a UserSession).
+- Requested-service unverifiability: `unverifiable_transient`.
+- Local refresh refusal: `binding_unresolved`, `not_selected`, `required_scopes_uncovered`, `missing`, `unusable_definitive`, `service_lookup_failed`, `grant_lookup_failed`, `permission_set_lookup_failed`, `unverifiable_transient`.
+
+`servicescope.Outcome.Reason` owns the shared selection/coverage/usability reason mapping. Authorization and local refresh both use `unverifiable_transient` for unverifiable usability. These pre-merge corrections replace the former refresh-only `usability_unverifiable` and ambiguous continuation `invalid_session` labels, as approved in [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7047148239).
 
 Use typed constants for classifications. A transient result does not write a rejection marker. Recorded provider rejection, reconnect and background/sweep telemetry reuse the existing ADR 046 session events without renaming them. No new persisted audit ledger is introduced.
 

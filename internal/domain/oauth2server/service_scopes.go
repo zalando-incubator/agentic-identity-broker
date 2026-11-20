@@ -175,11 +175,11 @@ func (p *Provider) recheckBoundServices(ctx context.Context, req *fosite.AccessR
 		return transient(refreshScopePermissionSetLookupFailed)
 	}
 	if servicescope.AnyTransient(outcomes) {
-		return transient(refreshScopeUsabilityUnverifiable)
+		return transient(refreshScopeReason(servicescope.ReasonUnverifiableTransient))
 	}
 	for _, outcome := range outcomes {
 		if !outcome.Satisfied {
-			return refuse(scopesByService[outcome.ServiceID], unsatisfiedRefreshReason(outcome))
+			return refuse(scopesByService[outcome.ServiceID], refreshScopeReason(outcome.Reason()))
 		}
 	}
 	return nil
@@ -193,23 +193,9 @@ const (
 	refreshScopeServiceLookupFailed       refreshScopeReason    = "service_lookup_failed"
 	refreshScopeGrantLookupFailed         refreshScopeReason    = "grant_lookup_failed"
 	refreshScopePermissionSetLookupFailed refreshScopeReason    = "permission_set_lookup_failed"
-	refreshScopeUsabilityUnverifiable     refreshScopeReason    = "usability_unverifiable"
-	refreshScopeNotSelected               refreshScopeReason    = "not_selected"
-	refreshScopeRequiredScopesUncovered   refreshScopeReason    = "required_scopes_uncovered"
 	refreshScopeDefinitive                refreshScopeErrorKind = "definitive"
 	refreshScopeTransient                 refreshScopeErrorKind = "transient"
 )
-
-func unsatisfiedRefreshReason(outcome servicescope.Outcome) refreshScopeReason {
-	switch {
-	case !outcome.Selected:
-		return refreshScopeNotSelected
-	case !outcome.RequiredScopesCovered:
-		return refreshScopeRequiredScopesUncovered
-	default:
-		return refreshScopeReason(outcome.Usability)
-	}
-}
 
 // rejectServiceScopesWithoutUser refuses virtual scopes on grants without a user.
 func (p *Provider) rejectServiceScopesWithoutUser(scopes fosite.Arguments) error {
