@@ -78,11 +78,12 @@ oauth2_authorization_server:
 #   actor_token.sub == 'research-runner' &&
 #   subject_token.sub in ['alice@example.com', '550e8400-e29b-41d4-a716-446655440000'] &&
 #   request.agent_id == '550e8400-e29b-41d4-a716-446655440000'
-# Alice requires active delegation in both alternatives; the signed exact-target
-# subject is ineligible on human-only and consent-free on dual.
+# Alice requires browser-equivalent consent readiness in both alternatives. The signed
+# exact-target subject is ineligible on human-only and consent-free on dual.
 # Signed exact-target sub is ALWAYS agent-category, even on a human-only rule and
 # even with active same-text human delegation. No alias/case/UUID normalization occurs.
 # All principal extractions must succeed; the agent minted sub is the target UUID.
 # No email expression is evaluated for agents and no human grant/session is created.
-# An unsigned subject is always human: listing agent on an unsigned rule is valid
-# but has no effect; client assertions and actors still require signatures (ADR 031).
+# An unsigned subject is agent-category only when its raw sub equals the target UUID
+# and the rule predicate binds subject_token.sub. Client assertions and actors always
+# require signatures (031-unverified-subject-unsigned-jwt).

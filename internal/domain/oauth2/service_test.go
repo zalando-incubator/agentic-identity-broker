@@ -1,8 +1,10 @@
 package oauth2
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
@@ -2094,4 +2096,59 @@ func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	assert.Contains(t, consentURL, "session_token=", "buildConsentURL must always produce session_token")
 	assert.NotContains(t, consentURL, "redirect_uri=", "buildConsentURL must never produce redirect_uri fallback")
 	assert.True(t, strings.HasPrefix(consentURL, "https://broker.example.com/agents/"+agentID.String()+"?session_token="))
+}
+
+func TestHandleAuthorizationReadinessLogReasons(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		included  bool
+		session   *storage.UserSession
+		mandatory bool
+		event     string
+		reason    string
+	}{
+		{name: "included session missing", included: true, event: "oauth2.delegated_session.unusable", reason: "session_missing"},
+		{name: "mandatory scope mismatch", mandatory: true, session: &storage.UserSession{Scope: []string{"read"}}, event: "oauth2.mandatory_requirement.not_met", reason: "scope_mismatch"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			agentID, serviceID, permissionSetID := id.NewAgentID(), id.NewServiceID(), id.NewPermissionSetID()
+			principal := id.NewPrincipal("user@example.com")
+			agent := &storage.Agent{ID: agentID, ClientID: ptr.To(id.ClientID("upstream-client")),
+				RedirectURIs:   []string{"https://client.example.com/callback"},
+				PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: permissionSetID}}}
+			if tc.mandatory {
+				agent.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: serviceID,
+					RequirementType: storage.RequirementTypeMandatory, RequiredScopes: []string{"write"}}}
+			}
+			agents, grants := NewMockAgentRepository(), NewMockGrantRepository()
+			require.NoError(t, agents.Create(ctx, agent))
+			grant := &storage.UserGrant{ID: id.NewGrantID(), AgentID: agentID, Principal: principal}
+			if tc.included {
+				grant.GrantedPermissionSets = []storage.GrantedPermissionSetEntry{{PermissionSetID: permissionSetID,
+					IncludedServiceIDs: []id.ServiceID{serviceID}}}
+			}
+			require.NoError(t, grants.Create(ctx, grant))
+			sessions := NewMockSessionRepository()
+			sessions.findFunc = func(context.Context, id.Principal, id.ServiceID) (*storage.UserSession, error) {
+				return tc.session, nil
+			}
+			var records bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&records, nil))
+			svc := NewAuthorizationService(grants, sessions, NewAgentClientResolver(agents, logger),
+				&OAuth2Config{ModeStrategy: NewProxyModeStrategy(), PublicURL: "https://broker.example.com"},
+				logger, newTestSessionTokenService())
+			decision, err := svc.HandleAuthorization(ctx, &ports.AuthorizationRequest{
+				ClientID: id.ClientID(agentID.String()), RedirectURI: "https://client.example.com/callback",
+				ResponseType: "code", OriginalURL: "https://broker.example.com/oauth2/authorize",
+			}, principal)
+			require.NoError(t, err)
+			assert.Equal(t, "redirect_to_consent", decision.Action)
+			var event map[string]any
+			require.NoError(t, json.NewDecoder(&records).Decode(&event))
+			assert.Equal(t, tc.event, event["event"])
+			assert.Equal(t, tc.reason, event["reason"])
+			assert.Equal(t, serviceID.String(), event["service_id"])
+		})
+	}
 }

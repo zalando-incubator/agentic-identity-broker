@@ -275,17 +275,34 @@ type ImpersonationTokenIssuer interface {
 	IssueImpersonationToken(ctx context.Context, input ImpersonationMintInput) (string, error)
 }
 
-// UserDelegationStatus describes the active state of a principal's delegation to an agent.
-type UserDelegationStatus string
+// AuthorizationReadinessReason identifies why browser consent is required.
+// An empty reason means the user can proceed.
+type AuthorizationReadinessReason string
 
 const (
-	UserDelegationActive  UserDelegationStatus = "active"
-	UserDelegationMissing UserDelegationStatus = "missing"
-	UserDelegationExpired UserDelegationStatus = "expired"
+	ReadinessReady                      AuthorizationReadinessReason = ""
+	ReadinessGrantMissing               AuthorizationReadinessReason = "grant_missing"
+	ReadinessGrantExpired               AuthorizationReadinessReason = "grant_expired"
+	ReadinessPermissionSetUndeclared    AuthorizationReadinessReason = "permission_set_undeclared"
+	ReadinessIncludedSessionMissing     AuthorizationReadinessReason = "included_session_missing"
+	ReadinessIncludedSessionUnusable    AuthorizationReadinessReason = "included_session_unusable"
+	ReadinessMandatorySessionMissing    AuthorizationReadinessReason = "mandatory_session_missing"
+	ReadinessMandatorySessionUnusable   AuthorizationReadinessReason = "mandatory_session_unusable"
+	ReadinessMandatoryScopeInsufficient AuthorizationReadinessReason = "mandatory_scope_insufficient"
+	ReadinessGrantLookupFailed          AuthorizationReadinessReason = "grant_lookup_failed"
+	ReadinessSessionLookupFailed        AuthorizationReadinessReason = "session_lookup_failed"
 )
 
-// UserDelegationVerifier reports whether a principal has an active delegation to an agent.
-// A non-nil error means the status could not be determined and callers must fail closed.
-type UserDelegationVerifier interface {
-	VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (UserDelegationStatus, error)
+// AuthorizationReadiness carries a credential-free reason and affected entity.
+// A non-nil evaluation error always fails closed, regardless of the reason.
+type AuthorizationReadiness struct {
+	Reason          AuthorizationReadinessReason
+	ServiceID       id.ServiceID
+	PermissionSetID id.PermissionSetID
+}
+
+// AuthorizationReadinessVerifier evaluates human consent after the impersonation
+// rule authorizes the request. Agent-category subjects do not use this port.
+type AuthorizationReadinessVerifier interface {
+	EvaluateAuthorizationReadiness(ctx context.Context, principal id.Principal, agent *storage.Agent) (AuthorizationReadiness, error)
 }

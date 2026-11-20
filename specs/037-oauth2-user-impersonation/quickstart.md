@@ -118,6 +118,7 @@ observable proof.
 | 3 | Otherwise valid request but expired subject delegation | Same 403 body as missing delegation; audit records expired category |
 | 4 | Unverified subject with no delegation | 403 `access_denied`; no token |
 | 5 | Delegation verifier storage failure | 500 `server_error`; no token and no `error_uri` |
+| 6 | Active grant with stale permission set, missing or unusable selected session, or unmet mandatory service | Browser redirects to consent with sealed JWE state; human impersonation returns 403 `access_denied` and the consent URI in both body and safe Bearer challenge; after reconnection, both paths issue tokens. |
 
 ### Edge cases (additional `It()` blocks)
 
@@ -126,7 +127,7 @@ observable proof.
 - `requested_token_type` present but ≠ access-token type → 400 `invalid_request`.
 - actor identity equals subject identity → permitted; `act.sub == sub`.
 - signing-key metadata for an issuer unavailable → rules depending on it fall through; if none match, fail closed.
-- Missing or expired subject delegation → 403 `access_denied` with `<end-user-public-url>/consent/agent/<target-agent-id>` as `error_uri`; it is terminal and applies to unverified subjects. A delegation lookup failure → 500 `server_error` with no `error_uri`.
+- Missing, expired, or stale consent, or an unusable selected or mandatory service session → 403 `access_denied` with `<end-user-public-url>/agents/<target-uuid>` as `error_uri` and a Bearer `insufficient_scope` challenge. A repository error → 500 `server_error` without either recovery signal. Eligible self-agent issuance skips human consent.
 
 ---
 
@@ -146,8 +147,9 @@ curl -s -X POST http://localhost:8000/oauth2/token \
   --data-urlencode 'scope=read' | jq .
 # Decode access_token: sub == subject; agent_id and policy agent fields equal target; act.iss == validated actor-token issuer; act.sub == actor;
 # aud follows local token_claims_expression; scope == "read" when the target allows it.
-# Before this request, create an active UserGrant for the extracted subject and $TARGET_AGENT_ID.
-# Without that delegation, expect 403 access_denied with error_uri=$ENDUSER_PUBLIC_URL/consent/agent/$TARGET_AGENT_ID.
+# Before this request, make sure that the extracted human subject and target have an active grant and usable selected/mandatory service sessions.
+# End-User API 2.0.0: an active agent-level grant without complete browser consent no longer permits human minting.
+# Otherwise expect 403 access_denied with error_uri=$ENDUSER_PUBLIC_URL/agents/$TARGET_AGENT_ID and a Bearer insufficient_scope challenge.
 ```
 
 Use `audience=$IMPERSONATION_AUDIENCE_PREFIX/$TARGET_AGENT_CANONICAL_ID` to address the same target by canonical ID.

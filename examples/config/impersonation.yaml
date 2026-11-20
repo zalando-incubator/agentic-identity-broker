@@ -81,10 +81,11 @@ oauth2_authorization_server:
     # registered. This does not set the issued token's `aud`; local token_claims_expression remains authoritative.
     audience_prefix: "https://broker.example.com/impersonation"
 
-    # Every successful impersonation also requires an active UserGrant for the subject extracted
-    # from subject_token and the audience-selected target agent. This is mandatory for every
-    # rule, including verification:none; a missing or expired grant returns access_denied with
-    # an error_uri to that target agent's existing consent-management page.
+    # After a rule authorizes a human subject, browser-equivalent consent readiness is required:
+    # an active grant with declared permission sets, usable included-service sessions, and
+    # mandatory service sessions with required scopes. This includes verification:none humans.
+    # An unmet condition returns 403 access_denied with the target agent's consent error_uri
+    # and a Bearer insufficient_scope challenge. Eligible agent-category subjects are exempt.
 
     # CR-002: non-empty, ordered; evaluated first-match (FR-004a). Both rules
     # below trust the SAME issuer (https://idp.internal.example.com), demonstrating

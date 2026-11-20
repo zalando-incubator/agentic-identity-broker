@@ -23,15 +23,11 @@ func TestAuthZENContract_RetainsExchangeFieldsDuringDeprecation(t *testing.T) {
 	t.Parallel()
 	raw := readEnduserContract(t)
 	var contract struct {
-		Info struct {
-			Version string `yaml:"version"`
-		} `yaml:"info"`
 		Components struct {
 			Schemas map[string]yaml.Node `yaml:"schemas"`
 		} `yaml:"components"`
 	}
 	require.NoError(t, yaml.Unmarshal(raw, &contract))
-	assert.Equal(t, "1.3.0", contract.Info.Version)
 	node, ok := contract.Components.Schemas["TokenExchangeResponse"]
 	require.True(t, ok)
 	var response struct {

@@ -466,7 +466,7 @@ func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trac
 	}
 }
 
-// handleTokenExchangeError keeps recovery links in the direct OAuth response only.
+// handleTokenExchangeError sends recovery links in the direct OAuth response.
 func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err error) error {
 	status := http.StatusInternalServerError
 	errBody := map[string]string{
@@ -481,8 +481,28 @@ func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err
 		if exchangeErr.ErrorURI() != "" {
 			errBody["error_uri"] = exchangeErr.ErrorURI()
 		}
+		if status == http.StatusForbidden && exchangeErr.Code() == tokenexchange.AccessDeniedError &&
+			exchangeErr.Diagnostic().ExchangeKind() == tokenexchange.ExchangeImpersonation &&
+			exchangeErr.Diagnostic().RecoveryAction() == tokenexchange.RecoveryReconsent &&
+			exchangeErr.Diagnostic().RecoveryTarget() == tokenexchange.TargetConsent && exchangeErr.ErrorURI() != "" {
+			challenge := `Bearer error="insufficient_scope"`
+			if validBearerChallengeURI(exchangeErr.ErrorURI()) {
+				challenge += `, error_uri="` + exchangeErr.ErrorURI() + `"`
+			}
+			w.Header().Set("WWW-Authenticate", challenge)
+		}
 	}
 	return writeTokenExchangeErrorJSON(w, status, errBody)
+}
+
+// RFC 6750 Section 3 permits only ASCII %x21 / %x23-5B / %x5D-7E in error_uri.
+func validBearerChallengeURI(uri string) bool {
+	for i := range len(uri) {
+		if uri[i] < 0x21 || uri[i] > 0x7e || uri[i] == '"' || uri[i] == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 func writeTokenExchangeErrorJSON(w http.ResponseWriter, status int, body map[string]string) error {

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
@@ -215,132 +216,69 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	}
 
-	// Step 2: Check if user has active grant for this agent
-	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agent.ID)
-	if err != nil && !errors.Is(err, ports.ErrNotFound) {
-		// redirect_uri is validated above so a redirect-with-error is safe here.
-		errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
-		return &ports.AuthorizationDecision{
-			Action:      "error",
-			ErrorCode:   "server_error",
-			ErrorDesc:   "Failed to check grant",
-			RedirectURL: errRedirect,
-		}, nil
-	}
-
-	// Step 3: Determine action based on grant status
-	needsConsent := grant == nil || !grant.IsActive()
-	if !needsConsent {
-		for _, entry := range grant.GrantedPermissionSets {
-			if !slices.ContainsFunc(agent.PermissionSets, func(declared storage.AgentPermissionSetEntry) bool {
-				return declared.PermissionSetID == entry.PermissionSetID
-			}) {
-				needsConsent = true
-				break
-			}
-		}
-	}
-	if needsConsent {
-		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
-		if buildErr != nil {
-			if s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
-			}
-			errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
-			return &ports.AuthorizationDecision{
-				Action:      "error",
-				ErrorCode:   "server_error",
-				ErrorDesc:   "Failed to initiate consent session",
-				RedirectURL: errRedirect,
-			}, nil
-		}
-		return ports.ConsentDecision(consentURL), nil
-	}
-
-	// Step 4: Check that every service included in the grant has a usable session.
-	// A missing or unusable session sends the user to consent to reconnect or deselect it.
-	unusableServiceID, unusableReason, err := s.anyDelegatedSessionUnusable(ctx, principal, grant.GrantedPermissionSets)
+	readiness, err := consent.EvaluateAuthorizationReadiness(ctx, s.grantRepo, s.sessionRepo, principal, agent)
 	if err != nil {
-		errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
+		if s.logger != nil {
+			if readiness.ServiceID.IsZero() {
+				s.logger.ErrorContext(ctx, "authorization readiness check failed", "agent_id", agent.ID, "reason", readiness.Reason)
+			} else {
+				s.logger.ErrorContext(ctx, "authorization readiness check failed", "agent_id", agent.ID,
+					"service_id", readiness.ServiceID, "reason", readiness.Reason)
+			}
+		}
 		return &ports.AuthorizationDecision{
-			Action:      "error",
-			ErrorCode:   "server_error",
-			ErrorDesc:   "Failed to check session status",
-			RedirectURL: errRedirect,
+			Action: "error", ErrorCode: "server_error",
+			ErrorDesc:   "Failed to check authorization readiness",
+			RedirectURL: s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error"),
 		}, nil
 	}
-	if unusableReason != "" {
+
+	switch readiness.Reason {
+	case "":
+	case ports.ReadinessGrantMissing, ports.ReadinessGrantExpired, ports.ReadinessPermissionSetUndeclared:
+	case ports.ReadinessIncludedSessionMissing, ports.ReadinessIncludedSessionUnusable:
 		if s.logger != nil {
-			s.logger.WarnContext(ctx,
-				"delegated session unusable",
-				"event", "oauth2.delegated_session.unusable",
-				"agent_id", agent.ID,
-				"principal", principal,
-				"service_id", unusableServiceID,
-				"reason", unusableReason,
-			)
+			reason := "session_missing"
+			if readiness.Reason == ports.ReadinessIncludedSessionUnusable {
+				reason = "reauthentication_required"
+			}
+			s.logger.WarnContext(ctx, "delegated session unusable",
+				"event", "oauth2.delegated_session.unusable", "agent_id", agent.ID,
+				"principal", principal, "service_id", readiness.ServiceID, "reason", reason)
 		}
+	case ports.ReadinessMandatorySessionMissing, ports.ReadinessMandatorySessionUnusable, ports.ReadinessMandatoryScopeInsufficient:
+		if s.logger != nil {
+			reason := "session_not_found"
+			switch readiness.Reason {
+			case ports.ReadinessMandatorySessionUnusable:
+				reason = "reauthentication_required"
+			case ports.ReadinessMandatoryScopeInsufficient:
+				reason = "scope_mismatch"
+			}
+			s.logger.WarnContext(ctx, "mandatory requirement not met",
+				"event", "oauth2.mandatory_requirement.not_met", "agent_id", agent.ID,
+				"service_id", readiness.ServiceID, "reason", reason)
+		}
+	default:
+		if s.logger != nil {
+			s.logger.ErrorContext(ctx, "unknown authorization readiness reason", "agent_id", agent.ID)
+		}
+		return ports.ErrorDecision("server_error", "Failed to check authorization readiness",
+			s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")), nil
+	}
+	if readiness.Reason != "" {
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 		if buildErr != nil {
 			if s.logger != nil {
 				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
 			}
-			errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 			return &ports.AuthorizationDecision{
-				Action:      "error",
-				ErrorCode:   "server_error",
+				Action: "error", ErrorCode: "server_error",
 				ErrorDesc:   "Failed to initiate consent session",
-				RedirectURL: errRedirect,
+				RedirectURL: s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error"),
 			}, nil
 		}
 		return ports.ConsentDecision(consentURL), nil
-	}
-
-	// Step 5: Validate mandatory service requirements.
-	if len(agent.ServiceRequirements) > 0 {
-		err := s.validateMandatoryRequirements(ctx, principal.String(), agent)
-		if err != nil {
-			var storageErr *storage.StorageError
-			if errors.As(err, &storageErr) {
-				if s.logger != nil {
-					s.logger.ErrorContext(ctx,
-						"mandatory requirement check failed",
-						"event", "oauth2.mandatory_requirement.check_failed",
-						"agent_id", agent.ID,
-						"error", err.Error(),
-					)
-				}
-				errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
-				return &ports.AuthorizationDecision{
-					Action:      "error",
-					ErrorCode:   "server_error",
-					ErrorDesc:   "Failed to validate service requirements",
-					RedirectURL: errRedirect,
-				}, nil
-			}
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"mandatory requirement not met",
-					"event", "oauth2.mandatory_requirement.not_met",
-					"agent_id", agent.ID,
-					"error", err.Error(),
-				)
-			}
-			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
-			if buildErr != nil {
-				if s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
-				}
-				errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
-				return &ports.AuthorizationDecision{
-					Action:      "error",
-					ErrorCode:   "server_error",
-					ErrorDesc:   "Failed to initiate consent session",
-					RedirectURL: errRedirect,
-				}, nil
-			}
-			return ports.ConsentDecision(consentURL), nil
-		}
 	}
 
 	// Active grant exists and all mandatory requirements satisfied — proceed.
@@ -532,137 +470,4 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 	}
 
 	return metadata, nil
-}
-
-// anyDelegatedSessionUnusable reports the first service included in the grant whose
-// session is missing or no longer usable, with the reason. Only services listed in the
-// IncludedServiceIDs of a granted permission set entry are checked (FR-022 of Feature 019),
-// so sessions for services the user did not include never force consent.
-func (s *AuthorizationService) anyDelegatedSessionUnusable(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (id.ServiceID, string, error) {
-	relevantServices := make(map[id.ServiceID]bool)
-	for _, entry := range grantEntries {
-		for _, svcID := range entry.IncludedServiceIDs {
-			relevantServices[svcID] = true
-		}
-	}
-
-	// Use per-service lookup so sessions that require reauthentication stay visible.
-	// ListActiveByPrincipal filters those out; FindByPrincipalAndService returns them.
-	for svcID := range relevantServices {
-		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, svcID)
-		if err != nil {
-			return id.ServiceID{}, "", fmt.Errorf("failed to find session for service %s: %w", svcID, err)
-		}
-		if session == nil {
-			return svcID, "session_missing", nil
-		}
-		if session.RequiresReauthentication() {
-			return svcID, "reauthentication_required", nil
-		}
-	}
-	return id.ServiceID{}, "", nil
-}
-
-// validateMandatoryRequirements checks that user has active sessions for all mandatory services
-// with required scopes. Returns error if any mandatory requirement is not satisfied.
-// Optional requirements are ignored and never block authorization.
-func (s *AuthorizationService) validateMandatoryRequirements(
-	ctx context.Context,
-	principal string,
-	agent *storage.Agent,
-) error {
-	// If agent has no service requirements, nothing to validate
-	if len(agent.ServiceRequirements) == 0 {
-		return nil
-	}
-
-	// Check each mandatory requirement
-	for _, req := range agent.ServiceRequirements {
-		// Skip optional requirements
-		if !req.IsMandatory() {
-			continue
-		}
-
-		// Verify user has active session for this service.
-		// FindByPrincipalAndService returns (nil, nil) when no session exists — that is
-		// not an error condition per the port contract; check nil separately.
-		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, id.Principal(principal), req.ServiceID)
-		if err != nil {
-			return fmt.Errorf("failed to check session for service %s: %w", req.ServiceID, err)
-		}
-		if session == nil {
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"mandatory requirement not met",
-					"event", "oauth2.mandatory_requirement.not_met",
-					"agent_id", agent.ID,
-					"service_id", req.ServiceID,
-					"reason", "session_not_found",
-				)
-			}
-			return fmt.Errorf("session_required: user does not have required session for service %s", req.ServiceID)
-		}
-
-		if session.RequiresReauthentication() {
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"mandatory requirement not met",
-					"event", "oauth2.mandatory_requirement.not_met",
-					"agent_id", agent.ID,
-					"service_id", req.ServiceID,
-					"reason", "reauthentication_required",
-				)
-			}
-			return fmt.Errorf("reauthentication_required: user session requires reauthentication for service %s", req.ServiceID)
-		}
-
-		// Check if session scopes include all required scopes (superset check)
-		if !s.hasRequiredScopes(session.Scope, req.RequiredScopes) {
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"mandatory requirement not met",
-					"event", "oauth2.mandatory_requirement.not_met",
-					"agent_id", agent.ID,
-					"service_id", req.ServiceID,
-					"reason", "scope_mismatch",
-					"required_scopes", req.RequiredScopes,
-					"actual_scopes", session.Scope,
-				)
-			}
-			return fmt.Errorf("scope_mismatch: user session lacks required scopes for service %s", req.ServiceID)
-		}
-	}
-
-	// All mandatory requirements satisfied
-	return nil
-}
-
-// hasRequiredScopes checks if sessionScopes is a superset of requiredScopes (case-sensitive).
-// Returns true if sessionScopes contains all scopes in requiredScopes, allowing for extra scopes.
-// Returns true if requiredScopes is empty or nil (no requirements).
-func (s *AuthorizationService) hasRequiredScopes(sessionScopes []string, requiredScopes []string) bool {
-	// If no required scopes, always pass
-	if len(requiredScopes) == 0 {
-		return true
-	}
-
-	// If required scopes exist but session has none, fail
-	if len(sessionScopes) == 0 {
-		return false
-	}
-
-	// Build map of session scopes for efficient lookup
-	sessionScopeMap := make(map[string]bool)
-	for _, scope := range sessionScopes {
-		sessionScopeMap[scope] = true
-	}
-
-	// Check that all required scopes exist in session scopes
-	for _, required := range requiredScopes {
-		if !sessionScopeMap[required] {
-			return false
-		}
-	}
-
-	return true
 }
