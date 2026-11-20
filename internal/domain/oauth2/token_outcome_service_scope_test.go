@@ -145,6 +145,14 @@ func TestTokenOutcomeServiceValidatesBeforeForwarding(t *testing.T) {
 			assert.Equal(t, tc.want, failure)
 			if tc.want != ports.TokenProxyNoFailure {
 				require.Error(t, err)
+				switch tc.name {
+				case "malformed", "malformed before lookup":
+					assert.ErrorIs(t, err, servicescope.ErrMalformedScope)
+				case "unknown":
+					assert.ErrorIs(t, err, servicescope.ErrUnknownService)
+				case "ineligible":
+					assert.ErrorIs(t, err, servicescope.ErrServiceNotEligible)
+				}
 				assert.Empty(t, proxy.forms, "refusal cannot consume upstream credentials")
 				_, failure, err = svc.Proxy(context.Background(), url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"synthetic-refresh"}, "scope": {"openid"}}, "application/x-www-form-urlencoded", resolution)
 				require.NoError(t, err)

@@ -41,7 +41,7 @@ func (s *TokenOutcomeService) Proxy(ctx context.Context, form url.Values, conten
 		for _, token := range strings.Fields(form.Get("scope")) {
 			_, kind := servicescope.Parse(token, s.publicURL)
 			if kind == servicescope.KindMalformed {
-				return nil, ports.TokenProxyScopeNotPermitted, errors.New(descriptionServiceScopeNotPermitted)
+				return nil, ports.TokenProxyScopeNotPermitted, servicescope.ErrMalformedScope
 			}
 			if kind == servicescope.KindVirtual {
 				hasBrokerScope = true
@@ -58,7 +58,7 @@ func (s *TokenOutcomeService) Proxy(ctx context.Context, form url.Values, conten
 		}
 		if _, err := s.resolver.Resolve(ctx, form.Get("scope"), agent, nil); err != nil {
 			if servicescope.IsPermissionFailure(err) {
-				return nil, ports.TokenProxyScopeNotPermitted, errors.New(descriptionServiceScopeNotPermitted)
+				return nil, ports.TokenProxyScopeNotPermitted, err
 			}
 			return nil, ports.TokenProxyScopeLookupFailed, errors.New("service scope lookup failed")
 		}

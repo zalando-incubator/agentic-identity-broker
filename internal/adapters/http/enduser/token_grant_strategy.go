@@ -10,11 +10,13 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -59,8 +61,22 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 	if err != nil {
 		switch failure {
 		case ports.TokenProxyScopeNotPermitted:
+			span.SetAttributes(attribute.String("error.type", string(proxyScopeErrorDefinitive)), attribute.Int("http.response.status_code", http.StatusBadRequest))
+			span.SetStatus(codes.Error, "requested service scope rejected")
+			if s.logger != nil {
+				s.logger.WarnContext(ctx, "requested service scope rejected",
+					"event", "oauth2.requested_service.scope_rejected",
+					"agent_id", resolution.AgentID, "reason", proxyScopeRejectionReason(err), "error_kind", proxyScopeErrorDefinitive)
+			}
 			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_scope", "requested service scope is not permitted")
 		case ports.TokenProxyScopeLookupFailed:
+			span.SetAttributes(attribute.String("error.type", string(proxyScopeErrorTransient)), attribute.Int("http.response.status_code", http.StatusInternalServerError))
+			span.SetStatus(codes.Error, "requested service resolution failed")
+			if s.logger != nil {
+				s.logger.ErrorContext(ctx, "requested service resolution failed",
+					"event", "oauth2.requested_service.resolution_failed",
+					"agent_id", resolution.AgentID, "reason", proxyScopeDependencyFailed, "error_kind", proxyScopeErrorTransient)
+			}
 			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "service scope lookup failed")
 		case ports.TokenProxyClientMissing:
 			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent has no upstream client_id configured")
@@ -146,6 +162,32 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 		if s.logger != nil {
 			s.logger.ErrorContext(r.Context(), "failed to stream upstream token response", "error", err)
 		}
+	}
+}
+
+type proxyScopeReason string
+type proxyScopeErrorKind string
+
+const (
+	proxyScopeMalformed        proxyScopeReason    = "malformed_scope"
+	proxyScopeUnknown          proxyScopeReason    = "unknown_service"
+	proxyScopeNotEligible      proxyScopeReason    = "service_not_eligible"
+	proxyScopeBindingMismatch  proxyScopeReason    = "binding_mismatch"
+	proxyScopeDependencyFailed proxyScopeReason    = "dependency_failed"
+	proxyScopeErrorDefinitive  proxyScopeErrorKind = "definitive"
+	proxyScopeErrorTransient   proxyScopeErrorKind = "transient"
+)
+
+func proxyScopeRejectionReason(err error) proxyScopeReason {
+	switch {
+	case errors.Is(err, servicescope.ErrMalformedScope):
+		return proxyScopeMalformed
+	case errors.Is(err, servicescope.ErrUnknownService):
+		return proxyScopeUnknown
+	case errors.Is(err, servicescope.ErrServiceNotEligible):
+		return proxyScopeNotEligible
+	default:
+		return proxyScopeBindingMismatch
 	}
 }
 
