@@ -151,7 +151,10 @@ Unknown-ID bindings create no services. Each filesystem service uses only its ow
 The broker infers no binding from a service UUID, display name, client ID, or filename.
 
 Register the service with `credential_source: "filesystem"`, a canonical ID, and neither inline credential field.
-See [source-specific administration](/docs/guides/manage-agents-and-services#register-and-update-a-filesystem-service) for complete create and PUT examples.
+See
+[source-specific administration](/docs/guides/manage-agents-and-services#register-and-update-a-filesystem-service)
+for the operator workflow, and the [Admin API reference](/api/admin#tag/Services)
+for complete create and PUT examples.
 Stored services ignore bindings, including unusable bindings. Filesystem services fail closed when their required binding or file is unavailable.
 Public, CIMD confidential, and Google services cannot select filesystem mode.
 
