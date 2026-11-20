@@ -124,6 +124,33 @@ func TestImplementation_InitiateOAuth2Flow_Success(t *testing.T) {
 	assert.NotEmpty(t, query.Get("state"), "should include state token")
 }
 
+func TestImplementation_InitiateOAuth2Flow_DefaultReturnURI(t *testing.T) {
+	ctx := context.Background()
+	service, providerService := setupImplementedService(t)
+	principal := id.Principal("user@example.com")
+	serviceID := id.NewServiceID()
+	require.NoError(t, providerService.Create(ctx, createTestService(serviceID)))
+
+	for _, tc := range []struct {
+		name, redirectURI, want string
+	}{
+		{"default", "", "https://broker.example.com/sessions"},
+		{"explicit", "https://broker.example.com/agents?tab=services", "https://broker.example.com/agents?tab=services"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, tc.redirectURI)
+			require.NoError(t, err)
+			claims, err := service.ValidateStateToken(result.StateToken, principal, serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, claims.RedirectURI)
+			assert.Empty(t, claims.ConsentStateID)
+			authorizeURL, err := url.Parse(result.AuthorizationURL)
+			require.NoError(t, err)
+			assert.Equal(t, "https://broker.example.com/api/third-party/"+serviceID.String()+"/oauth2/callback", authorizeURL.Query().Get("redirect_uri"))
+		})
+	}
+}
+
 func TestImplementation_StateTokenValidation_Success(t *testing.T) {
 	ctx := context.Background()
 	service, providerService := setupImplementedService(t)

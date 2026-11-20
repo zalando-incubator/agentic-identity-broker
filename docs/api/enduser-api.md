@@ -2,6 +2,26 @@
 
 The end-user API serves OAuth2 authorization, token, and metadata requests. The broker serves it on the end-user listener.
 
+## Third-Party Service Login
+
+To verify a configured service in an authenticated browser, open:
+
+```text
+https://broker.example.com/api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize
+```
+
+An omitted or empty `redirect_uri` returns to the configured public URL's `/sessions`
+page after successful provider login, with `success=true` and `service_id` query
+parameters. The default comes from `server.enduser.public_url`, not the request
+Host or forwarded headers. An explicit return URI must have that configured origin.
+
+The provider still receives the broker's callback endpoint as its OAuth2
+`redirect_uri`. Consent-selection form POSTs still require both `redirect_uri`
+and `consent_state_id`; this default applies only to GET initiation, not the
+broker authorization server's `/oauth2/authorize` endpoint. See the
+[canonical OpenAPI](../../api/enduser/openapi.yaml) and
+[complete example journey](../../specs/008-thirdparty-oauth2-sessions/spec.md#journey-3--alice-manually-verifies-github-setup-user-story-2-scenario-12-212).
+
 ## CIMD Client Authentication
 
 In local or hybrid mode with CIMD enabled, a pre-registered CIMD client can authenticate at the token endpoint with `private_key_jwt`. The client signs a short-lived assertion with a key from its metadata document. The broker requires a fresh assertion for each authorization-code exchange and refresh request.

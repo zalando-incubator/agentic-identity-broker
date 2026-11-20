@@ -94,9 +94,9 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		return resp, body
 	}
 
-	startConnect := func() *url.URL {
+	startConnectWithQuery := func(query string) *url.URL {
 		resp, err := enduserServer.AuthenticatedGET(
-			"/api/third-party/"+githubID.String()+"/oauth2/authorize?redirect_uri="+url.QueryEscape("http://localhost:8000/sessions"),
+			"/api/third-party/"+githubID.String()+"/oauth2/authorize"+query,
 			principal,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -114,6 +114,10 @@ var _ = Describe("Third-Party Session Reliability", func() {
 		return callbackURL
 	}
 
+	startConnect := func() *url.URL {
+		return startConnectWithQuery("?redirect_uri=" + url.QueryEscape("http://localhost:8000/sessions"))
+	}
+
 	finishConnect := func(callbackURL *url.URL) *url.URL {
 		callbackResp, err := enduserServer.AuthenticatedGET(callbackURL.RequestURI(), principal)
 		Expect(err).NotTo(HaveOccurred())
@@ -127,6 +131,25 @@ var _ = Describe("Third-Party Session Reliability", func() {
 	completeConnect := func() *url.URL {
 		return finishConnect(startConnect())
 	}
+
+	// US2-S12 from specs/008-thirdparty-oauth2-sessions/spec.md
+	It("[US2-S12] completes bare service login and returns to configured session management", func() {
+		for _, query := range []string{"", "?redirect_uri="} {
+			location := finishConnect(startConnectWithQuery(query))
+			Expect(location.Scheme + "://" + location.Host + location.Path).To(Equal(config.Server.EndUser.PublicURL + "/sessions"))
+			Expect(location.Query().Get("success")).To(Equal("true"))
+			Expect(location.Query().Get("service_id")).To(Equal(githubID.String()))
+			Expect(location.Query().Has("consent_state_id")).To(BeFalse())
+
+			session, err := testStorage.UserSessions().FindByPrincipalAndService(context.Background(), id.Principal(principal), githubID)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(session).NotTo(BeNil())
+			Expect(session.EncryptedAccessToken).NotTo(BeEmpty())
+			resp, body := exchange()
+			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
+			Expect(body["access_token"]).NotTo(BeEmpty())
+		}
+	})
 
 	// US5-S6 from specs/013-token-exchange/spec.md
 	It("[US5-S6] survives a transient provider outage during refresh without demanding re-authentication", func() {

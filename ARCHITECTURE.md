@@ -186,6 +186,8 @@ Domain errors expose immutable, typed, credential-free diagnostics. Telemetry ex
 
 **Service-specific session recovery ([ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
 
+**Manual third-party login ([ADR 047](adrs/047-thirdparty-default-return-uri.md))**: A browser GET to a service's authorize endpoint may omit `redirect_uri` or send it empty. The session domain defaults the sealed return URI to the configured public URL's `/sessions` page, never a request-derived origin. Explicit return URI validation, the provider callback URI, and POST consent-selection requirements are unchanged.
+
 #### 3.1.4. End-to-End Testing Architecture
 
 The E2E suites exercise backend HTTP contracts, ExtProc processing, and browser journeys.

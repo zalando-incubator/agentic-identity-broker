@@ -127,37 +127,39 @@ func (h *Handler) InitiateFlow(w http.ResponseWriter, r *http.Request) {
 	} else {
 		redirectURI = r.URL.Query().Get("redirect_uri")
 	}
-	if redirectURI == "" {
+	if redirectURI == "" && r.Method == http.MethodPost {
 		h.logger.WarnContext(ctx, "missing redirect_uri", "service_id", safeServiceIDStr)
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "redirect_uri is required")
 		return
 	}
 
-	redirectURL, err := url.Parse(redirectURI)
-	if err != nil {
-		h.logger.WarnContext(ctx, "invalid redirect_uri", "redirect_uri", redirectURI, "error", err)
-		writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri is not a valid URL")
-		return
+	if redirectURI != "" {
+		redirectURL, err := url.Parse(redirectURI)
+		if err != nil {
+			h.logger.WarnContext(ctx, "invalid redirect_uri", "redirect_uri", redirectURI, "error", err)
+			writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri is not a valid URL")
+			return
+		}
+		callbackURL, err := url.Parse(h.service.GetCallbackBaseURL())
+		if err != nil {
+			h.logger.ErrorContext(ctx, "failed to parse callback base URL", "callback_url", h.service.GetCallbackBaseURL(), "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "server_error", "failed to validate redirect_uri")
+			return
+		}
+		if redirectURL.Host != callbackURL.Host || redirectURL.Scheme != callbackURL.Scheme {
+			h.logger.WarnContext(ctx, "redirect_uri origin mismatch",
+				"redirect_host", redirectURL.Host,
+				"configured_host", callbackURL.Host,
+				"service_id", serviceIDStr)
+			writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri must be on the same origin as the configured public URL")
+			return
+		}
+		redirectQuery := redirectURL.Query()
+		redirectQuery.Del("consent_state")
+		redirectQuery.Del("consent_state_id")
+		redirectURL.RawQuery = redirectQuery.Encode()
+		redirectURI = redirectURL.String()
 	}
-	callbackURL, err := url.Parse(h.service.GetCallbackBaseURL())
-	if err != nil {
-		h.logger.ErrorContext(ctx, "failed to parse callback base URL", "callback_url", h.service.GetCallbackBaseURL(), "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "server_error", "failed to validate redirect_uri")
-		return
-	}
-	if redirectURL.Host != callbackURL.Host || redirectURL.Scheme != callbackURL.Scheme {
-		h.logger.WarnContext(ctx, "redirect_uri origin mismatch",
-			"redirect_host", redirectURL.Host,
-			"configured_host", callbackURL.Host,
-			"service_id", serviceIDStr)
-		writeJSONError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uri must be on the same origin as the configured public URL")
-		return
-	}
-	redirectQuery := redirectURL.Query()
-	redirectQuery.Del("consent_state")
-	redirectQuery.Del("consent_state_id")
-	redirectURL.RawQuery = redirectQuery.Encode()
-	redirectURI = redirectURL.String()
 
 	var result *oauth2session.InitiateFlowResult
 	if consentStateID != "" {

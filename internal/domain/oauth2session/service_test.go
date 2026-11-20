@@ -1055,10 +1055,7 @@ func TestInitiateOAuth2Flow_ServiceNotFound(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestInitiateOAuth2Flow_InvalidRedirectURI(t *testing.T) {
-	// Note: redirect_uri validation for host matching and format is done at the HTTP handler level.
-	// The service only requires that redirect_uri is non-empty (validated in state token claims).
-	// This test focuses on what the service actually validates.
+func TestInitiateOAuth2FlowWithConsentState_RequiresRedirectURI(t *testing.T) {
 
 	ctx := context.Background()
 	service, _, providerService := setupService(t)
@@ -1070,14 +1067,12 @@ func TestInitiateOAuth2Flow_InvalidRedirectURI(t *testing.T) {
 
 	principal := id.Principal("user@example.com")
 
-	// Test 1: Empty redirect_uri fails at state token claims validation
-	result, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "")
-	assert.Error(t, err, "empty redirect_uri should fail validation")
+	consentStateID := "550e8400-e29b-41d4-a716-446655440000"
+	result, err := service.InitiateOAuth2FlowWithConsentState(ctx, principal, serviceID, "", consentStateID)
+	assert.Error(t, err, "consent-state flow must not default an empty redirect_uri")
 	assert.Nil(t, result)
 
-	// Test 2: Non-empty redirect_uri succeeds at service level
-	// (handler-level validation for host matching would happen separately in HTTP layer)
-	result, err = service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://example.com/callback")
+	result, err = service.InitiateOAuth2FlowWithConsentState(ctx, principal, serviceID, "https://example.com/callback", consentStateID)
 	assert.NoError(t, err, "valid non-empty redirect_uri should succeed")
 	assert.NotNil(t, result)
 	assert.NotEmpty(t, result.StateToken)
