@@ -56,7 +56,13 @@ interface AlertState {
 export const ThirdPartySessionsPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { sessions, loading, error, refetch } = useSessions();
+  const { sessions: loadedSessions, loading, error, refetch } = useSessions();
+  const [terminatedSessionIds, setTerminatedSessionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const sessions = terminatedSessionIds.size === 0
+    ? loadedSessions
+    : loadedSessions.filter((session) => !terminatedSessionIds.has(session.id));
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
@@ -154,7 +160,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
   };
 
   const handleTerminationConfirm = async () => {
-    if (!selectedSessionId) return;
+    if (!selectedSessionId || !selectedSessionDetails) return;
 
     try {
       setTerminatingLoading(true);
@@ -162,6 +168,9 @@ export const ThirdPartySessionsPage: React.FC = () => {
 
       // Call API to terminate session (DELETE endpoint)
       await sessionsApi.terminateSession(selectedSessionId);
+      setTerminatedSessionIds((previous) =>
+        new Set(previous).add(selectedSessionDetails.session.id),
+      );
 
       // Close dialog and refetch sessions
       setSelectedSessionId(null);
@@ -227,7 +236,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
   };
 
   // Loading state with skeleton cards
-  if (loading) {
+  if (loading && sessions.length === 0) {
     return (
       <AppLayout>
         <PageTransition>
@@ -427,6 +436,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
           onClose={handleTerminationCancel}
           onConfirm={handleTerminationConfirm}
           serviceName={selectedSessionDetails.session.service_display_name}
+          serviceIconSvg={selectedSessionDetails.session.service_icon_svg}
           dependentAgents={selectedSessionDetails.dependent_agents || []}
           loading={terminatingLoading}
           error={terminationError}

@@ -125,3 +125,188 @@ Content-Type: application/json
 A detection failure returns `503 service_unavailable`. `GET /api/approvals` authenticates only the client assertion and is unaffected.
 
 The [configuration reference](../configuration.md#subject-categories-and-self-agent-issuance), [concepts](../concepts/token-exchange.md#agent-subject-boundary), [field reference](../reference/token-exchange.md#agent-subject-boundary) and [example configurations](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md#impersonation-agent-subjectyaml--signed-self-agent-issuance) describe the same contract.
+
+## Service Icons
+
+The approved icon contract extends existing service, consent, and session JSON responses.
+The [Admin OpenAPI](../../api/admin/openapi.yaml) and [end-user OpenAPI](../../api/enduser/openapi.yaml) are canonical.
+No new runtime configuration, image deployment, or image endpoint is required.
+
+### Fields and access boundaries
+
+| API representation | Optional field | Source |
+| --- | --- | --- |
+| Admin service create/update input | `icon_svg` | Operator-supplied SVG document |
+| Admin service create/update/detail/list response | `icon_svg` | Exact accepted source |
+| Consent `data.services[]` (`ServiceRequirementForUser`) | `iconSvg` | Current service source |
+| Session summary (`UserSessionSummary`) | `service_icon_svg` | Current service source, not a session snapshot |
+| Session details (`SessionStatus`) | Inherited `service_icon_svg` | Same current service projection |
+
+Admin requests retain the existing trusted-proxy boundary.
+The proxy must authenticate the caller and enforce administrator privilege before it forwards a request.
+The broker does not identify administrators. The icon feature adds no broker-side Admin authentication requirement.
+The examples use the configured proxy principal header, `X-Remote-User`.
+
+Consent and session routes retain principal authentication, ownership checks, and existing error envelopes.
+Unauthenticated requests return the route's existing `401` response without SVG bytes.
+Existing JSON caching rules remain unchanged. The feature adds no public or shared cache.
+
+Consent icons follow the existing filtering of `data.services`.
+Permission-set service rows reuse that metadata, rather than additional SVG copies on scope records.
+The feature adds no service catalog. Service icons do not use a remote URL fallback.
+
+### Create, replace, preserve, and clear
+
+| `icon_svg` input | Create | Otherwise valid full-service PUT |
+| --- | --- | --- |
+| Omitted | No icon | Preserve the current icon |
+| `null` | No icon | Clear the current icon |
+| Permitted string | Store exact source | Replace with exact source |
+
+An empty or whitespace-only string is invalid, not a clear operation.
+A number, object, array, URL, path, or data URI is also invalid.
+The server omits absent source from responses. It returns configured source exactly after JSON decoding, without normalization or sanitization.
+
+This example creates Atlas Files with original SVG artwork:
+
+```http
+POST /api/services HTTP/1.1
+Host: admin.broker.example.com
+X-Remote-User: olivia@example.com
+Content-Type: application/json
+
+{
+  "display_name": "Atlas Files",
+  "client_id": "atlas-broker-public",
+  "token_endpoint_auth_method": "none",
+  "issuer_uri": "https://atlas.example.com",
+  "discovery": {"enable_discovery": false},
+  "endpoints": {
+    "authorize_endpoint": "https://atlas.example.com/authorize",
+    "token_endpoint": "https://atlas.example.com/token"
+  },
+  "scopes": [{"scope_value": "files.read", "description": "Read files"}],
+  "icon_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M4 4h16v16H4z\"/></svg>"
+}
+```
+
+Creation returns `201 Created` and the direct service object, without a `data` envelope.
+`GET /api/services/{service-id}` returns the same `icon_svg` value.
+`GET /api/services` returns a direct array whose configured service entries include that value.
+The following response excerpt omits unrelated service properties:
+
+```json
+{
+  "id": "880e8400-e29b-41d4-a716-446655440010",
+  "display_name": "Atlas Files",
+  "icon_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill=\"currentColor\" d=\"M4 4h16v16H4z\"/></svg>"
+}
+```
+
+An icon update still uses a complete, valid full-service replacement, not a partial PATCH.
+Send `PUT /api/services/880e8400-e29b-41d4-a716-446655440010` with the headers and body fields from the POST example.
+Replace `icon_svg` with the following value:
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle fill="currentColor" cx="12" cy="12" r="8"/></svg>
+```
+
+A successful update returns `200 OK`, the current strong service `ETag`, and the exact replacement source.
+For preservation, send the same full body without `icon_svg`.
+For clearing, send the same full body with `"icon_svg": null`.
+The clear response omits `icon_svg`.
+
+Existing service row-version checks still apply. A concurrent modification returns `409 Conflict` without partial changes.
+Changing only the icon does not require `If-Match` when `protected_resources` is omitted or null.
+An explicit `protected_resources` array still replaces that set and requires the current strong service ETag in `If-Match`.
+That operation retains `428` for a missing precondition and `412` for a stale precondition.
+Existing not-found and authorization behavior remains unchanged.
+
+### Validation and image-only rendering
+
+Non-null source must be valid UTF-8 and contain 1–65,536 bytes after JSON decoding.
+The limit measures bytes, not Unicode characters or JSON escape length.
+OpenAPI character-length keywords cannot enforce this byte limit or the XML rules.
+
+The upload checks require these properties:
+
+- One root `svg` in `http://www.w3.org/2000/svg`, properly nested elements, and no trailing non-whitespace content
+- Strict, well-formed XML without duplicate attributes or unknown entity references
+- At most one pre-root SVG DOCTYPE, optionally with an external PUBLIC or SYSTEM identifier, without an internal subset
+- No entity declarations, other XML directives, or processing instructions except one initial UTF-8 XML declaration
+- No `script`, `a`, or `foreignObject` element local names, ASCII case-insensitively in every namespace
+- No attribute local names that start with `on`, ASCII case-insensitively, including namespaced forms
+- No decoded attribute value with a leading `javascript:` or `vbscript:` scheme after ASCII control/space removal and ASCII-insensitive comparison
+
+Ordinary comments, harmless metadata, namespace aliases, and visual features remain permitted.
+Styles, text, effects, local reuse, embedded media, and declarative visual animation do not require manual simplification.
+Missing references, duplicate IDs, unusual geometry, and browser-ignored values are rendering concerns, not automatic upload errors.
+These named checks do not certify all CSS, references, animated values, or arbitrary document safety.
+The byte limit is not a browser CPU, memory, filter-cost, or animation-lifetime budget.
+
+Invalid input returns the existing Admin `400` validation envelope without echoing the document, for example:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"error":"validation failed","message":"icon_svg contains prohibited content"}
+```
+
+Malformed and oversized documents use the same validation envelope.
+Validation fails before discovery, credential changes, or persistence. No service properties change, even if the request also changes credentials or metadata.
+The broker never resolves a DTD, installs an external resolver or custom entity table, or fetches icon references.
+
+**Render source only as an image.** URI-encode the exact source into `data:image/svg+xml;charset=utf-8,...` and use an `<img>` with empty alt text.
+Do not insert SVG markup into the page DOM or use object, embed, iframe, or document delivery.
+External references can remain in accepted source. Browser SVG image mode prevents their loads.
+Authenticated JSON controls receipt of bytes, not arbitrary reuse by an authorized client who copies them.
+
+### Consent and session integration
+
+`GET /api/consent/agents/{agent-id}` returns the configured source beside the existing service ID and name.
+This response excerpt omits unrelated agent properties:
+
+```json
+{
+  "data": {
+    "services": [{
+      "serviceId": "880e8400-e29b-41d4-a716-446655440010",
+      "serviceName": "Atlas Files",
+      "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle fill=\"currentColor\" cx=\"12\" cy=\"12\" r=\"8\"/></svg>",
+      "requirementType": "mandatory",
+      "requiredScopes": [{"name": "files.read", "description": "Read files"}],
+      "connectionStatus": "connected"
+    }]
+  }
+}
+```
+
+Session list, detail, and refresh responses use the same current service metadata:
+
+| Operation | Field location |
+| --- | --- |
+| `GET /api/third-party/sessions` | `data.sessions[].service_icon_svg` |
+| `GET /api/third-party/{serviceId}/session` | `data.session.service_icon_svg`, inherited through `SessionStatus` |
+| `POST /api/third-party/{serviceId}/session/refresh` | `data.service_icon_svg` in the returned summary |
+
+This session list excerpt shows the source after the replacement:
+
+```json
+{
+  "data": {
+    "sessions": [{
+      "id": "990e8400-e29b-41d4-a716-446655440020",
+      "service_id": "880e8400-e29b-41d4-a716-446655440010",
+      "service_display_name": "Atlas Files",
+      "service_icon_svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><circle fill=\"currentColor\" cx=\"12\" cy=\"12\" r=\"8\"/></svg>"
+    }]
+  }
+}
+```
+
+After clearing, fresh responses omit `iconSvg` and `service_icon_svg` from those same objects.
+Clients accept omission or null and replace their previous icon metadata, rather than merge stale source back into the view.
+Existing refresh and cache lifetimes remain unchanged. Fresh source replaces the prior image, and changed source retries a failed image without a full page reload.
+Absent or broken images retain each view's original fallback, visible service name, and working consent, connection, refresh, and termination controls.
+The icon adds no keyboard stop or duplicate service announcement.

@@ -41,6 +41,11 @@ import { scrollToError } from '../utils/scrollToError';
  */
 export function AgentGrantDetailPage() {
   const { agentId } = useParams<{ agentId: string }>();
+  const normalizedAgentId = agentId?.toLowerCase() ?? '';
+  return <AgentGrantEditor key={normalizedAgentId} agentId={normalizedAgentId} />;
+}
+
+function AgentGrantEditor({ agentId }: { agentId: string }) {
   const { showToast } = useToast();
   const location = useLocation();
   const navigate = useNavigate();
@@ -80,8 +85,6 @@ export function AgentGrantDetailPage() {
     });
   }, [activeCallbackState, navigate]);
 
-  const resolvedAgentId = agentId ?? '';
-
   // Memoize options to keep a stable object reference across renders.
   // Without this, { sessionToken } creates a new object every render, causing
   // useCallback in useAgentGrants to recreate fetchData, which triggers
@@ -101,7 +104,7 @@ export function AgentGrantDetailPage() {
     error,
     sessionExpired,
     refetch,
-  } = useAgentGrants(resolvedAgentId, agentGrantOptions);
+  } = useAgentGrants(agentId, agentGrantOptions);
 
   // Grant toggle hook for permission sets
   const {
@@ -109,7 +112,8 @@ export function AgentGrantDetailPage() {
     error: submitError,
     submit,
     clearError,
-  } = useToggleGrant(resolvedAgentId);
+  } = useToggleGrant(agentId);
+  const [isRefreshingAfterSave, setIsRefreshingAfterSave] = useState(false);
 
   const hasExistingGrant = grants !== null;
 
@@ -239,7 +243,12 @@ export function AgentGrantDetailPage() {
     }
 
     if (grant.kind === 'created') {
-      await refetch();
+      setIsRefreshingAfterSave(true);
+      try {
+        await refetch();
+      } finally {
+        setIsRefreshingAfterSave(false);
+      }
       showToast('Grant updated successfully!', 'success');
     }
     // 'noContent' — grant revoked, no further action
@@ -419,7 +428,7 @@ export function AgentGrantDetailPage() {
   }
 
   // Loading state
-  if (loading) {
+  if (loading && !agent) {
     return (
       <AppLayout>
         <div className="space-y-6">
@@ -496,8 +505,11 @@ export function AgentGrantDetailPage() {
     );
   }
 
-  // No agent data (should not happen if no error)
-  if (!agent) {
+  if (
+    !agent ||
+    agent.agentId.toLowerCase() !== agentId ||
+    (grants && grants.agent_id.toLowerCase() !== agentId)
+  ) {
     return (
       <AppLayout>
         <div className="space-y-6">
@@ -670,6 +682,7 @@ export function AgentGrantDetailPage() {
             <GrantValidityControl
               value={validityState}
               onChange={handleValidityChange}
+              disabled={isSubmitting || isRefreshingAfterSave}
             />
           </div>
 
@@ -683,6 +696,7 @@ export function AgentGrantDetailPage() {
                   s.kind === 'requirement'
                     ? s.serviceName
                     : (s.displayName ?? s.serviceId),
+                iconSvg: s.kind === 'requirement' ? s.iconSvg : undefined,
               }))}
               serviceRequirements={agent.service_requirements}
               initialGrantedPermissionSets={
@@ -747,7 +761,7 @@ export function AgentGrantDetailPage() {
               grants.granted_permission_sets &&
               Object.keys(grants.granted_permission_sets).length > 0 && (
                 <RevokeGrantButton
-                  agentId={resolvedAgentId}
+                  agentId={agentId}
                   agentName={agent.displayName}
                   onRevoked={handleGrantRevoked}
                 />
@@ -756,7 +770,7 @@ export function AgentGrantDetailPage() {
             <Button
               variant="primary"
               onClick={handleSubmit}
-              isLoading={isSubmitting}
+              isLoading={isSubmitting || isRefreshingAfterSave}
               disabled={isApproveDisabled}
               title={
                 isApproveDisabled

@@ -26,7 +26,7 @@ const providerColumns = `
 	s.token_endpoint, s.authorize_endpoint, s.scopes,
 	COALESCE((SELECT array_agg(pr.resource_uri ORDER BY pr.resource_uri)
 	          FROM service_protected_resources pr WHERE pr.service_id = s.id), ARRAY[]::text[]),
-	s.authorization_params, s.created_at, s.updated_at, s.version, s.credential_source, s.credential_source_transitioned, s.client_registration`
+	s.authorization_params, s.created_at, s.updated_at, s.version, s.credential_source, s.credential_source_transitioned, s.client_registration, s.icon_svg`
 
 type PostgresThirdpartyOAuth2ProviderRepository struct{ adapter *Adapter }
 
@@ -57,12 +57,12 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Create(ctx context.Context,
 		enable_discovery, metadata_url, resource_url, client_method, resource_explicit,
 		discovery_last_attempt_at, discovery_last_success_at, discovery_failure_reason,
 		token_endpoint, authorize_endpoint, scopes, authorization_params, created_at, updated_at,
-		credential_source, credential_source_transitioned, client_registration, version
-	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,FALSE,$24,1)`,
+		credential_source, credential_source_transitioned, client_registration, version, icon_svg
+	) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,FALSE,$24,1,$25)`,
 		record.ID, record.CanonicalID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.ResourceURL, record.ClientMethod, record.ResourceExplicit,
 		record.DiscoveryLastAttemptAt, record.DiscoveryLastSuccessAt, record.DiscoveryFailureReason,
-		record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes, record.AuthorizationParams, record.CreatedAt, record.UpdatedAt, record.CredentialSource, record.ClientRegistration)
+		record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes, record.AuthorizationParams, record.CreatedAt, record.UpdatedAt, record.CredentialSource, record.ClientRegistration, record.IconSVG)
 	if err != nil {
 		return providerStorageError("CreateThirdpartyOAuth2Provider", err, "failed to create provider")
 	}
@@ -275,19 +275,19 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 		token_endpoint=$16, authorize_endpoint=$17, scopes=$18, authorization_params=CASE WHEN $19 THEN authorization_params ELSE $20 END,
 		canonical_id=CASE WHEN $21 THEN NULL WHEN $22 THEN canonical_id ELSE $23 END,
 		credential_source_transitioned=credential_source_transitioned OR credential_source IS DISTINCT FROM $25,
-		credential_source=$25, client_registration=$26,
+		credential_source=$25, client_registration=$26, icon_svg=$27,
 		updated_at=$24, version=version+1 WHERE id=$1
 		AND ($10::text IS NULL OR resource_url IS NULL OR discovery_last_attempt_at < $13)`
 	args := []any{record.ID, record.DisplayName, record.ClientID, record.SecretCiphertext, record.TokenEndpointAuthMethod, record.Flavor, record.IssuerURI,
 		record.EnableDiscovery, record.MetadataURL, record.ResourceURL, record.ClientMethod, record.ResourceExplicit,
 		record.DiscoveryLastAttemptAt, record.DiscoveryLastSuccessAt, record.DiscoveryFailureReason,
 		record.TokenEndpoint, record.AuthorizeEndpoint, record.Scopes,
-		retainParams, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt, record.CredentialSource, record.ClientRegistration}
+		retainParams, record.AuthorizationParams, entity.ClearCanonicalID, canonicalIDOmitted, record.CanonicalID, record.UpdatedAt, record.CredentialSource, record.ClientRegistration, record.IconSVG}
 	if expectedVersion != nil {
-		query += ` AND version=$27`
+		query += ` AND version=$28`
 		args = append(args, *expectedVersion)
 	}
-	query += ` RETURNING created_at, authorization_params, version, canonical_id, resource_explicit, credential_source, credential_source_transitioned`
+	query += ` RETURNING created_at, authorization_params, version, canonical_id, resource_explicit, credential_source, credential_source_transitioned, icon_svg`
 	var createdAt time.Time
 	var authorizationParams providerAuthorizationParams
 	var version int64
@@ -295,7 +295,8 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	var resourceExplicit bool
 	var source string
 	var transitioned bool
-	err = tx.QueryRowContext(execCtx, query, args...).Scan(&createdAt, &authorizationParams, &version, &canonicalID, &resourceExplicit, &source, &transitioned)
+	var iconSVG *string
+	err = tx.QueryRowContext(execCtx, query, args...).Scan(&createdAt, &authorizationParams, &version, &canonicalID, &resourceExplicit, &source, &transitioned, &iconSVG)
 	if errors.Is(err, sql.ErrNoRows) {
 		if expectedVersion != nil || record.ResourceURL != nil {
 			var exists bool
@@ -332,6 +333,7 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) Update(ctx context.Context,
 	}
 	entity.CreatedAt, entity.UpdatedAt, entity.Version = createdAt, record.UpdatedAt, version
 	entity.CanonicalID = canonicalID
+	entity.IconSVG = iconSVG
 	entity.AuthorizationParams = maps.Clone(map[string]string(authorizationParams))
 	entity.ResourceExplicit = resourceExplicit
 	entity.CredentialSource = model.CredentialSource(source)
@@ -593,7 +595,7 @@ func scanProvider(scanner providerRowScanner) (*ThirdpartyOAuth2ProviderRecord, 
 		&record.DiscoveryFailureReason, &record.TokenEndpoint, &record.AuthorizeEndpoint,
 		&record.Scopes, pq.Array(&record.ProtectedResources), &record.AuthorizationParams,
 		&record.CreatedAt, &record.UpdatedAt, &record.Version,
-		&record.CredentialSource, &record.CredentialSourceTransitioned, &record.ClientRegistration,
+		&record.CredentialSource, &record.CredentialSourceTransitioned, &record.ClientRegistration, &record.IconSVG,
 	)
 	return &record, err
 }

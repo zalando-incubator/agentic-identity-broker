@@ -1,37 +1,100 @@
 # Service Icons: Validation Guide
 
-This guide describes checks after implementation, not current capabilities. See [the contract](contracts/service-icons.md), [model](data-model.md) and [plan](plan.md).
+This guide records implementation and verification for configurable third-party Service Icons. See the [approved contract](contracts/service-icons.md), [data model](data-model.md) and [canonical acceptance mapping](plan.md#canonical-acceptance-mapping).
 
 ## Prerequisites
 
-Use Go/Node versions in the manifests, just, existing test tools and Playwright Chromium. PostgreSQL restart/migration cases require Docker or Podman. All stakeholder approvals are recorded in [the contract](contracts/service-icons.md). Before behavior changes, publish the canonical contract, document security analysis, write the Accepted ADR, update the glossary and complete test-first cases. These are unfinished work, not further approval requests. Use original synthetic artwork, never a required third-party logo or local download.
+Use the Go and Node versions in the manifests, npm, just, Ginkgo, Playwright Chromium and Docker or Podman. Local verification used Go 1.27.4, Node 26.13.0, npm 11.20.0, just 1.59.0, Ginkgo 2.34.0 and Docker 29.5.2. Browser and PostgreSQL prerequisites worked.
 
-## Commands
+The security script requires Bash with `mapfile`. The tool shell provides Bash 5.3, but commands launched by `just` selected the older platform Bash. Run the release gate with a modern Bash on PATH. No runtime configuration, Helm, dependency or ignore-file changes apply to this feature.
 
-Run focused package/case selections while implementing. After Go/test changes run just check before the matching tests. Existing suite recipes are:
+## Operator and API usage
+
+Use the existing Admin service POST/PUT bodies. Supply SVG source, not an image URL, path or data URI. The complete HTTP examples are in the [API guide](../../docs/api/enduser-api.md#service-icons) and [specification journeys](spec.md#concrete-example-journeys-mandatory).
+
+| `icon_svg` input | Create | Update |
+|---|---|---|
+| Omitted | No icon | Preserve current source |
+| Null | No icon | Clear source |
+| Permitted SVG string | Store exact source | Replace exact source |
+| Invalid type, empty/invalid/prohibited/oversized source, URL or path | Reject entire write | Reject entire write |
+
+Admin reads omit absent source. Existing consent `data.services` entries use `iconSvg`. Session list, detail and summary-returning refresh use current `service_icon_svg`, not a session snapshot. Clients replace cleared metadata rather than merge stale values. Existing authentication, row versions and five-/two-minute caches remain unchanged. Icon-only PUT adds no mandatory If-Match requirement.
+
+The live consent response never populated service `logoUrl`. The field is removed from the unused schema. No remote URL is used as an SVG fallback.
+
+## Observed verification
+
+| Check | Result |
+|---|---|
+| `just check` | Passed after final fixture corrections, zero lint issues |
+| `just web-build` | TypeScript and production Vite build passed |
+| Affected Go package tests | All 10 packages passed |
+| Focused frontend image/caller/API/page tests | 12 files, 110 tests passed |
+| Service Icon acceptance | All 12 canonical scenarios passed: 3 backend and 9 browser |
+| Live PostgreSQL migration/repository tests | Passed production-chain up/down/up, failed-DDL atomicity, byte-shape checks, independent copies, rejected updates and reconnect persistence |
+| PostgreSQL-backed broker restart | Passed without reseeding, retaining exact source and existing service/grant/session state |
+| `npm run build --prefix assets/docusaurus` | Passed, rendering both canonical OpenAPI documents. Existing CSS minimizer/Node warnings were non-fatal |
+| `just test web-test cdk-test mock-sample-agent-test mock-upstream-oauth2-test test-integration-all` | All tiers passed before the later backend E2E contract failure |
+| Full backend E2E | 961 of 962 cases initially passed. The approved CSP changed one exact-header contract. After updating it, all 3 focused root-SPA route cases passed |
+| Full Docker backend E2E | Review follow-up restored full-chain upgrades. `just test-e2e-docker` passed all 16 cases. The rooted migration-file helper then passed all 4 historical Agent journeys |
+| `just test-e2e-extproc` | 116 of 116 passed |
+| `just test-e2e-frontend` | 76 of 76 passed with normal parallel workers, including all Service Icon browser cases |
+| Review-focused browser E2E | All 16 affected Service Icon, session-control and consent-save journeys passed after maintained page-action reuse |
+| Bootstrap security scan | `gosec -nosec-require-rules -nosec-require-justification ./tests/e2e/bootstrap` passed with zero issues. Migration files are read through `os.Root` |
+| Security script in Bash 5.3 | Passed gosec, govulncheck and OSV under the repository's existing exceptions |
+
+`just verify` was attempted. It stopped when the platform Bash lacked `mapfile`; it did not complete as one uninterrupted command. Its remaining test tiers ran separately. The unchanged security script passed from the tool's Bash 5.3 shell with:
 
 ```sh
-just check
-just test
-just web-test
-just test-integration-infra
-just test-e2e-backend
-just test-e2e-docker
-just test-e2e-frontend
+(source scripts/security-scan.sh .)
 ```
 
-Run just verify before the PR per CONTRIBUTING.md. Record actual results and unavailable prerequisites, not assumed passes.
+GO-2026-6911 already has a maintained exception for the local `mocks/sample-agent` client until 2026-12-31. No exception, dependency or security control changed here. The initial E2E contract and fixture corrections received focused reruns before the full gate.
 
-## Journeys
+After those reruns, `PATH=/opt/homebrew/opt/bash/bin:$PATH just verify` passed with Bash 5.3.20. All verification tiers completed, including 76 of 76 frontend cases. Later consent chip fit and spacing changes received the focused checks in [Acceptance evidence](#acceptance-evidence).
 
-1. Create Atlas Files with the original inline SVG from spec.md; read/list exact source. Establish consent/grant/session with existing fixtures. In the backend Docker suite, restart against the same PostgreSQL database without reseeding. Verify exact source in fresh authenticated consent/session responses. Keep restart support out of the browser harness.
-2. Replace source and obtain genuinely fresh responses. Omission preserves; null clears and restores each original fallback. The other service sharing the same artwork remains unchanged. Existing five-/two-minute caches are not bypassed by merely invoking a cached refetch.
-3. Submit malformed XML, empty input, URL/path input, prohibited active constructs and a 65,537-byte SVG. Reject atomically even alongside credentials/metadata edits. Accept a valid exactly-65,536-byte source; cover decoded UTF-8 bytes rather than wire characters.
-4. Submit valid visual examples with styles, filters, masks, patterns, text, local reuse, inert media, animation and a DOCTYPE without an internal subset. Verify exact source through API round trips and decoded data URIs. In Chromium, verify image complete and naturalWidth > 0. Keep meaningful-state screenshots; no pixel comparisons or synchronized animation checks are required. Reject internal subsets, entity declarations and unknown entity references without resolving a DTD.
-5. Include external references in otherwise accepted source, including CSS and animated values. With the built SPA in Chromium, observe zero icon-related external loads, script execution or interaction; inspect no inline SVG insertion. Verify remote user avatars still render under the revised CSP. Explicit script/event/hyperlink/foreignObject constructs still reject upload. Do not confuse accepted source with safe inline/document markup.
-6. Without authentication, read every actual delivery path; existing failures must contain no SVG bytes.
-7. Cause a deterministic browser image error with valid stored source, retain usable controls/fallback, replace source and observe recovery in the open page without remounting actions. Verify decorative alt/focus behavior and narrow/wide views. Save configured/unset/failed/recovered screenshots under tests/e2e/screenshots/.
+US3.1 also passed against PostgreSQL: the fixture seeded services without `icon_svg`, rolled back to schema 48, and reapplied migration 49 before opening consent and sessions. The browser exercised the resulting fallbacks and actions without a broker restart.
 
-## Evidence and limits
+Review found that the first historical-fixture workaround reduced successful upgrades from `MigrateTo(0)` to `MigrateTo(47)`. That reduction is corrected. Current provider columns require migration `049` before the legacy broker can start, so `PostgresFixture.ApplyMigrationFile` supplies the column temporarily. Successful paths remove that temporary column and run the complete migration chain with `MigrateTo(0)`. Normal rollback to `046` removes `049` before full reapply. Only the deliberately blocked case targets `047`. API remediation, duplicate reports, dirty-state checks and relationship-preservation assertions are unchanged.
 
-Map all twelve scenario IDs to one canonical It each as in plan.md. Record production migration up/down/up, unchanged preexisting rows and backend Docker restart results. Verify built-SPA security headers and Chromium isolation, not only mocked events. No new browser matrix, browser restart harness or image-diff tooling is required. Rendering-resource budgets and stress tests are out of scope; operator artwork can be expensive. These planned checks are not runtime evidence.
+## Acceptance evidence
+
+US1.1–US1.4 cover exact Admin lifecycle, real PostgreSQL restart, preserved identity/grants/session/OAuth credentials, fresh omission/null transitions and atomic rejection without fetches.
+
+US2.1–US2.4 cover original effects, text, styles, local reuse, embedded PNG, animation, aliases and permitted DOCTYPE exports. Chromium decoded the exact API/data-URI source with positive natural width. Accepted attribute, CSS and animated references caused no observed external loads or execution. The signed-profile remote avatar still rendered under the revised CSP. Every actual source-bearing end-user response enforced existing principal/ownership boundaries.
+
+US3.1–US3.4 cover original initials/name-only fallbacks, native image errors against valid stored source and usable actions. They also prove fresh-source recovery without replacing the open document or action nodes. Accessible names and keyboard operation pass at 390px and 1280px. Uploaded images had no accessibility node or keyboard stop. Existing accessible scope-badge images remain permitted.
+
+The square-icon regression in US3.4 failed before the clipping fix. After the fix, Chromium confirmed that all four image corners fit in required and optional consent chips at 390px and 1280px. `just check`, `just web-build`, and 56 focused Vitest tests passed. The configured consent screenshots were refreshed at both widths.
+
+The consent chip spacing check failed before the inset change. After the change, Chromium verified a 4px inset and unclipped image corners in both chip variants at 390px and 1280px. `just check` and `just web-build` passed, and both configured consent screenshots were refreshed.
+
+Forty meaningful-state screenshots are published under `tests/e2e/screenshots/`:
+
+```text
+service_icons_{configured,failed,recovered,unset}_{narrow,wide}_{consent_requirements,connection_cards,session_cards,detail_atlas_files,detail_cobalt_notes}.png
+```
+
+Representative configured narrow consent and failed-image narrow session captures were inspected. Screenshot capture used `E2E_CAPTURE_SCREENSHOTS=true` with one worker. Feature cases contain no pending/skipped placeholders. Filtered runs skipped unrelated scenarios only.
+
+The screenshot workflow refreshes these same generated basenames and removes only captures no longer produced. Initial tracked captures therefore remain compatible with CI publication. Detail-header variants cover required identity surfaces, not additional artwork fixtures.
+
+Plain Save and named session actions use maintained `ConsentPage` and `SessionsPage` methods. The icon helper keeps observations and keyboard traversal. The consent waiter ignores success toasts already present before each Save.
+
+The US3.3 browser test pauses the post-save consent refresh. The [pending Save screenshot](../../tests/e2e/screenshots/service_icons_consent_save_pending.png) shows that Save stays disabled without unmounting the editor. The focused Vitest test checks that a second click sends no extra write.
+
+## Security and quality limits
+
+Accepted source is supported only as a URI-encoded decorative `<img>` data image. It is not certified safe for inline SVG or active-document reuse. Authentication controls receipt of bytes, not reuse by an authorized recipient. The byte limit does not bound browser CPU/GPU work, memory, filter cost or animation lifetime.
+
+No additional validator defect arose during the US2 checks. No sanitizer dependency, CSS/reference-graph analyzer, renderer quota, third-party artwork, image endpoint or browser restart harness was added. Finite browser checks do not prove arbitrary future rendering safety or cost.
+
+Review follow-up removed the original icon Save/Refresh/Confirm/KeyboardSave clone groups. Remaining heuristic findings normalize distinct selectors, waits and fixed-path/factory patterns. No findings were suppressed or acknowledged. See [plan.md](plan.md#implementation-compliance-review) for the retained validator/test-size findings and rationale.
+
+| Scoped gating heuristics | Before review | After corrections |
+|---|---:|---:|
+| Whole change | 27 | 25 |
+| Page objects | 27 | 22 |
+
+The Accepted decision is [20261119-211813-service-icons-image-mode](../../adrs/20261119-211813-service-icons-image-mode.md). No maintained changelog was present. The temporary parser probe was removed. No commit or push was requested.

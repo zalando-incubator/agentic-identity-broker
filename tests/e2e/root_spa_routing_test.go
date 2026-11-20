@@ -72,7 +72,7 @@ var _ = Describe("Root-Mounted SPA Routing", func() {
 		for header, expected := range map[string]string{
 			"X-Frame-Options":         "DENY",
 			"X-Content-Type-Options":  "nosniff",
-			"Content-Security-Policy": "frame-ancestors 'none'",
+			"Content-Security-Policy": "frame-ancestors 'none'; object-src 'none'",
 		} {
 			Expect(getResponse.Header.Values(header)).To(Equal([]string{expected}), header)
 			Expect(headResponse.Header.Values(header)).To(Equal([]string{expected}), header)

@@ -398,6 +398,9 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	ctx context.Context,
 	entity *model.ThirdpartyOAuth2ProviderEntity,
 ) (resultErr error) {
+	if err := model.ValidateServiceIcon(entity.IconSVG); err != nil {
+		return err
+	}
 	discovered := entity.Discovery.ResourceURL != nil
 	var attemptedAt time.Time
 	var selected *model.ThirdpartyOAuth2ProviderEntity
@@ -665,6 +668,9 @@ func (s *ThirdpartyOAuth2ProviderService) ValidateUpdate(ctx context.Context, en
 }
 
 func (s *ThirdpartyOAuth2ProviderService) prepareUpdate(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+	if err := model.ValidateServiceIcon(entity.IconSVG); err != nil {
+		return nil, err
+	}
 	if entity.Discovery.ResourceURL != nil {
 		candidate := *entity
 		if err := candidate.ValidateDiscoveryRequest(); err != nil {
@@ -687,6 +693,9 @@ func (s *ThirdpartyOAuth2ProviderService) prepareUpdate(ctx context.Context, ent
 	persisted, err := s.repo.Get(ctx, entity.ID)
 	if err != nil {
 		return nil, err
+	}
+	if entity.IconSVG == nil && !entity.IconSVGProvided {
+		entity.IconSVG = persisted.IconSVG
 	}
 	previousSource := persisted.CredentialSource
 	if previousSource == "" {

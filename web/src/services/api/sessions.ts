@@ -22,6 +22,9 @@ export interface SessionSummary {
   /** Human-readable service name */
   service_display_name: string;
 
+  /** Exact current service source, supported only as an encoded img data image. */
+  service_icon_svg?: string | null;
+
   /** OAuth2 token type (e.g., "Bearer") */
   token_type: string;
 

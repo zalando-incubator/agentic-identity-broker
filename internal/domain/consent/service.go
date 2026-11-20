@@ -94,6 +94,7 @@ type ServiceScopeInfo struct {
 type ServiceRequirementStatus struct {
 	ServiceID       id.ServiceID
 	DisplayName     string
+	IconSVG         *string
 	RequirementType storage.RequirementType
 	RequiredScopes  []ServiceScopeInfo
 	IsConnected     bool
@@ -231,6 +232,7 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 		requirements = append(requirements, ServiceRequirementStatus{
 			ServiceID:       req.ServiceID,
 			DisplayName:     svc.DisplayName,
+			IconSVG:         svc.IconSVG,
 			RequirementType: req.RequirementType,
 			RequiredScopes:  scopes,
 			IsConnected:     connected[req.ServiceID],
