@@ -20,14 +20,14 @@ import (
 // Service orchestrates impersonation rule selection, credential validation, authorization,
 // target-agent context, and local token minting. It is safe for concurrent use.
 type Service struct {
-	audiencePrefix     string
-	rules              []*compiledRule
-	agents             ports.AgentRepository
-	canonicalAgents    ports.AgentCanonicalIDRepository
-	issuer             ports.ImpersonationTokenIssuer
-	delegationVerifier ports.UserDelegationVerifier
-	consentBaseURL     string
-	logger             *slog.Logger
+	audiencePrefix    string
+	rules             []*compiledRule
+	agents            ports.AgentRepository
+	canonicalAgents   ports.AgentCanonicalIDRepository
+	issuer            ports.ImpersonationTokenIssuer
+	readinessVerifier ports.AuthorizationReadinessVerifier
+	consentBaseURL    string
+	logger            *slog.Logger
 }
 
 // NewService compiles the impersonation rules at startup and validates direct construction.
@@ -38,7 +38,7 @@ func NewService(
 	issuer ports.ImpersonationTokenIssuer,
 	clockSkew time.Duration,
 	logger *slog.Logger,
-	delegationVerifier ports.UserDelegationVerifier,
+	readinessVerifier ports.AuthorizationReadinessVerifier,
 	consentBaseURL string,
 ) (*Service, error) {
 	if cfg == nil {
@@ -54,8 +54,8 @@ func NewService(
 	if issuer == nil {
 		return nil, fmt.Errorf("impersonation token issuer is nil")
 	}
-	if delegationVerifier == nil {
-		return nil, fmt.Errorf("impersonation user delegation verifier is nil")
+	if readinessVerifier == nil {
+		return nil, fmt.Errorf("impersonation authorization readiness verifier is nil")
 	}
 	if consentBaseURL == "" {
 		return nil, fmt.Errorf("impersonation consent base URL is required")
@@ -82,7 +82,7 @@ func NewService(
 		}
 		rules = append(rules, rule)
 	}
-	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
+	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, readinessVerifier: readinessVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
 }
 
 // AuditRecord is the credential-free decision record emitted for every impersonation attempt
@@ -273,23 +273,41 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 	}
 
 	if res.category == SubjectCategoryHuman {
-		delegationStatus, err := s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID)
+		readiness, err := s.readinessVerifier.EvaluateAuthorizationReadiness(ctx, id.Principal(subjectID), targetAgent)
 		if err != nil {
-			res.abort = originError(ctx, serverError("user delegation verification failed"), err, tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable)
+			stage, detail := tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable
+			if readiness.Reason == ports.ReadinessSessionLookupFailed {
+				stage, detail = tokenexchange.StageSessionLookup, tokenexchange.DetailSessionRepositoryUnavailable
+			}
+			res.abort = originError(ctx, serverError("user authorization readiness check failed"), err, stage, detail)
 			return res
 		}
-		switch delegationStatus {
-		case ports.UserDelegationActive:
-		case ports.UserDelegationMissing:
-			res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
-				WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantMissing))
-			return res
-		case ports.UserDelegationExpired:
-			res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
-				WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantExpired))
-			return res
+		var detail tokenexchange.FailureDetail
+		switch readiness.Reason {
+		case "":
+		case ports.ReadinessGrantMissing:
+			detail = tokenexchange.DetailGrantMissing
+		case ports.ReadinessGrantExpired:
+			detail = tokenexchange.DetailGrantExpired
+		case ports.ReadinessPermissionSetUndeclared:
+			detail = tokenexchange.DetailGrantPermissionSetUndeclared
+		case ports.ReadinessIncludedSessionMissing:
+			detail = tokenexchange.DetailConsentIncludedSessionMissing
+		case ports.ReadinessIncludedSessionUnusable:
+			detail = tokenexchange.DetailConsentIncludedSessionUnusable
+		case ports.ReadinessMandatorySessionMissing:
+			detail = tokenexchange.DetailConsentMandatorySessionMissing
+		case ports.ReadinessMandatorySessionUnusable:
+			detail = tokenexchange.DetailConsentMandatorySessionUnusable
+		case ports.ReadinessMandatoryScopeInsufficient:
+			detail = tokenexchange.DetailConsentMandatoryScopeInsufficient
 		default:
-			res.abort = originError(ctx, serverError("user delegation verification returned an unknown status"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
+			res.abort = originError(ctx, serverError("user authorization readiness result is unknown"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
+			return res
+		}
+		if detail != "" {
+			res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
+				WithDiagnostic(impersonationDiagnostic(tokenexchange.StageGrantAuthorization, detail))
 			return res
 		}
 	}

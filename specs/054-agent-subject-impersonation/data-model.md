@@ -68,9 +68,9 @@ This is not a new type. It is held on `ruleResult`:
 | `category` | `human` | `agent` |
 | `subject` (represented identity and minted `sub`) | Extracted subject principal | `target.Agent.ID.String()` |
 | credential-derived email | From `email_expression`, per the existing rules | Extraction not evaluated; `Email=nil` passed to mint |
-| delegation | `UserDelegationVerifier` required | Skipped |
+| human consent readiness | `AuthorizationReadinessVerifier` required | Skipped |
 
-All principal extractions must succeed before classification. For agents, the extracted subject principal need not equal the raw verified `sub` or minted target UUID; no new extraction-equality restriction is introduced. This target-derived minting and the delegation exception are covered by the proposed ADR 045's agent-only supersession of ADR 032 decisions 2 and 1 respectively. Eligible humans retain the byte-for-byte extracted-principal-as-minted-sub/delegation-principal invariant. Signed exact equality remains agent-category regardless of eligibility and is rejected on human-only rules even with active human delegation.
+All principal extractions must succeed before classification. For agents, the extracted subject principal need not equal the raw verified `sub` or minted target UUID. [045-agent-subject-impersonation](../../adrs/045-agent-subject-impersonation.md) permits target-derived agent issuance without human delegation. Eligible humans retain the byte-for-byte extracted-principal-as-minted-sub/consent-principal invariant and now use shared consent readiness under [20261120-145501-human-impersonation-consent-readiness](../../adrs/20261120-145501-human-impersonation-consent-readiness.md). Signed exact equality remains agent-category regardless of eligibility; a human-only rule rejects it even with same-text human delegation.
 
 ## Configuration: `ClaimExtractionConfig` (extended)
 
@@ -82,7 +82,7 @@ All principal extractions must succeed before classification. For agents, the ex
 
 ## Port DTO: `ports.ImpersonationMintInput` (unchanged)
 
-No field is added. For an agent-category request, the impersonation service passes `Subject = target UUID` and `Email = nil`. No new port interface is added. `ImpersonationTokenIssuer` and `UserDelegationVerifier` are unchanged.
+No mint-input field is added. For an agent-category request, the impersonation service passes `Subject = target UUID` and `Email = nil`. The agent category skips the human `AuthorizationReadinessVerifier`; it does not weaken credential or CEL authorization.
 
 ## Token: agent-subject access token
 

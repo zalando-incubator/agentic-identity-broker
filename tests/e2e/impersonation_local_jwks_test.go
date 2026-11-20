@@ -51,9 +51,11 @@ var _ = Describe("Local key sets for impersonation trusted issuers", Label(trust
 		target.AllowedScopes = []string{"read"}
 		targetAudience = imperAudience + "/" + target.ID.String()
 		Expect(testStorage.Agents().Create(context.Background(), target)).To(Succeed())
-		Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
-			"user-1", target.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
-		))).To(Succeed())
+		ctx := context.Background()
+		Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage)).To(Succeed())
+		grant := fixtures.ActiveGrant("user-1", target.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"})
+		Expect(testStorage.UserGrants().Create(ctx, grant)).To(Succeed())
+		Expect(fixtures.SeedGrantSessions(ctx, testStorage, grant)).To(Succeed())
 	})
 
 	AfterEach(func() {

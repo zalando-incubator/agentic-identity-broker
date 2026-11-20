@@ -468,7 +468,7 @@ Key settings:
 
 ### `impersonation.yaml` — RFC 8693 User Impersonation
 
-Complete, bootable `local`-mode configuration demonstrating RFC 8693 user impersonation. A privileged client presents client-assertion, actor, and subject JWT credentials; the broker authorizes that client, resolves the registered target agent from the suffixed routing audience, verifies the subject's active user delegation to that agent, and mints a token whose `sub` represents the impersonated subject and whose `act` records the actor. A request activates only when its single `audience` is `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>`.
+This `local`-mode example configures RFC 8693 user impersonation. A privileged client presents signed client-assertion and actor JWTs plus a subject credential. The broker authorizes the rule, resolves the target agent from the suffixed audience, and checks browser-equivalent consent readiness for human subjects before minting. The token's `sub` represents the human subject; `act` identifies the actor. Exactly one `audience` of `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` activates the request.
 
 Key settings (`oauth2_authorization_server.impersonation`):
 - `audience_prefix` — routing-only HTTP(S) URI prefix; requests append one target agent's canonical lower-case UUID or `canonical_id`. It is not an issued-token audience.
@@ -479,7 +479,7 @@ Key settings (`oauth2_authorization_server.impersonation`):
 
 The audience-selected target supplies minted `agent_id` and local policy `agent.*`; the asserted privileged-client identity is retained only for authorization and audit. `token_claims_expression` alone controls issued `aud`.
 
-An active `UserGrant` for `(extracted subject, target agent)` is mandatory for every rule, including unverified subjects. A missing or expired grant returns generic `403 access_denied` and an `error_uri` to the existing target-agent consent page; no configuration option disables this check.
+Every authorized human request, including one with an unverified subject, needs an active `UserGrant` for `(extracted subject, target agent)`, current permission-set declarations, usable sessions for included services, and mandatory service sessions with required scopes. An unmet condition returns terminal `403 access_denied` with the target agent's consent `error_uri` and a Bearer `insufficient_scope` challenge. Repository failures return `500 server_error` without a recovery signal. Eligible agent-category subjects do not require human consent.
 
 **Usage:**
 ```bash
@@ -488,7 +488,7 @@ An active `UserGrant` for `(extracted subject, target agent)` is mandatory for e
 
 ### `impersonation-agent-subject.yaml` — Signed Self-Agent Issuance
 
-Complete local-mode configuration for [feature 054 Journeys 1–2](../../specs/054-agent-subject-impersonation/spec.md). Replace example trust URLs and register the target Agent. The signed subject's raw `sub` must exactly equal the audience-selected target UUID. The example binds client, actor, subject and target explicitly in CEL and enables `allowed_subject_categories: [agent]`. It needs no human delegation and creates no grant/session. The token has reserved `sub == agent_id`, existing `act`, and no category claim. Human-only and dual alternatives are included; nonmatching human subjects always require active delegation.
+Complete local-mode configuration for [feature 054 Journeys 1–2](../../specs/054-agent-subject-impersonation/spec.md). Replace example trust URLs and register the target Agent. The signed subject's raw `sub` must exactly equal the audience-selected target UUID. The example binds client, actor, subject and target explicitly in CEL and enables `allowed_subject_categories: [agent]`. It needs no human consent and creates no grant/session. The token has reserved `sub == agent_id`, existing `act`, and no category claim. Human-only and dual alternatives are included; nonmatching human subjects require browser-equivalent consent readiness.
 
 Omitting `allowed_subject_categories` means `[human]`; signed exact-target collisions are rejected even with active same-text delegation. An unsigned subject is agent-category only when the rule's predicate binds `subject_token.sub`. The [token-exchange example](token-exchange.yaml) describes default third-party rejection, replacing overrides and their security responsibility.
 
