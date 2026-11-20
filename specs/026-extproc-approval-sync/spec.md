@@ -59,6 +59,11 @@ See [the syncer](../../internal/extproc/approval/syncer.go) and [the cache](../.
 - Q: What observability does approval gating require? → A: ExtProc increments `extproc.approval.gate.decisions` for every gate outcome. The counter has an `outcome` attribute. ExtProc creates an `extproc.approval.gate` span for every gate evaluation and records the same outcome. The `extproc.approval.sync_age` gauge reports elapsed seconds since the last successful approval synchronization. These signals supersede the structured-logs-only answer from 2026-04-10.
 
 
+## Observability Contract
+
+See [the ExtProc approval observability contract](contracts/observability.md) for
+instrument metadata, bounded attribute sets, and recording semantics.
+
 ## Overview
 
 This feature wires the OPA authorization engine (introduced in feature 020) to the identity broker's approval service (built in feature 024), completing the Tier 2 runtime authorization loop described in the overarching tool authorization design.

@@ -468,9 +468,15 @@ func TestGateEvaluateEmitsDecisionTelemetry(t *testing.T) {
 				continue
 			}
 			counterFound = true
+			assert.Equal(t, "extproc", scopeMetrics.Scope.Name)
+			assert.Equal(t, "{decision}", metric.Unit)
+			assert.Equal(t, "Number of approval gate decisions by outcome", metric.Description)
 			sum, ok := metric.Data.(metricdata.Sum[int64])
 			require.True(t, ok, "gate decisions must be an Int64 counter")
+			assert.True(t, sum.IsMonotonic)
+			require.Len(t, sum.DataPoints, 3)
 			for _, point := range sum.DataPoints {
+				require.Equal(t, 1, point.Attributes.Len(), "only the bounded outcome attribute may be exported")
 				counterOutcomes[attributeValue(point.Attributes.ToSlice(), "outcome")] += point.Value
 			}
 		}
