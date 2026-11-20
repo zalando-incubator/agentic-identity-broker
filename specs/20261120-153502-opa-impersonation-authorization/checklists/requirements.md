@@ -15,26 +15,25 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
-- [ ] Requirements are testable and unambiguous
+- [x] No [NEEDS CLARIFICATION] markers remain
+- [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
-- [ ] All acceptance scenarios are defined
+- [x] All acceptance scenarios are defined
 - [x] Edge cases are identified
 - [x] Scope is clearly bounded
 - [x] Dependencies and assumptions identified
 
 ## Feature Readiness
 
-- [ ] All functional requirements have clear acceptance criteria
+- [x] All functional requirements have clear acceptance criteria
 - [x] User scenarios cover primary flows
-- [ ] Feature meets measurable outcomes defined in Success Criteria
+- [x] Feature meets measurable outcomes defined in Success Criteria
 - [x] No implementation details leak into specification
 
 ## Notes
 
 - Technical names, configuration snippets, HTTP exchanges, and decoded JWT examples describe requested compatibility and observable contracts required by Constitution Principle XIV. They do not select implementation packages, wiring, or algorithms. OPA, Rego, CEL, and Envoy compatibility are explicit feature requirements.
-- Q1 remains open: "Must the first release support policy-time HTTP lookups against governance/CMDB services, managed policy/data bundles only, or both?" FR-012 needs the selected data acquisition/freshness model and its acceptance cases.
-- Q2 remains open: "Must OPA support unsigned subjects and audience-absent roles in this release, or may OPA reject those combinations at startup while they remain available through CEL?" FR-013 and SR-005 need the approved support boundary and binding-control acceptance cases.
-- The unresolved questions affect unambiguity, scenario completeness, requirement acceptance coverage, and final outcome coverage; the corresponding items remain incomplete. The primary signed-subject, governance, mixed-engine, and fail-closed flows are described and linked to concrete journeys.
-- Items marked incomplete require clarification and specification updates before planning. No architecture decision or approval is recorded by this checklist.
+- Q1's proposed answer limits external governance acquisition to managed bundles, prohibits policy-time networking, and retains the last complete revision after update failures without a broker-enforced maximum age. FR-012, SR-006, Scenarios 3.4–3.5, and Journey 2 define its acceptance boundary.
+- Q2's proposed answer limits OPA to signed, expected-audience credentials and preserves existing CEL exceptional modes. FR-013, SR-005, Scenario 4.4, and Journey 3 define its acceptance boundary.
+- Both answers remain Proposed under Clarifications until maintainer acceptance. The checklist assesses specification quality, not approval of these choices or completion of implementation. No architecture decision or approval is recorded by this checklist.
