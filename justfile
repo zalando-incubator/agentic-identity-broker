@@ -22,6 +22,7 @@ E2E_CAPTURE_SCREENSHOTS := env_var_or_default("E2E_CAPTURE_SCREENSHOTS", "false"
 
 COMPOSE_CMD := "docker compose"
 COMPOSE_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml"
+COMPOSE_POSTGRES_FILE_ARGS := "--env-file .env.compose -f docker-compose.yml -f configs/compose/postgres.yml"
 
 
 # Default recipe (shown when running `just` with no args)
@@ -248,9 +249,16 @@ vet:
     @echo "Running go vet..."
     go vet ./...
 
-# Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom)
+# Install development tools (air, golangci-lint, go-junit-report, ginkgo, Playwright, Wireloom, jq)
 install-tools:
     @echo "Installing development tools..."
+    @if ! command -v jq >/dev/null 2>&1; then \
+        if command -v brew >/dev/null 2>&1; then brew install jq; \
+        elif command -v apt-get >/dev/null 2>&1; then \
+            if [ "$(id -u)" -eq 0 ]; then apt-get update && apt-get install -y jq; \
+            else sudo apt-get update && sudo apt-get install -y jq; fi; \
+        else echo "Install jq with your system package manager" >&2; exit 1; fi; \
+    fi
     @air -v 2>/dev/null | grep -q 'v1\.67\.4' || go install github.com/air-verse/air@v1.67.4
     @GOTOOLCHAIN="$(go env GOVERSION)" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
     @go install github.com/jstemmer/go-junit-report/v2@v2.1.0
@@ -723,7 +731,7 @@ docker-build-all: docker-build-broker docker-build-migrate docker-build-extproc
 # Docker Compose - Development (Hot Reload)
 # =============================================================================
 
-# Create .env.compose from .env.compose.example if it doesn't exist
+# Create .env.compose if it doesn't exist
 compose-env:
     @if [ -f .env.compose ]; then \
         echo ".env.compose already exists"; \
@@ -732,34 +740,32 @@ compose-env:
         echo "✓ Created: .env.compose (customize as needed)"; \
     fi
 
-# Validate docker-compose.yml syntax
+# Create a stable local encryption key for the PostgreSQL setup
+compose-env-postgres: compose-env
+    @just _compose-postgres-credentials
+    @if [ ! -e .env.compose.key ]; then \
+        umask 077; \
+        key_file=$(mktemp .env.compose.key.XXXXXX) || exit 1; \
+        ./scripts/generate-jwe-key.sh > "$key_file" || { rm -f "$key_file"; exit 1; }; \
+        if ln "$key_file" .env.compose.key 2>/dev/null; then echo "✓ Created persistent database encryption key"; fi; \
+        rm -f "$key_file"; \
+    fi
+    @[ -s .env.compose.key ] || { echo "Missing or empty .env.compose.key" >&2; exit 1; }
+    @chmod 600 .env.compose.key
+
+_compose-postgres-credentials:
+    @command -v jq >/dev/null || { echo "jq is required for PostgreSQL Compose mode" >&2; exit 1; }
+    @config=$({{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} config --format json) || exit 1; \
+        printf '%s\n' "$config" | jq -e '.services.postgres.environment | [.POSTGRES_DB, .POSTGRES_USER, .POSTGRES_PASSWORD] | all(.[]; type == "string" and test("^[A-Za-z0-9._~-]+$"))' >/dev/null || \
+        { echo "PostgreSQL database, user, and password must use only letters, digits, dots, underscores, tildes, or hyphens" >&2; exit 1; }
+
+# Validate default and PostgreSQL Compose configurations
 compose-validate:
-    @echo "Validating docker-compose.yml..."
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} config > /dev/null && echo "✓ Syntax valid" || echo "✗ Syntax error"
+    @echo "Validating default and PostgreSQL Compose configurations..."
+    @just _compose-postgres-credentials
+    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} config > /dev/null && {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} config > /dev/null && echo "✓ Both Compose configs are valid" || (echo "✗ Compose configuration error" >&2; exit 1)
 
-# Start all services with logs streaming (foreground)
-compose-up: compose-env
-    @echo "Generating JWE signing key..."
-    @echo "Generating encryption key..."
-    @echo "Starting docker-compose services with hot reload..."
-    @echo "Services:"
-    @echo "  - Identity Broker (8000, 14000) with Air hot reload"
-    @echo "  - Frontend (3000) with Vite HMR"
-    @echo "  - Upstream OAuth2 (9001)"
-    @echo "  - Third-Party OAuth2 (9000)"
-    @echo "  - Sample Agent (9002)"
-    @echo "  - Seed data will auto-run once broker is healthy"
-    @echo ""
-    @echo "Press Ctrl+C to stop"
-    IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --build
-
-# Start all services in background
-compose-up-detached: compose-env
-    @echo "Generating JWE signing key..."
-    @echo "Starting docker-compose services in background..."
-    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --build --wait --wait-timeout 600
-    @just compose-health
-    @echo ""
+_compose-urls storage:
     @echo "Service URLs:"
     @echo "  - Browser UI (Vite proxy includes development identity): http://localhost:3000/"
     @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
@@ -767,35 +773,71 @@ compose-up-detached: compose-env
     @echo "  - Admin health: http://localhost:14000/health"
     @echo "  - Sample OAuth2 client: http://localhost:9002/"
     @echo "  - Agentgateway MCP endpoint: http://localhost:4000/mcp"
+    @if [ "{{storage}}" = "postgres" ]; then echo "  - PostgreSQL: localhost:5433 by default (see .env.compose for overrides)"; fi
     @echo ""
+
+_compose-start storage detached:
+    @if [ "{{storage}}" != "memory" ] && [ "{{storage}}" != "postgres" ]; then echo "Usage: just compose-up[-detached] [memory|postgres]" >&2; exit 2; fi
+    @if [ "{{storage}}" = "postgres" ]; then just compose-env-postgres; else just compose-env; fi
+    @echo "Starting Docker Compose services with hot reload..."
+    @echo "  - Identity Broker (8000, 14000) with Air hot reload"
+    @echo "  - Frontend (3000) with Vite HMR"
+    @echo "  - Upstream OAuth2 (9001)"
+    @echo "  - Third-Party OAuth2 (9000)"
+    @echo "  - Sample Agent (9002)"
+    @echo "  - Seed data will auto-run once broker is healthy"
+    @echo ""
+    @if [ "{{detached}}" = "false" ]; then just _compose-urls {{storage}}; echo "Press Ctrl+C to stop"; fi
+    @set -eu; \
+        if [ "{{storage}}" = "postgres" ]; then \
+            set -- {{COMPOSE_POSTGRES_FILE_ARGS}}; \
+            encryption_key=$(cat .env.compose.key); \
+        else \
+            set -- {{COMPOSE_FILE_ARGS}}; \
+            encryption_key=$(./scripts/generate-jwe-key.sh); \
+        fi; \
+        signing_key=$(./scripts/generate-jwe-key.sh); \
+        set -- "$@" up --build; \
+        if [ "{{detached}}" = "true" ]; then set -- "$@" -d --wait --wait-timeout 600; fi; \
+        IDENTITY_BROKER_JWE_SIGNING_KEY="$signing_key" IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY="$encryption_key" {{COMPOSE_CMD}} "$@"
+
+# Start all services with logs streaming; pass `postgres` for persistent storage
+compose-up storage="memory":
+    @just _compose-start {{storage}} false
+
+# Start all services in background; pass `postgres` for persistent storage
+compose-up-detached storage="memory":
+    @just _compose-start {{storage}} true
+    @just compose-health
+    @just _compose-urls {{storage}}
     @echo "View logs: just compose-logs"
     @echo "Stop services: just compose-down"
 
 # Stop all services
 compose-down:
     @echo "Stopping docker-compose services..."
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} down
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} down
 
 # Stop all services and remove volumes
 compose-down-volumes:
-    @echo "Stopping docker-compose services and removing volumes..."
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} down -v
+    @echo "Stopping services and removing volumes, including PostgreSQL data..."
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} down -v
 
 # View logs from all services (tail -f)
 compose-logs:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f
 
 # View logs from backend only
 compose-logs-backend:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f identity-broker
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f identity-broker
 
 # View logs from frontend only
 compose-logs-frontend:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f frontend
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f frontend
 
 # View logs from specific service
 compose-logs-service SERVICE:
-    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} logs -f {{SERVICE}}
+    {{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} logs -f {{SERVICE}}
 
 # Restart backend and its namespace-sharing sample agent (after code changes)
 compose-restart-backend:
@@ -810,11 +852,11 @@ compose-restart-frontend:
 # Show service status and connectivity
 compose-health:
     @echo "Checking service health..."
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps
+    @{{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} ps --all
     @echo ""
     @echo "Testing connectivity..."
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} exec -T identity-broker curl -s http://localhost:8000/health && echo "✓ Backend health OK" || echo "✗ Backend not ready"
-    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} exec -T frontend curl -s http://localhost:3000 > /dev/null && echo "✓ Frontend responding" || echo "✗ Frontend not ready"
+    @{{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} exec -T identity-broker curl -s http://localhost:8000/health && echo "✓ Backend health OK" || echo "✗ Backend not ready"
+    @{{COMPOSE_CMD}} {{COMPOSE_POSTGRES_FILE_ARGS}} exec -T frontend curl -s http://localhost:3000 > /dev/null && echo "✓ Frontend responding" || echo "✗ Frontend not ready"
     @echo ""
 
 # Clean up: stop containers, remove volumes, clean tmp directories
@@ -985,15 +1027,20 @@ mock-mcp-server-start:
     cd mocks/mcp-server && go run cmd/mcp-server/main.go
 
 # Start the full ExtProc + agentgateway + MCP integration stack
-compose-extproc-up:
+compose-extproc-up: compose-env
     @echo "Starting ExtProc integration stack..."
     @echo "Services:"
     @echo "  - extproc-token-exchange (50051, container-internal)"
     @echo "  - mcp-server-mock (9003)"
     @echo "  - agentgateway (4000, 15000)"
     @echo ""
-    @echo "Requires identity-broker and upstream-oauth2 to be running."
-    @IDENTITY_BROKER_JWE_SIGNING_KEY=`./scripts/generate-jwe-key.sh` IDENTITY_BROKER_ENCRYPTION_MEMORY_RAW_KEY=`./scripts/generate-jwe-key.sh` {{COMPOSE_CMD}} -f docker-compose.yml up extproc-token-exchange mcp-server-mock agentgateway
+    @echo "Requires identity-broker, upstream-oauth2, and opa-bundle-server to be running."
+    @for service in identity-broker upstream-oauth2 opa-bundle-server; do \
+        {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} ps --services --status running "$service" | grep -qx "$service" || { echo "$service is not running" >&2; exit 1; }; \
+    done
+    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --no-deps --no-recreate --wait --wait-timeout 120 upstream-oauth2
+    @{{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up -d --no-deps --wait --wait-timeout 120 extproc-token-exchange mcp-server-mock
+    {{COMPOSE_CMD}} {{COMPOSE_FILE_ARGS}} up --no-deps agentgateway
 
 # Stop ExtProc integration services only
 compose-extproc-down:

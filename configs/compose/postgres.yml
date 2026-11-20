@@ -1,0 +1,48 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: aib-postgres
+    environment:
+      POSTGRES_DB: ${IDENTITY_BROKER_POSTGRES_DB:-agentic_identity_broker}
+      POSTGRES_USER: ${IDENTITY_BROKER_POSTGRES_USER:-aib_dev}
+      POSTGRES_PASSWORD: ${IDENTITY_BROKER_POSTGRES_PASSWORD:-aib_dev_password}
+    ports:
+      - "127.0.0.1:${IDENTITY_BROKER_POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - broker-postgres-data:/var/lib/postgresql/data
+    networks:
+      - aib-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  broker-migrate:
+    build:
+      context: .
+      dockerfile: build/docker/Dockerfile.migrate
+    command:
+      - "-path"
+      - "/app/migrations"
+      - "-database"
+      - "postgresql://${IDENTITY_BROKER_POSTGRES_USER:-aib_dev}:${IDENTITY_BROKER_POSTGRES_PASSWORD:-aib_dev_password}@postgres:5432/${IDENTITY_BROKER_POSTGRES_DB:-agentic_identity_broker}?sslmode=disable"
+      - "up"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - aib-network
+
+  identity-broker:
+    environment:
+      - IDENTITY_BROKER_STORAGE_BACKEND=postgres
+      - IDENTITY_BROKER_STORAGE_POSTGRES_URL=postgresql://${IDENTITY_BROKER_POSTGRES_USER:-aib_dev}:${IDENTITY_BROKER_POSTGRES_PASSWORD:-aib_dev_password}@postgres:5432/${IDENTITY_BROKER_POSTGRES_DB:-agentic_identity_broker}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+      broker-migrate:
+        condition: service_completed_successfully
+
+volumes:
+  broker-postgres-data:
