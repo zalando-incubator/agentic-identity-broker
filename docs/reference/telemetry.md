@@ -1155,7 +1155,7 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `provider_response_invalid` | The provider answered a refresh with a success status but a malformed or oversized body, or one without an access token. |
 | `provider_unavailable` | The provider's token endpoint was unreachable, timed out or answered 429 or 5xx, or signing the client assertion failed. |
 | `refresh_rejected` | The provider answered a refresh with a 4xx `invalid_grant` error, now or earlier, so the user must reconnect to the service. |
-| `refresh_unavailable` | A refresh was due or requested but the session has no refresh token, so the user must reconnect to the service. |
+| `refresh_unavailable` | A refresh was due or requested but the session has no refresh token, so the user must reconnect to the service; if the access token has already expired when a refresh is due, the detail is `access_token_expired` instead. |
 | `repository_unavailable` | The broker could not read or lock the stored session, or read the service registration, so check the storage backend. |
 | `session_missing` | No session is stored for the user and the service, so the user must connect to the service. |
 
@@ -1232,8 +1232,8 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `agent_missing` | No registered agent matches the agent ID that the token claims resolve to, or that the impersonation `audience` names, in which case the caller may have named the wrong agent. |
 | `agent_repository_unavailable` | Looking up the agent in storage failed for a reason other than the agent not existing. |
 | `caller_canceled` | The request was canceled or its deadline passed before the broker finished it, usually because the caller disconnected. |
-| `cel_configuration` | A configured CEL expression returned a value of the wrong type or an empty value, so check the expression and the token claims that it reads. |
-| `cel_evaluation_failed` | A CEL expression failed or timed out while it ran, such as when it reads a claim that the token lacks. |
+| `cel_configuration` | A configured CEL expression returned a value of the wrong type or an empty value, so check the expression and the token claims that it reads; impersonation reports such values as `cel_evaluation_failed` instead. |
+| `cel_evaluation_failed` | A CEL expression failed or timed out while it ran, such as when it reads a claim that the token lacks, or an impersonation expression returned a value that is not a string or an empty identity. |
 | `client_expired` | The client assertion has expired, so the calling client must create a new one. |
 | `client_invalid` | The client assertion failed validation, is not trusted or lacks a required subject, or an access evaluation request carried no bearer assertion. |
 | `client_policy_denied` | The CEL authorization policy, or an impersonation rule's authorization predicate, denied the calling client. |
@@ -1259,7 +1259,7 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `provider_unavailable` | The provider's token endpoint was unreachable, timed out or answered 429 or 5xx during refresh, or signing the client assertion failed. |
 | `refresh_rejected` | The provider rejected the session's refresh token with `invalid_grant`, now or on an earlier refresh, so the user must reconnect the service. |
 | `refresh_unavailable` | The broker had to renew the access token but found no usable refresh token, so the user must reconnect the service. |
-| `request_malformed` | A parameter or the request body was missing, repeated or invalid, or repeated `resource` values differ. |
+| `request_malformed` | A parameter or the request body was missing, repeated or invalid, repeated `resource` values differ, an impersonation asked for a scope that the target agent does not allow, or the `context.agent` of an access evaluation does not match the subject token. |
 | `resource_ambiguous` | More than one registered service claims the requested resource; storage keeps each resource unique to one service, so the broker does not currently set it. |
 | `resource_missing` | The third-party exchange request had no `resource` parameter. |
 | `resource_repository_unavailable` | Looking up the service for the resource failed in storage, or an access evaluation could not load canonical service IDs. |
@@ -1378,7 +1378,7 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `internal_unclassified` | ExtProc could not classify the failure, such as an unexpected error or an OAuth error code that it does not map to a detail. |
 | `none` | Nothing failed; metrics of successful requests and successful `extproc.grant_context.*` spans carry it, while other successful spans and logs leave out the failure detail. |
 | `policy_configuration` | Authorization is enabled but the gateway sent no protocol metadata, or no `mcp_server` metadata for an MCP request; ExtProc answered 403. |
-| `policy_denied` | The OPA decision did not allow the request, also after a policy error, a timeout or an undefined result, so ExtProc answered 403 `access_denied`; `authorization.result_code` on `extproc.opa.evaluate` tells which. |
+| `policy_denied` | The OPA decision did not allow the request, also after a policy error, a timeout or an undefined result, so ExtProc answered 403 `access_denied`; `authorization.result_code` on `extproc.opa.evaluate` tells which, and for a request with a body only logs carry this detail. |
 | `policy_evaluation_failed` | The authorizer returned an error instead of a decision; the OPA authorizer never does, because it reports errors, timeouts and undefined results as `policy_denied`. |
 | `provider_response_invalid` | The OAuth provider answered the client assertion refresh with a response that ExtProc could not read or parse, or without the configured `id_token` or `access_token`. |
 | `provider_unavailable` | ExtProc could not reach the OAuth provider in time to refresh its client assertion, or the provider answered 5xx, 429, `server_error` or `temporarily_unavailable`. |

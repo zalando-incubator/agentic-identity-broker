@@ -124,7 +124,7 @@ const (
 	DetailPolicyEvaluationFailed FailureDetail = "policy_evaluation_failed"
 	// DetailPolicyDenied means the OPA decision did not allow the request, also after a policy error, a timeout or an
 	// undefined result, so ExtProc answered 403 `access_denied`; `authorization.result_code` on `extproc.opa.evaluate`
-	// tells which. For a request with a body, only logs carry this detail.
+	// tells which, and for a request with a body only logs carry this detail.
 	DetailPolicyDenied FailureDetail = "policy_denied"
 	// DetailResponseWriteFailed means ExtProc could not send its response to the gateway on the processing stream;
 	// only logs carry it, since the span has already ended.

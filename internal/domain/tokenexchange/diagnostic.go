@@ -88,10 +88,9 @@ const (
 	DetailNone FailureDetail = "none"
 	// DetailResourceMissing means the third-party exchange request had no `resource` parameter.
 	DetailResourceMissing FailureDetail = "resource_missing"
-	// DetailRequestMalformed means a parameter or the request body was missing, repeated or invalid, or repeated
-	// `resource` values differ.
-	// Impersonation also uses it for a scope that the target agent does not allow, and an access evaluation for a
-	// `context.agent` that does not match the subject token.
+	// DetailRequestMalformed means a parameter or the request body was missing, repeated or invalid, repeated
+	// `resource` values differ, an impersonation asked for a scope that the target agent does not allow, or the
+	// `context.agent` of an access evaluation does not match the subject token.
 	DetailRequestMalformed FailureDetail = "request_malformed"
 	// DetailSubjectInvalid means the subject token, or an impersonation actor token, failed parsing or its
 	// signature, issuer, audience or claim checks.
@@ -114,12 +113,12 @@ const (
 	// predicate, denied the calling client.
 	DetailClientPolicyDenied FailureDetail = "client_policy_denied"
 	// DetailCELConfiguration means a configured CEL expression returned a value of the wrong type or an empty value, so
-	// check the expression and the token claims that it reads. A CEL expression that fails to compile stops the broker
-	// at startup.
+	// check the expression and the token claims that it reads; impersonation reports such values as
+	// `cel_evaluation_failed` instead. A CEL expression that fails to compile stops the broker at startup.
 	DetailCELConfiguration FailureDetail = "cel_configuration"
 	// DetailCELEvaluationFailed means a CEL expression failed or timed out while it ran, such as when it reads a
-	// claim that the token lacks.
-	// Impersonation also uses it when an identity expression returns an empty value.
+	// claim that the token lacks, or an impersonation expression returned a value that is not a string or an empty
+	// identity.
 	DetailCELEvaluationFailed FailureDetail = "cel_evaluation_failed"
 	// DetailAgentMissing means no registered agent matches the agent ID that the token claims resolve to, or that the
 	// impersonation `audience` names, in which case the caller may have named the wrong agent.

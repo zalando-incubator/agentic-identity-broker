@@ -108,7 +108,7 @@ const (
 	// user must reconnect to the service.
 	DetailAccessTokenExpired ErrorDetail = "access_token_expired"
 	// DetailRefreshUnavailable means a refresh was due or requested but the session has no refresh token, so the
-	// user must reconnect to the service. If the access token has already expired when a refresh is due, the
+	// user must reconnect to the service; if the access token has already expired when a refresh is due, the
 	// detail is `access_token_expired` instead.
 	DetailRefreshUnavailable ErrorDetail = "refresh_unavailable"
 	// DetailRefreshRejected means the provider answered a refresh with a 4xx `invalid_grant` error, now or earlier,
