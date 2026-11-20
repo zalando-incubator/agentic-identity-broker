@@ -36,6 +36,10 @@ data:
       :'broker_user'
     ) \gexec
 
+    -- The runtime user appends and expires ledger rows but never updates them.
+    SELECT format('REVOKE UPDATE ON TABLE public.business_events FROM %I', :'broker_user')
+    WHERE to_regclass('public.business_events') IS NOT NULL \gexec
+
     -- Grant permissions on sequences (required for SERIAL / IDENTITY columns)
     SELECT format(
       'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I',

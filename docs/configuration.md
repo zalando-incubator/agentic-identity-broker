@@ -312,6 +312,11 @@ Each successful confidential-provider secret decryption emits `service_secret_de
 | `business_events.retention.interval` | Go duration string | `1h` | `1s`–`24h` inclusive | No | `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_INTERVAL` | `--business_events.retention.interval` | Time between retention runs in each replica. The first run is immediate. |
 | `business_events.retention.batch_size` | integer | `1000` | 1–10000 inclusive | No | `IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_BATCH_SIZE` | `--business_events.retention.batch_size` | Maximum rows per delete statement. |
 
+For PostgreSQL, apply migrations through `049_create_business_events` before you enable the ledger.
+Use a separate broker runtime role that does not own `business_events`.
+Grant that role `SELECT`, `INSERT`, and `DELETE` on the table, but not `UPDATE`, directly or through role membership.
+See [Operating the ledger](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/20261118-125900-business-event-ledger/contracts/configuration.md#operating-the-ledger) for deployment and retention guidance.
+
 #### Token Refresh Configuration
 
 | Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
