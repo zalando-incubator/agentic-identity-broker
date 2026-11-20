@@ -286,10 +286,10 @@
     {
       "issue": 367,
       "pr": 403,
-      "branch": "repo-assist/fix-issue-367-authorization-readiness-17a1d83b98b8ce0c",
+      "branch": "repo-assist/fix-issue-367-release-v02-44733281261",
       "status": "blocked",
       "updated_at": "2026-11-20",
-      "note": "#403 confirmed closed. Requested replacement base release/0.2 does not exist in live branches or local refs; release/v0.2 exists. Awaiting maintainer confirmation of target before conflict resolution/new PR."
+      "note": "Closed #403 replacement prepared at f5c31e8f against confirmed release/v0.2; publication pending, verify live PR next run. Static/build/fast/race and integration tests plus full non-Docker backend E2E pass. Security gate reproduces unchanged release scanner fixture compilation failure."
     },
     {
       "issue": 212,
@@ -435,8 +435,8 @@
   "priorities": [
     {
       "task": 6,
-      "item": "Unblock #403/#432 integration publication",
-      "note": "#432 live head unchanged; bundle rejected at 5735 KB vs 4096 KB changed-content limit. Transport alone did not fix size blocker. Maintainer-approved path needed; do not retry oversized pushes or rewrite history. #403 semantic main integration remains."
+      "item": "Confirm #367 replacement publication; unblock #432",
+      "note": "#367 local replacement targets confirmed release/v0.2; verify new PR before further work. #432 still needs approved publication path after oversized bundle rejection; do not repeat or rewrite existing PR history."
     },
     {
       "task": 2,
