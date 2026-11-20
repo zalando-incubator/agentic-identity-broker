@@ -26,10 +26,11 @@ func MustDefine(name string, options ...Option) Definition {
 	if !identifier.MatchString(name) {
 		panic("invalid business event identifier: " + name)
 	}
-	d := Definition{name: name}
+	configured := Definition{name: name}
 	for _, option := range options {
-		option(&d)
+		option(&configured)
 	}
+	d := Definition{name: name, ownerVisible: configured.ownerVisible}
 	registry.Lock()
 	defer registry.Unlock()
 	if _, exists := registry.definitions[name]; exists {

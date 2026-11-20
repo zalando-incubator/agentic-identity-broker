@@ -44,13 +44,20 @@ func TestBusinessEventDefinitionsUseEventKey(t *testing.T) {
 func miskeyedBusinessEvents(info *types.Info, file *ast.File) []ast.Expr {
 	var offenders []ast.Expr
 	checkPairs := func(exprs []ast.Expr) {
-		for i, value := range exprs {
-			if !isBusinessEventType(info.TypeOf(value)) {
+		for len(exprs) > 0 {
+			key := exprs[0]
+			if len(exprs) > 1 && (types.Identical(info.TypeOf(key), types.Typ[types.String]) ||
+				types.Identical(info.TypeOf(key), types.Typ[types.UntypedString])) {
+				if isBusinessEventType(info.TypeOf(exprs[1])) && !isBusinessEventKey(info, key) {
+					offenders = append(offenders, exprs[1])
+				}
+				exprs = exprs[2:]
 				continue
 			}
-			if i == 0 || !isBusinessEventKey(info, exprs[i-1]) {
-				offenders = append(offenders, value)
+			if isBusinessEventType(info.TypeOf(key)) {
+				offenders = append(offenders, key)
 			}
+			exprs = exprs[1:]
 		}
 	}
 	ast.Inspect(file, func(node ast.Node) bool {
@@ -62,7 +69,15 @@ func miskeyedBusinessEvents(info *types.Info, file *ast.File) []ast.Expr {
 				if function, ok := n.Fun.(*ast.SelectorExpr); ok && function.Sel.Name == "AnyValue" {
 					break
 				}
-				checkPairs(n.Args)
+				args := n.Args
+				if sig, ok := info.TypeOf(n.Fun).(*types.Signature); ok && sig.Variadic() {
+					fixed := sig.Params().Len() - 1
+					if len(args) < fixed {
+						break // One tuple expression supplies multiple parameters.
+					}
+					args = args[fixed:]
+				}
+				checkPairs(args)
 			}
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(n)) {
@@ -130,6 +145,9 @@ func TestBusinessEventGuardDetectsWrongKeys(t *testing.T) {
 	}{
 		{"key value", `logger.InfoContext(nil, "record", "action", definition)`, 1},
 		{"correct key", `logger.InfoContext(nil, "record", "event", definition)`, 0},
+		{"message is not a key", `logger.InfoContext(nil, "event", definition)`, 1},
+		{"attribute value is not a key", `logger.InfoContext(nil, "record", "action", "event", definition)`, 1},
+		{"group name is not a key", `_ = slog.Group("event", definition)`, 1},
 		{"constant key", `const key = "event"; logger.InfoContext(nil, "record", key, definition)`, 0},
 		{"dynamic key", `key := "event"; logger.InfoContext(nil, "record", key, definition)`, 1},
 		{"typed attr", `_ = slog.Any("action", definition)`, 1},

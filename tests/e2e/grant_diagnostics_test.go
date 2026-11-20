@@ -371,7 +371,7 @@ func (f *grantDiagnosticsFixture) LifecycleRecords() []map[string]any {
 	var audits []map[string]any
 	for _, record := range records {
 		discriminatorKey := "action"
-		if _, hasEvent := record["event"]; hasEvent {
+		if record["event"] == "consent.grant.revoked" {
 			discriminatorKey = "event"
 		}
 		discriminator, _ := record[discriminatorKey].(string)

@@ -41,6 +41,16 @@ func TestDefinitionContract(t *testing.T) {
 	assert.NotEqual(t, definitions, Definitions(), "registry results must not alias its state")
 }
 
+func TestDefinitionKeepsValidatedName(t *testing.T) {
+	suffix := testDefinitionSequence.Add(1)
+	previous := MustDefine(fmt.Sprintf("test.definition.original_%d", suffix))
+	name := fmt.Sprintf("test.definition.next_%d", suffix)
+	got := MustDefine(name, func(d *Definition) { *d = previous }, OwnerVisible())
+	assert.Equal(t, name, got.Name())
+	assert.True(t, got.OwnerVisible())
+	assert.Contains(t, Definitions(), got)
+}
+
 func TestDefinitionRejectsMalformedIdentifiers(t *testing.T) {
 	for _, name := range []string{"", "consent", "consent.grant", "consent.grant.revoked.extra", "Consent.grant.revoked", "consent.grant.re-voked", "1consent.grant.revoked", "consent..revoked", "consent.grant.revoked\n"} {
 		t.Run(name, func(t *testing.T) {
