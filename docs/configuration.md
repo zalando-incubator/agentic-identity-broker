@@ -157,76 +157,16 @@ Public, CIMD confidential, and Google services cannot select filesystem mode.
 
 Initiation reads only the current client-ID file. Each exchange attempt and actual refresh reads a fresh, coherent pair.
 Each file must be regular, readable by the broker UID, non-empty after whitespace removal, and at most 65,536 bytes before trimming.
-The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value. Administrative service metadata reads and writes never read files. Session and consent usability displays read only the client-ID file, never the secret file; source failure falls back to persisted identity evidence for display only. Token acquisition and authorization gates have no availability fallback.
-Consent detail evaluates only connections referenced by the agent's service requirements or resolved permission sets. It reads session metadata without encrypted tokens and does not evaluate unrelated providers or their credential files.
+The broker removes surrounding whitespace and preserves internal characters. It caches no descriptor or credential value.
 Configuration has no hot reload. Binding changes require a restart, but file publication takes effect on the next applicable operation.
 
 For rotation, publish fresh immutable targets and switch the complete pair atomically. Do not modify a published target or reuse a retired target during acquisition.
 The reader revalidates both targets after acquisition. A detected replacement returns a safe `generation_changed` error and sends no provider authentication request.
 A pair validated before later publication can finish its in-flight operation. Provider validity overlap must cover that operation.
 
-Same-ID secret rotation through files or the Admin API never invalidates sessions. Metadata-only writes also preserve sessions.
-A different client ID invalidates old codes and sessions, including still-valid access tokens, for every principal.
-Restoring an old client ID records another monotonic revision. It does not revive invalidated sessions.
-The broker retains sessions and grants. Each principal reconnects independently.
-Identity-less legacy sessions remain usable only for stored services that never changed credential source, while the service revision remains 0.
-The broker infers no historical identity. Pre-upgrade callbacks without explicit identity/revision claims must restart sign-in on new replicas.
+Changing the client ID requires users to reconnect. Rotating the secret without changing the client ID does not.
 Source transitions never rewrite established identities. Removing a binding preserves filesystem mode and makes affected authentication fail with `missing_binding`.
 Administrative responses expose source metadata, not paths, file values, or transition history. Source errors retain generic HTTP responses and closed, credential-free event reasons.
-
-### Changing a service client ID
-
-Existing `third_party_oauth2.credential_files` and `server.enduser.public_url` suffice. There is no enforcement opt-out, new configuration key, or changed default. The public URL determines the same-origin, service-specific recovery URL; see [ADR 044-service-specific-session-recovery-url](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/044-service-specific-session-recovery-url.md).
-
-Before an identity change, complete the [client-identity upgrade checklist](#client-identity-upgrade-checklist).
-For stored credentials, an accepted full-replacement Admin PUT records a different effective `client_id` atomically with the update.
-For filesystem credentials, the first broker read of a different client-ID file value records the change.
-Administrative service metadata operations never read files. Rejected or version-conflicting updates invalidate nothing.
-
-1. Register the new client and existing callback URI with the provider.
-2. Publish the complete filesystem credential pair through fresh immutable targets, or send one full-replacement Admin PUT with the new stored client ID and credentials.
-3. Wait for coherent publication to reach every replica before announcing the change. A stale replica or reverted file can record another revision, requiring users who reconnected early to reconnect again.
-4. Expect sign-in on each user's next use. Unreadable identity fails closed with `500 server_error`, even with a still-valid access token; identity invalidation instead gives recoverable `invalid_grant` with a service-specific `error_uri`.
-
-Same-ID secret rotation needs no reconnection or identity change procedure. It must still satisfy the immutable-target publication rules above.
-
-### Client-identity upgrade checklist
-
-The [accepted ADR 048-client-identity-revisions](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005) defines this continuous rolling upgrade.
-The [chart migration procedure](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/charts/agentic-identity-broker/README.md#client-identity-migrations-049-and-050) gives database lock and failure-recovery details.
-Activation is the operator-verified boundary that permits identity changes, not a runtime switch. New replicas enforce revisions from startup.
-This procedure adds no configuration keys, defaults, Helm values, templates, hooks, or workflows.
-
-Record evidence for each prerequisite:
-
-- [ ] Record and freeze effective client IDs, credential sources, canonical IDs, and immutable bindings across all replicas.
-- [ ] Pause identity-mutating Admin automation, filesystem publication, discovery/DCR re-registration, and direct writers. Defer new registrations that assign identities.
-- [ ] Keep end-user and Admin ingress healthy throughout mixed-version overlap. Verify continued token acquisition, refresh, browser authorization, and session access.
-- [ ] Permit same-ID secret rotation and metadata-only writes only when they cannot change frozen fields.
-- [ ] Apply additive migrations 049 and 050 online before new replicas start. Verify schema expansion and constraint validation.
-- [ ] Verify the actual supported prior release against the expanded schema. Require explicit-column reads, updates preserving unknown evidence columns, and legacy inserts compatible with revision default 0.
-- [ ] Replace replicas incrementally with pinned revision-aware images under unchanged identities and bindings. Account for pre-upgrade callbacks that require sign-in retry on new replicas.
-- [ ] Withdraw every old process from end-user, Admin, and direct traffic. Drain all admitted token requests, refreshes, sweeps, callbacks, and service writes while healthy new replicas serve.
-- [ ] Verify the entire serving/writing inventory: replicas, workers, jobs, direct callers, and DCR writers. Require revision-aware images for every process and pinned rollback target.
-- [ ] Prevent controllers from restarting an unaware image. Only after every prerequisite passes, activate by resuming identity changes.
-
-If migration, compatibility, drain, or inventory checks fail, keep healthy replicas serving and retain the freeze.
-Never force past failed validation or automate dirty-state recovery.
-
-Before activation, abort to the prior binary only after all these checks pass:
-
-- Verify that identities, sources, canonical IDs, and bindings remained unchanged throughout the overlap.
-- Verify that every service revision remains 0.
-- Drain all new admitted work while healthy replicas serve.
-- Retain the expanded schema and identity evidence.
-
-Zero revisions alone do not prove a safe abort. An old writer or filesystem change can escape revision recording.
-If freeze integrity is lost, isolate unaware readers/writers and restore a revision-aware fleet before identity changes resume.
-
-After activation, use only revision-aware releases for rollback, even when every revision remains 0.
-Retain schema and identity evidence. Never resume an unaware serving or writing process.
-The guarded 049 DOWN refuses positive service revisions, but a successful guard does not authorize application rollback.
-The historical credential-source conversion procedure cannot authorize an unaware binary after activation.
 
 ## ExtProc approval configuration
 
@@ -705,7 +645,6 @@ These options control the authorization-code flow and token refresh for third-pa
 - If a reconnect omits `refresh_token`, the broker accepts the new access token and clears the stored refresh token and any recorded rejection. This prevents combining credentials from different upstream accounts. The connection requires login again after the new access token expires. To restore automatic refresh, obtain a new refresh token through provider consent. For providers that require it, configure `prompt=consent` through the service's authorization parameters.
 - The broker does not infer or record refresh-token expiry from provider-specific lifetime fields. It records only an observed provider `invalid_grant` rejection, which requires the user to log in again. Provider rejection remains authoritative.
 - The broker accepts access-token `expires_in` values as JSON numbers or numeric strings. During refresh, absent or null metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid`. Other positive fractions are truncated to whole seconds. Refresh commits explicit token type and scope with the new tokens. An omitted scope retains the stored scope; an explicit empty scope clears it. GitHub scopes use comma separators.
-- After credential reselection, callback and refresh scope processing uses the provider snapshot that supplied the successful token request, including its scope separator and callback fallback scopes.
 
 **Notes:**
 

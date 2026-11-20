@@ -483,7 +483,7 @@ Before activation, a prior-binary abort requires verified unchanged identities/s
 
 050 DOWN restores unvalidated constraints without altering rows. 049 DOWN refuses any positive service revision and changes nothing on refusal. A successful DOWN guard is not an application rollback authorization. Retaining invalidated session rows and service revision evidence prevents a restored client ID from reviving old sessions.
 
-For filesystem publication, publish fresh immutable credential pairs coherently to every replica before announcing an identity change. Each differing observation, including a stale replica or reverted file, can record another revision, so early reconnections can need repeating. Same-ID secret rotation and metadata-only updates never invalidate sessions. See [configuration guidance](../../docs/configuration.md#changing-a-service-client-id).
+For filesystem publication, publish fresh immutable credential pairs coherently to every replica before announcing an identity change. Each differing observation, including a stale replica or reverted file, can record another revision, so early reconnections can need repeating. Same-ID secret rotation and metadata-only updates never invalidate sessions. See [credential file configuration](../../docs/configuration.md#third-party-oauth2-credential-files).
 
 ### Security: Separate Migration Image
 

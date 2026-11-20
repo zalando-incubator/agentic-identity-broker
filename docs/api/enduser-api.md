@@ -2,11 +2,11 @@
 
 The end-user API serves OAuth2 authorization, token, and metadata requests. The broker serves it on the end-user listener.
 
-The canonical contract is [End-User API 2.0.0](../../api/enduser/openapi.yaml), upgraded from 1.2.0 on the existing routes. Request and response shapes remain unchanged. The approved behavior adds client-identity invalidation to the existing reauthentication rules. The related [Admin API 3.0.0](../../api/admin/openapi.yaml) cutover changes sweep result classification, not its routes or shapes.
+See the [End-User API contract](../../api/enduser/openapi.yaml) for request and response schemas.
 
 ## Session reauthentication and client identity
 
-A service client-ID change invalidates every affected user's existing connection on its next use. This applies to stored IDs changed through the Admin API and filesystem IDs changed through credential publication. Restoring the previous client ID does not restore an invalidated connection. Each user must reconnect under the current identity. Same-ID secret rotation does not require reauthentication. Existing grants and unrelated service connections remain unchanged.
+If a service changes its client ID, sign in to the service again the next time you use it. Restoring the old ID does not restore your connection. Rotating the secret without changing the client ID does not require sign-in. Your grants and other service connections stay unchanged.
 
 ### Session fields
 
@@ -19,68 +19,17 @@ The existing fields apply to session lists, session details, and manual-refresh 
 | `access_token_expired` | Whether the recorded access-token expiry passed. Unknown expiry does not establish permanent validity. |
 | `has_refresh_token` | Whether the broker stores a refresh token, including a rejected token. It does not establish refresh usability or lifetime. |
 
-A recorded rejection blocks issuance even with an unexpired access token. An expired access token remains refreshable with a stored, not-rejected refresh token and usable identity. The broker never predicts refresh-token expiry.
-
-For example, a synthetic Reports Production session can require sign-in before its access token expires:
-
-```json
-{
-  "id": "660e8400-e29b-41d4-a716-446655440001",
-  "service_id": "880e8400-e29b-41d4-a716-446655440010",
-  "service_display_name": "Reports Production",
-  "token_type": "Bearer",
-  "scope": ["reports:read"],
-  "initiated_at": "2026-11-04T08:00:00Z",
-  "requires_reauthentication": true,
-  "is_expired": true,
-  "access_token_expired": false,
-  "has_refresh_token": true,
-  "dependent_agent_count": 1,
-  "is_encrypted": true
-}
-```
-
-Consent detail reports `connectionStatus: not_connected` for this service. Such a session cannot satisfy a mandatory service when the user submits a grant. Consent and session displays read the live client-ID file, never the secret file. If source resolution fails, these displays fall back to persisted identity evidence. A display response never authorizes token release.
-
-Grant submission checks both included services and the Agent's mandatory service requirements. A mandatory service still requires a usable connection when its permission set is unselected. This check does not add that permission set or service to the grant.
-
-The SPA requests current usability whenever it loads session lists, session details, or consent details. These responses bypass the frontend TTL cache. Returning through SPA navigation does not require a full-page reload to show sign-in. Unrelated metadata and grant caches remain unchanged.
+Consent shows the affected service as `not_connected`. Reconnect any required service before submitting the grant.
 
 ### Browser authorization and reconnect
 
-In local and hybrid mode, the next relevant `GET /oauth2/authorize` request checks the service connections included in the existing grant. If an included connection requires reauthentication, the broker returns the existing consent redirect:
+In local and hybrid mode, agent authorization opens consent if an included service needs you to sign in again. Use the service’s sign-in action to reconnect. If a sign-in started before the client ID changed, start it again.
 
-```http
-HTTP/1.1 302 Found
-Location: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000?session_token=SYNTHETIC_SEALED_AUTHORIZATION_CONTEXT
-```
-
-An existing grant does not bypass this check. The broker does not send a proactive notification or navigate an already open page. The existing service sign-in action starts authorization under the current identity. Provider login and consent remain under provider control. A successful reconnect restores only that user's service connection.
-
-A callback from authorization started under an older identity or revision fails before code exchange. This also applies after the operator restores the previous client ID. Pre-upgrade callback state without an explicit identity or revision must restart sign-in, even at revision 0. The legacy stored-session exception does not apply to callback state. The browser receives the existing `302` to `/sessions?error=callback_failed&error_description=...`. A failed callback preserves the existing session.
-
-Token requests cannot navigate a browser. The [token-exchange recovery example](../reference/token-exchange.md#400-invalid_grant) shows the service-specific recovery link and the return to `/sessions`. Direct recovery does not redirect the user to agent consent.
+If a token exchange returns a [recovery link](../reference/token-exchange.md#400-invalid_grant), open it in a browser to reconnect.
 
 ### Manual refresh
 
-`POST /api/third-party/{serviceId}/session/refresh` returns `409 refresh_unavailable` for missing required identity, a mismatched client ID, or a superseded revision. The broker makes no provider request and leaves stored tokens unchanged:
-
-```http
-HTTP/1.1 409 Conflict
-Content-Type: application/json
-
-{"error":"refresh_unavailable","message":"no valid refresh token available for this session"}
-```
-
-This replaces the previous identity-mismatch `500` outcome. The same `refresh_unavailable` code still covers sessions without a stored refresh token. A recorded or newly observed terminal provider rejection retains `409 refresh_rejected`. Identity handling does not replace that rejection outcome. An unreadable client-ID file remains a `500` failure, not a reconnect diagnosis.
-
-### Admin sweep compatibility
-
-In Admin API 3.0.0, `POST /api/sessions/sweep` counts identity-invalid eligible candidates as `failed`, not `refreshed`, in real and dry runs. Missing required identity, a mismatched ID, a superseded revision, or an unreadable identity cannot count as refresh success. Identity-invalid candidates make no provider request. With one due identity-invalid candidate, a completed sweep returns `200 OK` with `failed: 1`, `refreshed: 0`, and `total_evaluated: 1`.
-
-A dry run compares the live identity with persisted revision evidence without provider calls or observation/session writes. A differing file value can count as failed without a persisted revision increment. Other candidates that would refresh still count as `refreshed` in a dry run. Candidate selection and the exclusion of provider-rejected sessions remain unchanged. Sessions without a recorded access expiry are not sweep candidates, but identity enforcement still applies on their next use.
-
-See [the service-management guide](../guides/manage-agents-and-services.md) for the change procedure and guarded rolling-upgrade requirements.
+Manual refresh returns `409 refresh_unavailable` when a client-ID change requires a new sign-in. A provider rejection of the refresh token still returns `409 refresh_rejected`.
 
 ## CIMD Client Authentication
 

@@ -64,7 +64,7 @@ Existing records migrate to stored mode without changing confidential, public, o
 
 Never expose or accept the transition marker through the administrative API. File configuration never registers services or selects their source. Filesystem-only credential omission does not change stored redaction or excluded-mode representations.
 
-Published `v0.1.81` contains Admin API `1.0.0`, whose response requires `client_id`. Filesystem omission breaks that contract. On 2026-10-08, the user accepted ADR 041 and approved the major contract bump to `2.0.0`. The implemented source-aware schema uses existing `/api/services` routes without a compatibility endpoint or shim. Repository administrative consumers use the new representation. The [Admin API 2.0.0 migration guide](../../../docs/guides/manage-agents-and-services.md#migrate-administrative-consumers-to-admin-api-200) records the unreleased breaking change and external consumer migration.
+Published `v0.1.81` contains Admin API `1.0.0`, whose response requires `client_id`. Filesystem omission breaks that contract. On 2026-10-08, the user accepted ADR 041 and approved the major contract bump to `2.0.0`. The [source-aware schema](../../../api/admin/openapi.yaml) uses existing `/api/services` routes without a compatibility endpoint or shim. Repository administrative consumers use the new representation.
 
 The [release evidence](../research.md#decision-9-preserve-repository-release-note-conventions) remains the published baseline, not a feature-release claim.
 

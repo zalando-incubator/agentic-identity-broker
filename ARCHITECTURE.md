@@ -629,7 +629,7 @@ Creation omission selects stored. Update omission preserves the current source. 
 
 PUT remains a full replacement with existing documented omission exceptions. Source transitions update the source, credentials, and irreversible transition evidence atomically. The reverse transition requires both explicit non-empty inline credentials, never imported file values. Existing error envelopes, ETags, protected-resource preconditions, methods, endpoints, and unrelated validation remain unchanged. End-user API and operational error contracts remain unchanged.
 
-An OpenAPI request cannot inspect the previous service record. The domain enforces omitted-source updates, the resulting canonical ID, and stricter reverse-transition credentials against that record. Repository administrative consumers use the source-aware contract. External consumers must migrate as documented in the [Admin API 2.0.0 migration guide](docs/guides/manage-agents-and-services.md#migrate-administrative-consumers-to-admin-api-200). The Admin API version does not announce a broker release.
+An OpenAPI request cannot inspect the previous service record. The domain enforces omitted-source updates, the resulting canonical ID, and stricter reverse-transition credentials against that record. See the [Admin API contract](api/admin/openapi.yaml) for the source-aware schema. The Admin API version does not announce a broker release.
 
 The relationships and ownership are:
 

@@ -10,7 +10,7 @@ This guide validates implemented, unreleased behavior described by [plan.md](./p
 
 ~~The smoke setup requires a different stored placeholder, while registration, API, and storage remain unchanged.~~ Superseded by explicit filesystem registration without inline credentials.
 
-**Design approval, 2026-10-08**: The user accepted ADR 041 and selected a major contract bump to Admin API `2.0.0`. Published `v0.1.81` contains the incompatible `1.0.0` required-client-ID schema. The implemented source-aware schema uses existing `/api/services` routes without a compatibility endpoint or shim. The [Admin API 2.0.0 migration guide](../../docs/guides/manage-agents-and-services.md#migrate-administrative-consumers-to-admin-api-200) records the unreleased breaking change and consumer migration. The route examples remain valid. Approval preceded implementation and did not itself prove runtime behavior.
+**Design approval, 2026-10-08**: The user accepted ADR 041 and selected a major contract bump to Admin API `2.0.0`. Published `v0.1.81` contains the incompatible `1.0.0` required-client-ID schema. The [source-aware schema](../../api/admin/openapi.yaml) uses existing `/api/services` routes without a compatibility endpoint or shim. The route examples remain valid. Approval preceded implementation and did not itself prove runtime behavior.
 
 Historical design and test-first evidence remains recorded here.
 

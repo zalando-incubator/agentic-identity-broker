@@ -16,12 +16,6 @@ To deploy transparent exchange at an Envoy-based gateway, see the
 contract for this endpoint lives in the [end-user API reference](/api/enduser).
 :::
 
-The canonical contracts are [End-User API 2.0.0](../../api/enduser/openapi.yaml) and
-[Admin API 3.0.0](../../api/admin/openapi.yaml). The identity-related major cutovers retain
-existing routes and request/response shapes. End-User consumers must handle the extended
-reauthentication behavior. Admin consumers must handle changed sweep totals, including dry runs.
-See [session and refresh compatibility](../api/enduser-api.md#session-reauthentication-and-client-identity).
-
 The broker supports two RFC 8693 flows:
 
 - **Third-party token exchange** returns a stored provider credential. The broker resolves a
@@ -161,35 +155,20 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
 | `granted_permission_sets` | Optional | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. |
 
-Token exchange checks the current service client identity and revision before decrypting or
-returning a stored access token. The check applies even with unexpired tokens or unknown expiry.
-After this check, exchange returns a still-valid stored access token immediately.
+Token exchange returns a still-valid access token if the service connection is usable.
 
 If it expires within `token_refresh.lookahead_duration` (default `5m`) and has a usable refresh token,
 the broker submits background refresh work. The exchange does not wait for that work.
 A failed or dropped background refresh does not change the response.
 The lookahead window does not guarantee a minimum remaining lifetime for the returned token.
 
-If identity remains usable after access expiry, the broker waits for an on-demand refresh with the stored refresh token.
-Concurrent refreshes for the same principal and service share work in one process.
-Across replicas, the broker locks and re-reads the session before refreshing and committing rotated tokens.
-Every refresh path checks identity under the session lock before provider authentication.
-Identity denial submits no refresh token to the provider and leaves stored tokens unchanged.
+After the access token expires, exchange waits for a refresh if the connection is usable and has a usable refresh token.
 
 Refresh retries complete HTTP 5xx and 429 error responses and pre-send dial failures, with at most three attempts and backoff delays of 1s and 2s. It honors `Retry-After` up to 10 seconds; larger values, including numeric overflow, stop retries. It does not retry incomplete response bodies, timeouts, other HTTP 4xx responses, or ambiguous transport failures after sending request headers. A lost response can lose a provider rotation. The broker leaves stored credentials unchanged; a later provider rejection can require login.
 
 Refresh commits explicit provider token type and scope with the new credentials.
 Omitted scope retains the stored scope. An explicit empty scope clears it.
 Scope narrowing thus applies to subsequent exchange authorization and responses.
-
-Session lists and consent checks use the existing `requires_reauthentication` field.
-It includes recorded terminal refresh rejection, access expiry without a stored refresh token,
-and unusable client identity or revision. The deprecated `is_expired` alias always has the same value.
-`access_token_expired` remains the independent access-expiry signal.
-
-A recorded rejection stops token exchange immediately, even while the stored access token is still valid.
-An expired access token remains refreshable with a stored, not-rejected refresh token and usable identity.
-The broker never predicts refresh-token expiry.
 
 During refresh, absent or null `expires_in` metadata leaves expiry unspecified. Malformed or unrepresentable values, including positive lifetimes below one second, fail with `provider_response_invalid` instead of producing a non-expiring token. Other positive fractions are truncated to whole seconds.
 
@@ -254,41 +233,9 @@ No service has the requested URI in its `protected_resources`.
 
 ### 400 invalid_grant
 
-A service client-ID change invalidates existing connections for every affected user on next use.
-This applies to accepted stored-ID updates and observed filesystem-ID changes.
-Restoring the previous client ID does not restore those connections because the revision advances again.
-Same-ID secret rotation does not invalidate sessions. Grants and unrelated services remain unchanged.
+If a service changes its client ID, token exchange can return `invalid_grant` even before the access token expires.
 
-All three identity-denial reasons return `400 invalid_grant` with the service-specific recovery URI:
-
-| Internal reason | Meaning |
-|---|---|
-| `identity_missing` | Required establishment identity is absent or empty, without an applicable legacy stored-session exception. |
-| `identity_mismatch` | The session's client ID differs from the current effective client ID. |
-| `identity_superseded` | The session's revision differs from the current service revision, including after identity restoration. |
-
-These reasons are diagnostics, not new OAuth error codes or response fields.
-The denial returns no access token, refresh token, or `WWW-Authenticate` header.
-
-For example, Reports Production changes from synthetic client ID `reports-client-v1` to `reports-client-v2`.
-The Reports resource resolves to service UUID `880e8400-e29b-41d4-a716-446655440010`.
-Alice's stored token still has an hour remaining, but the otherwise valid exchange fails:
-
-```http
-POST /oauth2/token HTTP/1.1
-Host: broker.example.com
-Content-Type: application/x-www-form-urlencoded
-
-grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
-&resource=https%3A%2F%2Freports.example.com%2Fapi
-&subject_token=SYNTHETIC_SIGNED_SUBJECT_JWT
-&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token
-&client_assertion_type=urn%3Aietf%3Aparams%3Aoauth%3Aclient-assertion-type%3Ajwt-bearer
-&client_assertion=SYNTHETIC_SIGNED_CLIENT_ASSERTION_JWT
-
-HTTP/1.1 400 Bad Request
-Content-Type: application/json
-
+```json
 {
   "error": "invalid_grant",
   "error_description": "User session is unavailable. Please re-authenticate.",
@@ -301,45 +248,11 @@ Form-body line breaks are for display only. No new JWT is issued.
 The same denial applies to a token with unknown expiry.
 
 Rejected subject credentials do not require provider-session recovery and have no recovery URI.
-A missing, locally expired, scope-deficient, provider-rejected, or identity-invalid session has a service-specific `error_uri`.
-The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`.
-The configured `server.enduser.public_url` supplies the origin, never the request host or a caller-selected URL.
-The resolved service UUID supplies `{serviceId}`.
+If the response includes a service-specific `error_uri`, offer the link to the user so they can reconnect in a browser.
 The link is not broker `/oauth2/authorize`, a provider URL, or a direct session-management page.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
-The token request cannot navigate a browser. A client can present the recovery link to Alice.
-The authenticated browser opens that link, and the broker starts service OAuth with PKCE under the current identity:
-
-```http
-GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions HTTP/1.1
-Host: broker.example.com
-
-HTTP/1.1 302 Found
-Location: https://reports.example.com/oauth/authorize?response_type=code&client_id=reports-client-v2&redirect_uri=https%3A%2F%2Fbroker.example.com%2Fapi%2Fthird-party%2F880e8400-e29b-41d4-a716-446655440010%2Foauth2%2Fcallback&scope=reports%3Aread&state=SYNTHETIC_SEALED_DIRECT_RECOVERY_STATE&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256
-```
-
-The provider controls its login and consent screens.
-After Alice authorizes, the callback validates the principal, sealed state, service, and current identity/revision before code exchange.
-The code exchange uses PKCE:
-
-```http
-GET /api/third-party/880e8400-e29b-41d4-a716-446655440010/oauth2/callback?code=SYNTHETIC_ONE_USE_RECOVERY_CODE&state=SYNTHETIC_SEALED_DIRECT_RECOVERY_STATE HTTP/1.1
-Host: broker.example.com
-
-HTTP/1.1 302 Found
-Location: https://broker.example.com/sessions?success=true&service_id=880e8400-e29b-41d4-a716-446655440010
-```
-
-These browser requests use the deployment's existing trusted principal authentication.
-The state and code markers represent synthetic, validated values. The callback replaces only Alice's connection.
-Other users must reconnect separately. A subsequent valid exchange can return the stored provider token through the existing success response.
-
-Direct recovery returns to `/sessions`, not agent consent.
-In local and hybrid mode, the next relevant agent browser authorization instead shows consent for included unusable service connections.
-An existing grant does not bypass that check. This is not proactive navigation of an already open page.
-Stale callbacks and pre-upgrade state without explicit identity/revision fail before code exchange and must restart sign-in.
-See [browser authorization and reconnect](../api/enduser-api.md#browser-authorization-and-reconnect) for callback and display behavior.
+After sign-in, the browser returns to `/sessions`. See [browser authorization and reconnect](../api/enduser-api.md#browser-authorization-and-reconnect).
 
 ### 401 invalid_client
 
@@ -375,9 +288,7 @@ CEL compilation or configuration failure instead returns `server_error`.
 }
 ```
 
-An unreadable client-ID file or unavailable service identity state returns `500 server_error`, even for an unexpired stored token.
-The response has no `error_uri` because the failure does not establish identity invalidation.
-Token release and refresh fail closed. Repeated user sign-in does not resolve an unavailable credential source.
+If the broker cannot read the current client ID, it returns `500 server_error` without a recovery link. Signing in again does not fix this error.
 
 ### Diagnostic attributes
 
@@ -422,9 +333,7 @@ Provider refresh rejection and recorded local expiry are distinct causes.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.
 Credential-file availability failures use `credential_source_unavailable` with outcome `infrastructure_error` at the affected session stage.
-They return `server_error` without a recovery URI.
-All three identity-denial reasons (`identity_missing`, `identity_mismatch`, `identity_superseded`) instead use
-`credential_identity_changed`, `reauth_required`, and `reauthenticate` targeting `provider_session`.
+They return `server_error` without a recovery URI. Missing or mismatched established client identity instead uses `credential_identity_changed`, `reauth_required`, and `reauthenticate` targeting `provider_session`.
 Identity failures return `invalid_grant` with the same service-specific `error_uri` before provider authentication.
 
 Session `OperationError` carries immutable operation/detail/kind/dependency/status/allowlisted-code metadata.
@@ -450,9 +359,7 @@ Successful grant writes return persisted identity and timestamps to the domain t
 Grant revocation uses the atomically deleted row as its observation snapshot, not a preceding lookup. Agent and permission-set deletion records are emitted only when the primary entity was actually deleted; repeated absent deletes retain their existing HTTP responses without another successful deletion record. These outcomes do not change adapter cascade behavior.
 
 Session failures also carry bounded `token_exchange.session.*` metadata.
-Telemetry excludes descriptions, causes, client-ID values, credential-file paths or contents, tokens, secrets,
-sealed state, authorization codes, PKCE verifiers, unvalidated JWT claims, JOSE headers, provider bodies/headers,
-endpoint URLs, resource paths, and recovery URIs.
+Telemetry excludes descriptions, causes, unvalidated JWT claims, JOSE headers, provider bodies/headers, endpoint URLs, resource paths, and recovery URIs.
 Established authenticated actor and calling-peer audit fields remain unchanged.
 Span status descriptions are static. Raw errors never become exception events.
 

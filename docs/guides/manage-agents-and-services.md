@@ -142,25 +142,6 @@ The broker prevents deletion of a service that a grant references. `DELETE
 before you delete the service.
 :::
 
-## Migrate administrative consumers to Admin API 2.0.0
-
-Admin API `2.0.0` is an unreleased breaking change from the `1.0.0` contract in broker release `v0.1.81`.
-The existing `/api/services` routes remain unchanged. There is no compatibility endpoint or shim.
-
-Before deployment:
-
-1. Update administrative consumers to read `credential_source` and accept filesystem responses without `client_id` or `client_secret`.
-2. Preserve stored-mode handling: responses include the stored client ID and redact applicable secrets as `REDACTED`.
-3. For filesystem registration, supply a canonical ID and `credential_source: "filesystem"`. Omit both inline credential fields, including null placeholders.
-4. Apply database migrations 039 and 040 before new broker pods start.
-5. Enable filesystem mode only after all old broker pods are replaced.
-
-Filesystem authentication acquires current credentials for each exchange or refresh attempt. Missing bindings or unusable files fail closed without stored-credential fallback.
-Client-ID changes invalidate existing sessions on their next use. See [Changing a service client ID](#changing-a-service-client-id) for both change channels.
-
-Guarded database downgrade refuses filesystem services and prior source transitions. After client-identity activation, rollback requires revision-aware binaries and retained schema/evidence.
-A successful database DOWN guard never authorizes an older binary. See the [upgrade checklist](/docs/configuration#client-identity-upgrade-checklist).
-
 ## Register and update a filesystem service
 
 Filesystem mode supports standard and GitHub shared-secret authentication. Static public, CIMD confidential, CIMD public, and Google services retain stored mode.
@@ -218,43 +199,9 @@ jq '. + {credential_source:"stored", client_id:env.PROVIDER_CLIENT_ID, client_se
   --data-binary @- "http://localhost:14000/api/services/${SERVICE_ID}"
 ```
 
-For protected-resource replacement, retain the existing strong `If-Match` requirement. A source transition never rewrites established session identities or revisions.
-A transition that preserves the effective client ID does not invalidate matching sessions. Different or missing identities require reconnection, except for eligible legacy sessions.
+For protected-resource replacement, retain the existing strong `If-Match` requirement.
 
-## Changing a service client ID
-
-First complete the [client-identity upgrade checklist](/docs/configuration#client-identity-upgrade-checklist).
-The [accepted ADR 048-client-identity-revisions](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-client-identity-revisions.md) defines the rollout and rollback boundary.
-
-There are two change channels:
-
-- An accepted full-replacement `PUT /api/services/{service-id}` changes a stored service's effective `client_id` atomically with its identity revision.
-- Coherent filesystem publication changes the client-ID file. The first broker read records a different identity, without an administrative metadata update.
-
-Both channels invalidate existing sessions for every principal on next use, including sessions with still-valid access tokens.
-Rejected or version-conflicting PUT requests invalidate nothing. Administrative service metadata operations never read credential files.
-Restoring a previous client ID records another revision. It never restores an invalidated session.
-The broker retains sessions and grants. Each principal reconnects independently through the existing service sign-in flow.
-
-Identity-less legacy sessions remain usable only for stored services that never changed credential source, while the service revision remains 0.
-The broker infers no historical identity. The first recorded identity change ends this exception.
-Pre-upgrade callback state lacks required identity/revision claims. On a new replica, the user must restart sign-in before provider exchange.
-This callback rule has no legacy-session exception.
-
-After the upgrade checklist permits identity changes:
-
-1. Register the new client and existing callback URI with the provider.
-2. Send one full-replacement stored-service PUT, or publish a complete filesystem credential pair through fresh immutable targets.
-3. For filesystem publication, wait until every replica reads the new pair before you announce the change.
-4. Expect each principal to reconnect on next use.
-
-A stale replica or reverted file can record another revision. A principal who reconnects before publication reaches every replica can need another reconnection.
-Identity invalidation returns recoverable `invalid_grant` with a service-specific `error_uri` during token acquisition.
-An unreadable current identity fails closed, even with a still-valid access token.
-
-Same-ID secret rotation through the Admin API or filesystem never invalidates sessions. Metadata-only writes also preserve sessions.
-Source transitions that preserve the effective client ID do not invalidate matching sessions.
-Routine filesystem rotation still requires coherent publication through fresh immutable targets.
+If the client ID changes, users must sign in to the service again. Restoring the old ID does not restore their connections. Rotating the secret without changing the ID does not require sign-in.
 
 ## Register a broker-hosted outbound CIMD confidential service
 
