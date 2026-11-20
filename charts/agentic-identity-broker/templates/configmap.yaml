@@ -74,14 +74,16 @@ data:
       trace:
         response_enabled: {{ .Values.broker.requestContext.trace.responseEnabled }}
 
+    {{- with .Values.broker.businessEvents }}
     # Business event ledger configuration
     business_events:
-      enabled: {{ .Values.broker.businessEvents.enabled }}
-      write_timeout: {{ .Values.broker.businessEvents.writeTimeout | quote }}
+      enabled: {{ .enabled }}
+      write_timeout: {{ .writeTimeout | quote }}
       retention:
-        period: {{ .Values.broker.businessEvents.retention.period | quote }}
-        interval: {{ .Values.broker.businessEvents.retention.interval | quote }}
-        batch_size: {{ .Values.broker.businessEvents.retention.batchSize }}
+        period: {{ .retention.period | quote }}
+        interval: {{ .retention.interval | quote }}
+        batch_size: {{ .retention.batchSize }}
+    {{- end }}
 
     # Third-party OAuth2 configuration
     third_party_oauth2:

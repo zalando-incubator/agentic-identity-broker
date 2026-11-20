@@ -582,6 +582,13 @@ func TestHelmBusinessEventsConfiguration(t *testing.T) {
 	}
 }
 
+func TestHelmBusinessEventsAbsentFromLegacyValues(t *testing.T) {
+	// A pre-ledger release reused on upgrade has no businessEvents defaults.
+	output := renderHelmTemplate(t, "--set", "broker.businessEvents=null")
+	configuration, _, _ := credentialHelmConfiguration(t, output)
+	require.NotContains(t, configuration, "business_events")
+}
+
 func TestHelmBusinessEventsRejectInvalidValues(t *testing.T) {
 	cases := []struct {
 		name      string

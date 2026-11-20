@@ -455,7 +455,7 @@ jobs:
       - name: Verify rendered deployment contracts
         env:
           REQUIRE_HELM: "1"
-        run: go test -count=1 -v ./tests/integration -run '^TestHelmCredentialFiles'
+        run: go test -count=1 -v ./tests/integration -run '^TestHelm(CredentialFiles|BusinessEvents)'
 
   # ---------------------------------------------------------------------------
   # The pipeline lints itself: syntax (actionlint) and security posture
