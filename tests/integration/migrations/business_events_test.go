@@ -103,6 +103,31 @@ func TestMigration049BusinessEvents(t *testing.T) {
 	`), "the reapplied table must accept an ID from before rollback")
 }
 
+func TestMigration049BusinessEventsAtomicOnIndexFailure(t *testing.T) {
+	f := NewMigrationTestFramework(t)
+	defer f.Cleanup(t)
+	require.NoError(t, f.Up(t, 48))
+	require.NoError(t, f.ExecuteSQL(t, `
+		CREATE TABLE ledger_migration_fixture (value text);
+		CREATE INDEX idx_business_events_agent ON ledger_migration_fixture (value);
+		INSERT INTO ledger_migration_fixture (value) VALUES ('preserved');
+	`))
+	err := f.Up(t, 49)
+	require.ErrorContains(t, err, "idx_business_events_agent")
+	require.ErrorContains(t, err, "already exists")
+	exists, err := f.TableExists(t, "business_events")
+	require.NoError(t, err)
+	assert.False(t, exists)
+	for _, name := range []string{"business_events_pkey", "idx_business_events_recorded", "idx_business_events_principal"} {
+		exists, err := f.IndexExists(t, name)
+		require.NoError(t, err)
+		assert.False(t, exists, name)
+	}
+	value, err := f.QuerySQL(t, `SELECT value FROM ledger_migration_fixture`)
+	require.NoError(t, err)
+	assert.Equal(t, "preserved", value)
+}
+
 func assertBusinessEventsSchema(t *testing.T, f *MigrationTestFramework) {
 	t.Helper()
 	version, dirty, err := f.Version(t)
