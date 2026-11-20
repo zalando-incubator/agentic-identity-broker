@@ -98,11 +98,11 @@ test-e2e-backend: web-build
     @echo "Running backend E2E suite..."
     @if command -v ginkgo > /dev/null; then ginkgo -v --procs={{GINKGO_BACKEND_PROCS}} --label-filter="!performance && !docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
-# Run E2E scenarios that require Docker or Podman
+# Run the agentgateway policy scenario and six ledger acceptance scenarios with Docker or Podman
 test-e2e-docker:
     @if command -v ginkgo > /dev/null; then ginkgo -v --procs=1 --label-filter="docker" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
-# Run the SC-001 backend performance measurement separately from functional E2E tests
+# Run the SC-001 impersonation and SC-004 ledger measurements separately from functional E2E tests
 test-e2e-performance:
     @echo "Running backend E2E performance measurement..."
     @if command -v ginkgo > /dev/null; then ginkgo -v --procs=1 --label-filter="performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi

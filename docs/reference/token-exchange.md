@@ -376,12 +376,12 @@ OTel resources exclude process command arguments and command lines, including co
 
 ## Grant and definition lifecycle audits
 
-The domain mutation service emits one successful operational record after persistence. Request handlers do not emit a second success or infer a mutation from the HTTP status. These synchronous logs are observations, not a durable transactional audit ledger.
+The domain mutation service emits one operational audit record after a committed mutation. Request handlers do not emit a second record or infer a mutation from the HTTP status. The logs do not guarantee transactional delivery.
 
-| Actions | Purpose-limited fields |
+| Audit discriminator | Purpose-limited fields |
 |---|---|
 | `grant_created`, `grant_updated` | Owner `principal`, `agent_id`, committed `grant_id`, `valid_until`, `created_at`, `updated_at`, and typed `{permission_set_id, included_service_ids}` entries. |
-| `grant_revoked` | Atomically deleted grant's owner, IDs, validity, update time and granted entries, plus `revoked_at`. |
+| `event=consent.grant.revoked` | Atomically deleted grant's `principal`, `agent_id`, `grant_id`, `valid_until`, `updated_at`, and `granted_permission_sets`, plus `revoked_at`, in both committed-delete branches. Failed cleanup additionally adds `refresh_cleanup=failed`. |
 | `agent_created`, `agent_updated` | Registered `agent_id`, typed `permission_sets`, and `service_requirements` with service ID, requirement type, required scopes and all-scopes flag. |
 | `agent_deleted` | The primary agent ID actually deleted; no inferred grant cascade count or per-grant revocation claim. |
 | `permission_set_created`, `permission_set_updated` | `permission_set_id` and typed `service_scopes`. |

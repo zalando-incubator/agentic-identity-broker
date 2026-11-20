@@ -1,0 +1,9 @@
+# Copy this block into your broker configuration file.
+# Use PostgreSQL for durable rows. Memory storage loses rows on process exit.
+business_events:
+  enabled: true          # Default: false. Disabling also stops retention and leaves existing rows.
+  write_timeout: 1s      # Append context deadline (100ms-10s), not total logging or request latency.
+  retention:
+    period: 2160h        # 90 days. Valid range: 24h-8760h (365 days).
+    interval: 1h         # Valid range: 1s-24h. The first run starts immediately.
+    batch_size: 1000     # Maximum rows per delete statement. Valid range: 1-10000.

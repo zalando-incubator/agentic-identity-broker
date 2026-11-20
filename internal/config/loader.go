@@ -22,6 +22,14 @@ import (
 	"github.com/spf13/viper"
 )
 
+var ledgerEnvPaths = map[string]string{
+	"IDENTITY_BROKER_BUSINESS_EVENTS_ENABLED":              configutil.Key("business_events", "enabled"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_WRITE_TIMEOUT":        configutil.Key("business_events", "write_timeout"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_PERIOD":     configutil.Key("business_events", "retention", "period"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_INTERVAL":   configutil.Key("business_events", "retention", "interval"),
+	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_BATCH_SIZE": configutil.Key("business_events", "retention", "batch_size"),
+}
+
 // Loader implements the ConfigPort interface using Viper, Cobra, and godotenv.
 // Each Loader instance has its own Viper instance for proper isolation.
 type Loader struct {
@@ -147,6 +155,12 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("storage", "timeouts", "read"), "5s")
 	l.v.SetDefault(configutil.Key("storage", "timeouts", "write"), "10s")
 
+	l.v.SetDefault(configutil.Key("business_events", "enabled"), false)
+	l.v.SetDefault(configutil.Key("business_events", "write_timeout"), "1s")
+	l.v.SetDefault(configutil.Key("business_events", "retention", "period"), "2160h")
+	l.v.SetDefault(configutil.Key("business_events", "retention", "interval"), "1h")
+	l.v.SetDefault(configutil.Key("business_events", "retention", "batch_size"), 1000)
+
 	requestContextDefaults := ports.DefaultRequestContextConfig()
 	l.v.SetDefault(configutil.Key("request_context", "trusted_proxy", "enabled"), requestContextDefaults.TrustedProxy.Enabled)
 	l.v.SetDefault(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), requestContextDefaults.TrustedProxy.ForwardedHeader)
@@ -171,6 +185,9 @@ func (l *Loader) setDefaults() {
 	_ = l.v.BindEnv(configutil.Key("server", "admin", "cors", "max_age"), "IDENTITY_BROKER_SERVER_ADMIN_CORS_MAX_AGE")
 	_ = l.v.BindEnv(configutil.Key("storage", "backend"), "IDENTITY_BROKER_STORAGE_BACKEND")
 	_ = l.v.BindEnv(configutil.Key("storage", "postgres", "connection_url"), "IDENTITY_BROKER_STORAGE_POSTGRES_URL")
+	for env, path := range ledgerEnvPaths {
+		_ = l.v.BindEnv(path, env)
+	}
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_ENABLED")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trusted_proxy", "forwarded_header"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRUSTED_PROXY_FORWARDED_HEADER")
 	_ = l.v.BindEnv(configutil.Key("request_context", "trace", "response_enabled"), "IDENTITY_BROKER_REQUEST_CONTEXT_TRACE_RESPONSE_ENABLED")
@@ -327,6 +344,8 @@ func (l *Loader) setDefaults() {
 			"server.admin.port", "server.admin.bind", "server.admin.public_url",
 			"server.shutdown.timeout",
 			"storage.backend", "storage.timeouts.read", "storage.timeouts.write",
+			"business_events.enabled", "business_events.write_timeout",
+			"business_events.retention.period", "business_events.retention.interval", "business_events.retention.batch_size",
 			"request_context.trusted_proxy.enabled",
 			"request_context.trusted_proxy.forwarded_header",
 			"request_context.trace.response_enabled",
@@ -413,6 +432,11 @@ func (l *Loader) loadEnvFile(filename string) error {
 	for key, value := range envMap {
 		// Set in OS environment (needed for os.Expand() in expandEnvVars phase)
 		_ = os.Setenv(key, value)
+		if path, bound := ledgerEnvPaths[key]; bound {
+			// The environment binding supplies this value at its canonical path.
+			keys = append(keys, strings.ReplaceAll(path, configutil.Delimiter, "."))
+			continue
+		}
 
 		// Strip IDENTITY_BROKER_ prefix and convert to Viper format
 		viperKey := key
@@ -543,6 +567,11 @@ func (l *Loader) expandEnvVars() error {
 
 	for _, key := range allKeys {
 		if key == credentialFilesKey || strings.HasPrefix(key, credentialFilesPrefix) {
+			continue
+		}
+		// Explicit ledger flags are bound after expansion and already carry typed values.
+		if l.cmd != nil && strings.HasPrefix(key, "business_events"+configutil.Delimiter) &&
+			l.cmd.Flags().Changed(strings.ReplaceAll(key, configutil.Delimiter, ".")) {
 			continue
 		}
 		value := l.v.GetString(key)
@@ -863,6 +892,32 @@ func (l *Loader) bindFlags() error {
 		queryTimeout, _ := l.cmd.Flags().GetDuration("token_refresh.health_metrics.query_timeout")
 		l.v.Set(configutil.Key("token_refresh", "health_metrics", "query_timeout"), queryTimeout)
 		cliKeys = append(cliKeys, "token_refresh.health_metrics.query_timeout")
+	}
+
+	if l.cmd.Flags().Changed("business_events.enabled") {
+		enabled, _ := l.cmd.Flags().GetBool("business_events.enabled")
+		l.v.Set(configutil.Key("business_events", "enabled"), enabled)
+		cliKeys = append(cliKeys, "business_events.enabled")
+	}
+	if l.cmd.Flags().Changed("business_events.write_timeout") {
+		timeout, _ := l.cmd.Flags().GetDuration("business_events.write_timeout")
+		l.v.Set(configutil.Key("business_events", "write_timeout"), timeout)
+		cliKeys = append(cliKeys, "business_events.write_timeout")
+	}
+	if l.cmd.Flags().Changed("business_events.retention.period") {
+		period, _ := l.cmd.Flags().GetDuration("business_events.retention.period")
+		l.v.Set(configutil.Key("business_events", "retention", "period"), period)
+		cliKeys = append(cliKeys, "business_events.retention.period")
+	}
+	if l.cmd.Flags().Changed("business_events.retention.interval") {
+		interval, _ := l.cmd.Flags().GetDuration("business_events.retention.interval")
+		l.v.Set(configutil.Key("business_events", "retention", "interval"), interval)
+		cliKeys = append(cliKeys, "business_events.retention.interval")
+	}
+	if l.cmd.Flags().Changed("business_events.retention.batch_size") {
+		batchSize, _ := l.cmd.Flags().GetInt("business_events.retention.batch_size")
+		l.v.Set(configutil.Key("business_events", "retention", "batch_size"), batchSize)
+		cliKeys = append(cliKeys, "business_events.retention.batch_size")
 	}
 
 	// Bind third_party_oauth2.client_name flag

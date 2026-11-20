@@ -81,8 +81,9 @@ func validTestConfig() *ports.Config {
 				ResponseEnabled: true,
 			},
 		},
-		Security:     ports.SecurityConfig{},
-		TokenRefresh: validTokenRefreshConfig(),
+		Security:       ports.SecurityConfig{},
+		TokenRefresh:   validTokenRefreshConfig(),
+		BusinessEvents: validBusinessEventsConfig(),
 	}
 }
 

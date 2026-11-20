@@ -47,6 +47,19 @@ type Config struct {
 	RequestContext   RequestContextConfig   `mapstructure:"request_context"`
 	Approvals        ApprovalsConfig        `mapstructure:"approvals"`
 	TokenRefresh     TokenRefreshConfig     `mapstructure:"token_refresh"`
+	BusinessEvents   BusinessEventsConfig   `mapstructure:"business_events"`
+}
+
+type BusinessEventsConfig struct {
+	Enabled      bool                          `mapstructure:"enabled"`
+	WriteTimeout time.Duration                 `mapstructure:"write_timeout"`
+	Retention    BusinessEventsRetentionConfig `mapstructure:"retention"`
+}
+
+type BusinessEventsRetentionConfig struct {
+	Period    time.Duration `mapstructure:"period"`
+	Interval  time.Duration `mapstructure:"interval"`
+	BatchSize int           `mapstructure:"batch_size"`
 }
 
 // TokenRefreshConfig declares the proactive refresh settings for production configuration.

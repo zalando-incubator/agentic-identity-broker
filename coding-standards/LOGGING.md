@@ -4,16 +4,17 @@ This standard applies to all Go code in `cmd/` and `internal/`. Read it before y
 
 Scope: log records only. OpenTelemetry traces and metrics follow `coding-standards/OPENTELEMETRY.md`.
 
-Related binding sources: ADR 011 and ADR 027 (OpenTelemetry), ADR 033 (request security context),
+Related binding sources: 011-opentelemetry-provider-pattern and 027-extproc-telemetry-shared-dependency (OpenTelemetry), 033-request-security-context-propagation (request security context), 20261118-125900-business-events-as-typed-log-records (business events),
 `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
 ## 1. Logger Plumbing
 
 | Rule | Reason |
 |---|---|
-| Use `log/slog` only. Do not use `log`, `fmt.Print*`, or a third-party logger. | One handler chain applies context, principal policy, and export to every record. |
+| Use `log/slog` only. Do not use `log`, `fmt.Print*`, or a third-party logger. | One handler chain applies context and principal policy before the fan-out to operational sinks and the enabled ledger handler (`telemetry.NewLedgerHandler`). |
 | Inject a `*slog.Logger` through the builder (`internal/app/builder.go`) or a constructor. | Constitution Principle XII. |
 | Require a logger in each constructor. Do not fall back to `slog.Default()`. In tests, inject a discard or buffer logger. | A fallback hides wiring errors and skips the builder handler chain. |
+| Send ledger-handler failure records through a context handler and principal policy to the operational sinks, never through the ledger handler. | Context metadata and principal policy remain central, without recursive ledger writes. |
 | When a `ctx` is in scope, use `DebugContext`, `InfoContext`, `WarnContext`, `ErrorContext`, `LogAttrs`, or `Log`. | `telemetry.ContextHandler` adds `trace_id`, `actor`, and `calling_peer` only from the context (ADR 033, SR-004). |
 | Do not add `trace_id`, `actor`, or `calling_peer` manually. | The context handler owns these attributes. |
 | In ExtProc, get the logger with `loggerFromContext(ctx, s.logger)`. Log exchange outcomes with `logDiagnostic`. | ExtProc keeps log parity without importing broker domain packages (ADR 027). |
@@ -51,7 +52,8 @@ oauth2_server.token.issued
 ```
 
 - Use only the key `event`. Do not use `action` or other discriminator keys.
-- An event identifier is a contract for dashboards and alerts. A rename is a breaking change. Record it in the changelog.
+- An event identifier is a contract for dashboards and alerts. A rename is a breaking change. Record the rename under `Breaking changes` in the pull request description. That section is the changelog record. Generated release notes link to that description without copying its contents.
+- For a business event, declare one `bizevent.Definition` with a package-level `bizevent.MustDefine` call in the emitting service package. Log the definition only under `event`, not its string identifier. A string `event` is an operational record only.
 - A diagnostic record that is not an audit, security, or lifecycle record can omit `event`.
 
 ### 2.3 Attribute Keys
@@ -125,10 +127,12 @@ A principal identifies a person, for example by email or subject. It is personal
 
 ### 5.2 Example
 
+This example uses the consent package's `GrantRevoked` definition from `internal/domain/consent/events.go`.
+
 ```go
 // Correct
 s.logger.InfoContext(ctx, "grant revoked",
-    "event", "consent.grant.revoked",
+    "event", GrantRevoked,
     "principal", grant.Principal, // id.Principal
     "agent_id", grant.AgentID)
 
@@ -194,9 +198,12 @@ These data classes are prohibited at all levels, including `Debug`.
 
 ## 8. Audit Records
 
-Audit records are structured operational logs. They are not a durable ledger.
+Audit records are structured operational logs. An audit record is not a transactional ledger: the write of a record is not atomic with the mutation that it reports.
+
+The business event ledger is a projection of audit records ([20261118-125900-business-events-as-typed-log-records](../adrs/20261118-125900-business-events-as-typed-log-records.md)). When the ledger is enabled, a handler in the builder chain stores each record whose `event` value is a typed business event definition. The ledger is disabled by default. A failed or timed-out write is counted and logged. A confirmed insert failure leaves no row. A timed-out write has an unknown outcome: the database can still commit the insert, so the row can exist. A record whose `event` value is a string is not stored. Do not add a second API that records the same fact.
 
 - Write the record after the mutation commits. Do not write a success record for an operation that changed nothing.
+- Do not write an audit record inside a storage transaction. The record reaches stdout, OpenTelemetry, and the ledger immediately, and it is false if the transaction rolls back.
 - Each audit record contains `event`, the IDs of the affected resources, and `principal` or `operator_principal`.
 - Use a `*Context` method. The context supplies `trace_id`, `actor`, and `calling_peer`.
 - Use the prefix `previous_observed_` for state that the operation read before the write.
@@ -208,12 +215,14 @@ Audit records are structured operational logs. They are not a durable ledger.
 - For each path that handles a credential, assert that the buffer does not contain the credential under test. Examples: `internal/extproc/server/exchange_safety_test.go`, `internal/extproc/authorization/authorizer_safety_test.go`.
 - For each path that logs a principal, assert that the attribute value is the policy output.
 - `TestLoggedPrincipalsAreTyped` (`internal/adapters/telemetry`) type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It fails when a value under a reserved principal key is not an `id.Principal`. It checks key-value arguments, key-value pairs in `[]any` literals and in `append` calls on a `[]any` (lists spread with `args...`), and `slog.Attr` literals, where the value must be `slog.AnyValue` of an `id.Principal` (section 5.1, rules 2 and 5).
+- The guard test in `internal/adapters/telemetry/business_event_logging_guard_test.go` type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It rejects a `bizevent.Definition` under a key other than `event`.
 - Assert `event` and the key attributes. Do not assert message text.
 
 ## 10. Review Checklist
 
 - [ ] The call uses a `*Context` method with the request `ctx`.
 - [ ] The message is a constant lowercase phrase. Audit and security records have `event`.
+- [ ] Each business event has one package-local definition, logged as a `bizevent.Definition` only under `event`.
 - [ ] Keys are `snake_case` and canonical (section 2.3). The error key is `error`.
 - [ ] The level agrees with section 3. The failure is logged one time.
 - [ ] Principals are logged as `id.Principal` under a reserved key and only where section 5 permits.

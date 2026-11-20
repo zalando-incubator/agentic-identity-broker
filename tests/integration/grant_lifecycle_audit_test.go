@@ -1,7 +1,9 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -13,8 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/permissionset"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -201,6 +205,99 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 			records, err = logs.Records()
 			require.NoError(t, err)
 			assert.Len(t, records, 2)
+		})
+	}
+}
+
+type grantAuditEventAppender func(context.Context, *model.BusinessEvent) error
+
+func (f grantAuditEventAppender) Append(ctx context.Context, event *model.BusinessEvent) error {
+	return f(ctx, event)
+}
+
+type grantAuditFailingRefreshRepo struct {
+	ports.RefreshTokenSessionRepository
+	err error
+}
+
+func (r grantAuditFailingRefreshRepo) RevokeByPrincipalAndAgent(context.Context, id.Principal, id.AgentID) (int, error) {
+	return 0, r.err
+}
+
+func TestGrantLifecycleAudit_RevocationBusinessEventPipeline(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cleanupErr error
+	}{
+		{name: "success"},
+		{name: "cleanup failure", cleanupErr: errors.New("refresh cleanup unavailable")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			grants := memory.NewUserGrantRepository()
+			validUntil := time.Now().Add(time.Hour).UTC()
+			grant := &storage.UserGrant{
+				ID: id.NewGrantID(), Principal: id.NewPrincipal("resource-owner"), AgentID: id.NewAgentID(),
+				ValidUntil: &validUntil, UpdatedAt: validUntil.Add(-time.Hour),
+				GrantedPermissionSets: []storage.GrantedPermissionSetEntry{{
+					PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()},
+				}},
+			}
+			require.NoError(t, grants.Create(ctx, grant))
+			var refreshRepo ports.RefreshTokenSessionRepository = memory.NewRefreshTokenSessionStore()
+			if tc.cleanupErr != nil {
+				refreshRepo = grantAuditFailingRefreshRepo{refreshRepo, tc.cleanupErr}
+			}
+			var events []*model.BusinessEvent
+			appender := grantAuditEventAppender(func(ctx context.Context, event *model.BusinessEvent) error {
+				_, err := grants.FindByPrincipalAndAgent(ctx, grant.Principal, grant.AgentID)
+				require.ErrorIs(t, err, ports.ErrNotFound, "audit emission must follow committed deletion")
+				events = append(events, event.Copy())
+				return nil
+			})
+			var operational bytes.Buffer
+			base := slog.NewJSONHandler(&operational, nil)
+			fallback := telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(base))
+			ledger := telemetry.NewLedgerHandler(appender, fallback, time.Second)
+			logger := slog.New(telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(telemetry.NewMultiHandler(base, ledger))))
+			service := consent.NewService(nil, nil, grants, nil, refreshRepo, nil, logger)
+			err := service.RevokeConsentForPrincipal(ctx, grant.Principal, grant.AgentID)
+			require.ErrorIs(t, err, tc.cleanupErr)
+			require.Len(t, events, 1)
+			event := events[0]
+			assert.Equal(t, "consent.grant.revoked", event.Event)
+			require.NotNil(t, event.Principal)
+			assert.Equal(t, grant.Principal.String(), *event.Principal)
+			stored, err := json.Marshal(event.Attributes)
+			require.NoError(t, err)
+			var attributes map[string]any
+			require.NoError(t, json.Unmarshal(stored, &attributes))
+			assert.Equal(t, grant.ID.String(), attributes["grant_id"])
+			assert.Equal(t, grant.AgentID.String(), attributes["agent_id"])
+			if tc.cleanupErr != nil {
+				assert.Equal(t, "failed", event.Attributes["refresh_cleanup"])
+			} else {
+				assert.NotContains(t, event.Attributes, "refresh_cleanup")
+			}
+			decoder := json.NewDecoder(&operational)
+			var revocations []map[string]any
+			for decoder.More() {
+				var record map[string]any
+				require.NoError(t, decoder.Decode(&record))
+				if record["event"] == event.Event {
+					revocations = append(revocations, record)
+				}
+			}
+			require.Len(t, revocations, 1)
+			assert.Equal(t, *event.Principal, revocations[0]["principal"])
+			for _, key := range []string{"time", "level", "msg", "event", "principal"} {
+				delete(revocations[0], key)
+			}
+			logged, err := json.Marshal(revocations[0])
+			require.NoError(t, err)
+			assert.JSONEq(t, string(logged), string(stored), "ledger attributes must match the operational audit snapshot")
+			require.ErrorIs(t, service.RevokeConsentForPrincipal(ctx, grant.Principal, grant.AgentID), consent.ErrGrantNotFound)
+			assert.Len(t, events, 1, "an unchanged retry must persist no event")
 		})
 	}
 }

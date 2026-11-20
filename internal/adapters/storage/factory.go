@@ -63,6 +63,8 @@ type Adapter struct {
 	authorizationCodes     ports.AuthorizationCodeRepository
 	pkceSessions           ports.PKCESessionRepository
 	clientAssertionReplays ports.ClientAssertionReplayRepository
+	businessEvents         ports.BusinessEventAppender
+	businessEventRetention ports.BusinessEventRetention
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -123,6 +125,8 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           noOpStorageTransactionManager{},
 		pkceSessions:           memory.NewPKCESessionStore(),
 		clientAssertionReplays: memory.NewClientAssertionReplayStore(),
+		businessEvents:         memAdapter,
+		businessEventRetention: memAdapter,
 	}, nil
 }
 
@@ -164,6 +168,8 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           pgAdapter,
 		pkceSessions:           postgres.NewPKCESessionRepo(pgAdapter),
 		clientAssertionReplays: postgres.NewClientAssertionReplayRepo(pgAdapter),
+		businessEvents:         pgAdapter,
+		businessEventRetention: pgAdapter,
 	}, nil
 }
 
@@ -331,4 +337,12 @@ func (a *Adapter) PKCESessions() ports.PKCESessionRepository {
 // ClientAssertionReplays returns the client assertion replay repository.
 func (a *Adapter) ClientAssertionReplays() ports.ClientAssertionReplayRepository {
 	return a.clientAssertionReplays
+}
+
+func (a *Adapter) BusinessEvents() ports.BusinessEventAppender {
+	return a.businessEvents
+}
+
+func (a *Adapter) BusinessEventRetention() ports.BusinessEventRetention {
+	return a.businessEventRetention
 }

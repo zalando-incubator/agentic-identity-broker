@@ -598,6 +598,49 @@
             }
           }
         },
+        "businessEvents": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Business event ledger and retention in each broker replica",
+          "required": ["enabled", "writeTimeout", "retention"],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable ledger writes and retention; disabling leaves existing rows unchanged"
+            },
+            "writeTimeout": {
+              "type": "string",
+              "default": "1s",
+              "description": "Append context deadline as a Go duration, 100ms-10s inclusive; the broker validates syntax and bounds at startup even when disabled. This is not total logging or request latency."
+            },
+            "retention": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Retention runs inside the broker Deployment whenever the ledger is enabled",
+              "required": ["period", "interval", "batchSize"],
+              "properties": {
+                "period": {
+                  "type": "string",
+                  "default": "2160h",
+                  "description": "Retention age by storage time as a Go duration, 24h-8760h inclusive; the broker validates syntax and bounds at startup even when disabled. Default: 90 days; maximum: 365 days."
+                },
+                "interval": {
+                  "type": "string",
+                  "default": "1h",
+                  "description": "Time between retention runs as a Go duration, 1s-24h inclusive; the broker validates syntax and bounds at startup even when disabled. Startup and re-enable trigger immediate cleanup."
+                },
+                "batchSize": {
+                  "type": "integer",
+                  "default": 1000,
+                  "minimum": 1,
+                  "maximum": 10000,
+                  "description": "Maximum rows per delete statement, also validated when the ledger is disabled"
+                }
+              }
+            }
+          }
+        },
 
         "thirdPartyOauth2": {
           "type": "object",

@@ -38,6 +38,7 @@ The scope is the name passed to `otel.Tracer` and `otel.Meter`.
 | `approval` | Approval domain and handlers |
 | `oauth2session` | Third-party session domain and the sweep handler |
 | `tokenexchange` | Broker token exchange |
+| `business_events` | Ledger handler |
 | `extproc` | ExtProc |
 
 ## 3. Spans

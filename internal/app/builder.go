@@ -40,6 +40,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
 	agentsservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/agents"
 	domainapproval "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/approval"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/bizevent/retention"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/cimdclient"
 	consentservice "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
@@ -363,6 +364,14 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	if b.logger == nil {
 		return nil, fmt.Errorf("logger is required")
 	}
+	if b.config.BusinessEvents.Enabled {
+		if b.storage.BusinessEvents() == nil {
+			return nil, fmt.Errorf("business event appender is required when the ledger is enabled")
+		}
+		if b.storage.BusinessEventRetention() == nil {
+			return nil, fmt.Errorf("business event retention repository is required when the ledger is enabled")
+		}
+	}
 
 	oauthCfg, err := b.config.OAuth2AuthServer.Resolve()
 	if err != nil {
@@ -418,6 +427,11 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		otelHandler := otelslog.NewHandler(b.config.Telemetry.ServiceName,
 			otelslog.WithLoggerProvider(otel.GetLoggerProvider()))
 		baseHandler = telemetry.NewMultiHandler(baseHandler, otelHandler)
+	}
+	if b.config.BusinessEvents.Enabled {
+		fallback := telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(baseHandler))
+		ledger := telemetry.NewLedgerHandler(b.storage.BusinessEvents(), fallback, b.config.BusinessEvents.WriteTimeout)
+		baseHandler = telemetry.NewMultiHandler(baseHandler, ledger)
 	}
 	b.logger = slog.New(telemetry.NewContextHandler(telemetry.NewPrincipalPolicyHandler(baseHandler)))
 	app.Logger = b.logger
@@ -1401,6 +1415,13 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			return nil, fmt.Errorf("failed to create session health metrics: %w", err)
 		}
 	}
+	var ledgerRetention *retention.Service
+	if b.config.BusinessEvents.Enabled {
+		ledgerRetention, err = retention.NewService(b.storage.BusinessEventRetention(), b.config.BusinessEvents.Retention, b.logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create business event retention: %w", err)
+		}
+	}
 
 	// Drain admitted refreshes while telemetry and the upstream transport are still live.
 	prevSessionShutdown := app.Shutdown
@@ -1420,6 +1441,20 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 	}
 
 	// Start maintenance only after all fallible construction has completed.
+	if ledgerRetention != nil {
+		retentionCtx, cancelRetention := context.WithCancel(context.Background())
+		retentionDone := make(chan struct{})
+		go func() {
+			defer close(retentionDone)
+			ledgerRetention.Run(retentionCtx)
+		}()
+		app.chainShutdown(func(context.Context) error {
+			cancelRetention()
+			<-retentionDone
+			return nil
+		})
+	}
+
 	switch oauthCfg.(type) {
 	case *ports.LocalOAuth2Config, *ports.HybridOAuth2Config:
 		cleanup := oauth2server.NewSessionCleanup(

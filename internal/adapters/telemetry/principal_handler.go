@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/bizevent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
@@ -89,6 +90,11 @@ func (h *principalPolicyHandler) render(attr slog.Attr) slog.Attr {
 	if attr.Value.Kind() == slog.KindLogValuer {
 		if principal, ok := attr.Value.Any().(id.Principal); ok {
 			return slog.String(attr.Key, h.policy(principal.String()))
+		}
+		if attr.Key == "event" {
+			if _, ok := attr.Value.Any().(bizevent.Definition); ok {
+				return attr
+			}
 		}
 	}
 

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -199,8 +200,11 @@ func (f *grantDiagnosticsFixture) DeletionRecords() []map[string]any {
 	Expect(err).NotTo(HaveOccurred())
 	var deletions []map[string]any
 	for _, record := range records {
-		switch record["msg"] {
-		case "grant revoked", "agent deleted", "PermissionSetDeleted", "permission set deleted":
+		switch {
+		case record["event"] == "consent.grant.revoked",
+			record["msg"] == "agent deleted",
+			record["msg"] == "PermissionSetDeleted",
+			record["msg"] == "permission set deleted":
 			f.AssertPrivateObservation(record)
 			deletions = append(deletions, record)
 		}
@@ -346,7 +350,6 @@ func (f *grantDiagnosticsFixture) LifecycleRecords() []map[string]any {
 	messages := map[string]string{
 		"grant_created":          "grant created",
 		"grant_updated":          "grant updated",
-		"grant_revoked":          "grant revoked",
 		"agent_created":          "agent created",
 		"agent_updated":          "agent updated",
 		"agent_deleted":          "agent deleted",
@@ -357,7 +360,7 @@ func (f *grantDiagnosticsFixture) LifecycleRecords() []map[string]any {
 	fields := map[string]string{
 		"grant_created":          "principal agent_id grant_id valid_until created_at updated_at granted_permission_sets",
 		"grant_updated":          "principal agent_id grant_id valid_until created_at updated_at granted_permission_sets previous_observed_valid_until previous_observed_updated_at previous_observed_granted_permission_sets",
-		"grant_revoked":          "principal agent_id grant_id valid_until updated_at granted_permission_sets revoked_at",
+		"consent.grant.revoked":  "principal agent_id grant_id valid_until updated_at granted_permission_sets revoked_at",
 		"agent_created":          "agent_id permission_sets service_requirements",
 		"agent_updated":          "agent_id permission_sets service_requirements previous_observed_permission_sets previous_observed_service_requirements previous_observed_updated_at",
 		"agent_deleted":          "agent_id",
@@ -367,20 +370,30 @@ func (f *grantDiagnosticsFixture) LifecycleRecords() []map[string]any {
 	}
 	var audits []map[string]any
 	for _, record := range records {
-		action, _ := record["action"].(string)
-		_, lifecycle := messages[action]
+		discriminatorKey := "action"
+		if record["event"] == "consent.grant.revoked" {
+			discriminatorKey = "event"
+		}
+		discriminator, _ := record[discriminatorKey].(string)
+		_, lifecycle := fields[discriminator]
 		for _, message := range messages {
 			lifecycle = lifecycle || record["msg"] == message
 		}
-		lifecycle = lifecycle || record["msg"] == "permission set created" || record["msg"] == "permission set updated" || record["msg"] == "permission set deleted"
+		message, _ := record["msg"].(string)
+		lifecycle = lifecycle || slices.Contains([]string{"grant revoked", "permission set created", "permission set updated", "permission set deleted"}, message)
 		if !lifecycle {
 			continue
 		}
-		expectedMessage, implemented := messages[action]
-		Expect(implemented).To(BeTrue(), "every lifecycle success must have a fixed domain-owned action; handler-only successes are duplicates")
-		Expect(record["msg"]).To(Equal(expectedMessage))
+		_, implemented := fields[discriminator]
+		Expect(implemented).To(BeTrue(), "every lifecycle success must have a fixed domain-owned discriminator; handler-only successes are duplicates")
+		if discriminator == "consent.grant.revoked" {
+			Expect(record["event"]).To(Equal("consent.grant.revoked"), "grant revocation must use the typed event discriminator")
+		}
+		if expectedMessage, checkMessage := messages[discriminator]; checkMessage {
+			Expect(record["msg"]).To(Equal(expectedMessage))
+		}
 		Expect(record["level"]).To(Equal("INFO"))
-		allowed := strings.Fields("time level msg action actor trace_id calling_peer " + fields[action])
+		allowed := strings.Fields("time level msg " + discriminatorKey + " actor trace_id calling_peer " + fields[discriminator])
 		for key := range record {
 			Expect(allowed).To(ContainElement(key), "lifecycle records must contain only approved operational and typed definition fields")
 		}
@@ -390,12 +403,16 @@ func (f *grantDiagnosticsFixture) LifecycleRecords() []map[string]any {
 	return audits
 }
 
-func (f *grantDiagnosticsFixture) LifecycleActions() []string {
-	var actions []string
+func (f *grantDiagnosticsFixture) LifecycleDiscriminators() []string {
+	var discriminators []string
 	for _, record := range f.LifecycleRecords() {
-		actions = append(actions, record["action"].(string))
+		discriminator := record["event"]
+		if discriminator == nil {
+			discriminator = record["action"]
+		}
+		discriminators = append(discriminators, discriminator.(string))
 	}
-	return actions
+	return discriminators
 }
 
 func (f *grantDiagnosticsFixture) RequestJSON(server *bootstrap.TestServer, method, path, principal string, request any, status int) (map[string]any, string) {
@@ -462,7 +479,7 @@ func (f *grantDiagnosticsFixture) AssertGrantAudit(record map[string]any, grant 
 		Expect(value).To(Equal(grant.ValidUntil.UTC().Format(time.RFC3339Nano)))
 	}
 	Expect(record["granted_permission_sets"]).To(Equal(grantDiagnosticJSONValue(grant.GrantedPermissionSets)))
-	if record["action"] != "grant_revoked" {
+	if record["event"] != "consent.grant.revoked" {
 		Expect(record["created_at"]).To(Equal(grant.CreatedAt.UTC().Format(time.RFC3339Nano)))
 	}
 }
@@ -719,8 +736,8 @@ var _ = Describe("Grant Deletion Outcomes", func() {
 
 		records := fixture.DeletionRecords()
 		Expect(records).To(HaveLen(1), "only the actual revocation must produce a successful deletion record")
-		Expect(records[0]["msg"]).To(Equal("grant revoked"))
-		Expect(records[0]["action"]).To(Equal("grant_revoked"))
+		Expect(records[0]["event"]).To(Equal("consent.grant.revoked"))
+		Expect(records[0]).NotTo(HaveKey("action"))
 		Expect(records[0]["principal"]).To(Equal(fixture.Principal.String()))
 		Expect(records[0]["agent_id"]).To(Equal(fixture.Agent.ID.String()))
 		Expect(records[0]["grant_id"]).To(Equal(fixture.Grant.ID.String()))
@@ -776,7 +793,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		Expect(fixture.LifecycleRecords()).To(BeEmpty())
 
 		grant, traceID := fixture.PostConsent(nil, []id.ServiceID{fixture.S1.ID, fixture.S2.ID, fixture.S0.ID})
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_created"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"grant_created"}))
 		record := fixture.LifecycleRecords()[0]
 		fixture.AssertGrantAudit(record, grant)
 		fixture.AssertAuditIdentity(record, fixture.Principal.String(), traceID)
@@ -785,7 +802,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		}
 		observation := fixture.AssertLifecycleExchange(fixture.S1, grant, "")
 		Expect(observation["actor"]).To(Equal(record["actor"]))
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_created"}), "exchange must not create a duplicate lifecycle event")
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"grant_created"}), "exchange must not create a duplicate lifecycle event")
 	})
 
 	// GD-S2 from specs/013-token-exchange/spec.md.
@@ -796,7 +813,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		updated, traceID := fixture.PostConsent(nil, services)
 		Expect(updated.ID).To(Equal(before.ID))
 		Expect(updated.CreatedAt).To(Equal(before.CreatedAt))
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"grant_updated"}))
 		record := fixture.LifecycleRecords()[0]
 		fixture.AssertGrantAudit(record, updated)
 		fixture.AssertAuditIdentity(record, fixture.Principal.String(), traceID)
@@ -807,7 +824,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 
 		unchanged, _ := fixture.PostConsent(nil, services)
 		Expect(unchanged).To(Equal(updated), "an identical POST must preserve all stored grant metadata and inclusions")
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"grant_updated"}))
 		body, _ := fixture.RequestJSON(fixture.Enduser, http.MethodPost, "/api/consent/agents/"+fixture.Agent.ID.String()+"/grants", fixture.Principal.String(), map[string]any{
 			"granted_permission_sets": map[string][]string{},
 		}, http.StatusBadRequest)
@@ -815,7 +832,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		stored, err := fixture.Storage.UserGrants().Get(context.Background(), updated.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(stored).To(Equal(updated), "empty grant POST must not revoke or alter consent")
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"grant_updated"}))
 		fixture.AssertLifecycleExchange(fixture.S1, stored, "")
 	})
 
@@ -832,7 +849,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		}, http.StatusCreated)
 		createdPSID, err := id.ParsePermissionSetID(createdPSBody["id"].(string))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"permission_set_created"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"permission_set_created"}))
 		createdRecord := fixture.LifecycleRecords()[0]
 		fixture.AssertAuditIdentity(createdRecord, operator, createPSTrace)
 		Expect(createdRecord["permission_set_id"]).To(Equal(createdPSID.String()))
@@ -847,7 +864,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		}, http.StatusCreated)
 		createdAgentID, err := id.ParseAgentID(createdAgentBody["id"].(string))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_created"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"agent_created"}))
 		createdRecord = fixture.LifecycleRecords()[0]
 		fixture.AssertAuditIdentity(createdRecord, operator, createAgentTrace)
 		Expect(createdRecord["agent_id"]).To(Equal(createdAgentID.String()))
@@ -875,7 +892,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		afterAgent, err := fixture.Storage.Agents().Get(context.Background(), fixture.Agent.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(afterAgent.ServiceRequirements).To(Equal(excluded))
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"agent_updated"}))
 		record := fixture.LifecycleRecords()[0]
 		fixture.AssertAuditIdentity(record, "anonymous", excludeTrace)
 		Expect(record["agent_id"]).To(Equal(fixture.Agent.ID.String()))
@@ -887,7 +904,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		fixture.AssertLifecycleExchange(fixture.S2, grant, "grant_service_requirement_excluded")
 
 		_, restoreTrace := fixture.RequestJSON(fixture.Admin, http.MethodPut, agentPath, operator, agentRequest(beforeAgent.ServiceRequirements), http.StatusOK)
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_updated", "agent_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"agent_updated", "agent_updated"}))
 		restored, err := fixture.Storage.Agents().Get(context.Background(), fixture.Agent.ID)
 		Expect(err).NotTo(HaveOccurred())
 		record = fixture.LifecycleRecords()[1]
@@ -906,7 +923,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 			"name": "", "description": grantDiagnosticPrivateProfile, "service_scopes": beforePS.ServiceScopes,
 		}, http.StatusBadRequest)
 		Expect(body["error"]).To(Equal("validation failed"))
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_updated", "agent_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"agent_updated", "agent_updated"}))
 		newScopes := beforePS.Copy().ServiceScopes
 		newScopes[1].Scopes = []string{"write"}
 		_, psTrace := fixture.RequestJSON(fixture.Admin, http.MethodPut, psPath, "", map[string]any{
@@ -915,7 +932,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		afterPS, err := fixture.Storage.PermissionSets().Get(context.Background(), fixture.PermissionSet.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(afterPS.ServiceScopes).To(Equal(newScopes))
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_updated", "agent_updated", "permission_set_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"agent_updated", "agent_updated", "permission_set_updated"}))
 		record = fixture.LifecycleRecords()[2]
 		fixture.AssertAuditIdentity(record, "anonymous", psTrace)
 		Expect(record["permission_set_id"]).To(Equal(fixture.PermissionSet.ID.String()))
@@ -928,7 +945,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		}, http.StatusOK)
 		updatedPS, err := fixture.Storage.PermissionSets().Get(context.Background(), fixture.PermissionSet.ID)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_updated", "agent_updated", "permission_set_updated", "permission_set_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"agent_updated", "agent_updated", "permission_set_updated", "permission_set_updated"}))
 		record = fixture.LifecycleRecords()[3]
 		fixture.AssertAuditIdentity(record, operator, authenticatedPSTrace)
 		Expect(record["permission_set_id"]).To(Equal(fixture.PermissionSet.ID.String()))
@@ -939,7 +956,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		storedGrant, err := fixture.Storage.UserGrants().Get(context.Background(), grant.ID)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(storedGrant).To(Equal(grant), "definition changes must not mutate the grant ID, inclusions, or metadata")
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"agent_updated", "agent_updated", "permission_set_updated", "permission_set_updated"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"agent_updated", "agent_updated", "permission_set_updated", "permission_set_updated"}))
 	})
 
 	// GD-S4 from specs/013-token-exchange/spec.md.
@@ -960,7 +977,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		revokeStarted := time.Now().UTC()
 		traceID := fixture.Delete(fixture.Enduser, grantPath, http.StatusNoContent)
 		revokeFinished := time.Now().UTC()
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_revoked"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"consent.grant.revoked"}))
 		record := fixture.LifecycleRecords()[0]
 		fixture.AssertGrantAudit(record, grant)
 		fixture.AssertAuditIdentity(record, fixture.Principal.String(), traceID)
@@ -974,7 +991,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		Expect(errors.Is(err, ports.ErrNotFound)).To(BeTrue())
 		fixture.AssertLifecycleExchange(fixture.S1, nil, "grant_missing")
 		fixture.Delete(fixture.Enduser, grantPath, http.StatusNotFound)
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_revoked"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"consent.grant.revoked"}))
 
 		agentPath := "/api/agents/" + fixture.Agent.ID.String()
 		agentTrace := fixture.Delete(fixture.Admin, agentPath, http.StatusNoContent)
@@ -982,7 +999,7 @@ var _ = Describe("Grant Diagnostic Lifecycle", func() {
 		psPath := "/api/permission-sets/" + fixture.PermissionSet.ID.String()
 		psTrace := fixture.Delete(fixture.Admin, psPath, http.StatusNoContent)
 		fixture.Delete(fixture.Admin, psPath, http.StatusNoContent)
-		Expect(fixture.LifecycleActions()).To(Equal([]string{"grant_revoked", "agent_deleted", "permission_set_deleted"}))
+		Expect(fixture.LifecycleDiscriminators()).To(Equal([]string{"consent.grant.revoked", "agent_deleted", "permission_set_deleted"}))
 		records := fixture.LifecycleRecords()
 		Expect(records[1]["agent_id"]).To(Equal(fixture.Agent.ID.String()))
 		fixture.AssertAuditIdentity(records[1], fixture.Principal.String(), agentTrace)

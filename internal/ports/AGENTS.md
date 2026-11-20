@@ -36,6 +36,7 @@ For feature changes, read the relevant specification, plan, and tasks before cha
 | `internal/ports/oauth2server.go` | `SigningKeyManager`, `SigningKeyBootstrapCoordinator`, credential interfaces | Signing-key lifecycle, coordinated bootstrap, and broker credentials |
 | `internal/ports/server.go` | `HealthState`, `ComponentHealth` | Server lifecycle: starting, healthy, shutting down, unhealthy. Component health: healthy or degraded |
 | `internal/ports/storage.go` | Repository and transaction interfaces, including `ClientAssertionReplayRepository` | Entity persistence, approval sync, and session refresh. The replay repository atomically consumes `(client_id, jti)` and removes expired records. Sentinel: `ErrNotFound` |
+| `internal/ports/storage.go` | `BusinessEventAppender`, `BusinessEventRetention` | Append immutable business events and delete expired rows. No read or update port. |
 | `internal/ports/thirdparty_provider.go` | Provider and canonical-ID repositories | Provider storage and protected-resource mutation results |
 
 ## Rules

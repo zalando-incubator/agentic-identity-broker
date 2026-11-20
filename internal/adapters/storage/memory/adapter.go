@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"sync"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -16,15 +19,18 @@ import (
 // Adapter implements storage repository and lifecycle helpers
 // using in-memory storage with sync.RWMutex for thread-safety.
 type Adapter struct {
-	mu    sync.RWMutex
-	users map[id.UserID]*ports.User
+	mu             sync.RWMutex
+	users          map[id.UserID]*ports.User
+	ledgerLock     *semaphore.Weighted
+	businessEvents []*model.BusinessEvent
 }
 
 // NewAdapter creates a new in-memory storage adapter.
 // Returns immediately (no I/O or initialization required).
 func NewAdapter() *Adapter {
 	return &Adapter{
-		users: make(map[id.UserID]*ports.User),
+		users:      make(map[id.UserID]*ports.User),
+		ledgerLock: semaphore.NewWeighted(1),
 	}
 }
 
@@ -62,11 +68,17 @@ func (a *Adapter) Close(ctx context.Context) error {
 	default:
 	}
 
+	if err := a.ledgerLock.Acquire(ctx, 1); err != nil {
+		return err
+	}
+	defer a.ledgerLock.Release(1)
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	// Clear all data
 	a.users = make(map[id.UserID]*ports.User)
+	a.businessEvents = nil
 
 	return nil
 }

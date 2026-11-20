@@ -128,7 +128,7 @@ Observations preserve authenticated actor and calling-peer correlation and exclu
 
 Successful deletes retain an empty HTTP 204 response. A repeated grant DELETE retains the existing HTTP 404 error schema and description.
 
-The grant revoke record retains `action=grant_revoked`, the owner `principal`, `agent_id`, and the ID of the deleted grant in `grant_id`.
+The grant revoke record uses `event=consent.grant.revoked` and retains the owner `principal`, `agent_id`, and the ID of the deleted grant in `grant_id`.
 The agent record retains `agent_id`. The permission-set record retains `action=permission_set_deleted` and `permission_set_id`.
 HTTP handlers emit no duplicate successful deletion records. Absent deletes emit no successful deletion records.
 Scenarios revoke grants and remove agent references before deleting a permission set. They do not change storage cascade behavior.
@@ -169,7 +169,7 @@ The agent has explicit read ceilings for S1/S2 and an empty ceiling for S0.
 
 **GD-S4** distinguishes successful revocation from rejected consent and absent deletes:
 
-- DELETE consent returns HTTP 204 and emits exactly one `grant_revoked` record. The record contains the atomically deleted snapshot and UTC RFC3339Nano revocation time.
+- DELETE consent returns HTTP 204 and emits exactly one `event=consent.grant.revoked` record. The record contains the atomically deleted snapshot and UTC RFC3339Nano revocation time.
 - A later exchange returns `grant_missing` without grant metadata.
 - Repeated DELETE returns HTTP 404 without another revoke record.
 - A rejected empty-map POST cannot revoke a valid grant.

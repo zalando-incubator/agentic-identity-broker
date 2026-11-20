@@ -458,6 +458,13 @@ func init() {
 	rootCmd.PersistentFlags().Bool("token_refresh.health_metrics.enabled", false, "publish the oauth2_sessions gauge when telemetry metrics are enabled (default: true)")
 	rootCmd.PersistentFlags().Duration("token_refresh.health_metrics.query_timeout", 0, "session health count query timeout (default: 5s)")
 
+	// Business event ledger configuration flags
+	rootCmd.PersistentFlags().Bool("business_events.enabled", false, "store typed business events and run retention (default: false)")
+	rootCmd.PersistentFlags().Duration("business_events.write_timeout", 0, "ledger append timeout, 100ms to 10s (default: 1s)")
+	rootCmd.PersistentFlags().Duration("business_events.retention.period", 0, "ledger retention period, 24h to 8760h (default: 2160h)")
+	rootCmd.PersistentFlags().Duration("business_events.retention.interval", 0, "ledger retention interval, 1s to 24h (default: 1h)")
+	rootCmd.PersistentFlags().Int("business_events.retention.batch_size", 0, "ledger retention batch size, 1 to 10000 (default: 1000)")
+
 	// Third-party OAuth2 client registration configuration
 	rootCmd.PersistentFlags().String("third_party_oauth2.client_name", "", "broker or platform name for dynamic client registration")
 	rootCmd.PersistentFlags().String("token_exchange.claim_extraction.agent_subject_expression", "", "replacing CEL agent-subject detector; must reference subject_token.sub (empty uses guarded sub == agent_id)")
