@@ -1331,36 +1331,110 @@ Created in `internal/domain/oauth2session/sweep.go`.
 
 ### internal/extproc/server.Dependency
 
-`broker`, `local`, `oauth_provider`
+| Value | Meaning |
+|---|---|
+| `broker` | The broker's token endpoint, which ExtProc calls for the token exchange behind its circuit breaker. |
+| `local` | ExtProc itself, without an outbound call, such as its configuration or its expired client assertion; ExtProc also uses it for an unknown dependency. |
+| `oauth_provider` | The OAuth provider that issues ExtProc's client assertion through the client credentials grant, not a provider behind the broker. |
 
 ### internal/extproc/server.ErrorKind
 
-`assertion_expired`, `caller_canceled`, `circuit_open`, `configuration`, `internal`, `invalid_response`, `none`, `rejected`, `unavailable`
+| Value | Meaning |
+|---|---|
+| `assertion_expired` | ExtProc's own client assertion had expired when an exchange needed it, so ExtProc answered 503 without calling the broker. |
+| `caller_canceled` | The request was canceled, or its deadline passed, while ExtProc waited for the exchange; ExtProc sets no error status for it. |
+| `circuit_open` | ExtProc's circuit breaker for the broker was open, or half-open with no free probe, so ExtProc answered 503 without calling the broker; failures inside ExtProc also count toward opening it. |
+| `configuration` | ExtProc's own configuration is unusable, such as a client assertion type that it does not support or a token endpoint that it cannot build a request for. |
+| `internal` | ExtProc could not classify the error; it is also the fallback for an unknown kind. |
+| `invalid_response` | The broker or the OAuth provider answered with a body that ExtProc could not use, or the delegation permit carried an invalid grant timestamp. |
+| `none` | Nothing failed; ExtProc never sets `error.type` to it. |
+| `rejected` | The broker or the OAuth provider answered with a 4xx error, or ExtProc rejected the request's token-exchange metadata and answered 503. |
+| `unavailable` | The broker or the OAuth provider was unreachable, timed out or answered 5xx or 429, or ExtProc had no usable grant context. |
 
 ### internal/extproc/server.ExchangeKind
 
-`impersonation`, `third_party`, `unknown`
+| Value | Meaning |
+|---|---|
+| `impersonation` | A user impersonation exchange; ExtProc never sets it, because it cannot observe the broker's exchange kind. |
+| `third_party` | A third-party service token exchange; ExtProc never sets it, because it cannot observe the broker's exchange kind. |
+| `unknown` | ExtProc cannot observe which kind of exchange the broker performed; ExtProc always sets this value. |
 
 ### internal/extproc/server.FailureDetail
 
-`authorization_denied`, `broker_response_invalid`, `broker_unavailable`, `caller_canceled`, `circuit_open`, `client_expired`, `client_invalid`, `configuration`, `consent_required`, `credential_rejected`, `grant_context_denied`, `grant_context_unavailable`, `internal_unclassified`, `none`, `policy_configuration`, `policy_denied`, `policy_evaluation_failed`, `provider_response_invalid`, `provider_unavailable`, `reauth_required`, `request_malformed`, `resource_missing`, `response_write_failed`, `session_reauth_required`, `subject_invalid`
+| Value | Meaning |
+|---|---|
+| `authorization_denied` | The broker, or the OAuth provider during refresh, answered `access_denied` without an `error_uri`, so ExtProc had no consent URL to return. |
+| `broker_response_invalid` | The broker answered 200, but ExtProc could not read or parse the body, or the body had no access token. |
+| `broker_unavailable` | ExtProc could not reach the broker in time, or the broker answered with a 5xx or 429 status or with `server_error` or `temporarily_unavailable`. |
+| `caller_canceled` | The request was canceled, or its deadline passed, while ExtProc waited for the exchange or was sending its response. |
+| `circuit_open` | ExtProc's circuit breaker for the broker was open, or half-open with no free probe, so ExtProc answered 503 without calling the broker; failures inside ExtProc, such as an expired client assertion, also count toward opening it. |
+| `client_expired` | ExtProc's own client assertion had expired, so ExtProc answered 503 without calling the broker; look for failed `extproc.client_assertion.refresh` spans. |
+| `client_invalid` | The broker or the OAuth provider answered `invalid_client` or `unauthorized_client`: it rejected ExtProc's client authentication, or ExtProc may not use that grant. |
+| `configuration` | ExtProc's own configuration is unusable: it could not build the request to the broker, or the client assertion type is neither `id_token` nor `access_token`. |
+| `consent_required` | The broker answered `access_denied` with an `error_uri`, and ExtProc returned that URL to the client in a 403 `insufficient_scope` challenge. |
+| `credential_rejected` | The broker answered `invalid_grant` without an `error_uri`, which it does only when the subject token fails validation, or the OAuth provider did so during refresh. |
+| `grant_context_denied` | The broker's grant context evaluation denied the delegation, and ExtProc answered 403 `access_denied` with the consent URL as `error_uri`. |
+| `grant_context_unavailable` | ExtProc had no usable delegation permit and answered 503: the broker evaluation failed or could not run, the request was canceled meanwhile, the permit expired or was invalid, or the exchange result did not match it. |
+| `internal_unclassified` | ExtProc could not classify the failure, such as an unexpected error or an OAuth error code that it does not map to a detail. |
+| `none` | Nothing failed; metrics of successful requests and successful `extproc.grant_context.*` spans carry it, while other successful spans and logs leave out the failure detail. |
+| `policy_configuration` | Authorization is enabled but the gateway sent no protocol metadata, or no `mcp_server` metadata for an MCP request; ExtProc answered 403. |
+| `policy_denied` | The OPA decision did not allow the request, also after a policy error, a timeout or an undefined result, so ExtProc answered 403 `access_denied`; `authorization.result_code` on `extproc.opa.evaluate` tells which. |
+| `policy_evaluation_failed` | The authorizer returned an error instead of a decision; the OPA authorizer never does, because it reports errors, timeouts and undefined results as `policy_denied`. |
+| `provider_response_invalid` | The OAuth provider answered the client assertion refresh with a response that ExtProc could not read or parse, or without the configured `id_token` or `access_token`. |
+| `provider_unavailable` | ExtProc could not reach the OAuth provider in time to refresh its client assertion, or the provider answered 5xx, 429, `server_error` or `temporarily_unavailable`. |
+| `reauth_required` | An OAuth error had the code `reauth_required` and no `error_uri`; the broker never sends this code, so it can only come from the OAuth provider during refresh. |
+| `request_malformed` | ExtProc found the request's metadata, method or body malformed, or the broker or the OAuth provider answered `invalid_request`, `invalid_target`, `invalid_scope` or `unsupported_grant_type`. |
+| `resource_missing` | The request's token-exchange metadata has no resource URI, or a blank one; check that the gateway sets it, because ExtProc answers 503. |
+| `response_write_failed` | ExtProc could not send its response to the gateway on the processing stream; only logs carry it, since the span has already ended. |
+| `session_reauth_required` | The broker answered `invalid_grant` with an `error_uri` because the user must reconnect the provider session, and ExtProc returned that URL to the client in a 403 `insufficient_scope` challenge. |
+| `subject_invalid` | The broker, or the OAuth provider during refresh, answered `invalid_token`; the broker reports a rejected subject token as `invalid_grant`, which is `credential_rejected`. |
 
 ### internal/extproc/server.FailureStage
 
-`client_authorization`, `exchange_routing`, `none`, `refresh`, `request_validation`, `response_write`
+| Value | Meaning |
+|---|---|
+| `client_authorization` | ExtProc's own authorization step failed or denied the request: the OPA policy, the gateway metadata that it needs, or the grant context. |
+| `exchange_routing` | The token exchange with the broker failed, including an open circuit breaker and a canceled wait; ExtProc also uses it for an unknown stage. |
+| `none` | Nothing failed; metrics of successful requests carry it, while successful spans and logs leave out the failure stage. |
+| `refresh` | ExtProc's own client assertion refresh failed, or an exchange found the assertion expired; it is not the broker's refresh of a provider session. |
+| `request_validation` | ExtProc rejected the request itself: its token-exchange metadata, its HTTP method or its body was missing or malformed. |
+| `response_write` | ExtProc could not send its response to the gateway; only logs carry it, since the span has already ended. |
 
 ### internal/extproc/server.Operation
 
-`assertion_refresh`, `configuration`, `exchange`
+| Value | Meaning |
+|---|---|
+| `assertion_refresh` | The refresh of ExtProc's own client assertion at the OAuth provider; an exchange that finds the assertion expired also reports it. |
+| `configuration` | Building the token exchanger at startup; a failure stops ExtProc, so no span or metric carries this value. |
+| `exchange` | The token exchange with the broker, including the wait for a shared exchange; ExtProc also uses it for an unknown operation. |
 
 ### internal/extproc/server.Outcome
 
-`authentication_failed`, `authorization_denied`, `canceled`, `configuration_error`, `infrastructure_error`, `invalid_request`, `reauth_required`, `success`
+| Value | Meaning |
+|---|---|
+| `authentication_failed` | The broker or the OAuth provider rejected a credential, or ExtProc's own client assertion had expired; the failure detail tells which. |
+| `authorization_denied` | The OPA policy, the grant context, the broker or the OAuth provider refused access; the failure detail tells which, and whether ExtProc returned a consent URL. |
+| `canceled` | The request was canceled, or its deadline passed, while ExtProc waited for the exchange or sent its response; ExtProc does not set the error status on the span. |
+| `configuration_error` | ExtProc's configuration, or the metadata that the gateway sends for policy evaluation, is unusable; fix it, because a retry fails the same way. |
+| `infrastructure_error` | A dependency or ExtProc itself failed, such as an unreachable broker, an open circuit breaker or an unavailable grant context; a retry may succeed. |
+| `invalid_request` | ExtProc found the request's metadata, method or body malformed, or the broker or the OAuth provider rejected the request it received as invalid. |
+| `reauth_required` | The broker answered `invalid_grant` with an `error_uri` for a new sign-in, or an OAuth error had the code `reauth_required`; the failure detail tells whether the client got the URL. |
+| `success` | The checks and the exchange passed, or the client assertion was refreshed; a later policy decision on a request body does not change it. |
 
 ### internal/extproc/server.RecoveryAction
 
-`fix_configuration`, `none`, `reauthenticate`, `reconsent`, `retry`
+| Value | Meaning |
+|---|---|
+| `fix_configuration` | An operator should fix ExtProc's configuration or the gateway's metadata; ExtProc suggests it for `configuration` and `policy_configuration`. |
+| `none` | ExtProc suggests no recovery: the request succeeded or was canceled, or no listed action fits, as for rejected credentials and policy denials. |
+| `reauthenticate` | The user should sign in again at the `error_uri` that ExtProc returned; ExtProc suggests it only for `session_reauth_required`. |
+| `reconsent` | The user should grant consent again at the URL that ExtProc returned; ExtProc suggests it for `consent_required` and `grant_context_denied`. |
+| `retry` | The failure may be temporary and a later request may succeed; ExtProc suggests it for every `infrastructure_error` outcome. |
 
 ### internal/extproc/server.RecoveryTarget
 
-`consent`, `none`, `provider_session`
+| Value | Meaning |
+|---|---|
+| `consent` | The user's consent for the agent, which the user renews at the consent URL that ExtProc returned; it goes with `reconsent`. |
+| `none` | The recovery action has no target, which holds for every action except `reconsent` and `reauthenticate`. |
+| `provider_session` | The user's provider session that the broker holds, which the user renews at the returned `error_uri`; it goes with `reauthenticate`. |
