@@ -31,13 +31,17 @@ runtimes:
 jobs:
   agent:
     timeout-minutes: 200
-# gh-aw restores the skills into the workspace's ignored .pi/ directory, which the agent's checkout of the PR head
-# could replace; the agent reads this copy instead.
+# Every phase follows the default branch's skills, which match these instructions, even after the agent checks out a
+# feature branch that predates them. The listed skills stay in .agents/skills; gh-aw restores only inline skills into
+# .pi/skills, which may not exist.
 pre-agent-steps:
-  - name: Preserve the installed skills
+  - name: Copy the default branch's skills
     run: |
       rm -rf /tmp/gh-aw/speckit/skills
-      cp -R .pi/skills /tmp/gh-aw/speckit/skills
+      mkdir -p /tmp/gh-aw/speckit/skills
+      cp -R .agents/skills/. /tmp/gh-aw/speckit/skills/
+      if [ -d .pi/skills ]; then cp -R .pi/skills/. /tmp/gh-aw/speckit/skills/; fi
+      test -f /tmp/gh-aw/speckit/skills/speckit-implement/SKILL.md
 steps:
   - name: Preserve trusted automation code
     run: |
@@ -145,6 +149,15 @@ plans, tasks, checklists, and decisions that their skills produce.
 `quickstart.md` describes how to validate the feature, not what a run
 observed. A feature's `implementation-log.md` holds evidence from earlier
 runs; do not read or extend it.
+
+Only the `implement`, `remediate-review`, and `apply-review` phases change
+code, and only their jobs install the Go toolchain and development tools. Every
+other phase changes only feature documents, and the pull request's CI owns the
+repository gates for them: do not run `just check`, `just verify`, or the other
+checks that `CONTRIBUTING.md` requires before a pull request, and do not report
+their absence as a blocker. Still run the checks that the phase's skill or
+these instructions require, such as `just render-wireframes` for changed
+wireframes.
 
 For PR phases, switch to `context.head` **inside the agent sandbox**, before
 reading or executing feature code. Fetch only that exact SHA from `origin`,
