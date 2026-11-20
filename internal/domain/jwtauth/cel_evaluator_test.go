@@ -164,7 +164,7 @@ func TestCELEvaluator_ExtractClaims_StringExtraction(t *testing.T) {
 			evaluator, err := NewCELEvaluator(tt.config, testLogger())
 			require.NoError(t, err)
 
-			result, err := evaluator.ExtractClaims(tt.claims)
+			result, err := evaluator.ExtractClaims(t.Context(), tt.claims)
 			require.NoError(t, err)
 			require.NotNil(t, result)
 
@@ -192,7 +192,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 		claims := map[string]interface{}{
 			"user_id": 12345, // integer, not string
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.Error(t, err)
 		assert.Nil(t, result)
 		assert.ErrorIs(t, err, ErrClaimExtraction)
@@ -210,7 +210,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 			"sub":        "user123",
 			"display_id": 99, // integer, not string
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, id.Principal("user123"), result.Principal)
@@ -229,7 +229,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 			"sub":      "user123",
 			"verified": true, // bool, not string
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Nil(t, result.Email) // bool → treated as absent
@@ -245,7 +245,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 		claims := map[string]interface{}{
 			"sub": "", // empty string
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.Error(t, err)
 		assert.Nil(t, result)
 		assert.ErrorIs(t, err, ErrClaimExtraction)
@@ -262,7 +262,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 			"iss": "some-issuer",
 			// "sub" is missing
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.Error(t, err)
 		assert.Nil(t, result)
 	})
@@ -280,7 +280,7 @@ func TestCELEvaluator_ExtractClaims_NonStringHandling(t *testing.T) {
 			"sub": "user123",
 			// "name" and "email" missing
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, id.Principal("user123"), result.Principal)
@@ -302,7 +302,7 @@ func TestCELEvaluator_ExtractClaims_Timeout(t *testing.T) {
 		claims := map[string]interface{}{
 			"sub": "fast-user",
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.NoError(t, err)
 		assert.Equal(t, id.Principal("fast-user"), result.Principal)
 	})
@@ -331,7 +331,7 @@ func TestCELEvaluator_PrincipalRequired(t *testing.T) {
 		claims := map[string]interface{}{
 			"sub": "default-principal",
 		}
-		result, err := evaluator.ExtractClaims(claims)
+		result, err := evaluator.ExtractClaims(t.Context(), claims)
 		require.NoError(t, err)
 		assert.Equal(t, id.Principal("default-principal"), result.Principal)
 	})
@@ -346,7 +346,7 @@ func TestCELEvaluator_PrincipalRequired(t *testing.T) {
 		claims := map[string]interface{}{
 			"sub": "",
 		}
-		_, err = evaluator.ExtractClaims(claims)
+		_, err = evaluator.ExtractClaims(t.Context(), claims)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrClaimExtraction)
 	})

@@ -649,7 +649,7 @@ var _ = Describe("OAuth2 credential source metadata and transitions", Label("oau
 		Expect(authorized.Body.Close()).To(Succeed())
 		missing := name == "missing" || name == "legacy-round-trip"
 		if missing {
-			claims, err := j.Application.OAuth2SessionService.ValidateStateToken(callback.Query().Get("state"), id.Principal(j.Principal), registeredID)
+			claims, err := j.Application.OAuth2SessionService.ValidateStateToken(context.Background(), callback.Query().Get("state"), id.Principal(j.Principal), registeredID)
 			Expect(err).NotTo(HaveOccurred())
 			claims.UpstreamClientID = nil
 			sealed, err := j.Application.OAuth2SessionService.CreateStateToken(claims)

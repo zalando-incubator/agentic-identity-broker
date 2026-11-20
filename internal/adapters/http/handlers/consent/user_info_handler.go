@@ -2,6 +2,7 @@
 package consent
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -60,7 +61,7 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 			Data: userInfo,
 		}
 
-		h.writeJSON(w, http.StatusOK, response)
+		h.writeJSON(r.Context(), w, http.StatusOK, response)
 		return
 	}
 
@@ -68,7 +69,7 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		h.logger.WarnContext(ctx, "principal not found in context")
-		h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		h.writeError(r.Context(), w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 
@@ -85,21 +86,21 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		Data: userInfo,
 	}
 
-	h.writeJSON(w, http.StatusOK, response)
+	h.writeJSON(r.Context(), w, http.StatusOK, response)
 }
 
 // writeJSON writes a JSON response.
-func (h *UserInfoHandler) writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func (h *UserInfoHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data interface{}) {
 	if err := writeBufferedJSON(w, statusCode, data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
 // writeError writes an error response.
-func (h *UserInfoHandler) writeError(w http.ResponseWriter, statusCode int, error string, message string) {
+func (h *UserInfoHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, error string, message string) {
 	resp := ErrorResponse{
 		Error:   error,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }
