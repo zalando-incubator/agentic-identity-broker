@@ -116,7 +116,7 @@ func TestExchangeErrorDoesNotClassifyPermitClientErrorsAsGrantTimestamps(t *test
 			var logs bytes.Buffer
 			s := NewServer(&extprocconfig.Config{}, &safetyExchanger{}, slog.New(slog.NewJSONHandler(&logs, nil)))
 			err := fmt.Errorf("wrapped: %w", &grantcontext.Error{Category: category})
-			response, _ := s.exchangeErrorResponse(context.Background(), err)
+			response, _ := s.exchangeErrorResponse(context.Background(), err, nil)
 			require.NotNil(t, response.GetImmediateResponse())
 			assert.Equal(t, int32(500), int32(response.GetImmediateResponse().Status.Code))
 			assert.JSONEq(t, `{"error":"token_exchange_failed","error_description":"token exchange request failed"}`, string(response.GetImmediateResponse().Body))

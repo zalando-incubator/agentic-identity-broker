@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -45,7 +46,7 @@ func newTestTokenHandler(upstreamURL string, agentID id.AgentID) *enduser.OAuth2
 		ClientID: ptr.To(id.ClientID("test-upstream-client-id")),
 	}
 	transport := enduser.NewOAuth2TokenProxy(upstreamURL, nil)
-	outcomes := oauth2.NewTokenOutcomeService(transport, nil)
+	outcomes := oauth2.NewTokenOutcomeService(transport, nil, slog.New(slog.DiscardHandler))
 	return &enduser.OAuth2TokenHandler{
 		OAuth2Service: &stubOAuth2Service{agent: agent},
 		GrantHandler:  enduser.NewProxyTokenGrantStrategy(upstreamURL, outcomes, nil),

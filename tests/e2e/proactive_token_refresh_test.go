@@ -314,7 +314,7 @@ var _ = Describe("Proactive Token Refresh", func() {
 		var principal string
 		recoveryURI := func() string {
 			publicURL := config.Server.EndUser.PublicURL
-			return publicURL + "/api/third-party/" + serviceID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions")
+			return publicURL + "/api/third-party/" + serviceID.String() + "/oauth2/authorize?redirect_uri=" + url.QueryEscape(publicURL+"/sessions/"+serviceID.String())
 		}
 
 		BeforeEach(func() {

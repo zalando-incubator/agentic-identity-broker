@@ -42,6 +42,9 @@ export interface PermissionSetCardProps {
   /** Called when user toggles an optional SR service within this PS */
   onServiceToggle?: (psId: string, serviceId: string, included: boolean) => void;
 
+  /** Names of requested services this set can cover (Virtual Service Scopes); a marker only */
+  requestedServiceNames?: string[];
+
   isFirst?: boolean;
   isLast?: boolean;
 }
@@ -57,6 +60,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
   onServiceToggle,
   isFirst = false,
   isLast = false,
+  requestedServiceNames = [],
 }) => {
   const isMandatory = requirementType === 'mandatory';
   const isActive = isMandatory || isSelected;
@@ -130,6 +134,11 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
             <Badge variant={badgeVariant} size="sm" shape="rounded">
               {badgeLabel}
             </Badge>
+            {requestedServiceNames.length > 0 && (
+              <Badge variant="info" size="sm" shape="rounded" className="bg-info-dark border-info-dark" data-testid="requested-candidate-badge">
+                Covers requested {requestedServiceNames.join(', ')}
+              </Badge>
+            )}
           </div>
 
           {/* Description */}
@@ -241,7 +250,7 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
               'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full',
               'transition-colors duration-200 ease-in-out',
               'focus:outline-none focus:ring-2 focus:ring-trust-deep focus:ring-offset-2',
-              isSelected ? 'bg-trust-deep' : 'bg-neutral-300',
+              isSelected ? 'bg-trust-deep' : 'bg-text-secondary',
             ].join(' ')}
           >
             <span

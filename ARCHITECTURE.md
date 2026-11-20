@@ -112,7 +112,7 @@ The [end-user router](internal/adapters/http/routing/enduser.go) reserves `/api`
 It mounts the SPA for browser `GET` and `HEAD` requests.
 
 The [React router](web/src/App.tsx) redirects `/` to `/delegations` with history replacement.
-It also serves `/agents/:agentId`, `/sessions`, `/approvals`, and `/approvals/:id`.
+It also serves `/agents/:agentId`, `/sessions`, `/sessions/:service`, `/approvals`, and `/approvals/:id`.
 The [API client](web/src/services/api/client.ts) uses the relative base URL `/api` and normalizes error responses.
 
 **Development and build**:
@@ -184,7 +184,7 @@ The builder composes one `App.Shutdown` function. It stops the local/hybrid `Ses
 
 Domain errors expose immutable, typed, credential-free diagnostics. Telemetry excludes wrapped causes and sensitive request data. Recovery URLs remain in direct protocol responses, not telemetry. ExtProc derives its own diagnostics without importing broker domain packages. The [token-exchange reference](docs/reference/token-exchange.md#diagnostic-attributes) defines attribute values and classification rules.
 
-**Service-specific session recovery ([ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`. The browser GET starts third-party OAuth with PKCE; the handler validates the fixed return URI against the configured public origin, and the callback returns to `/sessions`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
+**Service-specific session recovery ([ADR 044](adrs/044-service-specific-session-recovery-url.md))**: A resolved third-party service and configured `PublicURL` determine the RFC 8693 `error_uri`. For missing, expired, scope-deficient, provider-rejected, or identity-mismatched sessions, it is `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions/<identifier>)>`, where `<identifier>` is the current canonical ID or the UUID ([ADR 049](adrs/049-service-session-recovery-return.md) supersedes the generic `/sessions` return). The browser GET starts third-party OAuth with PKCE; the handler validates the return URI against the configured public origin, and the callback returns to that service page. Recoverable errors after service resolution also carry the service's Virtual Service Scope as `scope`. The broker never constructs this link from a caller-provided origin or service ID. Grant errors still link to `/agents/{agent-id}`; non-recoverable errors have no link. `/oauth2/token` sends no `WWW-Authenticate`. ExtProc forwards a broker-provided URI unchanged in its existing 403 challenge and URL-elicitation body.
 
 #### 3.1.4. End-to-End Testing Architecture
 
@@ -384,6 +384,14 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 | Proxy (default) | `proxy` | Forwards authorization and token requests to an upstream authorization server. The broker still serves RFC 8414 metadata and a broker-hosted JWKS endpoint that republishes the upstream public keys. |
 | Local | `local` | Acts as a standalone OAuth2 authorization server, minting its own JWT access tokens signed with managed asymmetric keys. Metadata and JWKS expose only broker-managed local keys. |
 | Hybrid | `hybrid` | Combines proxy and local issuance. The builder wires both strategy sets at startup and dispatches per request based on the resolved agent `ClientType`. Metadata and JWKS expose the broker-hosted verification surface for both local and upstream tokens. |
+
+**Proxy service-scope validation (Feature 055)**: Before upstream refresh, `oauth2.TokenOutcomeService`
+uses the existing `TokenGrantResolution.AgentID` and shared `servicescope.Resolver` to check
+broker-prefixed syntax, current service existence and eligibility. Invalid scopes return
+`400 invalid_scope`; lookup failure returns `500 server_error`, without an upstream call.
+Ordinary-only requests add no I/O. Valid scopes are stripped; session usability/grant coverage are
+not checked and upstream response/rotation are unchanged. [ADR 050 Revision 1](adrs/050-virtual-service-scopes-revision-1.md)
+records this boundary and the known `.`/`..` canonical-ID limitation deferred to issue #446.
 
 **Strategy Pattern**: Handler behavior is fixed at startup by injected strategies rather than runtime mode checks:
 
@@ -1227,7 +1235,7 @@ Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker 
 
 ## 5. External Integrations / APIs
 
-**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 044](adrs/044-service-specific-session-recovery-url.md) records the recovery decision.
+**API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI; changing its target within the documented recovery purpose does not itself require a version increase ([ADR 044](adrs/044-service-specific-session-recovery-url.md)). End-User OpenAPI `1.4.0` documents the approved Feature 055 additions (ADR 046 uses `1.2.0` and ADR 048 uses `1.3.0`): virtual scopes, protected consent continuation, requested-service coverage and the additive service-session detail read. [ADRs 049](adrs/049-service-session-recovery-return.md) and [050](adrs/050-virtual-service-scopes.md) record those decisions. Admin API versioning is separate.
 
 The broker's external integrations have distinct owners:
 
@@ -1365,6 +1373,9 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
 | [048-authzen-delegation-pip.md](adrs/048-authzen-delegation-pip.md) | Accepted | AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc grant-context resolver, and permit-bound token reuse |
+| [049-service-session-recovery-return.md](adrs/049-service-session-recovery-return.md) | Accepted | Service-page recovery return (`/sessions/<identifier>`). Partly supersedes [044-service-specific-session-recovery-url.md](adrs/044-service-specific-session-recovery-url.md); rejected sessions follow [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) |
+| [050-virtual-service-scopes.md](adrs/050-virtual-service-scopes.md) | Accepted | Virtual Service Scopes, shared usability and coverage in [internal/domain/servicescope/](internal/domain/servicescope/), and immutable refresh assurance |
+| [050-virtual-service-scopes-revision-1.md](adrs/050-virtual-service-scopes-revision-1.md) | Accepted | Revises [050-virtual-service-scopes](adrs/050-virtual-service-scopes.md): proxy-refresh syntax, existence and eligibility validation before forwarding; known dot-segment canonical-ID limitation |
 
 ## 11. Project Identification
 
@@ -1568,6 +1579,22 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 
 **Requires Reauthentication**: A `UserSession` with a recorded refresh rejection, or with an expired access token and no stored refresh token. The domain predicate controls token issuance, consent connection status, active-session reads, and the `requires_reauthentication` API field.
 
+**Session Usability**: The verified ability of a `UserSession` to supply a service's effective provider scopes with matching established client identity now. [050-virtual-service-scopes](adrs/050-virtual-service-scopes.md) defines domain/log values `usable`, `missing`, `unusable_definitive`, and `unverifiable_transient`. Consent API baseline and candidate usability values map them to `usable`, `missing`, `unusable`, and `unavailable`, respectively; the HTTP adapter translates names, not decisions. Valid, scope-sufficient access remains usable without a refresh token, but a recorded refresh rejection makes the session definitively unusable ([046-observed-refresh-token-rejection](adrs/046-observed-refresh-token-rejection.md)); expired access requires a successful eligible refresh. Stored refreshability is only eligibility to attempt refresh, not verification of current usability. Unknown refresh-token expiry permits an attempt but does not guarantee success.
+
+**Baseline Usability**: Session Usability for the Agent's configured required provider scopes, using an empty scope set for `require_all_scopes` or no explicit ServiceRequirement. Consent combines this baseline with the selected candidates' usability; it alone does not establish Grant Coverage or satisfaction.
+
+**Candidate Usability**: Session Usability for one covering PermissionSet's effective provider-scope contribution, evaluated against the same verified snapshot as Baseline Usability. Fixed-scope requirements intersect the contribution with the configured ceiling; all-scopes or no explicit requirements use the full contribution. Consent requires every selected candidate to be usable; an unselected failing candidate does not block Save.
+
+**Authorization Continuation**: The server-built post-Save authorize URL carrying the same `session_token` AuthorizationSessionClaims JWE without renewing its expiry. Authorize re-entry validates expiry, principal, Agent and the original request excluding only `session_token`, then re-resolves Service-Scope Bindings before issuance or upstream redirect. Empty/repeated or invalid authorization-session context fails closed with `access_denied` and audit reason `invalid_authorization_session`; this reason does not refer to a third-party UserSession. Consent agent-detail and grant submission also reject empty/repeated tokens rather than treating them as absent.
+
+**Grant Coverage**: The grant-derived authorization of one ThirdpartyOAuth2Service for an Agent, computed by `servicescope.Cover` and shared by authorization, consent, local refresh and token exchange. It checks selected UserGrant entries against PermissionSet definitions and Agent service eligibility. `EffectiveScopes` is the union of provider scopes from selected permission sets that include the service, intersected with the ServiceRequirement's configured `required_scopes` ceiling for an explicit fixed-scope requirement. With `require_all_scopes` or no explicit requirements, it is the full selected union. `RequiredScopesCovered` reports whether that effective set contains all configured required scopes; `Failure` distinguishes structural, inclusion, definition, eligibility and empty-intersection denials. Configured required scopes are the Agent's ceiling/coverage requirement, not the selected union. Coverage does not establish Session Usability: requested-service satisfaction also requires verified usability for the effective scopes.
+
+**Virtual Service Scope**: A broker-only scope `<server.enduser.public_url>/sessions/<canonical-id-or-UUID>` requesting a usable, grant-covered session for one ThirdpartyOAuth2Service. It never grants provider scopes, selects permission sets, or changes permanent Agent requirements. ADR 050 defines it; `internal/domain/servicescope/` owns its grammar, resolution, coverage and evaluation.
+
+**Requested Service Set**: The deduplicated services selected by authorization Virtual Service Scopes or original refresh assurance bindings. It adds request-local requirements without changing the Agent's configuration.
+
+**Service-Scope Binding**: The protected/persisted map from each originally granted Virtual Service Scope string to its service UUID. It pins identity through consent re-entry, code exchange and refresh. Narrowing retains every binding as continuing-service assurance without re-granting removed scopes.
+
 **Callback Generation**: The private `UserSession.CallbackID` identifying the last successful authorization-code credential write. OAuth2 state seals the generation observed when authorization starts. A reconnect compares and replaces it atomically; refresh preserves it. This distinguishes deliberate reconnects from callbacks competing for the same connection state without relying on clock ordering.
 
 **Refresh Lookahead Window**: The interval before a `UserSession` access token expires. `token_refresh.lookahead_duration` sets its default length. Token exchange returns a still-valid token at once, then submits Proactive Refresh when the token is refreshable. Session Sweep uses this window unless `SweepRequest` overrides it. Tokens without an expiry never enter either path.
@@ -1633,7 +1660,7 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **ServiceRef**: Registered third-party service ID carried by exchange responses and errors. It contains no display name or credentials and is excluded from response JSON.
 
-**Session Recovery URL**: Broker-built RFC 8693 `error_uri` for a recoverable `UserSession`. The resolved `ThirdpartyOAuth2Service` ID selects the authorization route; configured `PublicURL` supplies the origin and encoded `/sessions` return URI. The route starts `OAuth2SessionService` authorization with PKCE. It is separate from the broker authorization server's `/oauth2/authorize` and from grant consent links.
+**Session Recovery URL**: Broker-built RFC 8693 `error_uri` for a recoverable `UserSession`. The resolved `ThirdpartyOAuth2Service` ID selects the authorization route; configured `PublicURL` supplies the origin and the encoded `/sessions/<identifier>` service-page return URI (ADR 049). The route starts `OAuth2SessionService` authorization with PKCE. It is separate from the broker authorization server's `/oauth2/authorize` and from grant consent links.
 
 **AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
 

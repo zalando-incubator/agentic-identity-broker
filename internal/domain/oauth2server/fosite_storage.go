@@ -117,16 +117,17 @@ func (s *FositeStorage) CreateAuthorizeCodeSession(ctx context.Context, code str
 	}
 	session := req.GetSession()
 	authCode := &storage.AuthorizationCode{
-		ID:            id.NewAuthorizationCodeID(),
-		CodeHash:      code, // code is already the fosite signature (sha256Hex of raw code)
-		AgentID:       agentID,
-		ClientID:      id.NewClientID(req.GetRequestForm().Get("client_id")),
-		Principal:     id.NewPrincipal(session.GetSubject()),
-		RedirectURI:   req.GetRequestForm().Get("redirect_uri"),
-		CodeChallenge: req.GetRequestForm().Get("code_challenge"),
-		Scope:         strings.Join(req.GetRequestedScopes(), " "),
-		ExpiresAt:     session.GetExpiresAt(fosite.AuthorizeCode),
-		CreatedAt:     time.Now(),
+		ID:                   id.NewAuthorizationCodeID(),
+		CodeHash:             code, // code is already the fosite signature (sha256Hex of raw code)
+		AgentID:              agentID,
+		ClientID:             id.NewClientID(req.GetRequestForm().Get("client_id")),
+		Principal:            id.NewPrincipal(session.GetSubject()),
+		RedirectURI:          req.GetRequestForm().Get("redirect_uri"),
+		CodeChallenge:        req.GetRequestForm().Get("code_challenge"),
+		Scope:                strings.Join(req.GetRequestedScopes(), " "),
+		ExpiresAt:            session.GetExpiresAt(fosite.AuthorizeCode),
+		CreatedAt:            time.Now(),
+		ServiceScopeBindings: sessionBindings(session),
 	}
 	if profile, ok := principal.ProfileFromContext(ctx); ok {
 		authCode.Email = profile.Email()
@@ -183,6 +184,7 @@ func (s *FositeStorage) GetAuthorizeCodeSession(ctx context.Context, code string
 		},
 	}
 	setSessionProfile(session, authCode.Email, authCode.DisplayName)
+	setSessionBindings(session, authCode.ServiceScopeBindings)
 
 	req := &fosite.Request{
 		ID:             authCode.ID.String(),
@@ -278,18 +280,19 @@ func (s *FositeStorage) CreateRefreshTokenSession(ctx context.Context, signature
 	email, displayName := sessionProfile(req.GetSession())
 
 	session := &storage.RefreshTokenSession{
-		Signature:        signature,
-		RequestID:        req.GetID(),
-		AgentID:          agentID,
-		GrantID:          &grantID,
-		ClientID:         id.NewClientID(req.GetClient().GetID()),
-		Principal:        id.NewPrincipal(req.GetSession().GetSubject()),
-		Email:            email,
-		DisplayName:      displayName,
-		Scope:            strings.Join(req.GetGrantedScopes(), " "),
-		ClientAuthMethod: clientAuthMethod,
-		ExpiresAt:        req.GetSession().GetExpiresAt(fosite.RefreshToken),
-		CreatedAt:        time.Now(),
+		Signature:            signature,
+		RequestID:            req.GetID(),
+		AgentID:              agentID,
+		GrantID:              &grantID,
+		ClientID:             id.NewClientID(req.GetClient().GetID()),
+		Principal:            id.NewPrincipal(req.GetSession().GetSubject()),
+		Email:                email,
+		DisplayName:          displayName,
+		Scope:                strings.Join(req.GetGrantedScopes(), " "),
+		ClientAuthMethod:     clientAuthMethod,
+		ExpiresAt:            req.GetSession().GetExpiresAt(fosite.RefreshToken),
+		CreatedAt:            time.Now(),
+		ServiceScopeBindings: sessionBindings(req.GetSession()),
 	}
 	if err := session.Validate(); err != nil {
 		return err
@@ -322,6 +325,7 @@ func (s *FositeStorage) GetRefreshTokenSession(ctx context.Context, signature st
 		},
 	}
 	setSessionProfile(sess, refreshSession.Email, refreshSession.DisplayName)
+	setSessionBindings(sess, refreshSession.ServiceScopeBindings)
 
 	req := &fosite.Request{
 		ID:             refreshSession.RequestID,

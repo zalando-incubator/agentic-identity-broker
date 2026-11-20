@@ -15,6 +15,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	domjwe "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwe"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
@@ -2089,7 +2090,7 @@ func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	}
 
 	// T008: nil cimdMeta must produce session_token URL (not redirect_uri fallback)
-	consentURL, err := svc.buildConsentURL(context.Background(), req, id.NewPrincipal("user@example.com"), agent, nil)
+	consentURL, err := svc.buildConsentURL(context.Background(), req, id.NewPrincipal("user@example.com"), agent, nil, &servicescope.RequestedServiceSet{}, "")
 	require.NoError(t, err)
 	assert.Contains(t, consentURL, "session_token=", "buildConsentURL must always produce session_token")
 	assert.NotContains(t, consentURL, "redirect_uri=", "buildConsentURL must never produce redirect_uri fallback")

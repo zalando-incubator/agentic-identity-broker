@@ -10,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
@@ -58,6 +59,14 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 	response, failure, err := s.outcomes.Proxy(ctx, formData, r.Header.Get("Content-Type"), resolution)
 	if err != nil {
 		switch failure {
+		case ports.TokenProxyScopeNotPermitted:
+			span.SetAttributes(attribute.String("error.type", string(proxyErrorDefinitive)), attribute.Int("http.response.status_code", http.StatusBadRequest))
+			span.SetStatus(codes.Error, "requested service scope rejected")
+			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_scope", "requested service scope is not permitted")
+		case ports.TokenProxyScopeLookupFailed:
+			span.SetAttributes(attribute.String("error.type", string(proxyErrorTransient)), attribute.Int("http.response.status_code", http.StatusInternalServerError))
+			span.SetStatus(codes.Error, "requested service resolution failed")
+			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "service scope lookup failed")
 		case ports.TokenProxyClientMissing:
 			writeOAuth2ErrorJSON(w, http.StatusInternalServerError, "server_error", "agent has no upstream client_id configured")
 		case ports.TokenProxyRequestCreationFailed:
@@ -144,6 +153,13 @@ func (s *proxyTokenGrantStrategy) HandleTokenGrant(w http.ResponseWriter, r *htt
 		}
 	}
 }
+
+type proxyErrorType string
+
+const (
+	proxyErrorDefinitive proxyErrorType = "definitive"
+	proxyErrorTransient  proxyErrorType = "transient"
+)
 
 // localGrantStrategy handles token grants locally using a TokenMintingStrategy.
 type localGrantStrategy struct {

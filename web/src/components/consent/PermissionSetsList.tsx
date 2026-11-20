@@ -52,6 +52,9 @@ export interface PermissionSetsListProps {
    * Optional PSes in this map will start selected; per-service state is also restored.
    */
   initialGrantedPermissionSets?: Record<string, string[]>;
+
+  /** Permission set ID → names of requested services it covers (marker only, never a selection) */
+  requestedCandidates?: Record<string, string[]>;
 }
 
 /**
@@ -65,6 +68,7 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
   serviceRequirements = [],
   onSelectionChange,
   initialGrantedPermissionSets = {},
+  requestedCandidates = {},
 }) => {
   const [selectedOptionalIds, setSelectedOptionalIds] = useState<Set<string>>(() => {
     const initial = new Set<string>();
@@ -300,6 +304,7 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
                 serviceRequirements={serviceRequirements}
                 includedServiceIds={isActive ? includedServiceIds : new Set()}
                 onServiceToggle={handleServiceToggle}
+                requestedServiceNames={requestedCandidates[ps.permission_set.id]}
                 isFirst={index === 0}
                 isLast={index === orderedSets.length - 1}
               />

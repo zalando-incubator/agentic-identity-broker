@@ -36,8 +36,8 @@ func newLocalCodeIssuer(provider *oauth2server.Provider) *localCodeIssuer {
 	return &localCodeIssuer{provider: provider}
 }
 
-func (s *localCodeIssuer) IssueAuthorizationCode(ctx context.Context, req *ports.AuthorizationRequest, principal id.Principal) (string, error) {
-	return s.provider.HandleAuthorize(
+func (s *localCodeIssuer) IssueAuthorizationCode(ctx context.Context, req *ports.AuthorizationRequest, principal id.Principal, bindings map[string]id.ServiceID) (string, error) {
+	return s.provider.HandleBoundAuthorize(
 		ctx,
 		string(req.ClientID),
 		req.RedirectURI,
@@ -47,5 +47,6 @@ func (s *localCodeIssuer) IssueAuthorizationCode(ctx context.Context, req *ports
 		req.CodeChallenge,
 		req.CodeChallengeMethod,
 		principal,
+		bindings,
 	)
 }
