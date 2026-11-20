@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 )
@@ -22,6 +23,30 @@ var logValueEscaper = strings.NewReplacer(
 // paragraph separators, so an untrusted value cannot forge or split a log line.
 func SanitizeLogValue(value string) string {
 	return logValueEscaper.Replace(value)
+}
+
+// SanitizeLogPath bounds the escaped path to 2048 bytes, including a truncation marker.
+func SanitizeLogPath(path string) string {
+	const maxBytes = 2048
+	const marker = "...[truncated]"
+
+	// Bound the input before escaping so allocation does not scale with the full path.
+	prefix := logPathPrefix(path, maxBytes)
+	escaped := SanitizeLogValue(prefix)
+	if len(prefix) == len(path) && len(escaped) <= maxBytes {
+		return escaped
+	}
+	return logPathPrefix(escaped, maxBytes-len(marker)) + marker
+}
+
+func logPathPrefix(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	for limit > 0 && !utf8.RuneStart(value[limit]) {
+		limit--
+	}
+	return value[:limit]
 }
 
 // LoggedRequestLine returns the request method and escaped target captured by

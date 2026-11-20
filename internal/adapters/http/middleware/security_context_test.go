@@ -394,7 +394,7 @@ func TestNewHandler_TraceResponseSuppressionKeepsTraceInContextAndLogs(t *testin
 	require.True(t, observed.ok, "disabling the response header must not disable capture")
 	assert.Empty(t, res.Header().Get("traceresponse"), "trace.response_enabled=false must suppress only the header")
 
-	accessLog, ok := findMiddlewareLogRecord(*base.records, "HTTP request")
+	accessLog, ok := findMiddlewareLogRecord(*base.records, "http request")
 	require.True(t, ok, "request completion must still be logged")
 	assert.Equal(t, observed.sc.TraceID, accessLog.attrs["trace_id"], "trace.response_enabled=false must not disable log enrichment")
 }

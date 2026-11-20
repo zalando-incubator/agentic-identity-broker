@@ -38,7 +38,7 @@ func TestLoggingMiddlewareLogsWhitelistedPrefix(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
-	if !strings.Contains(buf.String(), "HTTP request") {
+	if !strings.Contains(buf.String(), `"path":"/api/something"`) {
 		t.Errorf("expected log output for /api/ path, got: %s", buf.String())
 	}
 }
@@ -84,7 +84,7 @@ func TestLoggingMiddlewareLogsAllPathsWhenNoPrefixesGiven(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected status %d, got %d", http.StatusOK, rr.Code)
 	}
-	if !strings.Contains(buf.String(), "HTTP request") {
+	if !strings.Contains(buf.String(), `"path":"/health"`) {
 		t.Errorf("expected log output when no prefixes given, got: %s", buf.String())
 	}
 }
@@ -268,9 +268,11 @@ func TestRecoveryMiddleware_PanicLogCarriesSecurityContextAndTraceHeader(t *test
 	req := httptest.NewRequest(http.MethodGet, "/api/panic", nil).WithContext(security.WithSecurityContext(
 		context.Background(),
 		security.SecurityContext{
-			TraceID:     "0123456789abcdef0123456789abcdef",
-			Actor:       "alice@example.com",
-			CallingPeer: "gateway-client-1",
+			TraceID:       "0123456789abcdef0123456789abcdef",
+			Actor:         "alice@example.com",
+			CallingPeer:   "gateway-client-1",
+			RequestMethod: http.MethodPost,
+			RequestTarget: "/api/a%2Fb",
 		},
 	))
 	rr := httptest.NewRecorder()
@@ -279,7 +281,8 @@ func TestRecoveryMiddleware_PanicLogCarriesSecurityContextAndTraceHeader(t *test
 
 	require.Equal(t, http.StatusInternalServerError, rr.Code)
 	require.Len(t, *base.records, 1)
-	assert.Equal(t, "Panic recovered", (*base.records)[0].message)
+	assert.Equal(t, "/api/a%2Fb", (*base.records)[0].attrs["path"])
+	assert.Equal(t, http.MethodPost, (*base.records)[0].attrs["method"])
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", (*base.records)[0].attrs["trace_id"], "panic log must retain request trace correlation")
 	assert.Equal(t, "alice@example.com", (*base.records)[0].attrs["actor"], "panic log must retain the finalized actor")
 	assert.Equal(t, "gateway-client-1", (*base.records)[0].attrs["calling_peer"], "panic log must retain the finalized calling_peer")

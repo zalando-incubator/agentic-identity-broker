@@ -44,7 +44,13 @@ func requestSecurityTraceID(resp *http.Response) string {
 func requestSecurityAccessLogs(records []map[string]any, path string) []map[string]any {
 	filtered := make([]map[string]any, 0, len(records))
 	for _, record := range records {
-		if record["msg"] != "HTTP request" {
+		if _, ok := record["remote_addr"]; !ok {
+			continue
+		}
+		if _, ok := record["duration_ms"]; !ok {
+			continue
+		}
+		if _, ok := record["status"]; !ok {
 			continue
 		}
 		if pathValue, ok := record["path"].(string); ok && pathValue == path {
