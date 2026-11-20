@@ -14,6 +14,15 @@ Compose. It includes hot reload for the backend and frontend.
 For plain Docker Compose commands and a complete consent-to-tool journey,
 see [Get started](get-started/index.md).
 
+### Shared development hostname
+
+Browsers resolve `aib.localhost` to loopback and treat it as a trustworthy local
+origin, preserving the secure-context APIs used by the consent UI. If your host
+resolver needs an explicit entry, add `127.0.0.1 aib.localhost` to its hosts file
+(`/etc/hosts` on macOS/Linux, `C:\Windows\System32\drivers\etc\hosts` on Windows). Compose gives the frontend
+that same network alias. Use `http://aib.localhost:3000` for browser consent so the browser
+and ExtProc use the same AuthZEN PDP identifier. Keep this development stack private.
+
 ### Step 1: Start All Services
 
 ```bash
@@ -37,7 +46,7 @@ Slow or stalled seeding can still cause startup to fail.
 
 Open in your browser:
 
-- **Frontend**: http://localhost:3000
+- **Frontend**: http://aib.localhost:3000
 - **Backend API**: http://localhost:8000
 - **Admin API**: http://localhost:14000
 - **Upstream OAuth2**: http://localhost:9001
@@ -126,6 +135,34 @@ configuration keys for the AuthZEN endpoints, and `charts/agentic-identity-broke
 because it does not deploy ExtProc. Enabling grant context requires the broker's
 `server.enduser.public_url` to equal the identifier ExtProc expects and to be reachable from the
 ExtProc container. See [ExtProc grant context configuration](configuration.md#extproc-grant-context-configuration).
+
+### Enable ExtProc grant context
+
+Uncomment the `grant_context` block in `configs/config.extproc.docker.yaml`, including
+`policy_decision_point: "http://aib.localhost:3000"`, then start the stack normally.
+Keep `oauth2.token_endpoint` at `http://identity-broker:8000/oauth2/token`.
+The explicit PDP identifies the frontend origin; Vite proxies both discovery and
+`/access/v1/evaluation` to the broker. Vite retains its default localhost/IP host
+allowlist; no wildcard exception is needed.
+
+After changing the configuration, recreate ExtProc:
+
+```bash
+docker compose --env-file .env.compose -f docker-compose.yml up -d --no-deps --force-recreate extproc-token-exchange
+curl --fail http://aib.localhost:3000/.well-known/authzen-configuration
+docker compose --env-file .env.compose -f docker-compose.yml exec frontend \
+  curl --fail http://aib.localhost:3000/.well-known/authzen-configuration
+```
+
+Both responses must advertise `policy_decision_point` as `http://aib.localhost:3000` and
+`access_evaluation_endpoint` as `http://aib.localhost:3000/access/v1/evaluation`.
+Follow [Get started](get-started/index.md) to grant access and call `whoami` through
+the gateway, using the Local Client token for `dev@example.com`, the same principal
+the Vite development proxy supplies. Revoke the agent's grant in the consent UI,
+wait beyond the configured `max_staleness` (60 seconds by default), and repeat the
+call. It must fail with HTTP 403 and a consent URL on the same `aib.localhost` origin.
+Grant context remains disabled by default. Do not relax PDP equality or enable an
+unrestricted Vite host allowlist to make discovery work.
 
 ### Why the files differ
 
@@ -325,7 +362,7 @@ just compose-logs-frontend  # Look for proxy errors
 
 **Examine the proxy:**
 ```bash
-curl -s http://localhost:3000/api/health  # Should proxy to backend
+curl -s http://aib.localhost:3000/api/health  # Should proxy to backend
 ```
 
 ### Seed data did not start
@@ -419,7 +456,7 @@ just fmt            # Format code
 
 All ports (8000, 3000, 9000-9002) auto-forward to host:
 
-- From host browser: `http://localhost:3000` (works)
+- From host browser: `http://aib.localhost:3000` (works)
 - From devcontainer terminal: `http://identity-broker:3000` (inside container network)
 
 ### Benefits
@@ -555,7 +592,7 @@ docker exec aib-broker ping upstream-oauth2  # Should work
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Host Machine                             │
-│  http://localhost:3000  http://localhost:8000                   │
+│  http://aib.localhost:3000  http://localhost:8000                   │
 │            ↓                        ↓                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                      Docker Compose Network                      │

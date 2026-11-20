@@ -16,7 +16,7 @@ binds:
       policies:
         mcpAuthentication:
           mode: strict
-          issuer: http://localhost:3000
+          issuer: http://aib.localhost:3000
           audiences:
           - token-exchange-broker
           jwks:
@@ -54,7 +54,7 @@ binds:
             - "token-exchange-broker"
             jwks:
               url: "http://upstream-oauth2:9001/.well-known/jwks.json"
-          - issuer: "http://localhost:3000"
+          - issuer: "http://aib.localhost:3000"
             audiences:
             - "token-exchange-broker"
             jwks:

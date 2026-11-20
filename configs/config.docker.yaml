@@ -14,7 +14,7 @@ server:
     port: 8000
     bind: "::" # Dual-stack (IPv6 with IPv4 fallback)
     # Use port 3000, which points to the Vite dev server locally.
-    public_url: http://localhost:3000
+    public_url: http://aib.localhost:3000
     # Pre-auth mode trusts principals from reverse proxy headers.
     authentication:
       preauth:
@@ -22,7 +22,7 @@ server:
     # Allow the local Vite development server.
     cors:
       allowed_origins:
-        - "http://localhost:3000"
+        - "http://aib.localhost:3000"
 
   # Admin server (internal management API)
   admin:
@@ -111,7 +111,7 @@ token_exchange:
     # Extract user principal from the subject_token's sub claim
     principal_expression: "subject_token.sub"
     # Trust local azp as an agent UUID only for broker-issued tokens.
-    agent_id_expression: 'has(subject_token.azp) && subject_token.iss == "http://localhost:3000" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
+    agent_id_expression: 'has(subject_token.azp) && subject_token.iss == "http://aib.localhost:3000" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
   authorization:
     type: "cel"
     cel:
