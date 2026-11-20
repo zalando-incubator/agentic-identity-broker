@@ -129,8 +129,10 @@ var _ = Describe("Client identity continuous rolling upgrade", Label("docker", "
 	BeforeEach(func() {
 		journey, postgres, db, store, current, restarted = nil, nil, nil, nil, nil, nil
 		prior = nil
-		var err error
-		journey, err = helpers.NewOAuth2CredentialJourney()
+		// Docker may not share the OS temp directory with its VM.
+		workspace, err := os.Getwd()
+		Expect(err).NotTo(HaveOccurred())
+		journey, err = helpers.NewOAuth2CredentialJourneyIn(workspace)
 		Expect(err).NotTo(HaveOccurred())
 		alice, bob, storedSecret = fixtures.DefaultPrincipal().String(), fixtures.AnotherPrincipal().String(), fixtures.ReportsSecretV1
 		binding, err = journey.WritePair(fixtures.ReportsClientV1, fixtures.ReportsSecretV1)

@@ -36,7 +36,11 @@ type OAuth2CredentialJourney struct {
 }
 
 func NewOAuth2CredentialJourney() (*OAuth2CredentialJourney, error) {
-	directory, err := os.MkdirTemp("", "broker-credential-journey-")
+	return NewOAuth2CredentialJourneyIn(os.TempDir())
+}
+
+func NewOAuth2CredentialJourneyIn(parent string) (*OAuth2CredentialJourney, error) {
+	directory, err := os.MkdirTemp(parent, "broker-credential-journey-")
 	if err != nil {
 		return nil, err
 	}

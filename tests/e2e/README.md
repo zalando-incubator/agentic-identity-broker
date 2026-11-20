@@ -105,8 +105,8 @@ The Docker rollout harness uses the pinned published preceding-release image, no
 Its HTTP client connects through Docker's mapped ports but sends the configured Admin public-URL Host, as the production trust boundary requires.
 Each replica retains its own public end-user URL for same-origin return targets, even when another replica starts on different ports.
 
-The container runtime must share the temporary directory that holds credential files.
-For Colima, set `TMPDIR` to a temporary directory under a shared host path before the rollout run.
+The rollout harness creates its credential files under the checkout and mounts them read-only into the prior-release container.
+If Docker or Podman runs in a VM, share the checkout path with that VM.
 
 The external-ID migration journeys bootstrap and remediate schema 46 through that released broker.
 They start the current production Admin server only after migration succeeds, so current service repositories never query columns absent from the historical schema.

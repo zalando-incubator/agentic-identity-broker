@@ -572,7 +572,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 				hostPorts = append(hostPorts, port)
 			}
 			// Current service repositories require columns absent from schema 46.
-			legacyServer, err = helpers.StartClientIdentityPriorRelease(ctx, journey.Directory, document, hostPorts)
+			legacyServer, err = helpers.StartClientIdentityPriorRelease(ctx, "", document, hostPorts)
 			Expect(err).To(Succeed())
 			legacyServer.Principal = principal
 			request := fixtures.CredentialServiceRequest("external-id-upgrade", journey.Upstream.URL(), "stored")

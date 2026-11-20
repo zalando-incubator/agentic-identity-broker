@@ -147,7 +147,8 @@ func TestPostgresSessionClientIdentityLockAndCallbackCopies(t *testing.T) {
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	provider := createClientIdentityProvider(t, NewPostgresThirdpartyOAuth2ProviderRepository(adapter), false)
+	providers := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	provider := createClientIdentityProvider(t, providers, false)
 	firstRepo := NewUserSessionRepository(adapter)
 	secondAdapter, err := NewAdapter(adapter.config)
 	require.NoError(t, err)
@@ -155,6 +156,11 @@ func TestPostgresSessionClientIdentityLockAndCallbackCopies(t *testing.T) {
 	defer func() { require.NoError(t, secondAdapter.Close(context.Background())) }()
 	secondRepo := NewUserSessionRepository(secondAdapter)
 	session := createClientIdentitySession(t, firstRepo, provider)
+	provider.ClientID = "reports-v2"
+	changed, err := providers.Update(ctx, provider, &provider.Version)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, int64(1), provider.ClientIdentityRevision)
 	type result struct {
 		session *storage.UserSession
 		err     error
@@ -177,8 +183,8 @@ func TestPostgresSessionClientIdentityLockAndCallbackCopies(t *testing.T) {
 				return false, ctx.Err()
 			}
 			current.CallbackID = "winning-callback"
-			current.UpstreamClientID = new(id.ClientID("reports-v2"))
-			current.UpstreamClientRevision = 2
+			current.UpstreamClientID = new(provider.ClientID)
+			current.UpstreamClientRevision = provider.ClientIdentityRevision
 			current.EncryptedAccessToken = []byte("callback-access-ciphertext")
 			return true, nil
 		})
@@ -214,9 +220,9 @@ func TestPostgresSessionClientIdentityLockAndCallbackCopies(t *testing.T) {
 	first, second := <-firstDone, <-secondDone
 	require.NoError(t, first.err)
 	require.NoError(t, second.err)
-	assert.Equal(t, evidence{"reports-v2", 2, "winning-callback"}, <-seen)
+	assert.Equal(t, evidence{"reports-v2", 1, "winning-callback"}, <-seen)
 	assert.Equal(t, new(id.ClientID("reports-v2")), second.session.UpstreamClientID)
-	assert.Equal(t, int64(2), second.session.UpstreamClientRevision)
+	assert.Equal(t, int64(1), second.session.UpstreamClientRevision)
 	*first.session.UpstreamClientID = "mutated callback result"
 	second.session.EncryptedAccessToken[0] ^= 0xff
 	loser := *session
@@ -224,11 +230,17 @@ func TestPostgresSessionClientIdentityLockAndCallbackCopies(t *testing.T) {
 	loser.CallbackID = "losing-callback"
 	loser.UpstreamClientID = new(id.ClientID("obsolete"))
 	loser.UpstreamClientRevision = 100
+	_, err = firstRepo.CreateIfAbsent(ctx, &loser)
+	var sourceErr *model.CredentialSourceError
+	require.ErrorAs(t, err, &sourceErr)
+	require.Equal(t, model.CredentialSourceReasonIdentitySuperseded, sourceErr.Reason)
+	loser.UpstreamClientID = new(provider.ClientID)
+	loser.UpstreamClientRevision = provider.ClientIdentityRevision
 	winner, err := firstRepo.CreateIfAbsent(ctx, &loser)
 	require.NoError(t, err)
 	assert.Equal(t, session.ID, winner.ID)
 	assert.Equal(t, "winning-callback", winner.CallbackID)
 	assert.Equal(t, new(id.ClientID("reports-v2")), winner.UpstreamClientID)
-	assert.Equal(t, int64(2), winner.UpstreamClientRevision)
+	assert.Equal(t, int64(1), winner.UpstreamClientRevision)
 	assert.Equal(t, []byte("refreshed-access-ciphertext"), winner.EncryptedAccessToken)
 }

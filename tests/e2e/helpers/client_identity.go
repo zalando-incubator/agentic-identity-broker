@@ -21,6 +21,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	dockercontainer "github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -169,8 +170,9 @@ func ClientIdentityPriorReleaseImage() string {
 
 // StartClientIdentityPriorRelease runs only the published binary. Loopback relays
 // use the existing host tunnel so persisted issuer/endpoint URLs are identical on
-// host and container; credential publication uses the very same mounted directory.
-func StartClientIdentityPriorRelease(ctx context.Context, directory string, document map[string]any, hostPorts []int) (*ClientIdentityPriorRelease, error) {
+// host and container. A non-empty credentialDirectory lets both brokers read
+// credential publications from the same mounted directory.
+func StartClientIdentityPriorRelease(ctx context.Context, credentialDirectory string, document map[string]any, hostPorts []int) (*ClientIdentityPriorRelease, error) {
 	encoded, err := json.Marshal(document)
 	if err != nil {
 		return nil, err
@@ -209,7 +211,9 @@ func StartClientIdentityPriorRelease(ctx context.Context, directory string, docu
 			Entrypoint: []string{"/bin/sh", "-ec"}, Cmd: []string{script.String()},
 			ExposedPorts: []string{"8000/tcp", "14000/tcp"}, HostAccessPorts: hostPorts,
 			HostConfigModifier: func(host *dockercontainer.HostConfig) {
-				host.Binds = append(host.Binds, directory+":"+directory)
+				if credentialDirectory != "" {
+					host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeBind, Source: credentialDirectory, Target: credentialDirectory, ReadOnly: true})
+				}
 			},
 			Files:      []testcontainers.ContainerFile{{Reader: strings.NewReader(string(encoded)), ContainerFilePath: "/tmp/client-identity-config.json", FileMode: 0o644}},
 			WaitingFor: wait.ForLog("client-identity-relays-ready").WithStartupTimeout(30 * time.Second),
