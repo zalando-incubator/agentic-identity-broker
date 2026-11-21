@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 515
+    "investigation_after": 517
   },
   "issues": [
     {
@@ -292,6 +292,18 @@
       "state": "resolution_recommended",
       "updated_at": "2026-11-20",
       "note": "Verified merged #524 at 1d637dcd allows main/release/* and recompiles workflow. Recommended closure of historical base-override rejection; #545 now owns #367. No later publication success claimed."
+    },
+    {
+      "number": 516,
+      "state": "commented",
+      "updated_at": "2026-11-21",
+      "note": "Posted per-job tool profiles, linter release plus build-Go verification, and explicit revision/mode-bound artifact consumer path. Current recipes rebuild dist; coverage needs instrumented bundle. Docs-only config references confirmed; no workflow edits or speedup measured."
+    },
+    {
+      "number": 517,
+      "state": "commented",
+      "updated_at": "2026-11-21",
+      "note": "Posted exact parsed-parameter table candidate for three overlapping request-builder specs; preserve matcher negative controls and distinct integration contracts. Helpers/matchers uncached race pass (51/39 specs plus standard tests); no deletion/mutation or speedup claimed."
     }
   ],
   "fixes": [
@@ -390,39 +402,39 @@
       "follow_up": null
     },
     {
-      "area": "tests",
-      "checked_at": "2026-11-20",
-      "result": "Four existing classification tests pass uncached with race on release/v0.2 83f266e2 in tokenexchange, oauth2session and ExtProc server via just test override. Restored clean main. Generator/docs, static/full gate and Compose unrun; no source changes.",
-      "follow_up": null
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-20",
-      "result": "Eight open Repo Assist PRs; read reviews/threads plus both check types. Six external pipelines pass; #490 start blocker persists. #461 now non-draft/release-targeted, dirty and five external stages fail. #432 remains dirty; classifications missing #420/#448.",
-      "follow_up": "#461 local merge abort: six context/message conflicts and ~9169 KiB complete changed-file estimate. No oversized push; approved integration and first failing external logs needed."
-    },
-    {
-      "area": "hygiene",
-      "checked_at": "2026-11-20",
-      "result": "97 open issues/26 PRs reviewed. Submitted enhancement/performance on #514-#516, enhancement on #517/#518/#520, bug #545, documentation #546. Removed closed #222/#346; restored reopened #497. No monthly human check-offs.",
-      "follow_up": null
-    },
-    {
-      "area": "ci",
-      "checked_at": "2026-11-20",
-      "result": "#515 static review confirms coarse code selector, rename name-only limitation and screenshot handoff gap: CI captures off/two workers/reports-only vs head-based single-worker publisher. #524 fixes base-override rejection; #522 closure recommended.",
-      "follow_up": "Maintain gate dependencies and full fallback; screenshot artifact provenance and privileged publisher separation before eliminating second suite."
-    },
-    {
       "area": "code",
       "checked_at": "2026-11-20",
       "result": "#367 maintainer replacement #545 targets release/v0.2; no duplicate Repo Assist PR. #461 six local conflict regions require release-normalized messages plus context-aware logs/writers, not wholesale side selection. Merge aborted; clean main restored.",
       "follow_up": null
     },
     {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-21",
+      "result": "Eight live Repo Assist PRs, unchanged heads. Read reviews/threads, comments and both check types. Six external pipelines pass; #461 dirty with five failed stages, #432 dirty, #490 pipeline-start blocked, #420/#448 classification blocked.",
+      "follow_up": "Known oversized integration path remains blocked; no repeat push or duplicate self-follow-up. Approved maintainer integration/log evidence required."
+    },
+    {
+      "area": "ci",
+      "checked_at": "2026-11-21",
+      "result": "#516: tool installer rebuilds linter with selected Go by documented policy. JUnit E2E recipes rebuild dist unconditionally; sharing an artifact needs explicit consumer path and revision/mode binding. Scheduled browser coverage is instrumented. No runner-minute measurement.",
+      "follow_up": "Deferred maintenance-only candidate: per-job tooling and release/build-Go-aware linter reuse; preserve local verify and standalone container dispatch."
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-21",
+      "result": "On main 0c4bc4bc, maintained just test override passed helpers/matchers uncached with race: 51 helper specs plus standard tests and 39 matcher specs. Body durations 0.28/0.01s. No code changes, mutation, acceptance/coverage or full gate.",
+      "follow_up": "#517 candidate consolidates three request-builder tests into exact parsed-parameter cases; keep false-positive matcher guards and nonduplicated upstream contracts."
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-21",
+      "result": "All 97 open issues and 26 PRs have labels. Checked 47 pending issue-comment threads and all eight Repo Assist PR threads; no new human replies or monthly check-offs. Task 1 continued into Task 2; no redundant labels/comments.",
+      "follow_up": null
+    },
+    {
       "area": "release",
-      "checked_at": "2026-11-20",
-      "result": "release/v0.2 integration remains active, including #545 and #461 retarget. No release changes or new PRs permitted in this scheduled maintenance-only run.",
+      "checked_at": "2026-11-21",
+      "result": "Latest release v0.1.147 from Nov17; release/v0.2 work remains active. No new release PR in scheduled maintenance-only mode.",
       "follow_up": null
     }
   ],
@@ -444,8 +456,8 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first investigation after #515",
-      "note": "New #516/#517 CI work remains available for source-based investigation; #518 has draft #546 and #520 is assigned. #367/#508 have active #545/#549; do not duplicate. Await #500/#501 decisions."
+      "item": "Resume oldest-first investigation after #517",
+      "note": "#518 has #546; #520 is assigned. New #525-#542 activity slices remain for investigation; avoid duplicate #545/#549/#523. #516 tooling and #517 compact builder-test candidates await capacity; #500/#501 await decisions."
     },
     {
       "task": 3,
