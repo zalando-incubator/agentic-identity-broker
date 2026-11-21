@@ -34,7 +34,8 @@ type ImpersonationOPAPolicy struct {
 ```
 
 `AuthorizationConfig` and `OPAAuthorizationConfig` (used by `token_exchange.authorization`) are
-unchanged. `internal/config/validator.go` and `impersonation.validateRuleInvariants` both enforce
+unchanged as declarations, but the loader and ordinary-exchange service construction reject explicit
+`token_exchange.authorization.type: opa` before serving requests (API-CFG). `internal/config/validator.go` and `impersonation.validateRuleInvariants` both enforce
 the rules of the configuration contract (defense in depth, as today).
 
 ## 2. Port (`internal/ports/impersonation_policy.go`, new)
@@ -46,18 +47,22 @@ type ImpersonationPolicyRole string // "client_assertion", "actor_token", "subje
 // ImpersonationPolicyEvidence is the binding evidence of one policy revision.
 type ImpersonationPolicyEvidence struct {
 	References    map[ImpersonationPolicyRole]bool
-	FieldBindings map[ImpersonationPolicyRole]map[string]bool // only "sub" and "email" are recorded
+	FieldBindings map[ImpersonationPolicyRole]map[string]bool // subject_token only: "sub", "email"
 }
 
 type ImpersonationPolicyAction string // "allow" or "deny"
 
-// ImpersonationPolicyInput is the complete, credential-free input document (contract § 1).
+// ImpersonationPolicyInput excludes raw credentials but contains sensitive identity claims.
 type ImpersonationPolicyInput map[string]any
+
+// Implement LogValue() slog.Value, String() string, and GoString() string on this type.
+// Every method returns only the constant "[REDACTED]", including empty/nil values.
 
 // ImpersonationPolicyRevision is immutable and safe for concurrent use.
 type ImpersonationPolicyRevision interface {
 	Evidence() ImpersonationPolicyEvidence
-	Label() string // policy_revision for telemetry
+	Label() string // operator manifest label, log/audit only
+	AdmissionID() string // process-instance UUID plus per-rule admission sequence, log/audit only
 	// Evaluate returns allow or deny, or an error wrapping ErrPolicyDecisionInvalid or
 	// ErrPolicyEvaluationFailed. It honors ctx cancellation and its own deadline.
 	Evaluate(ctx context.Context, input ImpersonationPolicyInput) (ImpersonationPolicyAction, error)
@@ -65,8 +70,8 @@ type ImpersonationPolicyRevision interface {
 
 // ImpersonationPolicySource owns one rule's runtime.
 type ImpersonationPolicySource interface {
-	// AwaitReady blocks until a revision is admitted and every bundle activated once, or returns an
-	// error at the configured startup bound or ctx end.
+	// AwaitReady blocks until the SDK is ready and the active admitted revision contains every
+	// configured bundle in its own snapshot, or returns at the startup bound or ctx end.
 	AwaitReady(ctx context.Context) error
 	// Current returns the active revision; non-nil after AwaitReady succeeds.
 	Current() ImpersonationPolicyRevision
@@ -111,18 +116,35 @@ type PolicySourceFactory func(ruleName string, cfg ports.ImpersonationOPAAuthori
 - Error mapping: `ErrPolicyEvaluationFailed` → `serverError("authorization evaluation failed")` with
   `client_authorization/opa_evaluation_failed`; `ErrPolicyDecisionInvalid` → same response with
   `client_authorization/opa_decision_invalid`; both are `abort` results.
-- `AuditRecord` gains `AuthorizationEngine` and `PolicyRevision`.
+- `AuditRecord` gains `AuthorizationEngine`, `PolicyRevision`, and `PolicyAdmissionID`.
+- `context.agent.external_id` is copied from the resolved broker Agent, literally or `""` when
+  absent, independently of credential claims, caller headers, and bundle mappings. Missing External
+  ID denies the example governance policy rather than falling back to UUID.
+- Shared input vectors in `tests/testdata/opa-envoy-input/` must be consumed by both
+  `internal/domain/impersonation/policy_input_test.go` and
+  `internal/extproc/authorization/input_builder_test.go` for common Envoy fields and deliberate
+  broker exclusions; no production cross-binary imports are introduced.
+- Safe rendering tests belong in `internal/ports/impersonation_policy_test.go`: `%s`, `%v`, `%+v`,
+  `%#v`, pointer/value formatting, `slog.Any` with JSON and text handlers all exclude distinctive
+  synthetic claims and transport values. Evaluation still receives the full document, not its
+  redacted representation; never convert it to a raw map for logging or diagnostics.
 
 ## 4. Adapter (`internal/adapters/policy/opa/`, new)
 
 - `NewImpersonationPolicySource(ruleName, cfg, admit, logger)` reads and validates the
-  bootstrap subset, creates an in-memory store with an `OnCommit` trigger, and starts `sdk.New` with
+  bootstrap subset through an adapter-owned `os.Root` over the builder-supplied
+  `security.trust_material_dir`; it bounds the regular-file read to 1 MiB on the same descriptor,
+  rejects every SDK-local-file reference before startup, creates an in-memory store with an
+  `OnCommit` trigger, and starts `sdk.New` with
   `Ready`, `V1Compatible`, discard console logger, and no plugins. It obtains its tracer and meter
   from `otel.Tracer("tokenexchange")` and `otel.Meter("tokenexchange")`, never constructor-injected
   providers, as required by `coding-standards/OPENTELEMETRY.md` § 1.
-- The trigger builds candidates (research R2), computes capabilities (R4) and evidence (R5), calls
-  `admit`, and swaps an `atomic.Pointer[revision]`. Trigger failures never panic the broker; they
-  reject the candidate.
+- The trigger reads candidate modules, data, and activated bundle names from one transaction.
+  A candidate carries its configured/activated bundle sets and must include all configured bundles
+  before `admit` or any active-pointer swap, including initial loading. Historical SDK readiness
+  never admits an earlier subset. It then computes capabilities (R4) and evidence (R5), calls
+  `admit`, assigns a new `AdmissionID` only on successful admission, and swaps an
+  `atomic.Pointer[revision]`. Trigger failures reject the candidate, never panic the broker.
 - `revision.Evaluate` converts input with `ast.InterfaceToValue`, applies `context.WithTimeout`
   (`evaluation_timeout`), runs the prepared query, and parses the decision (contract § 3).
 - The adapter imports no other adapter and nothing from `internal/extproc`.
@@ -130,6 +152,6 @@ type PolicySourceFactory func(ruleName string, cfg ports.ImpersonationOPAAuthori
 ## 5. Builder and handler
 
 - `internal/app/builder.go` constructs the factory with the injected logger and passes
-  it to `impersonation.NewService`.
+  it to `impersonation.NewService`, and supplies `security.trust_material_dir` to the adapter factory.
 - `internal/adapters/http/enduser/oauth2_token.go` fills `Request.HTTP` from the `*http.Request` and
-  logs the two new audit attributes. It does not inspect policy results.
+  logs the three new audit attributes. It does not inspect policy results.

@@ -55,8 +55,10 @@ created by the adapter. The adapter registers a store `OnCommit` trigger. On eac
 a compiler (`plugins.GetCompilerOnContext`), the adapter builds a **candidate revision** inside the
 trigger:
 
-1. Copy the compiled modules from that compiler and read the complete data document in the
-   committing transaction.
+1. Copy the compiled modules, complete data document, and activated bundle-name set from the
+   same committing transaction. Record the configured bundle-name set as candidate completeness
+   evidence. Reject with `bundles_incomplete` unless every configured bundle is present in this
+   snapshot; partial initial candidates never enter admission or become serving revisions.
 2. Prepare a `rego.PreparedEvalQuery` for `data.<package>.<decision>` from those modules, a new
    in-memory store holding the data copy, the restricted capabilities of R4,
    `StrictBuiltinErrors(true)`, and print statements disabled.
@@ -88,7 +90,17 @@ use, not a stable contract). The OPA `download` package with a broker-written bu
 
 ## R3 — Bootstrap configuration subset (**Sign-off: API-BOOT**)
 
-**Decision**: The bootstrap file is OPA-native YAML or JSON, read once at startup. Only the
+**Decision (Proposed: API-BOOT)**: The bootstrap file is OPA-native YAML or JSON, read once at startup.
+It must be an absolute path within `security.trust_material_dir`, opened through an adapter-owned
+`os.Root` using the containment and same-descriptor regular-file checks of
+`040-trust-anchor-local-key-sets`. The root must be a resolved existing directory other than `/`;
+bootstrap reads are bounded to 1 MiB. Do not import the JWKS adapter; the builder supplies the trust
+directory setting. Bootstrap-referenced local file reads are not supported: reject bearer
+`token_path`, TLS CA/certificate/private-key file paths, bundle `file://` resources, and any other
+OPA configuration field that would cause a local file read. Validate against the pinned OPA
+configuration types before `sdk.New`, failing closed on unsupported nested settings; never pass
+unchecked file references to the SDK. Services use supported inline credentials, and bundle keys
+are inline. There is no fallback to unrestricted opening. Only the
 top-level keys `services`, `bundles`, `keys`, and `labels` are accepted. Every other top-level key
 fails startup, including `decision_logs`, `discovery`, `status`, `plugins`, `server`,
 `persistence_directory`, `caching`, `distributed_tracing`, `nd_builtin_cache`, `storage`,
@@ -107,7 +119,10 @@ ExtProc schema is broader because it runs in a separate trust context under ADR
 
 **Alternatives**: Accept the full OPA configuration as ExtProc does (exports sensitive claims,
 runtime reconfiguration). Accept a broker-specific bundle schema instead of OPA's vocabulary
-(contradicts the issue's request for an ExtProc-comparable bootstrap).
+(contradicts the issue's request for an ExtProc-comparable bootstrap). Permit OPA-native file reads
+outside the trust directory under a documented exception (retains file-based rotation, but gives
+bootstrap settings authority to read unrelated runtime credentials). A contained file resolver for
+all SDK credential forms is a larger alternative, not part of this release.
 
 ## R4 — Prohibiting policy-time networking (**Sign-off: DEC-BUILTINS**)
 
@@ -137,17 +152,20 @@ modules:
 1. The roots are the rules for `data.<package>.<decision>`. No such rule rejects the candidate.
 2. Reachable rules are the transitive closure of `compiler.Graph.Dependencies` from the roots,
    including functions and rules in other packages.
-3. A reachable expression with a `with` modifier whose target is `input` or starts with `input`
-   voids all evidence for the candidate (no references and no field bindings).
+3. Any `with` modifier in a reachable expression voids all evidence for the candidate (no
+   references and no field bindings), including replacements of `input`, `data` rules, or functions
+   and built-in functions. Do not count dependencies of an overridden rule or function as executed.
+   This deliberately avoids relying on the compiler graph to remove overridden references.
 4. In each reachable rule head and body, including nested comprehensions, every ref is examined.
    A ref is resolved through local aliases: a variable unified or assigned (`=`, `:=`, compiled
    `__localN__` rewrites) to a ref or alias that resolves to an input path inherits that path.
    Aliases are local to one rule body; they do not cross function or rule boundaries.
 5. A resolved ref whose ground string prefix is `input.context.<role>` (role
    `client_assertion`, `actor_token`, or `subject_token`) is a **reference** to that role. If the
-   next term is the ground string `email` or `sub`, it is also a **field binding**
-   `<role>.<field>`. Non-ground (variable) keys at those positions, `input`, and `input.context`
-   alone are not evidence.
+   role is `subject_token` and the next term is the ground string `email` or `sub`, it is also a
+   **field binding** `subject_token.<field>`. Only those two subject fields are recorded. Client and
+   actor references remain independent mandatory role evidence, never field bindings. Non-ground
+   (variable) keys at those positions, `input`, and `input.context` alone are not evidence.
 
 Evidence is part of the immutable revision (R2). It is equivalent to the CEL checks: CEL
 `References(v)` corresponds to a role reference and CEL `Binds(v, f)` to a field binding.
@@ -189,10 +207,13 @@ revision for each step (a swap between steps could mix evidence and decision).
 
 **Decision**: Add `authorization.opa.startup_timeout` (duration, default `30s`, range `1s`–`5m`).
 `NewService` starts every OPA rule's runtime, then waits concurrently. A rule is ready when the SDK
-`Ready` channel is closed (every configured bundle activated once) **and** the adapter has admitted a
-revision. If either does not happen within the rule's bound, the broker stops all started runtimes
-and startup fails with a credential-free diagnostic naming the rule index, rule name, field, and the
-last rejection reason class. An admitted revision can come from any activation inside the bound.
+`Ready` channel is closed **and** its active admitted revision carries completeness evidence for
+all configured bundles from that revision's own committing snapshot (R2). Historical activations
+cannot satisfy completeness for a different candidate. If this does not happen within the rule's
+bound, the broker stops all started runtimes and startup fails with a raw-credential-excluded
+diagnostic naming the rule index, rule name, field, and last rejection reason class. In particular,
+a usable first-bundle subset followed by a rejected complete two-bundle candidate never becomes
+ready; there is no partial admitted serving revision to retain.
 
 **Rationale**: FR-003 requires a bounded interval, and the spec left the setting to planning.
 `30s` covers several OPA bundle retry intervals for a slow bundle server; `5m` caps rollout stalls.
@@ -216,7 +237,10 @@ protocol, header map) into `impersonation.Request`. The domain builds the input:
   or `id`.
 - `context`: `client_assertion`, `actor_token`, `subject_token` (validated claim maps, `{}` when
   empty), `subject_unverified`, and `request` (`resource`, `grant_type`, `scope`, `agent_id`), built
-  from the same values as the CEL activation.
+  from the same values as the CEL activation; plus `agent.external_id` read literally from the
+  broker-resolved Agent (empty string when unset). Governance examples index bundles by that
+  External ID, not UUID. The broker is authoritative for UUID-to-External-ID mapping; callers and
+  bundles cannot override it. UUID remains the routing and minted identity.
 
 Field names and shapes follow `envoyauth.RequestToInput`. The adapter converts the input with
 `ast.InterfaceToValue` before evaluation; claim maps keep JSON types (numbers stay `json.Number`
@@ -234,6 +258,14 @@ the opa-envoy-plugin dependency to the broker binary for a handful of fields, an
 must then be disabled). Include all headers (exposes `authorization` and cookies). Allowlist headers
 (breaks reuse of header predicates such as tenant headers).
 
+**Envelope consistency**: Keep the domain builder, but add shared JSON request/output vectors under
+`tests/testdata/opa-envoy-input/`, consumed by broker-domain and ExtProc authorization tests without
+production imports between the binaries. Compare supported common HTTP/path/query fields against
+`envoyauth.RequestToInput`, applying the broker's declared body/header exclusions separately. The
+ADR records the deliberate decision divergence: broker invalid/error is terminal `server_error`;
+ExtProc invalid/error is deny and supports approval actions. Alternative: adapter-shaped envelope
+from an engine-neutral DTO; shared vectors preserve the existing design with less restructuring.
+
 ## R9 — Decision contract and failure mapping (**Sign-off: API-DECISION**, **API-DIAG**)
 
 **Decision**: The decision must be exactly one result whose value is an object with a string
@@ -242,7 +274,9 @@ satisfies the rule's authorization predicate; `deny` is a non-match (`403 access
 no-match precedence). Undefined, multiple results, non-object, missing or other `action` values
 (including `approval_required`) return `500 server_error` with diagnostic
 `client_authorization/opa_decision_invalid`. Evaluation errors, built-in errors under strict mode,
-timeouts, and cancellation return `500 server_error` with `client_authorization/opa_evaluation_failed`.
+timeouts, and cancellation map internally to terminal `server_error` with
+`client_authorization/opa_evaluation_failed`; connected callers receive HTTP 500, while
+client-disconnect cancellation has no response guarantee and uses correlated telemetry for E2E.
 Both abort rule evaluation without fallback. Response descriptions reuse the existing
 `authorization evaluation failed`.
 
@@ -259,7 +293,10 @@ detail). Treat undefined as deny like ExtProc (contradicts FR-007).
 **Decision**: Give each impersonation rule a dedicated `ImpersonationAuthorizationConfig` with
 `type`, `cel`, and `opa` (`policy.config_file`, `policy.package`, `policy.decision`,
 `evaluation_timeout`, `startup_timeout`). `token_exchange.authorization` keeps its existing
-`AuthorizationConfig`, including the reserved and ignored `opa.policy_url` / `opa.policy_path`.
+`AuthorizationConfig` declarations, including reserved `opa.policy_url` / `opa.policy_path`, but
+explicit `type: opa` fails startup instead of being accepted and ignored (**Proposed: API-CFG**).
+Its CEL defaults and valid CEL behavior remain unchanged; this feature implements no ordinary
+exchange OPA runtime.
 Validation for impersonation rules: `type` is `cel` or `opa`; the selected block is required; the
 other block must be empty; `cel.evaluation_timeout` and `opa.evaluation_timeout` keep the
 `10ms`–`5s` range. `policy.package` must be a dot-separated Rego package path; `policy.decision` a
@@ -270,8 +307,9 @@ OPA settings to `token_exchange.authorization`. The reserved fields were never d
 absence from impersonation rules changes no documented key. The YAML hierarchy of impersonation rules
 is unchanged.
 
-**Alternatives**: Extend the shared struct and reject OPA for third-party exchange at validation
-(adds unused keys to a second schema; changes an existing, ignored setting into a startup failure).
+**Alternatives**: Remove the reserved ordinary-exchange OPA struct entirely (unnecessary schema
+removal). Keep accepting `type: opa` while ignoring it (contradicts explicit engine selection and
+FR-009). Extend the shared struct with usable impersonation keys (adds unused keys to a second schema).
 
 ## R11 — One runtime per rule
 
@@ -295,7 +333,10 @@ set) and observable gauge `tokenexchange.impersonation.opa.revision.age` (second
 revision was admitted), both with attribute `rule` (operator-bounded rule name). Lifecycle log events
 `oauth2_server.impersonation_policy.revision_admitted` and `...revision_rejected`. The existing
 `impersonation_decision` audit event adds `authorization_engine` (`cel`/`opa`) and, for OPA,
-`policy_revision` (bundle manifest revisions). Details: [contracts/observability.md](contracts/observability.md).
+`policy_revision` (bundle manifest revisions) and `policy_admission_id` (process-instance UUID
+plus monotonic per-rule admission sequence). The latter identifies the exact deciding snapshot
+when manifest revisions are absent or reused; it is never a metric or span label. Details:
+[contracts/observability.md](contracts/observability.md).
 
 **Rationale**: Q1 accepts no broker-enforced maximum age, so operators need the age and rejection
 signals to manage staleness. No principal, claim, token, or decision reason is recorded
@@ -312,11 +353,14 @@ impersonation rules) and supersedes the CEL-specific mechanism wording of ADR
 `031-unverified-subject-unsigned-jwt` controls 3–4, ADR `034-audience-absent-impersonation-credentials`
 control 3, and ADR `045-agent-subject-impersonation` decision 2a, for OPA rules only, with the
 equivalent revision-coupled enforcement of R5–R6. It does not widen the unsigned-subject exception
-(subject role, `verification: none`, local mode), so Constitution Principle I needs no amendment: its
-carve-out requires "a startup-verified authorization predicate reference to `subject_token`" and
+(subject role, `verification: none`, local mode). **Proposed: DEC-CONST** asks the maintainer to
+confirm that this superseding ADR supplies equivalent controls under the existing Principle I
+carve-out without a constitution amendment; it is not an agent-granted constitutional exception.
+The carve-out requires "a startup-verified authorization predicate reference to `subject_token`" and
 "an unverified email minted only when the predicate binds `subject_token.email`", which the design
 enforces at startup and additionally at every activation. ADR `028-opa-extproc-authorization` is
-unaffected.
+unaffected. The main alternative is a separately maintainer-authored constitution amendment naming
+the superseding ADR explicitly; this worker cannot make that amendment.
 
 **Alternatives**: Separate ADRs for engine selection and binding equivalence (two approvals for one
 inseparable decision). Amend accepted ADRs in place (forbidden by Principle II).

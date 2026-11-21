@@ -36,6 +36,7 @@ eligibility, and before human delegation (the existing CEL position in the rule 
     "actor_token": {"iss": "https://identity.example.com", "sub": "automation-worker", "aud": "broker-impersonation", "iat": 1795165140, "exp": 1795168800},
     "subject_token": {"iss": "https://identity.example.com", "sub": "alice@example.com", "aud": "broker-impersonation", "iat": 1795165140, "exp": 1795168800},
     "subject_unverified": false,
+    "agent": {"external_id": "inventory-agent"},
     "request": {
       "resource": "",
       "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -60,6 +61,7 @@ eligibility, and before human delegation (the existing CEL position in the rule 
 | `context.subject_token` | Signed and verified claims, or the caller-asserted claims of an unsigned subject | Same map as the CEL variable |
 | `context.subject_unverified` | Rule's subject `verification` | `true` only for `verification: none` |
 | `context.request` | Exchange parameters and resolved target | Same map as the CEL `request` variable; `resource` is always `""` |
+| `context.agent.external_id` | Resolved broker Agent | Literal External ID, `""` when absent; broker-owned UUID mapping, never caller- or bundle-supplied; no UUID fallback |
 
 Absent optional claims stay absent. Strings, numbers, booleans, arrays, and nested objects keep their
 JSON types. Empty claim maps are `{}`. The input has no other members: no `body`, `raw_body`,
@@ -75,7 +77,9 @@ Envoy policy runs unchanged, for example policies that read bodies, source addre
 The `context` maps are sensitive policy input. The broker never writes the input or any part of it
 to logs, spans, metrics, error responses, or OPA decision logs (decision logs cannot be configured,
 see [impersonation-opa-config.yaml](impersonation-opa-config.yaml) `bootstrap_subset`). Print
-statements are disabled.
+statements are disabled. The named input type implements `LogValue`, `String`, and `GoString`,
+each returning only `[REDACTED]` for nil, empty, and populated values (LOGGING § 6.4). Full input is
+retained only for evaluation; formatting and JSON/text slog tests must prove no claims leak.
 
 ## 3. Decision document
 
@@ -85,6 +89,11 @@ statements are disabled.
 | Exactly one value, an object with `"action": "deny"` | Non-match; later rules are evaluated | No-match precedence (`403 access_denied`, `impersonation not permitted`) | `client_authorization/client_policy_denied` (existing) |
 | Undefined, more than one result, non-object, missing or non-string `action`, any other `action` (including `approval_required` and `ciba_required`) | Invalid decision; terminal | `500 server_error`, `authorization evaluation failed` | `client_authorization/opa_decision_invalid` (new) |
 | Evaluation error, strict built-in error, timeout, cancellation | Evaluation failure; terminal | `500 server_error`, `authorization evaluation failed` | `client_authorization/opa_evaluation_failed` (new) |
+
+For caller-disconnected HTTP requests, cancellation maps internally to the same terminal
+`server_error`, but no HTTP response is promised to the disconnected client. Domain tests assert
+that mapping; Scenario 3.2 observes client cancellation, the correlated `canceled` evaluation span,
+no issuance, and no later-rule authorization. Connected failure variants still assert HTTP 500.
 
 Other members of the decision object (`reasons`, `approval_context`, response headers) are ignored.
 They are never logged, recorded, or returned. A decision is never reused for another request.
@@ -103,7 +112,8 @@ result := {"action": "allow"} if {
 	input.parsed_path == ["oauth2", "token"]
 	input.context.client_assertion.sub == "gateway-1"
 	input.context.actor_token.sub == "automation-worker"
-	registration := data.governance.agents[input.context.request.agent_id]
+	input.context.agent.external_id != ""
+	registration := data.governance.agents[input.context.agent.external_id]
 	registration.status == "approved"
 	registration.application == "inventory-api"
 }
@@ -124,7 +134,18 @@ Evidence is computed once per candidate revision from the rules reachable from t
 | `input.context[k].sub` (non-ground key) | none | none |
 | `input.context` or `input` alone | none | none |
 | Any form in a rule the decision does not reach | none | none |
-| Any reachable `... with input as x` or `with input.context... as x` | voids all evidence of the revision | voids all evidence |
+| Any reachable `with` modifier, including `with input...`, `with data.helper as ...`, or function/built-in replacement | voids all evidence of the revision | voids all evidence |
+
+Only `subject_token.sub` and `subject_token.email` are recorded as field bindings. Direct,
+imported, or rule-local-aliased `client_assertion` and `actor_token` paths provide role references,
+not field bindings. Function-argument-derived and dynamic references never create field evidence.
+
+The reachable `with` rule is deliberately target-independent: it includes rule/function dependency
+replacements and nested comprehensions. Mandatory role requirements then reject the voided
+candidate; with no mandatory roles it may admit but supplies neither unsigned email nor agent
+classification evidence. Tests must override a helper that originally binds subject email/sub,
+replace functions with constants/functions, and compare unreachable modifiers (no invalidation).
+Do not assume the dependency graph drops an overridden rule's original references.
 
 Admission per rule configuration:
 
@@ -135,7 +156,9 @@ Admission per rule configuration:
 | Signed subject, expected audiences | Nothing | Signed classification and signed email unchanged |
 
 A candidate without a decision rule, or failing a requirement, is rejected; the previous admitted
-revision stays active. At startup, no admitted revision within `startup_timeout` fails startup.
+revision stays active. Every admitted snapshot must itself contain all configured bundles. At
+startup, a usable subset is not admitted; if the subsequent complete candidate is rejected,
+`startup_timeout` fails startup even if every bundle activated historically.
 
 ## 5. Built-ins (DEC-BUILTINS)
 

@@ -20,17 +20,25 @@ This guide describes how to validate the feature. It is not a record of any run.
 | Unit tests (domain, adapter, config, handler) | `just test` | Passes, including `go test -race` for revision swaps under concurrent evaluation |
 | Acceptance journeys 1–4 | After `just web-build`: `ginkgo -v --label-filter="!performance && !docker" --focus "OPA Impersonation Authorization" ./tests/e2e/` | One passing `It` per scenario 1.1–4.4 (19 in total) |
 | Existing impersonation behavior | `just test-e2e-backend` | Existing CEL suites pass unchanged (SC-005) |
+| Container-free ExtProc regression subset | `ginkgo -v --procs=1 --skip='Agentgateway' ./tests/e2e/extproc/` | Runs direct ExtProc scenarios; excludes every Agentgateway container context, including Metadata Input via Agentgateway |
 | Helm contract | `just helm-lint` and `just helm-template` | Schema accepts the CEL and OPA rule shapes and rejects mixed blocks |
+
+The full `just test-e2e-extproc` recipe includes Agentgateway testcontainers scenarios and runs
+only in downstream container validation, together with other container-backed suites. The subset
+above is not evidence that the full recipe passed; do not change tests or CI to make it container-free.
 
 ## Manual walk-through (local broker)
 
 1. Create a bundle directory with `policy.rego` from
    [contracts/policy-input-decision.md § 3](contracts/policy-input-decision.md#3-decision-document)
    and `data.json` containing
-   `{"governance":{"agents":{"550e8400-e29b-41d4-a716-446655440000":{"status":"approved","application":"inventory-api"}}}}`.
+   `{"governance":{"agents":{"inventory-agent":{"status":"approved","application":"inventory-api"}}}}`.
+   The broker Agent with Journey 1's UUID must have literal External ID `inventory-agent`; unset
+   or unknown External IDs deny the example policy, never falling back to UUID.
 2. Package the modules and data as an OPA bundle tarball and serve it from a local test HTTP
    server at `http://127.0.0.1:8182/bundles/impersonation.tar.gz`, with a new ETag on each revision.
-   Write a bootstrap file:
+   Write the bootstrap as `/etc/broker/opa/bootstrap.yaml` under an operator-owned trust directory
+   (or a temporary local directory under `/tmp/gh-aw/agent/`):
 
    ```yaml
    services:
@@ -45,7 +53,10 @@ This guide describes how to validate the feature. It is not a record of any run.
 
 3. Configure one impersonation rule as in
    [contracts/impersonation-opa-config.yaml](contracts/impersonation-opa-config.yaml) `example`, with
-   `config_file` pointing to the bootstrap file, and start the broker in local mode.
+   `security.trust_material_dir` set to its containing directory and absolute `config_file` pointing
+   to the bootstrap. Use a regular file at most 1 MiB and supported inline credentials if needed;
+   SDK-local-file references such as bearer `token_path` and TLS file paths fail startup. Mount a
+   credential-bearing bootstrap as a Secret. Start the broker in local mode.
 4. Send Journey 1 Step 2 from [spec.md](spec.md) Journey 1
    with test-issued credentials. Expect `200` and the decoded claims of Journey 1 Step 4.
 5. Change `status` to `unregistered`, rebuild the bundle, and publish it with a new ETag.
@@ -62,5 +73,12 @@ This guide describes how to validate the feature. It is not a record of any run.
 - `tokenexchange.impersonation.opa.revisions{outcome="admitted"}` increments after each admitted
   activation; `{outcome="rejected",reason=...}` after each rejected one.
 - `tokenexchange.impersonation.opa.revision.age` grows while no new revision is admitted.
-- `impersonation_decision` records contain `authorization_engine=opa` and `policy_revision`, and no
+- `impersonation_decision` records contain `authorization_engine=opa`, `policy_revision`, and
+  `policy_admission_id` (the deciding snapshot's process-instance UUID/per-rule sequence), and no
   claim values ([contracts/observability.md](contracts/observability.md)).
+- Initial readiness requires one admitted all-configured-bundle snapshot; a usable first subset
+  followed by a rejected complete candidate never becomes ready.
+- Cancellation acceptance uses a correlated ended `canceled` evaluation span, no issuance and no
+  later-rule authorization; a disconnected client is not expected to receive HTTP 500.
+- Equal or empty manifest labels on two admitted snapshots must still yield different admission
+  identifiers, matched to the snapshot used by each concurrent request.
