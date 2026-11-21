@@ -2,7 +2,7 @@
   "version": 1,
   "cursors": {
     "labelling_after": null,
-    "investigation_after": 517
+    "investigation_after": 526
   },
   "issues": [
     {
@@ -304,6 +304,18 @@
       "state": "commented",
       "updated_at": "2026-11-21",
       "note": "Posted exact parsed-parameter table candidate for three overlapping request-builder specs; preserve matcher negative controls and distinct integration contracts. Helpers/matchers uncached race pass (51/39 specs plus standard tests); no deletion/mutation or speedup claimed."
+    },
+    {
+      "number": 525,
+      "state": "commented",
+      "updated_at": "2026-11-21",
+      "note": "Posted #467 stored-row cursor/precision and pre-limit eligibility constraints. Retention reorders memory slice by recorded_at; reader needs independent occurrence order/copying. Existing ledger unit race tests pass; reader and PostgreSQL pagination unimplemented. Maintenance-only candidate."
+    },
+    {
+      "number": 526,
+      "state": "awaiting_clarification",
+      "updated_at": "2026-11-21",
+      "note": "Asked compatible-identity-only vs policy-versioned historical matching; #467 stores rendered principal with no epoch. Shared builder-wired policy port, current definition/OwnerVisible/projection intersection, deleted-grant independence. No activity API or isolation acceptance run."
     }
   ],
   "fixes": [
@@ -402,40 +414,40 @@
       "follow_up": null
     },
     {
-      "area": "code",
-      "checked_at": "2026-11-20",
-      "result": "#367 maintainer replacement #545 targets release/v0.2; no duplicate Repo Assist PR. #461 six local conflict regions require release-normalized messages plus context-aware logs/writers, not wholesale side selection. Merge aborted; clean main restored.",
-      "follow_up": null
-    },
-    {
-      "area": "repo_assist_prs",
-      "checked_at": "2026-11-21",
-      "result": "Eight live Repo Assist PRs, unchanged heads. Read reviews/threads, comments and both check types. Six external pipelines pass; #461 dirty with five failed stages, #432 dirty, #490 pipeline-start blocked, #420/#448 classification blocked.",
-      "follow_up": "Known oversized integration path remains blocked; no repeat push or duplicate self-follow-up. Approved maintainer integration/log evidence required."
-    },
-    {
       "area": "ci",
       "checked_at": "2026-11-21",
       "result": "#516: tool installer rebuilds linter with selected Go by documented policy. JUnit E2E recipes rebuild dist unconditionally; sharing an artifact needs explicit consumer path and revision/mode binding. Scheduled browser coverage is instrumented. No runner-minute measurement.",
       "follow_up": "Deferred maintenance-only candidate: per-job tooling and release/build-Go-aware linter reuse; preserve local verify and standalone container dispatch."
     },
     {
-      "area": "tests",
-      "checked_at": "2026-11-21",
-      "result": "On main 0c4bc4bc, maintained just test override passed helpers/matchers uncached with race: 51 helper specs plus standard tests and 39 matcher specs. Body durations 0.28/0.01s. No code changes, mutation, acceptance/coverage or full gate.",
-      "follow_up": "#517 candidate consolidates three request-builder tests into exact parsed-parameter cases; keep false-positive matcher guards and nonduplicated upstream contracts."
-    },
-    {
-      "area": "hygiene",
-      "checked_at": "2026-11-21",
-      "result": "All 97 open issues and 26 PRs have labels. Checked 47 pending issue-comment threads and all eight Repo Assist PR threads; no new human replies or monthly check-offs. Task 1 continued into Task 2; no redundant labels/comments.",
-      "follow_up": null
-    },
-    {
       "area": "release",
       "checked_at": "2026-11-21",
       "result": "Latest release v0.1.147 from Nov17; release/v0.2 work remains active. No new release PR in scheduled maintenance-only mode.",
       "follow_up": null
+    },
+    {
+      "area": "repo_assist_prs",
+      "checked_at": "2026-11-21",
+      "result": "Eight unchanged live Repo Assist heads; read reviews/threads/comments and both check types. Six external pipelines pass; #432/#461 dirty, #461 five failed stages, #490 start blocked, #420/#448 classification blocked. No new human requests or repeat blocked pushes.",
+      "follow_up": "Approved maintainer integration and external log evidence remain needed; do not retry known oversized publication."
+    },
+    {
+      "area": "hygiene",
+      "checked_at": "2026-11-21",
+      "result": "All 98 open issues and listed open PRs have labels. Checked pending memory issue-comment threads and monthly comments; no new human replies or checkbox completion. Task 1 continued into Task 2; no redundant labelling.",
+      "follow_up": null
+    },
+    {
+      "area": "tests",
+      "checked_at": "2026-11-21",
+      "result": "On live #467 head 4c21fd43, maintained just test override passed uncached race model/memory/PostgreSQL-driver TestBusinessEvent tests; separate bizevent package race run passed. Initial CLI option syntax corrected. No real PostgreSQL, new reader, activity API, E2E or full gate run.",
+      "follow_up": "#525 needs eligibility-before-limit, equal-time/precision and owner-isolation pagination acceptance in both adapters."
+    },
+    {
+      "area": "code",
+      "checked_at": "2026-11-21",
+      "result": "Inspected #525/#526 against live #467: ledger dependency open on main, absent from main/release. Memory keeps nanos; PostgreSQL microseconds. Policy renderer identity-only/private, rows lack epoch. Posted concrete cursor and historical identity matching contracts; no source edits.",
+      "follow_up": "Maintenance-only read-port candidate; settle #526 historical policy compatibility before exposing rows."
     }
   ],
   "completed_actions": [
@@ -456,8 +468,8 @@
     },
     {
       "task": 2,
-      "item": "Resume oldest-first investigation after #517",
-      "note": "#518 has #546; #520 is assigned. New #525-#542 activity slices remain for investigation; avoid duplicate #545/#549/#523. #516 tooling and #517 compact builder-test candidates await capacity; #500/#501 await decisions."
+      "item": "Resume oldest-first investigation after #526",
+      "note": "Next #527 timeline depends on #526; #528-#542 remaining activity slices. #525 reader candidate waits ledger #467/capacity; #526 historical-policy choice unresolved. Avoid #546/#545/#549/#523 duplication and respect assigned #520."
     },
     {
       "task": 3,
