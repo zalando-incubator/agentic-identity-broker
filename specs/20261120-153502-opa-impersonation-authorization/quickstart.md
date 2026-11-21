@@ -18,8 +18,8 @@ This guide describes how to validate the feature. It is not a record of any run.
 | --- | --- | --- |
 | Static checks | `just check` | Passes |
 | Unit tests (domain, adapter, config, handler) | `just test` | Passes, including `go test -race` for revision swaps under concurrent evaluation |
-| Acceptance journeys 1–4 | `ginkgo -v --focus "OPA Impersonation Authorization" ./tests/e2e/` | One passing `It` per scenario 1.1–4.4 (19 in total) |
-| Existing impersonation behavior | `ginkgo -v --focus "Impersonation" ./tests/e2e/` | Existing CEL suites pass unchanged (SC-005) |
+| Acceptance journeys 1–4 | After `just web-build`: `ginkgo -v --label-filter="!performance && !docker" --focus "OPA Impersonation Authorization" ./tests/e2e/` | One passing `It` per scenario 1.1–4.4 (19 in total) |
+| Existing impersonation behavior | `just test-e2e-backend` | Existing CEL suites pass unchanged (SC-005) |
 | Helm contract | `just helm-lint` and `just helm-template` | Schema accepts the CEL and OPA rule shapes and rejects mixed blocks |
 
 ## Manual walk-through (local broker)
@@ -28,12 +28,19 @@ This guide describes how to validate the feature. It is not a record of any run.
    [contracts/policy-input-decision.md § 3](contracts/policy-input-decision.md#3-decision-document)
    and `data.json` containing
    `{"governance":{"agents":{"550e8400-e29b-41d4-a716-446655440000":{"status":"approved","application":"inventory-api"}}}}`.
-2. Write a bootstrap file:
+2. Package the modules and data as an OPA bundle tarball and serve it from a local test HTTP
+   server at `http://127.0.0.1:8182/bundles/impersonation.tar.gz`, with a new ETag on each revision.
+   Write a bootstrap file:
 
    ```yaml
+   services:
+     governance:
+       url: http://127.0.0.1:8182
    bundles:
      impersonation:
-       resource: file:///absolute/path/to/bundle-dir
+       service: governance
+       resource: bundles/impersonation.tar.gz
+       polling: {min_delay_seconds: 1, max_delay_seconds: 1}
    ```
 
 3. Configure one impersonation rule as in
@@ -41,7 +48,7 @@ This guide describes how to validate the feature. It is not a record of any run.
    `config_file` pointing to the bootstrap file, and start the broker in local mode.
 4. Send Journey 1 Step 2 from [spec.md](spec.md) Journey 1
    with test-issued credentials. Expect `200` and the decoded claims of Journey 1 Step 4.
-5. Change `status` to `unregistered` and rebuild the bundle (or serve it over HTTP with a new ETag).
+5. Change `status` to `unregistered`, rebuild the bundle, and publish it with a new ETag.
    After the next poll, the same request returns `403 access_denied` (Journey 2 step 2), and the log
    contains `oauth2_server.impersonation_policy.revision_admitted`.
 6. Add `allow if http.send({"method":"GET","url":"https://cmdb.example.com"})` to a module. The

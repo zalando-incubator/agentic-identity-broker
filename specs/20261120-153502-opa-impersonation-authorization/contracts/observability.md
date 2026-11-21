@@ -5,7 +5,8 @@ Item API-DIAG | **Research**: R9, R12 | **Standards**: `coding-standards/LOGGING
 `coding-standards/OPENTELEMETRY.md`
 
 No signal contains a claim value, raw token, decision member other than the closed `action` set,
-bootstrap value, bundle-service URL or credential, or principal. Rule names, bundle names, and bundle
+bootstrap value, bundle-service URL or credential, or new principal attribute. Existing audited
+principals continue through the central principal policy, not through copied claim maps. Rule names, bundle names, and bundle
 manifest revisions are operator-defined configuration identifiers.
 
 ## Diagnostics (token-exchange diagnostic attributes)
@@ -25,9 +26,12 @@ Caller cancellation keeps the existing `caller_canceled` override in `originErro
 
 | Name | Scope | Kind | When | Attributes | Status |
 | --- | --- | --- | --- | --- | --- |
-| `tokenexchange.impersonation.opa.evaluate` | `tokenexchange` | Internal | Each OPA decision evaluation | `impersonation.rule` (string), `impersonation.authorization.action` (`allow`, `deny`, `invalid`, `error`), `impersonation.policy_revision` (string) | `Error` with a constant description for `invalid` and `error`; unset otherwise |
+| `tokenexchange.impersonation.opa.evaluate` | `tokenexchange` | Internal | Each OPA decision evaluation | `impersonation.rule` (configured rule-name set), `impersonation.authorization.action` (`allow`, `deny`, `invalid`, `error`, `canceled`), `error.type` (`opa_decision_invalid`, `opa_evaluation_failed`, on failures only) | `Error` with a constant description for `invalid` and `error`; unset for `allow`, `deny`, and caller cancellation (`canceled`) |
 
-CEL evaluation keeps no span, as today.
+CEL evaluation keeps no span, as today. The rule attribute is bounded by the configured rule-name
+set. Free-form bundle manifest revisions remain log/audit attributes only, not span or metric
+attributes (`OPENTELEMETRY.md` § 4.2 and § 6). Caller cancellation uses the `canceled` outcome without
+`error.type` or error status; deadline expiration remains an evaluation failure (§ 3.4).
 
 ## Metrics
 
@@ -37,7 +41,7 @@ CEL evaluation keeps no span, as today.
 | `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | `rule` | Read per export: seconds since the active revision was admitted; no point before the first admission |
 
 `rule` is bounded by the operator's rule list, like `service_id` in the `oauth2_sessions` precedent.
-Instruments are created once in the adapter constructor; constructor errors are logged once at
+Both instruments use scope `tokenexchange` and are created once in the adapter constructor; constructor errors are logged once at
 `Warn`.
 
 ## Log records

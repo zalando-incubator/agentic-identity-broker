@@ -105,7 +105,7 @@ type PolicySourceFactory func(ruleName string, cfg ports.ImpersonationOPAAuthori
 - `evaluateRule` reads `auth := rule.authz.current()` once, before classification, and uses `auth`
   for the `sub` binding (`classifySubject`), the `email` binding, and the decision. The pipeline order
   is unchanged.
-- `Request` gains `HTTP RequestAttributes{Method, Path, RawQuery, Protocol string; Headers http.Header}`
+- `Request` gains `HTTP RequestAttributes{Method, Path, RawQuery, Protocol string; Headers map[string][]string}`
   set by the handler. The domain builds the input (contract § 1) only for OPA rules, using
   `server.enduser.public_url` passed to `NewService`.
 - Error mapping: `ErrPolicyEvaluationFailed` → `serverError("authorization evaluation failed")` with
@@ -115,9 +115,11 @@ type PolicySourceFactory func(ruleName string, cfg ports.ImpersonationOPAAuthori
 
 ## 4. Adapter (`internal/adapters/policy/opa/`, new)
 
-- `NewImpersonationPolicySource(ruleName, cfg, admit, logger, meter, tracer)` reads and validates the
+- `NewImpersonationPolicySource(ruleName, cfg, admit, logger)` reads and validates the
   bootstrap subset, creates an in-memory store with an `OnCommit` trigger, and starts `sdk.New` with
-  `Ready`, `V1Compatible`, discard console logger, and no plugins.
+  `Ready`, `V1Compatible`, discard console logger, and no plugins. It obtains its tracer and meter
+  from `otel.Tracer("tokenexchange")` and `otel.Meter("tokenexchange")`, never constructor-injected
+  providers, as required by `coding-standards/OPENTELEMETRY.md` § 1.
 - The trigger builds candidates (research R2), computes capabilities (R4) and evidence (R5), calls
   `admit`, and swaps an `atomic.Pointer[revision]`. Trigger failures never panic the broker; they
   reject the candidate.
@@ -127,7 +129,7 @@ type PolicySourceFactory func(ruleName string, cfg ports.ImpersonationOPAAuthori
 
 ## 5. Builder and handler
 
-- `internal/app/builder.go` constructs the factory with the logger and telemetry providers and passes
+- `internal/app/builder.go` constructs the factory with the injected logger and passes
   it to `impersonation.NewService`.
 - `internal/adapters/http/enduser/oauth2_token.go` fills `Request.HTTP` from the `*http.Request` and
   logs the two new audit attributes. It does not inspect policy results.
