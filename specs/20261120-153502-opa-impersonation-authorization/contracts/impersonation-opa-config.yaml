@@ -1,0 +1,136 @@
+# Configuration contract: OPA authorization for impersonation rules
+#
+# Feature: specs/20261120-153502-opa-impersonation-authorization
+# Sign-off: plan.md Approval Items API-CFG (keys, defaults, validation) and API-BOOT (bootstrap subset).
+# Research: R3, R7, R10.
+#
+# All keys are relative to one entry of oauth2_authorization_server.impersonation.rules[].
+# Rules are a YAML list, so these keys have no environment-variable or CLI-flag form, like every
+# other per-rule impersonation key. token_exchange.authorization is unchanged.
+
+keys:
+  authorization.type:
+    type: string
+    enum: [cel, opa]
+    required: true
+    default: none            # existing behavior: no implicit engine
+    validation:
+      - unknown value fails startup: "rules[<i>].authorization.type"
+  authorization.cel:
+    description: Existing CEL block, unchanged. Required when type is cel; MUST be absent or empty when type is opa.
+  authorization.opa:
+    description: Required when type is opa; MUST be absent or empty when type is cel.
+    properties:
+      policy.config_file:
+        type: string
+        required: true
+        default: none
+        description: >-
+          Path of the OPA bootstrap configuration file (YAML or JSON), read once at startup.
+          Only the accepted subset below is allowed. Changing the file requires a restart;
+          bundle contents update without restart.
+        validation:
+          - empty fails startup
+          - unreadable file fails startup (diagnostic names the field, not the content)
+      policy.package:
+        type: string
+        required: true
+        default: none
+        description: Rego package of the decision, dot-separated, without the "data." prefix (e.g. company.impersonation).
+        validation:
+          - each segment is a Rego identifier ([A-Za-z_][A-Za-z0-9_]*); otherwise startup fails
+      policy.decision:
+        type: string
+        required: false
+        default: result
+        description: Rule name in policy.package whose value is the decision document.
+        validation:
+          - a single Rego identifier; otherwise startup fails
+      evaluation_timeout:
+        type: duration
+        default: 100ms
+        range: [10ms, 5s]
+        description: Per-request decision deadline. Timeout and cancellation are terminal 500 server_error.
+      startup_timeout:
+        type: duration
+        default: 30s
+        range: [1s, 5m]
+        description: >-
+          Bound for the rule to become ready: every configured bundle activated once and one
+          revision admitted. Otherwise startup fails, naming the rule and this field.
+
+bootstrap_subset:            # API-BOOT
+  accepted_top_level_keys: [services, bundles, keys, labels]
+  rejected_examples: [decision_logs, status, discovery, plugins, server, persistence_directory, caching,
+                      distributed_tracing, nd_builtin_cache, storage, default_decision, default_authorization_decision]
+  rules:
+    - every top-level key outside the accepted list fails startup; the diagnostic names the key, never its value
+    - bundles must contain at least one entry
+    - bundles.<name>.persist true fails startup
+    - service credentials use OPA's native forms; prefer file-based secrets such as credentials.bearer.token_path
+    - OPA parser errors are not echoed; the diagnostic gives the rule, the field, and a reason class
+  diagnostic_reason_classes: [unreadable, invalid_document, unsupported_key, no_bundles, persist_unsupported, invalid_opa_configuration]
+
+startup_diagnostics:         # credential-free; prefix "oauth2_authorization_server.impersonation.rules[<i>] (<name>): "
+  - authorization.type: "must be \"cel\" or \"opa\""
+  - authorization.opa: "required when authorization.type is \"opa\""
+  - authorization.cel: "must be empty when authorization.type is \"opa\""
+  - authorization.opa: "must be empty when authorization.type is \"cel\""
+  - authorization.opa.policy.config_file: "<reason class> [key <name>]"
+  - authorization.opa.startup_timeout: "no admissible policy revision within <duration> (last rejection: <reason>)"
+
+example:
+  oauth2_authorization_server:
+    mode: local
+    impersonation:
+      audience_prefix: https://broker.example.com/impersonate
+      rules:
+        - name: governed-inventory
+          allowed_subject_categories: [human]
+          roles:
+            client_assertion: {expected_audience: https://broker.example.com/oauth2/token, principal_expression: client_assertion.sub}
+            actor: {expected_audience: broker-impersonation, principal_expression: actor_token.sub}
+            subject: {expected_audience: broker-impersonation, principal_expression: subject_token.sub}
+          trusted_issuers:
+            - issuer_uri: https://identity.example.com
+              jwks_uri: https://identity.example.com/jwks.json
+              allowed_algorithms: [RS256]
+              signs_roles: [client_assertion, actor, subject]
+          authorization:
+            type: opa
+            opa:
+              policy:
+                config_file: /etc/broker/opa/bootstrap.yaml
+                package: company.impersonation
+                decision: result
+              evaluation_timeout: 100ms
+              startup_timeout: 30s
+
+example_bootstrap:
+  services:
+    governance:
+      url: https://policies.example.com
+      credentials:
+        bearer:
+          token_path: /var/run/secrets/governance/token
+  bundles:
+    impersonation:
+      service: governance
+      resource: bundles/impersonation.tar.gz
+      polling: {min_delay_seconds: 30, max_delay_seconds: 60}
+  keys:
+    governance-signing:
+      algorithm: RS256
+      key: "<PEM public key>"
+
+helm:                        # charts/agentic-identity-broker
+  values: >-
+    broker.oauth2AuthorizationServer.impersonation stays a verbatim snake_case block. The bootstrap
+    file and any bundle-service secret are mounted with the existing broker extraVolumes and
+    extraVolumeMounts; no new chart value is added.
+  values_schema_json: >-
+    Impersonation rule authorization becomes oneOf
+    {type: cel, cel: {...existing}} or
+    {type: opa, opa: {policy: {config_file (minLength 1), package (minLength 1), decision},
+     evaluation_timeout, startup_timeout}}, both with additionalProperties false.
+  readme: document the OPA rule block and the volume-mount pattern.
