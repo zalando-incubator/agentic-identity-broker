@@ -24,11 +24,13 @@ runtime pulls operator-managed policy/data bundles through a restricted OPA boot
   CEL once and to every OPA candidate. Each rule evaluation reads one revision and uses it for
   `sub`-based agent classification, unverified email minting, and the decision. ([R6](research.md#r6--admission-and-requirements-stay-in-the-domain))
 - **Input and decision.** The input is the Envoy-compatible request envelope without body or
-  credential headers, plus `context` with the same values as the CEL variables. `allow`/`deny` map to
-  match/non-match; everything else is a terminal `500 server_error` with new diagnostics.
+  credential headers, plus `context` with CEL-equivalent values and the broker-resolved Agent
+  External ID. `allow`/`deny` map to match/non-match; failures map internally to terminal
+  `server_error` with new diagnostics (HTTP 500 for connected callers).
   ([contracts/policy-input-decision.md](contracts/policy-input-decision.md))
 - **Startup is bounded.** A new `authorization.opa.startup_timeout` (default `30s`) bounds readiness;
-  without an admitted revision the broker does not start.
+  without an admitted snapshot containing every configured bundle the broker does not start.
+  Completeness is read from that same snapshot, not combined from historical activations.
 - **Governance.** A Proposed ADR ([draft](adr-20261121-061324-opa-impersonation-authorization.md))
   partly supersedes ADR `009-cel-for-authorization-policies` and the CEL-specific mechanisms of ADRs
   `031-unverified-subject-unsigned-jwt`, `034-audience-absent-impersonation-credentials`, and
@@ -87,7 +89,8 @@ No NEEDS CLARIFICATION remains; [research.md](research.md) resolves every open d
 
 **Implementation Considerations**:
 
-- [x] **Security-First (I)**: OPA is opt-in per rule; every failure is terminal or keeps the last admitted revision; existing credential, category, delegation, and minting controls stay authoritative. The ADR 031 exception keeps its scope; its Principle I controls are met at startup and on every activation ([research R13](research.md#r13--superseding-adr-sign-off-adr-opa)). No constitution amendment.
+- [x] **Security-First (I)**: OPA is opt-in per rule; every failure is terminal or keeps the last admitted revision; existing credential, category, delegation, and minting controls stay authoritative. The ADR 031 exception keeps its scope; its Principle I controls are met at startup and on every activation ([research R13](research.md#r13--superseding-adr-sign-off-adr-opa)). Proposed DEC-CONST requires maintainer confirmation of equivalent controls under the unchanged
+  Principle I carve-out; this pipeline cannot amend the constitution.
 - [x] **Architecture Docs (II)**: `ARCHITECTURE.md` impersonation section, glossary, and ADR index record the partial supersession. The new ADR records its supersedes links; no ADR already on the default branch is edited.
 - [x] **ADRs (II)**: Draft `adr-20261121-061324-opa-impersonation-authorization.md`, status Proposed; moved to `adrs/` with the recorded approval by the first implementation task.
 - [x] **Library-First Security (III)**: OPA SDK, compiler, capabilities, and dependency graph do the policy work; no custom parser or crypto.
@@ -114,7 +117,7 @@ Post-design re-check: no violation. Complexity Tracking lists the justified trad
 | FR-005, FR-006, SR-003 | R8, [input contract § 1–2](contracts/policy-input-decision.md) |
 | FR-007, SR-004 | R9, [decision contract § 3](contracts/policy-input-decision.md#3-decision-document) |
 | FR-008 | [internal contracts § 3](contracts/internal-contracts.md) (pipeline order unchanged) |
-| FR-009 | R10 (`token_exchange.authorization` unchanged) |
+| FR-009 | R10 (ordinary-exchange explicit `type: opa` rejected at startup; valid CEL unchanged) |
 | FR-010 | Config contract `evaluation_timeout` |
 | FR-011 | Documentation and example tasks (Constitution Check) |
 | FR-012, SR-006 | R2, R3, R4 |
@@ -168,7 +171,10 @@ api/enduser/openapi.yaml
 docs/configuration.md, docs/api/enduser-api.md, docs/reference/token-exchange.md
 examples/config/impersonation-opa.yaml, examples/config/opa/impersonation/, examples/config/README.md
 charts/agentic-identity-broker/values.schema.json, values.yaml (comment), README.md
-ARCHITECTURE.md, AGENTS.md (ADR index), adrs/20261121-061324-opa-impersonation-authorization.md
+ARCHITECTURE.md, AGENTS.md (ADR index and Domain Glossary), adrs/20261121-061324-opa-impersonation-authorization.md
+internal/ports/impersonation_policy_test.go       # sensitive input rendering safety
+tests/testdata/opa-envoy-input/                   # shared broker/ExtProc input vectors
+internal/extproc/authorization/input_builder_test.go # vectors only; no production coupling
 tests/e2e/opa_impersonation_authorization_test.go
 tests/e2e/fixtures/opa/impersonation/            # Rego and data fixtures
 tests/e2e/helpers/opa_bundle_server.go           # in-process bundle server
@@ -218,7 +224,7 @@ and one `It` per scenario.
 | US2 Scenario 2.4 | same file | `It("issues an unsigned self-agent token only with a sub binding and rejects cross-agent subjects")` |
 | US2 Scenario 2.5 | same file | `It("accepts audience-absent signed roles only with references and rejects aud, bad signatures, and expiry")` |
 | US3 Scenario 3.1 | same file | `It("denies the next request after a revoking revision activates")` |
-| US3 Scenario 3.2 | same file | `It("returns 500 server_error without fallthrough on error, timeout, cancellation, undefined, or malformed decisions")` |
+| US3 Scenario 3.2 | same file | `It("fails closed without fallthrough on runtime failures and observes caller cancellation through correlated telemetry")` |
 | US3 Scenario 3.3 | same file | `It("fails startup for a missing or invalid bootstrap or no ready policy within the bound")` |
 | US3 Scenario 3.4 | same file | `It("keeps the last complete revision after a failed fetch or invalid update")` |
 | US3 Scenario 3.5 | same file | `It("rejects revisions that use http.send without contacting the destination")` |
@@ -243,7 +249,8 @@ placeholder assertions, `Skip`, `XIt`, or `PIt`.
 impersonation suites unchanged.
 
 **Bootstrap Strategy**: Production `app.Builder` through `tests/e2e/bootstrap/`; fresh server and
-storage per test; OPA polling delays of 1 s; bootstrap files under `GinkgoT().TempDir()`.
+storage per test; OPA polling delays of 1 s; bootstrap files under a test-local trust directory
+within `/tmp/gh-aw/agent/`, passed through `security.trust_material_dir`.
 
 **Helper Utilities**: Existing JWT signing and claim decoding helpers; a log-capture helper for
 credential-free assertions (existing pattern in `impersonation_test.go`).
@@ -262,6 +269,26 @@ credential-free assertions (existing pattern in `impersonation_test.go`).
 - `internal/config`: validator errors with indexed rule paths.
 - `internal/adapters/http/enduser`: HTTP attributes and audit attributes.
 
+**Cancellation acceptance**: Scenario 3.2 keeps one `It` with connected HTTP 500 variants and a
+canceled-client variant. A test-local span processor waits for evaluation start; cancel the client,
+wait for the correlated evaluation/request spans to end, and assert `canceled`, no issuance, and no
+later-rule authorization. Domain tests cover internal terminal `server_error` mapping (A1).
+
+**Initial completeness**: Test a usable first-bundle subset followed by a rejected complete
+candidate; readiness must fail with no admitted subset (I1). Include this variant in Scenario 3.3.
+
+**Shared input vectors**: Broker and ExtProc tests consume `tests/testdata/opa-envoy-input/` for
+common Envoy field semantics, preserving broker exclusions and the ADR's intentional parsing
+divergence (F3). They must not import production packages across binaries.
+
+**Sensitive input safety**: Port tests cover redacted `LogValue`, `String`, and `GoString` through
+value/pointer formatting and both slog handlers; evaluation retains full data (C1).
+
+**Container-free repository validation**: Use `ginkgo -v --procs=1 --skip='Agentgateway' ./tests/e2e/extproc/`
+for direct ExtProc scenarios. The full `just test-e2e-extproc` recipe requires containers and is
+deferred to downstream container validation, not run in the implementation sandbox (I4).
+No tests or CI are changed to bypass container coverage.
+
 **Integration Tests**: None. No database or container-backed behavior changes.
 
 **Test Coverage Goals**: All new domain and adapter branches; 100% of acceptance scenarios in E2E;
@@ -277,13 +304,17 @@ existing impersonation unit and E2E suites pass unchanged.
 
 ## Approval Items
 
+Every row is Proposed; no approval is recorded by this plan. Detailed decisions and main
+alternatives are in the cited authoritative artifacts.
+
 | ID | Type | Decision | Details |
 | --- | --- | --- | --- |
-| ADR-OPA | ADR | New ADR `20261121-061324-opa-impersonation-authorization`: OPA selectable per impersonation rule; managed bundles only; broker-owned admitted revisions; equivalent, revision-coupled binding controls partly superseding ADRs `009-cel-for-authorization-policies`, `031-unverified-subject-unsigned-jwt` (controls 3–4), `034-audience-absent-impersonation-credentials` (control 3), and `045-agent-subject-impersonation` (decision 2a) for OPA rules only; unsigned-subject exception unchanged. Alternative: signed-only OPA (withdrawn by Q2). | `specs/20261120-153502-opa-impersonation-authorization/adr-20261121-061324-opa-impersonation-authorization.md:1-135` |
-| API-CFG | API | Per-rule keys `authorization.type: opa`, `authorization.opa.policy.config_file` (required), `.policy.package` (required), `.policy.decision` (default `result`), `.evaluation_timeout` (default `100ms`, `10ms`–`5s`), and new `.startup_timeout` (default `30s`, `1s`–`5m`); exactly one engine block; matching Helm schema; `token_exchange.authorization` unchanged. Alternative: fixed startup bound. | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:11-61` |
-| API-BOOT | API | Bootstrap subset: only `services`, `bundles`, `keys`, `labels`; every other key (decision logs, status, discovery, plugins, persistence, …) and `persist: true` fail startup without echoing values. Alternative: full OPA configuration as in ExtProc (exports claims, runtime reconfiguration). | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:62-81` |
-| API-INPUT | API | Policy input: Envoy-compatible `attributes.request.http` (method, path, host and scheme from `server.enduser.public_url`, protocol, headers without `authorization`, `proxy-authorization`, `cookie`, pseudo-headers), `parsed_path`, `parsed_query`, constant `parsed_body: null`/`truncated_body: false`, and CEL-equivalent `context`. Alternative: all headers, or a header allowlist. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:11-79` |
-| API-DECISION | API | Decision `{"action":"allow"}` matches, `{"action":"deny"}` is a non-match; anything else and every evaluation failure is terminal `500 server_error` (`authorization evaluation failed`); `POST /oauth2/token` description delta and 500 example; End-User API version `1.2.0` → `1.3.0`. Alternative: undefined as deny (ExtProc behavior). | `specs/20261120-153502-opa-impersonation-authorization/contracts/openapi-token-opa.yaml:1-57` |
-| API-DIAG | API | New diagnostic details `client_authorization/opa_evaluation_failed` and `opa_decision_invalid`; span `tokenexchange.impersonation.opa.evaluate`; metrics `tokenexchange.impersonation.opa.revisions` and `.revision.age`; lifecycle events `oauth2_server.impersonation_policy.revision_admitted`/`revision_rejected`/`startup_failed`; audit attributes `authorization_engine` and `policy_revision`. Alternative: reuse `cel_evaluation_failed`. | `specs/20261120-153502-opa-impersonation-authorization/contracts/observability.md:1-76` |
-| DEC-BUILTINS | Decision | Policy-time networking prohibition implemented as: every OPA built-in marked nondeterministic is unavailable except `time.now_ns` (removes `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign*`); print disabled. Alternative: deny only network built-ins. | `specs/20261120-153502-opa-impersonation-authorization/research.md:112-131` |
-| DEC-BIND | Decision | Binding evidence is computed conservatively from the reachable decision graph: imports and rule-local aliases count; function arguments, non-ground keys, and unreachable rules do not; a reachable `with input` voids all evidence; a missing decision rule rejects the candidate. Missing evidence fails closed (no activation, no unbound email, human classification). Alternative: runtime tracing of read paths. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:112-139` |
+| ADR-OPA | ADR | New ADR `20261121-061324-opa-impersonation-authorization`: OPA selectable per impersonation rule; managed bundles only; broker-owned admitted revisions; equivalent, revision-coupled binding controls partly superseding ADRs `009-cel-for-authorization-policies`, `031-unverified-subject-unsigned-jwt` (controls 3–4), `034-audience-absent-impersonation-credentials` (control 3), and `045-agent-subject-impersonation` (decision 2a) for OPA rules only; unsigned-subject exception unchanged. Alternative: signed-only OPA (withdrawn by Q2). | `specs/20261120-153502-opa-impersonation-authorization/adr-20261121-061324-opa-impersonation-authorization.md:1-178` |
+| API-CFG | API | Proposed: per-rule keys `authorization.type: opa`, `authorization.opa.policy.config_file` (required), `.policy.package` (required), `.policy.decision` (default `result`), `.evaluation_timeout` (default `100ms`, `10ms`–`5s`), and new `.startup_timeout` (default `30s`, `1s`–`5m`); exactly one engine block; matching Helm schema; contained bootstrap file with required existing `security.trust_material_dir`; explicit ordinary-exchange `token_exchange.authorization.type: opa` fails startup, valid CEL unchanged. Alternative: fixed startup bound. | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:12-95` |
+| API-BOOT | API | Bootstrap subset: only `services`, `bundles`, `keys`, `labels`; every other key (decision logs, status, discovery, plugins, persistence, …) and `persist: true` fail startup without echoing values; bootstrap is a contained regular file opened through `os.Root`, at most 1 MiB; all SDK-local-file references are rejected, credentials and signing keys inline. Alternative: unrestricted native file reads under a justified exception, or full OPA configuration as in ExtProc (exports claims, runtime reconfiguration). | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:24-89` |
+| API-INPUT | API | Policy input: Envoy-compatible `attributes.request.http` (method, path, host and scheme from `server.enduser.public_url`, protocol, headers without `authorization`, `proxy-authorization`, `cookie`, pseudo-headers), `parsed_path`, `parsed_query`, constant `parsed_body: null`/`truncated_body: false`, and CEL-equivalent `context` plus broker-resolved literal `context.agent.external_id` (empty when absent, no UUID fallback). Alternative: UUID-only governance maps, all headers, or a header allowlist. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:11-83` |
+| API-DECISION | API | Decision `{"action":"allow"}` matches, `{"action":"deny"}` is a non-match; anything else and every evaluation failure maps internally to terminal `server_error` (`authorization evaluation failed`), with HTTP 500 for connected callers and no disconnected-client response guarantee; `POST /oauth2/token` description delta and 500 example; End-User API version `1.2.0` → `1.3.0`. Alternative: undefined as deny (ExtProc behavior). | `specs/20261120-153502-opa-impersonation-authorization/contracts/openapi-token-opa.yaml:1-83` |
+| API-DIAG | API | New diagnostic details `client_authorization/opa_evaluation_failed` and `opa_decision_invalid`; span `tokenexchange.impersonation.opa.evaluate`; metrics `tokenexchange.impersonation.opa.revisions` and `.revision.age`; lifecycle events `oauth2_server.impersonation_policy.revision_admitted`/`revision_rejected`/`startup_failed`; audit attributes `authorization_engine`, `policy_revision`, and `policy_admission_id` identifying the deciding immutable snapshot independently of empty/reused labels; request-correlated canceled evaluation telemetry without an HTTP response guarantee. Alternative: reuse `cel_evaluation_failed`. | `specs/20261120-153502-opa-impersonation-authorization/contracts/observability.md:1-98` |
+| DEC-BUILTINS | Decision | Policy-time networking prohibition implemented as: every OPA built-in marked nondeterministic is unavailable except `time.now_ns` (removes `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign*`); print disabled. Alternative: deny only network built-ins. | `specs/20261120-153502-opa-impersonation-authorization/research.md:127-146` |
+| DEC-CONST | Decision | Proposed: confirm the superseding ADR provides equivalent controls under the existing Principle I unsigned-subject carve-out, without constitutional amendment or waived controls. Alternative: a separate maintainer-authored amendment naming the superseding ADR; this pipeline cannot amend the constitution. | `specs/20261120-153502-opa-impersonation-authorization/adr-20261121-061324-opa-impersonation-authorization.md:105-116` |
+| DEC-BIND | Decision | Binding evidence is computed conservatively from the reachable decision graph: imports and rule-local aliases count; function arguments, non-ground keys, and unreachable rules do not; any reachable `with` modifier (input, data-rule, or function/built-in replacement) voids all evidence; only subject sub/email field bindings are recorded, independent of all three role references; a missing decision rule rejects the candidate. Missing evidence fails closed (no activation, no unbound email, human classification). Alternative: runtime tracing of read paths. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:122-162` |

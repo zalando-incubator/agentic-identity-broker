@@ -20,7 +20,14 @@ client_authorization` and exchange kind `impersonation`. They are added to the c
 | `opa_evaluation_failed` | OPA evaluation error, strict built-in error, timeout, or cancellation | `500 server_error` |
 | `opa_decision_invalid` | Undefined, multiple, non-object, or unsupported-action decision | `500 server_error` |
 
-Caller cancellation keeps the existing `caller_canceled` override in `originError`.
+Caller cancellation keeps the existing `caller_canceled` override in `originError`. A disconnected
+client is not promised an HTTP response. Scenario 3.2 starts a request with a synthetic W3C trace
+context, waits for evaluation to begin through a test-local span processor, then cancels the client.
+It asserts the canceled client outcome, an ended OPA evaluation span with that trace ID and
+`canceled` action, no issuance audit, and no authorization by the permissive later rule (its test
+fixture would produce a distinct rule-selection audit). Wait for the correlated request span to
+end before asserting absence. Domain tests separately assert internal `server_error` mapping and
+no fallthrough. No new production test API, manually logged trace ID, or credential signal is added.
 
 ## Span
 
@@ -37,7 +44,7 @@ attributes (`OPENTELEMETRY.md` § 4.2 and § 6). Caller cancellation uses the `c
 
 | Name | Kind | Unit | Attributes | Changes when |
 | --- | --- | --- | --- | --- |
-| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `rule`; `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `binding_missing`, `evidence_voided`, `snapshot_failed`) | Each candidate revision after an OPA activation |
+| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `rule`; `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `binding_missing`, `evidence_voided`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision after an OPA activation |
 | `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | `rule` | Read per export: seconds since the active revision was admitted; no point before the first admission |
 
 `rule` is bounded by the operator's rule list, like `service_id` in the `oauth2_sessions` precedent.
@@ -48,7 +55,7 @@ Both instruments use scope `tokenexchange` and are created once in the adapter c
 
 | Message | `event` | Level | Attributes |
 | --- | --- | --- | --- |
-| `impersonation policy revision admitted` | `oauth2_server.impersonation_policy.revision_admitted` | Info | `rule`, `policy_revision`, `bundle_count`, `duration_ms` |
+| `impersonation policy revision admitted` | `oauth2_server.impersonation_policy.revision_admitted` | Info | `rule`, `policy_revision`, `policy_admission_id`, `bundle_count`, `duration_ms` |
 | `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule`, `policy_revision`, `reason` (closed set above), `error_kind`; for `binding_missing` also `missing_reference` (`subject_token`, `client_assertion`, `actor_token`); for `prohibited_builtin` also `builtin` (built-in name) |
 | `impersonation policy not ready` | `oauth2_server.impersonation_policy.startup_failed` | Error | `rule`, `reason` (`timeout`, `bootstrap_invalid`), `duration_ms` |
 
@@ -56,14 +63,24 @@ Both instruments use scope `tokenexchange` and are created once in the adapter c
 revision contributes `<bundle>=`. Raw OPA errors are not logged when they can contain bootstrap
 values; compile errors log only the module path and the error class.
 
+`policy_admission_id` is a broker-generated process-instance UUID joined with the strictly
+increasing per-rule successful-admission sequence. It is allocated only at admission, stored on
+that immutable revision, and copied unchanged to its admission log and deciding audits. It is
+unique within the logged `(rule, process instance)` scope even when bundle manifest labels are
+empty or reused; process-instance UUID prevents confusion across restarts. Rejected candidates
+have no admission ID. It is log/audit-only, never a metric or span attribute. The main alternative
+is requiring fresh nonempty manifest labels and rejecting unchanged labels (would reject valid
+updates from existing bundle publishers).
+
 ## Audit event `impersonation_decision`
 
-Adds two attributes, set on every record after rule selection:
+Adds three attributes, set on every record after rule selection:
 
 | Attribute | Values |
 | --- | --- |
 | `authorization_engine` | `cel`, `opa`, or absent when no rule reached authorization |
-| `policy_revision` | OPA only: the evaluated revision's `policy_revision` string |
+| `policy_revision` | OPA only: the evaluated revision's operator manifest-label string |
+| `policy_admission_id` | OPA only: the evaluated immutable revision's broker admission identifier |
 
 Existing attributes keep their meaning.
 
@@ -73,4 +90,9 @@ Existing attributes keep their meaning.
   credential appears in captured records for allow, deny, invalid, error, rejection, and startup
   failure.
 - Span tests use the in-memory exporter and assert the constant span name, attributes, and status.
-- Metric tests assert the counter outcomes and reasons and the gauge after admission.
+- Metric tests assert the counter outcomes and reasons and the gauge after admission; no revision
+  label or admission ID appears in a metric or span.
+- Admit two different snapshots with equal or empty manifest labels; their admission IDs differ.
+  Concurrent swap tests pair each audit with exactly the snapshot that made its decision.
+- Formatting and JSON/text slog tests of the sensitive input type assert constant redaction for
+  value/pointer `%s`, `%v`, `%+v`, `%#v`, and `slog.Any`; evaluation still receives full typed claims.

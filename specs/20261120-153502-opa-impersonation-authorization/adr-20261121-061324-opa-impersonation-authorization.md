@@ -39,24 +39,38 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    Exactly one engine block is configured. CEL remains the only engine for role principal/email
    extraction, local token claims, third-party token-exchange authorization, and
    `agent_subject_expression`. OPA is not available for third-party exchange or for proxy/hybrid
-   mode. Existing CEL rules behave as before.
+   mode. Existing valid CEL rules behave as before. Explicit ordinary-exchange
+   `token_exchange.authorization.type: opa` fails startup instead of being accepted and ignored;
+   reserved OPA declarations are retained but never instantiate a runtime.
 2. **Embedded OPA with managed bundles only.** The broker embeds the OPA Go SDK (already a module
    dependency for ExtProc) with one runtime per OPA rule. The bootstrap accepts only the OPA
    configuration keys `services`, `bundles`, `keys`, and `labels`; decision logs, status, discovery,
-   plugins, persistence, and every other key fail startup.
+   plugins, persistence, and every other key fail startup. Bootstrap is an absolute regular file
+   opened through adapter-owned `os.Root` under `security.trust_material_dir`, bounded to 1 MiB.
+   Reject every SDK-local-file reference (including bearer token paths and TLS files) before SDK
+   startup; supported credentials/signing keys are inline. This adopts, rather than bypasses, the
+   containment pattern of `040-trust-anchor-local-key-sets` without changing its key-set scope.
 3. **Broker-owned revisions.** After each OPA activation, the broker builds an immutable candidate
    revision from the compiled modules and a copy of the data. A candidate becomes the active revision
-   only if it compiles with the restricted capabilities (decision 4), defines the decision rule, and
+   only if its own transaction includes every configured bundle, it compiles with the restricted
+   capabilities (decision 4), defines the decision rule, and
    passes binding admission (decision 5). Otherwise the previous active revision stays. Every
    request reads one revision per rule evaluation and uses it for the decision, subject
-   classification, and email handling. There is no broker-enforced maximum revision age.
+   classification, and email handling. Every admission assigns a process-instance UUID plus
+   per-rule increasing sequence identifier, copied to deciding audits and the admission log;
+   empty/reused manifest labels are not identity. Readiness requires SDK readiness and that same
+   admitted complete snapshot, never historical bundle activation plus a subset candidate. There
+   is no broker-enforced maximum revision age.
 4. **No policy-time networking.** Candidate revisions compile without any built-in that OPA marks
    nondeterministic, except `time.now_ns`. This removes `http.send`, `net.lookup_ip_addr`, and
    `opa.runtime`, among others. A module that uses a removed built-in cannot activate.
 5. **Equivalent binding controls, enforced on every revision.** For an OPA rule, references and
    field bindings are computed from the rules reachable from `data.<package>.<decision>` in the
-   compiled dependency graph, resolving imports and rule-local aliases. A reachable `with input`
-   modifier voids all evidence. The equivalents of the superseded controls are:
+   compiled dependency graph, resolving imports and rule-local aliases. Any reachable `with`
+   modifier voids all evidence, including data-rule/function/built-in replacements; overridden
+   helper references cannot count as executed dependencies. Only `subject_token.sub` and
+   `subject_token.email` are recorded field bindings; all three role references remain independent.
+   The equivalents of the superseded controls are:
    - ADR 031 control 3 and ADR 034 control 3: the reachable decision references
      `input.context.subject_token` (unsigned-subject rule) and `input.context.<role>` for each
      audience-absent role. A candidate without them is not admitted. Without an admitted revision
@@ -69,13 +83,24 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    quality, as with CEL. CEL rules keep their existing startup checks unchanged.
 6. **Fail closed.** `{"action":"allow"}` satisfies the rule's predicate; `{"action":"deny"}` is a
    non-match. Undefined, malformed, or other actions, evaluation errors, timeouts, and cancellation
-   return `500 server_error` and stop rule evaluation. Credential validation, category eligibility,
+   map internally to terminal `server_error` and stop rule evaluation; connected callers receive
+   HTTP 500, but disconnected callers have no response guarantee. Cancellation acceptance uses
+   request-correlated canceled telemetry and no issuance/fallthrough, with domain error-mapping tests. Credential validation, category eligibility,
    cross-agent rejection, human delegation, and local minting are unchanged and remain
    authoritative over any allow.
-7. **Credential-free input and telemetry.** The input carries the Envoy-compatible request envelope
+7. **Raw-credential-excluded sensitive input and credential-free telemetry.** The input carries the Envoy-compatible request envelope
    without the body, `authorization`, `proxy-authorization`, or `cookie` headers, plus the validated
    CEL-equivalent `context`. Claim maps, decision members other than `action`, and bootstrap values
-   never appear in logs, spans, metrics, or error responses.
+   never appear in logs, spans, metrics, or error responses. The sensitive named input implements
+   redacted `LogValue`, `String`, and `GoString` methods.
+8. **Broker-authoritative governance identity.** `context.agent.external_id` is the resolved broker
+   Agent's literal External ID or `""` when absent. Governance examples key by it with no UUID
+   fallback. Callers and bundles cannot override the mapping; routing/minted identity remains UUID.
+9. **Envelope consistency without binary coupling.** Keep the domain builder; shared request/input
+   vectors under `tests/testdata/opa-envoy-input/` are tested by broker and ExtProc for supported
+   common Envoy fields, with broker credential/body exclusions asserted separately. Production
+   packages remain independent. Parsing deliberately diverges: broker invalid/error is terminal
+   `server_error`; ExtProc invalid/error is deny and ExtProc alone supports approval actions.
 
 ## Scope of the Unsigned-Subject Exception
 
@@ -83,7 +108,12 @@ Unchanged. The exception still applies only to the subject role of a local-mode 
 that declares `verification: none`. Client assertions and actors are always signature-verified.
 The constitution's Principle I carve-out requires a startup-verified predicate reference to
 `subject_token` and email minting only with a `subject_token.email` binding. Decision 5 meets both
-at startup and additionally at every activation, so no constitution amendment is needed.
+at startup and additionally at every activation. **Proposed (DEC-CONST)**: the maintainer confirms
+this superseding ADR satisfies the existing Principle I carve-out as an equivalent control source,
+without amending the constitution or waiving any control. This is not recorded approval. The main
+alternative is a separate maintainer-authored amendment naming this ADR; the pipeline cannot amend
+the constitution. Implementation of the exceptional modes requires the supplied approval to cover
+both ADR-OPA and DEC-CONST.
 
 ## Consequences
 
@@ -105,6 +135,10 @@ at startup and additionally at every activation, so no constitution amendment is
   exact-target subjects stay human.
 - Without a maximum revision age, a long bundle outage leaves an old governance snapshot active.
   Operators monitor the revision-age gauge.
+- Bootstrap-contained inline credentials require restart to rotate; native SDK file credentials are
+  deliberately unsupported rather than reopened outside containment.
+- A policy with any reachable `with` has no binding evidence, even when a replacement is harmless;
+  this false negative favors conservative enforcement.
 
 ### Risks
 
@@ -122,6 +156,15 @@ at startup and additionally at every activation, so no constitution amendment is
   the evaluated revision.
 - **Signed-only OPA rules**: withdrawn by maintainer direction Q2.
 - **Operator assertion of binding**: forbidden by spec SR-005.
+- **Scope-aware `with` replacement analysis**: greater implementation/proof complexity than
+  voiding evidence conservatively.
+- **UUID-only governance lookup**: operators would have to synchronize UUID-to-governance maps.
+- **Adapter-shaped engine-neutral input**: sound alternative; shared vectors retain the current
+  domain builder without duplicate untested Envoy semantics.
+- **Unrestricted bootstrap/SDK credential reads**: preserves native file rotation but permits
+  reading unrelated runtime files; rejected in favor of containment and a smaller bootstrap subset.
+- **Require nonempty changing manifest labels**: would reject publishers that omit/reuse labels;
+  broker admission identifiers identify deciding snapshots without restricting publishers.
 
 ## References
 

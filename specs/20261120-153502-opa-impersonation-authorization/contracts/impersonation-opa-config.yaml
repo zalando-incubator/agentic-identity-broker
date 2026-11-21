@@ -6,7 +6,8 @@
 #
 # All keys are relative to one entry of oauth2_authorization_server.impersonation.rules[].
 # Rules are a YAML list, so these keys have no environment-variable or CLI-flag form, like every
-# other per-rule impersonation key. token_exchange.authorization is unchanged.
+# other per-rule impersonation key. Ordinary-exchange CEL remains unchanged; explicit
+# token_exchange.authorization.type opa now fails startup (Proposed: API-CFG).
 
 keys:
   authorization.type:
@@ -31,7 +32,11 @@ keys:
           bundle contents update without restart.
         validation:
           - empty fails startup
-          - unreadable file fails startup (diagnostic names the field, not the content)
+          - security.trust_material_dir is required, resolved to an existing absolute directory other than /
+          - config_file must be absolute and contained under that directory; open through os.Root
+          - regular-file check and bounded read (at most 1 MiB) use the same descriptor
+          - outside paths, escaping or absolute symlinks, oversized or unreadable files fail startup without content
+          - no unrestricted file-opening fallback
       policy.package:
         type: string
         required: true
@@ -56,8 +61,9 @@ keys:
         default: 30s
         range: [1s, 5m]
         description: >-
-          Bound for the rule to become ready: every configured bundle activated once and one
-          revision admitted. Otherwise startup fails, naming the rule and this field.
+          Bound for the rule to become ready: SDK readiness and an admitted active revision whose
+          own committing snapshot contains every configured bundle. A historical bundle activation
+          plus an earlier subset candidate cannot satisfy readiness. Otherwise startup fails.
 
 bootstrap_subset:            # API-BOOT
   accepted_top_level_keys: [services, bundles, keys, labels]
@@ -67,9 +73,11 @@ bootstrap_subset:            # API-BOOT
     - every top-level key outside the accepted list fails startup; the diagnostic names the key, never its value
     - bundles must contain at least one entry
     - bundles.<name>.persist true fails startup
-    - service credentials use OPA's native forms; prefer file-based secrets such as credentials.bearer.token_path
+    - supported service credentials and signing keys are inline in the contained bootstrap
+    - reject every bootstrap-referenced local file read, including bearer token_path, TLS file paths, and file:// bundles
+    - validate nested settings against the pinned OPA types before sdk.New; unchecked local-file references are forbidden
     - OPA parser errors are not echoed; the diagnostic gives the rule, the field, and a reason class
-  diagnostic_reason_classes: [unreadable, invalid_document, unsupported_key, no_bundles, persist_unsupported, invalid_opa_configuration]
+  diagnostic_reason_classes: [unreadable, invalid_document, unsupported_key, no_bundles, persist_unsupported, invalid_opa_configuration, trust_directory_invalid, outside_trust_directory, file_too_large, local_file_unsupported]
 
 startup_diagnostics:         # credential-free; prefix "oauth2_authorization_server.impersonation.rules[<i>] (<name>): "
   - authorization.type: "must be \"cel\" or \"opa\""
@@ -79,7 +87,16 @@ startup_diagnostics:         # credential-free; prefix "oauth2_authorization_ser
   - authorization.opa.policy.config_file: "<reason class> [key <name>]"
   - authorization.opa.startup_timeout: "no admissible policy revision within <duration> (last rejection: <reason>)"
 
+ordinary_exchange:           # Proposed API-CFG compatibility correction; FR-009
+  token_exchange.authorization.type:
+    rejected: opa
+    diagnostic: 'token_exchange.authorization.type: OPA is supported only on impersonation rules'
+    enforcement: loader validation and domain service construction, including loader-bypassing builders
+    unchanged: valid CEL settings and defaults; reserved OPA fields remain declarations, not an implemented engine
+
 example:
+  security:
+    trust_material_dir: /etc/broker/opa
   oauth2_authorization_server:
     mode: local
     impersonation:
@@ -112,7 +129,7 @@ example_bootstrap:
       url: https://policies.example.com
       credentials:
         bearer:
-          token_path: /var/run/secrets/governance/token
+          token: "<synthetic bundle-service token; mount the bootstrap as a Secret>"
   bundles:
     impersonation:
       service: governance
@@ -126,8 +143,9 @@ example_bootstrap:
 helm:                        # charts/agentic-identity-broker
   values: >-
     broker.oauth2AuthorizationServer.impersonation stays a verbatim snake_case block. The bootstrap
-    file and any bundle-service secret are mounted with the existing broker extraVolumes and
-    extraVolumeMounts; no new chart value is added.
+    file (a Secret when it contains credentials) is mounted under security.trust_material_dir with
+    existing broker extraVolumes and extraVolumeMounts; no new chart value is added. No OPA-internal
+    credential-file mounts are supported; restart to reload inline bootstrap credentials.
   values_schema_json: >-
     Impersonation rule authorization becomes oneOf
     {type: cel, cel: {...existing}} or
