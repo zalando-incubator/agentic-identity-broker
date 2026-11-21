@@ -50,6 +50,17 @@ Two ADRs record the decisions, and one Proposed revision draft amends the second
 - [ADR 049 Revision 1](./adrs/049-virtual-service-scopes-revision-1.md) (Proposed) adds proxy-refresh
   pre-forward validation and records the dot-segment limitation.
 
+## Selected review remediation — 2026-11-21
+
+[Approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7051938077) for F2–F5 only:
+
+- Consent invalid-token handling emits one Warn `consent.authorization_session.rejected` record with `id.Principal`, typed Agent ID and `invalid_authorization_session`; buffer-logger tests assert the record and token absence. Existing HTTP errors stay unchanged.
+- Extend the existing challenged-exchange acceptance journey with empty/repeated parameters on agent detail and grant Save; assert `400 invalid_token` and unchanged grants before completing valid Save, issuance and exchange.
+- `httpctx.ParseAuthorizationContinuation` owns transport strictness for authorize and consent. `model.AuthorizationContinuation` carries absent/present/invalid parsed state and an opaque token through `AuthorizationRequest.Continuation`; parsing is not authentication, and existing sealed-session validation remains authoritative. The value redacts its token in formatting and logging.
+- Rename the log-projection type to `servicescope.OutcomeReason`, declare each emitted value, and distinguish it from CoverageFailure and Usability in the glossary and observability contract. Preserve existing reason mapping and transient-result decisions; F1 is not selected.
+
+Validation: `just check`, `just test`, shared-parser and buffer-logger regressions, and complete non-container backend, frontend and ExtProc acceptance journeys. Container-backed scenarios remain assigned to pushed-commit container tests. No API, ADR, migration or workflow change is required.
+
 ## Selected review remediation — 2026-11-20
 
 [Approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7047148239) for the six listed F2–F7 changes only:

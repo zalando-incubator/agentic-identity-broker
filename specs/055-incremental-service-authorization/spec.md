@@ -10,6 +10,15 @@
 
 ## Clarifications
 
+### Selected architecture review remediation — 2026-11-21
+
+The [maintainer-approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7051938077) selects F2–F5 from the review of `c41ff8cd` only. These clarifications preserve FR-011 HTTP outcomes and do not decide F1 transient-usability precedence.
+
+- **F2 / SR-005**: Consent agent-detail and grant submission emit one Warn `consent.authorization_session.rejected` security record for empty, repeated or invalid `session_token`, with typed principal, Agent ID and closed reason `invalid_authorization_session`; tokens remain absent from logs. *Reason*: the linked proposal requires consent-side audit parity.
+- **F3 / FR-011**: The existing challenge → provider login → consent Save → code → exchange journey also checks `400 invalid_token` for empty and repeated continuation parameters on both consent steps, with the grant unchanged. *Reason*: the linked proposal requires running-broker coverage.
+- **F4 / FR-011**: One HTTP helper parses absent, present and invalid continuation input; authorization receives a domain parsed result instead of an adapter-invalidity flag on its port DTO. Sealed-token authentication remains in the existing validator. *Reason*: the linked proposal chooses one parsing owner without changing trust boundaries.
+- **F5 / SR-005**: `servicescope.OutcomeReason` is the explicit log projection returned by `Outcome.Reason()`, distinct from structural `CoverageFailure` and verified `Usability`, with constants for every emitted reason. *Reason*: the linked proposal requires unambiguous ubiquitous language.
+
 ### Selected architecture review remediation — 2026-11-20
 
 The [maintainer-approved proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7047148239) selects F2–F7 from the review of `f6f36421`. It does not resolve the separate unselected-service transient-usability question (F1).

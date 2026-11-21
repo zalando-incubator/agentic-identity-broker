@@ -304,6 +304,15 @@ Scope: [maintainer-approved proposal](https://github.com/zalando-incubator/agent
 - [X] T132 [F6] Reject empty/repeated `session_token` values in consent agent-detail and grant submission through shared parsing and existing invalid-token handling; add handler regressions and align FR-011, the feature API contract, OpenAPI and `docs/api/enduser-api.md`. Preserve absent-token standalone consent (FR-011; Principles IV, VIII, X).
 - [X] T133 [F7] Define Authorization Continuation and baseline/candidate usability in `ARCHITECTURE.md`; rename the continuation-denial reason to `invalid_authorization_session` and align tests and the observability contract (FR-009–FR-011, SR-005; Principles V, VIII, XV).
 
+## Selected review remediation — 2026-11-21
+
+Scope: [maintainer-approved F2–F5 proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7051938077). F1 transient-usability precedence remains outside these tasks.
+
+- [X] T134 [F2] Add one Warn consent invalid-token security record with typed principal, Agent ID and closed reason; document it in `contracts/observability.md` and assert the record and token absence in `session_token_parameter_test.go` (SR-005; Principles I, VIII, XV).
+- [X] T135 [F3] Extend the existing challenged-exchange journey in `tests/e2e/incremental_authorization_test.go` with empty/repeated tokens on consent detail and Save, asserting `400 invalid_token`, unchanged grants and successful completion with the valid continuation (FR-011; Principles VIII, XIII).
+- [X] T136 [F4] Share continuation parsing in `httpctx`, replace the port DTO invalidity flag with `model.AuthorizationContinuation`, retain domain sealed-token validation and add parsing/redaction regressions (FR-011; Principles VI, VIII).
+- [X] T137 [F5] Rename the shared reason type to `OutcomeReason`, define every emitted value and document its distinction from CoverageFailure and Usability in the glossary and observability contract; preserve the existing outcome mapping (SR-005; Principles V, VIII, XV).
+
 ## Acceptance Scenario → Task Mapping
 
 The plan's exact `It` descriptions remain authoritative. The following assigns one owning test to every scenario; unit/integration tests add depth without duplicating acceptance ownership.

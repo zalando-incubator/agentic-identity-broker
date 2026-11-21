@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -36,11 +37,11 @@ func (s *AuthorizationService) isBrokerScope(scope string) bool {
 // expiry, principal, agent and original request must all match; it never falls back to an
 // unbound fresh resolution.
 func (s *AuthorizationService) authorizationContinuation(ctx context.Context, req *ports.AuthorizationRequest, principal id.Principal, agent *storage.Agent) (*ports.AuthorizationSession, *ports.AuthorizationDecision) {
-	if req.SessionToken == "" && !req.InvalidSessionTokenParameter {
+	if req.Continuation.Status == model.ContinuationAbsent && req.Continuation.Token == "" {
 		return nil, nil
 	}
-	if !req.InvalidSessionTokenParameter {
-		session, err := s.sessionTokenService.ValidateAuthorizationSessionToken(req.SessionToken, agent.ID, principal)
+	if req.Continuation.Status == model.ContinuationPresent {
+		session, err := s.sessionTokenService.ValidateAuthorizationSessionToken(req.Continuation.Token, agent.ID, principal)
 		if err == nil && session.OriginalURL == withoutSessionToken(req.OriginalURL) {
 			return session, nil
 		}
@@ -124,7 +125,7 @@ func (s *AuthorizationService) checkRequestedServices(ctx context.Context, req *
 	if servicescope.AnyTransient(outcomes) {
 		if s.logger != nil {
 			s.logger.WarnContext(ctx, "requested service usability unverifiable", "event", "oauth2.requested_service.unverifiable",
-				"agent_id", agent.ID, "principal", principal, "reason", servicescope.ReasonUnverifiableTransient, "error_kind", errorKindTransient)
+				"agent_id", agent.ID, "principal", principal, "reason", servicescope.OutcomeReasonUnverifiableTransient, "error_kind", errorKindTransient)
 		}
 		return s.redirectError(ctx, req, "temporarily_unavailable", descriptionUsabilityUnverifiable)
 	}

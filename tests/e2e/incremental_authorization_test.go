@@ -1,7 +1,9 @@
 package e2e_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
@@ -56,6 +58,27 @@ var _ = Describe("Incremental Service Authorization", func() {
 			expectedQuery.Set("service_id", journey.cast.GitHub.ID.String())
 			Expect(returned.Query()).To(Equal(expectedQuery))
 			Expect(coverageFor(journey.consentDetail(sessionToken), journey.cast.GitHub.ID)["usability"]).To(Equal("usable"))
+			By("rejecting empty and repeated continuation parameters on consent reads and Save without mutating the grant")
+			before := journey.currentGrant()
+			payload, err := json.Marshal(map[string]any{"granted_permission_sets": map[string][]string{
+				journey.cast.IdentityAccess.ID.String(): {journey.cast.Identity.ID.String()},
+				journey.cast.GitHubRead.ID.String():     {journey.cast.GitHub.ID.String()},
+			}})
+			Expect(err).NotTo(HaveOccurred())
+			for _, tokens := range [][]string{{""}, {sessionToken, sessionToken}} {
+				query := url.Values{"session_token": tokens}.Encode()
+				path := "/api/consent/agents/" + journey.clientID()
+				response, err := journey.enduser.AuthenticatedGET(path+"?"+query, journey.principal)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.StatusCode).To(Equal(http.StatusBadRequest))
+				Expect(decodeJSON[map[string]any](response)["error"]).To(Equal("invalid_token"))
+				Expect(journey.currentGrant()).To(Equal(before))
+				response, err = journey.enduser.AuthenticatedPOST(path+"/grants?"+query, journey.principal, "application/json", bytes.NewReader(payload))
+				Expect(err).NotTo(HaveOccurred())
+				Expect(response.StatusCode).To(Equal(http.StatusBadRequest))
+				Expect(decodeJSON[map[string]any](response)["error"]).To(Equal("invalid_token"))
+				Expect(journey.currentGrant()).To(Equal(before))
+			}
 			status, body = journey.submit(sessionToken, journey.grantSelection(journey.cast.IdentityAccess, journey.cast.GitHubRead), grant.ValidUntil)
 			continuation := journey.expectSaved(status, body, sessionToken)
 			code := journey.expectClientRedirect(journey.follow(continuation)).Get("code")

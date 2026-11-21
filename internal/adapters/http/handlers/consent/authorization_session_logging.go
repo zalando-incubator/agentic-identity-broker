@@ -1,0 +1,5 @@
+package consent
+
+type authorizationSessionReason string
+
+const reasonInvalidAuthorizationSession authorizationSessionReason = "invalid_authorization_session"

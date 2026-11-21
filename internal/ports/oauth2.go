@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
@@ -91,10 +92,7 @@ type AuthorizationRequest struct {
 
 	// OPTIONAL: Sealed authorization session JWE carried only by the server-built post-consent
 	// continuation. It is consumed locally and never forwarded upstream or to the client.
-	SessionToken string
-
-	// INTERNAL: The continuation parameter was present but empty or repeated.
-	InvalidSessionTokenParameter bool
+	Continuation model.AuthorizationContinuation
 }
 
 // AuthorizationDecision represents the broker's decision for an authorization request.

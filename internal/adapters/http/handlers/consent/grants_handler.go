@@ -150,7 +150,8 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "authorization session principal mismatch", "principal", principalValue)
 				h.writeError(w, http.StatusForbidden, "forbidden", "authorization session does not belong to this user")
 			case errors.Is(err, ports.ErrSessionInvalidToken):
-				h.logger.WarnContext(r.Context(), "authorization session token invalid", "agent_id", agentID, "principal", principalValue)
+				h.logger.WarnContext(r.Context(), "authorization session token invalid", "event", "consent.authorization_session.rejected",
+					"agent_id", parsedAgentID, "principal", principalValue, "reason", reasonInvalidAuthorizationSession)
 				h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			default:
 				h.logger.ErrorContext(r.Context(), "unexpected error validating authorization session token", "agent_id", agentID, "principal", principalValue, "error", err)

@@ -1,6 +1,7 @@
 package consent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -19,11 +20,12 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
-func TestConsentRejectsEmptyOrRepeatedSessionToken(t *testing.T) {
+func TestConsentRejectsInvalidSessionToken(t *testing.T) {
 	agentID := id.NewAgentID()
 	user := "user@example.com"
 	token := url.QueryEscape(newTestSessionToken(newTestJWETokenService(), agentID, user, "/oauth2/authorize"))
 	for _, tc := range []struct{ name, query string }{
+		{"invalid", "session_token=synthetic-invalid-JWE"},
 		{"empty", "session_token="}, {"bare", "session_token"},
 		{"repeated", "session_token=" + token + "&session_token=" + token},
 		{"trailing_empty", "session_token=" + token + "&session_token="},
@@ -32,7 +34,8 @@ func TestConsentRejectsEmptyOrRepeatedSessionToken(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {
 				t.Run(method, func(t *testing.T) {
-					logger := slog.New(slog.DiscardHandler)
+					var logs bytes.Buffer
+					logger := slog.New(slog.NewJSONHandler(&logs, nil))
 					detail := NewAgentDetailHandler(&mockAgentDetailService{
 						getAgentConsentDetailFunc: func(context.Context, id.AgentID, id.Principal) (*consent.AgentConsentDetail, error) {
 							return &consent.AgentConsentDetail{Agent: &storage.Agent{ID: agentID}}, nil
@@ -59,6 +62,16 @@ func TestConsentRejectsEmptyOrRepeatedSessionToken(t *testing.T) {
 					var body ErrorResponse
 					require.NoError(t, json.NewDecoder(rr.Body).Decode(&body))
 					assert.Equal(t, "invalid_token", body.Error)
+					logOutput := logs.String()
+					var record map[string]any
+					require.NoError(t, json.NewDecoder(&logs).Decode(&record))
+					assert.Equal(t, "WARN", record["level"])
+					assert.Equal(t, "consent.authorization_session.rejected", record["event"])
+					assert.Equal(t, user, record["principal"])
+					assert.Equal(t, agentID.String(), record["agent_id"])
+					assert.Equal(t, "invalid_authorization_session", record["reason"])
+					assert.NotContains(t, logOutput, token)
+					assert.NotContains(t, logOutput, "synthetic-invalid-JWE")
 				})
 			}
 		})

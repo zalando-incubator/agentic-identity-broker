@@ -1,14 +1,16 @@
 package consent
 
-import "net/url"
+import (
+	"net/url"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/httpctx"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+)
 
 func sessionTokenParameter(query url.Values) (string, error) {
-	values, present := query["session_token"]
-	if !present {
-		return "", nil
-	}
-	if len(values) != 1 || values[0] == "" {
+	continuation := httpctx.ParseAuthorizationContinuation(query)
+	if continuation.Status == model.ContinuationInvalid {
 		return "", errInvalidToken
 	}
-	return values[0], nil
+	return continuation.Token, nil
 }

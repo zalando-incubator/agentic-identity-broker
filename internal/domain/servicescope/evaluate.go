@@ -56,24 +56,35 @@ type Outcome struct {
 	Failure               CoverageFailure
 }
 
-// Reason is the shared authorization and refresh classification of a service outcome.
-type Reason string
+// OutcomeReason is an Outcome's log projection, not its structural CoverageFailure.
+type OutcomeReason string
 
 const (
-	ReasonNotSelected             Reason = "not_selected"
-	ReasonRequiredScopesUncovered Reason = "required_scopes_uncovered"
-	ReasonUnverifiableTransient   Reason = Reason(UsabilityUnverifiableTransient)
+	OutcomeReasonNotSelected             OutcomeReason = "not_selected"
+	OutcomeReasonRequiredScopesUncovered OutcomeReason = "required_scopes_uncovered"
+	OutcomeReasonUsable                  OutcomeReason = "usable"
+	OutcomeReasonMissing                 OutcomeReason = "missing"
+	OutcomeReasonUnusableDefinitive      OutcomeReason = "unusable_definitive"
+	OutcomeReasonUnverifiableTransient   OutcomeReason = "unverifiable_transient"
 )
 
 // Reason preserves selection and coverage precedence over session usability.
-func (o Outcome) Reason() Reason {
+func (o Outcome) Reason() OutcomeReason {
 	switch {
 	case !o.Selected:
-		return ReasonNotSelected
+		return OutcomeReasonNotSelected
 	case !o.RequiredScopesCovered:
-		return ReasonRequiredScopesUncovered
+		return OutcomeReasonRequiredScopesUncovered
+	case o.Usability == UsabilityUsable:
+		return OutcomeReasonUsable
+	case o.Usability == UsabilityMissing:
+		return OutcomeReasonMissing
+	case o.Usability == UsabilityUnusableDefinitive:
+		return OutcomeReasonUnusableDefinitive
+	case o.Usability == UsabilityUnverifiableTransient:
+		return OutcomeReasonUnverifiableTransient
 	default:
-		return Reason(o.Usability)
+		return OutcomeReason(o.Usability)
 	}
 }
 

@@ -175,7 +175,7 @@ func (p *Provider) recheckBoundServices(ctx context.Context, req *fosite.AccessR
 		return transient(refreshScopePermissionSetLookupFailed)
 	}
 	if servicescope.AnyTransient(outcomes) {
-		return transient(refreshScopeReason(servicescope.ReasonUnverifiableTransient))
+		return transient(refreshScopeReason(servicescope.OutcomeReasonUnverifiableTransient))
 	}
 	for _, outcome := range outcomes {
 		if !outcome.Satisfied {

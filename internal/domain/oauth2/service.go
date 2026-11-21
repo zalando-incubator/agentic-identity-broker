@@ -261,7 +261,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	}
 	if needsConsent {
-		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
+		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.Continuation.Token)
 		if buildErr != nil {
 			if s.logger != nil {
 				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
@@ -300,7 +300,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 				"reason", unusableReason,
 			)
 		}
-		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
+		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.Continuation.Token)
 		if buildErr != nil {
 			if s.logger != nil {
 				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
@@ -346,7 +346,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 					"error", err.Error(),
 				)
 			}
-			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
+			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.Continuation.Token)
 			if buildErr != nil {
 				if s.logger != nil {
 					s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
@@ -364,7 +364,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	}
 
 	if rejected := s.checkRequestedServices(ctx, req, principal, agent, grant, requested, func() *ports.AuthorizationDecision {
-		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.SessionToken)
+		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta, requested, req.Continuation.Token)
 		if buildErr != nil {
 			if s.logger != nil {
 				s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)

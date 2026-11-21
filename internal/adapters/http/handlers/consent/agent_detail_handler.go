@@ -261,7 +261,8 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if errors.Is(err, errInvalidToken) {
-			h.logger.ErrorContext(ctx, "authorization session token invalid", "agent_id", agentID)
+			h.logger.WarnContext(ctx, "authorization session token invalid", "event", "consent.authorization_session.rejected",
+				"agent_id", parsedAgentID, "principal", userPrincipal, "reason", reasonInvalidAuthorizationSession)
 			h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			return
 		}
