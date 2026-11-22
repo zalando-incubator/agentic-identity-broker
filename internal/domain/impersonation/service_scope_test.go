@@ -225,7 +225,7 @@ func TestImpersonate_VirtualServiceScopes(t *testing.T) {
 	} {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
 			result := serviceScopeFixture{}.impersonate(t, tc.scope)
-			requireRefused(t, result, tokenexchange.InvalidScopeError)
+			_ = requireRefused(t, result, tokenexchange.InvalidScopeError)
 			assert.Equal(t, 1, result.verifier.calls)
 		})
 	}
@@ -233,18 +233,18 @@ func TestImpersonate_VirtualServiceScopes(t *testing.T) {
 	t.Run("rejects a covered service whose session is not usable", func(t *testing.T) {
 		for _, usability := range []servicescope.Usability{servicescope.UsabilityMissing, servicescope.UsabilityUnusableDefinitive} {
 			result := serviceScopeFixture{sessions: scopeSessions{scopeGithubID: {Usability: usability}}}.impersonate(t, github)
-			requireRefused(t, result, tokenexchange.InvalidScopeError)
+			_ = requireRefused(t, result, tokenexchange.InvalidScopeError)
 		}
 	})
 
 	t.Run("rejects a usable session lacking the effective provider scopes", func(t *testing.T) {
 		result := serviceScopeFixture{sessions: scopeSessions{scopeGithubID: {Usability: servicescope.UsabilityUsable, Scopes: []string{"read:user"}}}}.impersonate(t, github)
-		requireRefused(t, result, tokenexchange.InvalidScopeError)
+		_ = requireRefused(t, result, tokenexchange.InvalidScopeError)
 	})
 
 	t.Run("transient usability fails closed with server_error", func(t *testing.T) {
 		result := serviceScopeFixture{sessions: scopeSessions{scopeGithubID: {Usability: servicescope.UsabilityUnverifiableTransient}}}.impersonate(t, github)
-		requireRefused(t, result, tokenexchange.ServerErrorCode)
+		_ = requireRefused(t, result, tokenexchange.ServerErrorCode)
 	})
 
 	t.Run("service lookup failure fails closed with server_error", func(t *testing.T) {
@@ -262,7 +262,7 @@ func TestImpersonate_VirtualServiceScopes(t *testing.T) {
 	t.Run("agent subject never receives a service scope", func(t *testing.T) {
 		services := &scopeServices{}
 		result := serviceScopeFixture{services: services, categories: []string{"agent"}, agentSubject: true}.impersonate(t, github)
-		requireRefused(t, result, tokenexchange.InvalidScopeError)
+		_ = requireRefused(t, result, tokenexchange.InvalidScopeError)
 		assert.Equal(t, SubjectCategoryAgent, result.outcome.Audit.SubjectCategory)
 		assert.Zero(t, result.verifier.calls)
 		assert.Zero(t, services.calls)
@@ -276,7 +276,7 @@ func TestImpersonate_VirtualServiceScopes(t *testing.T) {
 
 	t.Run("broker scopes fail closed when service scopes are not configured", func(t *testing.T) {
 		result := serviceScopeFixture{unconfigured: true}.impersonate(t, github)
-		requireRefused(t, result, tokenexchange.InvalidScopeError)
+		_ = requireRefused(t, result, tokenexchange.InvalidScopeError)
 	})
 
 	t.Run("scopes of another origin stay ordinary and follow the allow-list", func(t *testing.T) {

@@ -318,8 +318,8 @@ Scope: [maintainer-approved F2–F5 proposal](https://github.com/zalando-incubat
 Scope: the maintainer's direct decisions recorded in `spec.md` Clarifications (2026-11-22), made because the pipeline could not apply the [proposal for `c55a4582`](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7070667026). ADR-SCOPES-REV2 items remain Proposed until approved.
 
 - [X] T138 [US1] Replace `RequestedServiceBanner` with `web/src/components/consent/RequestedServiceGroup.tsx`: one `role="group"` request header per requested service inside Agent Permissions with text login/selection checks and the only login/retry control, covering sets nested on a semantic-token rail, no per-card "covers requested" badge, "Asked for"/"Connect above" in `ServiceCard`, and a one-sentence Save hint from `requestedServiceGate.ts`; update Vitest, Go page objects, the frontend journey and Wireloom States C/D (FR-009–FR-011; Principles XI, XIII, XIV).
-- [X] T139 [F1] Give "not selected" precedence over transient usability in `internal/domain/servicescope` so only selected requested services fail authorization or local refresh as transient; unselected ones follow focused consent / `invalid_scope` `not_selected`. Cover authorization and refresh with tests and align doc comments and `Outcome.Reason` (FR-003, SR-003; Principles VIII, XV).
-- [X] T140 [P1–P3] Register the parsed continuation parameter type in the `telemetrylint` credential types; audit expired and principal/Agent-mismatched consent sessions as `consent.authorization_session.rejected` with closed reasons and unchanged responses; rename the parameter type so "Authorization Continuation" names only the post-Save continuation (SR-005; Principles V, XV).
+- [X] T139 [F1] Give "not selected" precedence over transient usability in `internal/domain/servicescope` so only selected requested services fail authorization or local refresh as transient; unselected ones follow focused consent / `invalid_scope` `not_selected`. Cover authorization and refresh with domain tests and the US1 S8 and US3 S5 journeys in `tests/e2e/incremental_authorization_test.go`, and align doc comments, OpenAPI descriptions, contracts and `Outcome.Reason` (FR-003, SR-003; Principles VIII, XV).
+- [X] T140 [P1–P3] Register `model.ContinuationParameter` in the `telemetrylint` credential types with a lintrules fixture; audit expired and principal/Agent-mismatched consent sessions as `consent.authorization_session.rejected` (`expired_authorization_session`, `agent_mismatch`, `principal_mismatch`) with unchanged responses, asserted in `session_token_parameter_test.go`; rename `AuthorizationContinuation`/`ParseAuthorizationContinuation` to `ContinuationParameter`/`ParseContinuationParameter` so "Authorization Continuation" names only the post-Save continuation (SR-005; Principles V, XV).
 - [X] T141 [US4] Apply virtual-scope parsing, existence, eligibility, coverage and usability to local impersonation after delegation; reject virtual scopes for agent subjects; cover with `internal/domain/impersonation/service_scope_test.go` and `tests/e2e/impersonation_service_scopes_test.go` (US4 S5; FR-002, FR-003, FR-020; ADR-SCOPES-REV2).
 - [X] T142 [US4] In ExtProc grant-context mode, add the service-scope `insufficient_scope` challenge to body-path delegation denials when the concurrent exchange returns a matching `access_denied`; keep the denial body and header-only behavior; cover in `internal/extproc/server/grant_context_test.go` and document in `contracts/extproc-challenge.md` §5 (FR-005; ADR-SCOPES-REV2).
 - [X] T143 [US4] Add the US4 S6 grant-context journey to `tests/e2e/grant_context_journey_test.go` asserting the challenge header on a body-path denial and its absence on header-only requests (FR-005; Principle XIII).
@@ -350,6 +350,8 @@ The plan's exact `It` descriptions remain authoritative. The following assigns o
 | US4 S2 | `incremental_authorization_test.go` | T016 | T089, T092 | Identifier/rename/reuse continuity and no failed-refresh consumption |
 | US4 S3 | `incremental_authorization_test.go` | T016 | T089, T092 | Crafted service scope never over-grants |
 | US4 S4 | `incremental_authorization_docs_test.go` | T021 | T090–T093 | Deployable guide example, known dot-segment limitation and no discovery catalog |
+| US1 S8 | `incremental_authorization_test.go` | T139 | T139 | Unselected service with transient usability goes to consent; selected returns `temporarily_unavailable` |
+| US3 S5 | `incremental_authorization_test.go` | T139 | T139 | Unselected bound service refresh gets `invalid_scope`; selected gets `server_error`; no consumption |
 | US4 S5 | `impersonation_service_scopes_test.go` | T141 | T141 | Impersonation applies virtual-scope rules; agent subjects rejected |
 | US4 S6 | `grant_context_journey_test.go` | T143 | T142 | Grant-context body-path denial carries the service-scope challenge; header-only does not |
 
@@ -370,7 +372,7 @@ The plan's exact `It` descriptions remain authoritative. The following assigns o
 | FR-021 | T018, T066, T071–T072, T090–T091, T068–T077 |
 | API-001–API-004 | T009–T012, T045–T050, T054, T058–T060, T065–T071, T075–T077, T079, T082–T083, T091, T100 |
 | SR-001–SR-005 | T023–T033, T043–T059, T065–T073, T075–T077, T078–T082, T087–T089, T104–T108 |
-| SC-001–SC-006 | All 21 mapped scenarios (US4 S5–S6 added 2026-11-22); T064, T074, T086, T092, T110–T113 |
+| SC-001–SC-006 | All 23 mapped scenarios (US1 S8, US3 S5 and US4 S5–S6 added 2026-11-22); T064, T074, T086, T092, T110–T113 |
 
 ## Dependencies & Execution Order
 
@@ -425,7 +427,7 @@ There is no blanket story-level parallelism: authorization/provider/session/ExtP
 
 ## Implementation Strategy
 
-1. Establish approval evidence and design prerequisites; each new behavior depends on its own compiling semantic-red tests. Preserve all 21 acceptance mappings and complete journey/test-quality review before final compliance without requiring historical execution records.
+1. Establish approval evidence and design prerequisites; each new behavior depends on its own compiling semantic-red tests. Preserve all 23 acceptance mappings and complete journey/test-quality review before final compliance without requiring historical execution records.
 2. Build the single invariant owner and binding/usability foundations with test-first pairs and both storage adapters.
 3. Deliver US1 as the focused-consent core/MVP checkpoint, then immediately complete US3's refresh assurance and US2's URL recovery. US1 alone is not a releasable implementation of the approved feature: the P1 security and compatibility stories are mandatory.
 4. Add US4's operator guide and cross-path boundary checks, preserving every requirement and approval boundary.

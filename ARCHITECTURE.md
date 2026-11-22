@@ -905,6 +905,8 @@ Discovery and registration send no service credentials, user tokens, cookies, or
 
 **New Bounded Context**: `internal/domain/impersonation/` independently orchestrates credential validation, authorization, audience-target resolution, user-delegation enforcement, and local minting. It depends only on ports and domain; `ports.ImpersonationTokenIssuer` insulates it from the fosite signer and `ports.UserDelegationVerifier` insulates it from the consent bounded context. It resolves existing registered target agents through `ports.AgentRepository`; no new persistence exists.
 
+**Virtual Service Scopes** ([ADR 050 Revision 2](adrs/050-virtual-service-scopes-revision-2.md), Proposed): broker-prefixed scopes bypass the target's `allowed_scopes` pre-check. After rule authorization and human delegation, `internal/domain/servicescope` resolves and evaluates them against the grant selection that `ports.UserDelegationVerifier` returns; malformed, unknown, ineligible or unsatisfied scopes return `invalid_scope`, lookup failures and transient usability `server_error`, and agent subjects get `invalid_scope` for any virtual scope. No Service-Scope Binding is stored, because impersonation issues only an access token.
+
 **Responsibility / Flow**:
 
 ```
@@ -1033,6 +1035,7 @@ All four gates fail closed. A delegation denial returns 403 with the consent URL
 
 - Body-bearing requests run exchange and grant resolution concurrently in the headers phase and wait for both. Precedence: delegation denial (403 `access_denied` with `error_uri`), resolution error (503 `service_unavailable`), exchange error (existing handling), then validate the result binding before Authorization mutation or body buffering.
 - Header-only requests resolve first, then evaluate OPA, then exchange and validate the result binding only on allow, using the exact permit evaluated.
+- A body-path delegation denial also carries the service-scope `insufficient_scope` challenge (and `resource_metadata` when configured) when the concurrent exchange returns `access_denied` with the same consent URL and a valid `scope`; the denial body is unchanged and header-only denials carry no challenge ([ADR 050 Revision 2](adrs/050-virtual-service-scopes-revision-2.md), Proposed).
 - Immediately before every OPA evaluation that receives delegation input (header-only, body, and each batch element), ExtProc requires `now < Deadline`; otherwise it returns 503 without policy evaluation, forwarding or re-resolution. It checks the same original deadline again before final forwarding: after header-only exchange, before body/batch forwarding, and before the approval gate. A body the approval gate grants is forwarded without a further deadline check, so a consumed one-time approval is never lost. Expiry returns `503 service_unavailable` / `grant context unavailable`, without a header-only Authorization mutation or body forwarding.
 - `input.context` gains `principal`, `agent`, `resource`, `grant` and `permission_sets` from the typed permit, and `granted_permission_sets` and `granted_permission_sets_available: true` are derived from the permit. The approval gate uses the exchange response's principal and agent UUID under ADR 036, after verifying they match the permit. Identity mismatch or absence fails closed with terminal API-7 503. Disabled-mode input and approval identity are unchanged.
 
@@ -1376,6 +1379,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [049-service-session-recovery-return.md](adrs/049-service-session-recovery-return.md) | Accepted | Service-page recovery return (`/sessions/<identifier>`). Partly supersedes [044-service-specific-session-recovery-url.md](adrs/044-service-specific-session-recovery-url.md); rejected sessions follow [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) |
 | [050-virtual-service-scopes.md](adrs/050-virtual-service-scopes.md) | Accepted | Virtual Service Scopes, shared usability and coverage in [internal/domain/servicescope/](internal/domain/servicescope/), and immutable refresh assurance |
 | [050-virtual-service-scopes-revision-1.md](adrs/050-virtual-service-scopes-revision-1.md) | Accepted | Revises [050-virtual-service-scopes](adrs/050-virtual-service-scopes.md): proxy-refresh syntax, existence and eligibility validation before forwarding; known dot-segment canonical-ID limitation |
+| [050-virtual-service-scopes-revision-2.md](adrs/050-virtual-service-scopes-revision-2.md) | Proposed | Revises [050-virtual-service-scopes](adrs/050-virtual-service-scopes.md): optional `aib.tokenexchange.resource_metadata_url` challenge field, grant-context body-path denial challenge, local impersonation virtual-scope checks |
 
 ## 11. Project Identification
 

@@ -50,6 +50,18 @@ Two ADRs record the decisions, and one Proposed revision draft amends the second
 - [ADR 049 Revision 1](./adrs/049-virtual-service-scopes-revision-1.md) (Proposed) adds proxy-refresh
   pre-forward validation and records the dot-segment limitation.
 
+## Maintainer decisions — 2026-11-22
+
+Decided directly by the maintainer (see `spec.md` Clarifications, 2026-11-22), because the pipeline could not apply the [proposal for `c55a4582`](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7070667026):
+
+- **Precedence (F1)**: `servicescope.AnyTransient` counts only selected outcomes, matching `Outcome.Reason`. An unselected requested service with unverifiable usability goes to focused consent on authorization and gets `400 invalid_scope` (`not_selected`) on local refresh without consuming the token; selected services keep `temporarily_unavailable`/`server_error`. A selected service whose required scopes are uncovered keeps its transient outcome (not part of this decision).
+- **P2**: `consent.authorization_session.rejected` also covers expired and principal/Agent-mismatched sessions, with closed reasons `invalid_authorization_session`, `expired_authorization_session`, `agent_mismatch`, `principal_mismatch`; HTTP status codes and bodies are unchanged.
+- **P3/P1**: `httpctx.ParseContinuationParameter` returns `model.ContinuationParameter` (parameter-level, unauthenticated); the type is registered in `telemetrylint` credential types with a lintrules fixture.
+- **Consent UI**: `RequestedServiceGroup` replaces `RequestedServiceBanner` (Wireloom States C/D in `spec.md`).
+- **ADR-SCOPES-REV2**: impersonation virtual-scope checks and the grant-context denial challenge.
+
+Validation: build, vet, gofmt, golangci-lint with telemetrylint, race tests of touched packages, Vitest, the frontend journeys and focused backend/ExtProc journeys including US1 S8, US3 S5, US4 S5 and US4 S6.
+
 ## Selected review remediation — 2026-11-21
 
 [Approved by mjungsbluth](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7051938077) for F2–F5 only:

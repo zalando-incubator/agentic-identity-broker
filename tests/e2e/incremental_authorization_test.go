@@ -260,7 +260,7 @@ var _ = Describe("Incremental Service Authorization", func() {
 			journey.provider.WithTransientTokenFailures(http.StatusServiceUnavailable, 1000)
 		}
 
-		// US1 S8 (not selected precedes transient usability) from specs/055-incremental-service-authorization/spec.md.
+		// US1 S8 from specs/055-incremental-service-authorization/spec.md.
 		It("sends an unselected service to focused consent and answers temporarily_unavailable only for a selected one", func() {
 			selectGitHub(false)
 			unverifiableGitHub()
@@ -276,7 +276,7 @@ var _ = Describe("Incremental Service Authorization", func() {
 			journey.expectAuthorizationError(location, "temporarily_unavailable", "requested service usability cannot be verified; retry later")
 		})
 
-		// US3 S5 (not selected precedes transient usability) from specs/055-incremental-service-authorization/spec.md.
+		// US3 S5 from specs/055-incremental-service-authorization/spec.md.
 		It("refuses local refresh of an unselected bound service with invalid_scope and of a selected one with server_error, consuming neither", func() {
 			journey.usableGitHub()
 			refreshToken := journey.issue(ordinary + " " + journey.githubScope())["refresh_token"].(string)
