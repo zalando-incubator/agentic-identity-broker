@@ -49,6 +49,16 @@ WWW-Authenticate: Bearer error="insufficient_scope", error_description="User ses
 - A grant that does not cover the service (`access_denied`) links to the agent's consent page.
 - Errors before service resolution, and 5xx or transient errors, carry no `scope`.
 
+With ExtProc [grant context](../configuration.md#extproc-grant-context-configuration) enabled, a
+delegation denial takes precedence over the exchange error and keeps its 403
+`{"error":"access_denied","error_description":"delegation denied: <code>","error_uri":"<consent URL>"}`
+body. On a body-bearing request, ExtProc also adds the same `WWW-Authenticate` challenge when the
+concurrent exchange names the service: a non-transient broker `access_denied` with the same consent
+URL and a valid service `scope`. The challenge carries `error_description="delegation denied: <code>"`,
+the consent URL as `error_uri`, the `scope` and the optional `resource_metadata`. A header-only
+request resolves the delegation before any exchange, so its denial has no challenge. Grant-context
+request failures keep their 503 response without a challenge.
+
 ## Protected-resource metadata
 
 Each Agentgateway route can name its RFC 9728 protected-resource metadata URL with the optional

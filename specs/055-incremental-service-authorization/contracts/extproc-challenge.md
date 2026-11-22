@@ -80,3 +80,21 @@ Without the metadata field, the header is identical except that `resource_metada
 ExtProc never logs credentials. It logs the scope only as `token_exchange.challenge_scope_present=true|false` and
 `token_exchange.challenge_resource_metadata_present=true|false`. The broker-provided URLs are already public
 action links, but the logging footprint stays unchanged apart from these booleans.
+
+## 5. Grant-context mode denial ([`050-virtual-service-scopes-revision-2`](../../../adrs/050-virtual-service-scopes-revision-2.md))
+
+With `grant_context.enabled`, a delegation denial keeps the precedence, status and body of the
+Feature 054 contract (`specs/054-authzen-delegation-pip/contracts/extproc-grant-context.md`):
+403 `{"error":"access_denied","error_description":"delegation denied: <code>","error_uri":"<consent URL>"}`.
+The AuthZEN denial names no service. On the body-bearing path only, ExtProc adds the §3 header when
+the concurrent exchange failed with a non-transient broker `access_denied` whose `error_uri` equals
+the consent URL and whose `scope` is valid:
+
+```text
+WWW-Authenticate: Bearer error="insufficient_scope", error_description="delegation denied: <code>",
+                  error_uri="<consent URL>", scope="<exchange scope>"
+                  [, resource_metadata="<metadata resource_metadata_url>"]
+```
+
+Any other exchange outcome, a header-only denial, and every resolution failure (503) carry no
+challenge. The §4 logging booleans apply unchanged.

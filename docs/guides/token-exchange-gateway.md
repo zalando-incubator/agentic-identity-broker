@@ -116,7 +116,10 @@ ExtProc process configuration. See the
 
 Omit that field for the default variant; no metadata URL is inferred. An absent/invalid value
 omits only the optional `resource_metadata` challenge attribute. The challenge also carries the
-broker's service `scope` and preserves `error_uri` and URL elicitation.
+broker's service `scope` and preserves `error_uri` and URL elicitation. With grant context enabled,
+a body-path delegation denial for a service named by the concurrent exchange keeps its
+`access_denied` body and adds the same challenge
+([details](incremental-authorization.md#initial-challenge)).
 
 ADRs 011 and 036 keep the producer/consumer deployment boundary explicit. The
 `charts/agentic-identity-broker/` chart does not deploy Agentgateway or the standalone ExtProc

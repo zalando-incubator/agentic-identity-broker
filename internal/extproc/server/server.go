@@ -553,7 +553,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		var grantContextErr error
 		exchangeResult, state.grantContext, grantContextErr, exchErr = s.exchangeAndResolve(ctx, logger, input.subjectToken, resourceURI)
 		if grantContextErr != nil {
-			response, failure := grantContextFailureResponse(grantContextErr)
+			response, failure := s.grantContextFailureResponse(ctx, grantContextErr, exchErr, input.resourceMetadata)
 			diagnostic = failure
 			return response, nil
 		}
@@ -696,7 +696,7 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		result, grantContextErr := s.resolveGrantContext(ctx, logger, state.subjectToken, state.resourceURI)
 		if grantContextErr != nil {
 			var response *extprocv3.ProcessingResponse
-			response, diagnostic = grantContextFailureResponse(grantContextErr)
+			response, diagnostic = s.grantContextFailureResponse(ctx, grantContextErr, nil, nil)
 			return response
 		}
 		state.grantContext = result
@@ -1009,11 +1009,7 @@ func (s *Server) exchangeErrorResponse(ctx context.Context, err error, resourceM
 	}
 	logger := loggerFromContext(ctx, s.logger)
 	if hasBrokerError && brokerErr.ErrorURI != "" && !isTransientBrokerError(err) {
-		metadataURL, metadataPresent := resourceMetadataURL(resourceMetadata)
-		if metadataPresent && metadataURL == "" {
-			logOperationError(ctx, logger, slog.LevelWarn, "challenge metadata invalid", metadata, diagnostic,
-				slog.String("field", resourceMetadataURLFieldKey))
-		}
+		metadataURL := challengeResourceMetadataURL(ctx, logger, resourceMetadata, metadata, diagnostic)
 		logOperationError(ctx, logger, slog.LevelInfo, "token exchange requires re-authentication — returning 403 insufficient_scope challenge", metadata, diagnostic,
 			slog.Bool("token_exchange.challenge_scope_present", validChallengeScope(brokerErr.Scope)),
 			slog.Bool("token_exchange.challenge_resource_metadata_present", metadataURL != ""))

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -59,6 +61,17 @@ func resourceMetadataURL(value *structpb.Value) (metadataURL string, present boo
 		return "", true
 	}
 	return raw, true
+}
+
+// challengeResourceMetadataURL validates the route metadata for a challenge and logs an invalid
+// value without it.
+func challengeResourceMetadataURL(ctx context.Context, logger *slog.Logger, value *structpb.Value, metadata ErrorMetadata, diagnostic Diagnostic) string {
+	metadataURL, present := resourceMetadataURL(value)
+	if present && metadataURL == "" {
+		logOperationError(ctx, logger, slog.LevelWarn, "challenge metadata invalid", metadata, diagnostic,
+			slog.String("field", resourceMetadataURLFieldKey))
+	}
+	return metadataURL
 }
 
 func insufficientScopeChallenge(description, errorURI string) string {
