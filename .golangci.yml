@@ -127,6 +127,7 @@ linters:
             - /internal/extproc(/|$)
           credential-types:
             - github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model.Secret
+            - github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model.ContinuationParameter
   exclusions:
     paths:
       - web/node_modules

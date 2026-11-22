@@ -183,7 +183,7 @@ These data classes are prohibited at all levels, including `Debug`.
 
 ### 6.4 Safe Types
 
-- A value object that contains sensitive data must implement `slog.LogValuer`, `fmt.Stringer`, and `fmt.GoStringer`. Each method returns a redacted form. This applies to `model.Secret`.
+- A value object that contains sensitive data must implement `slog.LogValuer`, `fmt.Stringer`, and `fmt.GoStringer`. Each method returns a redacted form. This applies to `model.Secret` and `model.ContinuationParameter`.
 - Do not log a full entity or request struct with `slog.Any`. Log the necessary fields, or log a purpose-limited snapshot type.
 
 ## 7. Untrusted Input
@@ -233,7 +233,7 @@ Audit records are structured operational logs. They are not a durable ledger.
 | `snake_case`, canonical keys. The error key is `error` | `sloglint` `key-naming-case: snake` and `forbidden-keys: [err, cause, action]` | Canonical keys (section 2.3) |
 | Level. The failure is logged one time | — | All |
 | Principals as `id.Principal` under a reserved key | `gocritic` ruleguard (`tools/lintrules/ruleguard/rules.go`) rejects `slog.String` under a reserved key and a principal rendered with `String()` or `string(p)`. `telemetrylint` rejects a principal in `fmt.Errorf` (section 4). `TestLoggedPrincipalsAreTyped` checks every other `log/slog` call (section 9). | Where section 5 permits a principal |
-| No section 6.1 data, section 6.2 data in derived form, no full structs | `telemetrylint` rejects a value of a `credential-types` type (`model.Secret`), or a value derived from one, as a log attribute. | All other data classes |
+| No section 6.1 data, section 6.2 data in derived form, no full structs | `telemetrylint` rejects a value of a `credential-types` type (`model.Secret`, `model.ContinuationParameter`), or a value derived from one, as a log attribute. | All other data classes |
 | Sensitive types implement `slog.LogValuer`, `fmt.Stringer`, and `fmt.GoStringer` | — | All. Add the type to `credential-types` in `.golangci.yml`. |
 | A test asserts that credentials are not in the logs | — | All |
 
