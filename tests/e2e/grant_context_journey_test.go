@@ -483,6 +483,26 @@ var _ = Describe("ExtProc grant context journeys", Label("grant-context"), func(
 			expectGrantContextDenied(j.HeaderOnly(authzenRepoResource, nil), j.broker.Enduser.BaseURL()+"/agents/"+j.broker.Agent.ID.String())
 		})
 
+		// Scenario US4 S6 from specs/055-incremental-service-authorization/spec.md
+		It("adds the service-scope challenge to a body-path denial and none to a header-only denial", func() {
+			Expect(j.broker.Storage.UserGrants().Delete(context.Background(), j.broker.Grant.ID)).To(Succeed())
+			consentURL := j.broker.Enduser.BaseURL() + "/agents/" + j.broker.Agent.ID.String()
+
+			headersResp, bodyResp := j.BodyCall(authzenRepoResource)
+			Expect(bodyResp).To(BeNil())
+			expectGrantContextDenied(headersResp, consentURL)
+			challenge := extprochelpers.ExtractImmediateResponseHeader(headersResp, "WWW-Authenticate")
+			Expect(challenge).To(HavePrefix("Bearer "))
+			Expect(challenge).To(ContainSubstring(`error="insufficient_scope"`))
+			Expect(challenge).To(ContainSubstring(`error_uri="` + consentURL + `"`))
+			Expect(challenge).To(MatchRegexp(`scope="https?://[^"]+/sessions/[^"/]+"`))
+
+			headerOnly := j.HeaderOnly(authzenRepoResource, nil)
+			expectGrantContextDenied(headerOnly, consentURL)
+			Expect(extprochelpers.ExtractImmediateResponseHeader(headerOnly, "WWW-Authenticate")).To(BeEmpty(),
+				"header-only resolution runs before any exchange, so no service is named")
+		})
+
 		Context("with canonical-ID variants", func() {
 			var (
 				second, withoutReaderCanonicalID *grantContextJourney

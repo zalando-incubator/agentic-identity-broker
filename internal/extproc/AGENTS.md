@@ -181,7 +181,7 @@ Feature 043 supersedes older raw-header descriptions, including those in Feature
 - Return fixed 503 `invalid_subject_token` or `invalid_resource` responses for invalid metadata.
 - Do not restore raw-header fallback, resource construction, dual-source precedence, or a configuration toggle.
 - Do not expose subject credentials or rejected resource URIs in diagnostics.
-- Treat the optional `resource_metadata_url` field in the same namespace as advisory challenge input only (Feature 055). Validate it only when building a 403 `insufficient_scope` challenge, and append it after the broker's service `scope` as `resource_metadata`. Omit invalid values and log `challenge_metadata_invalid` without the value. It never affects exchange, caching, or OPA input.
+- Treat the optional `resource_metadata_url` field in the same namespace as advisory challenge input only (Feature 055). Validate it only when building a 403 `insufficient_scope` challenge, and append it after the broker's service `scope` as `resource_metadata`. Omit invalid values and log `challenge_metadata_invalid` without the value. It never affects exchange, caching, or OPA input. In grant-context mode, a body-path denial adds the challenge only when the concurrent exchange returns a matching `access_denied` with the same consent URL and a valid `scope` (`adrs/050-virtual-service-scopes-revision-2.md`).
 
 Agentgateway must apply strict `jwtAuth` before ExtProc, with `preserveToken: false`.
 The metadata producer can project the validated token through `jwt.rawToken.unredacted()`.
@@ -228,7 +228,7 @@ With `grant_context.enabled`, `adrs/048-authzen-delegation-pip.md` supersedes AD
 ```text
 Body-bearing:  RequestHeaders → metadata/protocol/transport checks
                → Exchanger.Exchange ∥ PermitResolver.Resolve (wait for both)
-               → denial 403 (error_uri) > resolution error 503 > exchange error > buffer body
+               → denial 403 (error_uri; + insufficient_scope challenge when the exchange names the service) > resolution error 503 > exchange error > buffer body
 RequestBody    → now < Deadline? else 503 → OPA with permit-derived context (each batch element re-checks)
 Header-only:   → PermitResolver.Resolve → denial 403 / error 503
                → now < Deadline? else 503 → OPA → allow: Exchange

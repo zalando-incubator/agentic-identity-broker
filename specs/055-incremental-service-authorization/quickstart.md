@@ -221,7 +221,7 @@ supersedes the earlier checkpoints below for status.
 - **US4/docs (T087–T092, T101):** discovery never advertises virtual scopes; the operator guide
   `docs/guides/incremental-authorization.md`; updated gateway guide, token-exchange reference,
   end-user API overview, configuration reference, examples, `ARCHITECTURE.md` and agent context.
-- **Consent UI (T051, T060–T062):** requested-service banner, candidate markers that never select or
+- **Consent UI (T051, T060–T062):** requested-service groups (replacing the earlier banner on 2026-11-22), nested covering sets that never select or
   lock optional sets, and live Save gating with an `aria-describedby` reason.
 - **Compliance verified (T095, T099, T100, T102, T104–T108):** no new broker or ExtProc config key and
   no chart change; `servicescope` imports only `canonical`, `id`, `model`, `storage` and `ports`;
@@ -574,8 +574,8 @@ components; no design-system primitive or visual-direction change is needed.
 
 | Wireloom state | Existing composition and behavior |
 |---|---|
-| Consent C — requested service needs login | Keep agent header, End Date and the existing permission-set/service switches. Use one application `RequestedServiceBanner` per service built from `Alert`/`Card`, text and `Badge` markers for every covering candidate. Use warning semantics plus explicit text, not color alone. Explain partial required-scope coverage and the selected candidate's usability separately; keep optional toggles editable and never auto-select them. |
-| Consent D — ready to save | Change the banner to success with a textual ready explanation only when the baseline and every selected contribution are usable and the selected union covers required scopes. Unselected unusable candidates do not block Save. Save remains the single primary action for submission; separate the existing destructive revoke action visually. Preserve end date, unrelated toggles and protected request context through login. |
+| Consent C — requested service needs login | Keep agent header, End Date and the existing permission-set/service switches. Inside Agent Permissions, render one application `RequestedServiceGroup` per requested service (`role="group"` labelled by its header): the header names agent and service, says "Turn on at least one of these permission sets to allow it.", shows text-labelled login and selection checks and the only "Log in to <service>"/Retry control; covering sets are nested on a warning-token rail with an arrow into each row, without a per-card badge. Connect Your Accounts shows "Asked for" and "Connect above" for the requested service. The Save hint names exactly the unmet conditions in one sentence and stays linked through `aria-describedby`. |
+| Consent D — ready to save | The group header and rail switch to success tokens only when the service is connected and the selected covering sets supply every required scope; both checks read Connected / Permission set on. Save is enabled. |
 | Session A — missing/unusable | Use `Card` with service identity, scope URL, text-labelled warning state, the principal's dependent agents and a primary Login action. Distinguish an existing unusable row from no row. A loading skeleton, authenticated not-found state and retryable `Alert` are separate states, not fabricated empty sessions. |
 | Session B — active | Reuse `SessionCard` content and UUID-based Refresh/Terminate actions, plus `TerminationDialog` confirmation. Show scopes, expiry, encryption and the principal-owned dependent agents. Successful refresh refetches detail; termination returns to State A. Login/management never mutates an agent grant. |
 

@@ -145,7 +145,7 @@ on the pipeline's approval comment. Implementation records the approval. Details
 authoritative text. The earlier approval comment covered the first eleven items in their earlier
 wording; the reconciled wording and the three planning items added on 2026-11-07 need the new
 approval comment. Remediation adds DEC-006, a Proposed scoped exception for missing historical
-browser execution evidence; there are now 15 sign-off items. No exception is granted here.
+browser execution evidence; there are now 16 sign-off items, including ADR-SCOPES-REV2 added on 2026-11-22. No exception is granted here.
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
@@ -163,6 +163,7 @@ browser execution evidence; there are now 15 sign-off items. No exception is gra
 | API-PROXY-REFRESH-VALIDATION | API | Before forwarding a proxy-mode refresh whose `scope` carries a broker-prefixed token, validate syntax, resolve the agent through the existing client resolution, and check service existence and eligibility. Malformed, unknown and ineligible scopes return `400 invalid_scope` (`requested service scope is not permitted`); lookup failure returns `500 server_error`; neither calls upstream. Ordinary-scope-only requests keep their existing path. No provider-usability check and no veto of upstream responses or rotation. | specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161; specs/055-incremental-service-authorization/spec.md:125-136 |
 | DEC-005 | Decision | Scope dropped: the canonical IDs `.` and `..` are accepted as a known defect. No UUID fallback for their scopes, service pages or recovery links, and no change to canonical-ID validation in this feature; issue #446 restricts them. | specs/055-incremental-service-authorization/spec.md:137-146; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:65-71; specs/055-incremental-service-authorization/research.md:421-439 |
 | ADR-SCOPES-REV1 | ADR | ADR 049 Revision 1 draft. Decision 6 gains proxy-refresh pre-forward validation (API-PROXY-REFRESH-VALIDATION); Consequences and Alternatives record the dot-segment limitation (DEC-005). Implementation applies it to `adrs/049-virtual-service-scopes.md` after approval. | adrs/049-virtual-service-scopes-revision-1.md:23-62 |
+| ADR-SCOPES-REV2 | ADR | `adrs/050-virtual-service-scopes-revision-2.md` (Proposed). Records the optional `aib.tokenexchange.resource_metadata_url` route field and challenge placement, the `insufficient_scope` challenge added to body-path grant-context denials that the concurrent exchange attributes to a service (denial body unchanged), and local impersonation applying the virtual-scope checks (agent subjects rejected; narrows merged ADR `032-impersonation-requires-user-delegation`'s scope-intersection non-goal for virtual scopes only). | adrs/050-virtual-service-scopes-revision-2.md |
 | DEC-006 | Decision | Proposed one-time exception for missing contemporaneous compiling semantic-red execution evidence for the original US1 S4/US2 S2 browser journeys only. Require retrospective pre-behavior sensitivity evidence and current complete green/browser/screenshot/accessibility/full-gate evidence; do not claim historical test-first execution or waive new revision TDD. | specs/055-incremental-service-authorization/validation-evidence.md:29-65 |
 
 The approved API items also cover these mechanical consequences:
@@ -289,8 +290,9 @@ web/src/
 ├── App.tsx                                       # /sessions/:service route
 ├── pages/ThirdPartySessionDetailPage.tsx         # New
 ├── pages/AgentGrantDetailPage.tsx                # Requested-service state, Save gating
-├── components/consent/RequestedServiceBanner.tsx # New (application component)
-├── components/consent/PermissionSetsList.tsx     # Candidate and requested markers
+├── components/consent/RequestedServiceGroup.tsx  # New (application component): request header + nested covering sets
+├── components/consent/PermissionSetsList.tsx     # Renders request groups before remaining sets
+├── components/consent/ServiceCard.tsx            # "Asked for" marker, no second login for requested services
 └── services/api/{consent.ts,sessions.ts}
 
 docs/guides/incremental-authorization.md          # New (FR-017)
@@ -515,7 +517,7 @@ execution proof; no other TDD or acceptance obligation is waived.
   scopes, and the return URL. Preserve ADR 046's single observed-rejection state.
 - Handlers: the session-detail route and the consent fields.
 - ExtProc: challenge assembly and metadata validation.
-- Vitest: `RequestedServiceBanner`, Save gating, and `ThirdPartySessionDetailPage`.
+- Vitest: `RequestedServiceGroup`, Save gating and its single-sentence hint, and `ThirdPartySessionDetailPage`.
 
 **Integration tests**:
 

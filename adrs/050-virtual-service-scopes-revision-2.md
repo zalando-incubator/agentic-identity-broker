@@ -1,4 +1,4 @@
-# ADR 050 Revision 2 — ExtProc Challenge Metadata and Grant-Context Denial Challenge
+# ADR 050 Revision 2 — ExtProc Challenge Metadata, Grant-Context Denial Challenge and Local Impersonation
 
 **Status**: Proposed
 **Date**: 2026-11-22
@@ -35,7 +35,34 @@ broker's exchange error carries `access_denied`, the same consent URL as `error_
 resolved service's virtual `scope`. On the header-only path, ExtProc resolves before any exchange
 and calls exchange only after policy allows.
 
+- **Local impersonation.** `050-virtual-service-scopes` Decision 3 names authorization, consent,
+  local issuance and token exchange as consumers of `internal/domain/servicescope/`, but local-mode
+  impersonation was not one of them. It checked each requested scope only against the target
+  Agent's `allowed_scopes` and copied the scopes into the minted token. With an unrestricted Agent
+  it minted malformed, unknown and grant-uncovered virtual scopes; with a restricted Agent it
+  rejected valid ones, contrary to this ADR's Consequences, which exempt virtual scopes from the
+  allow list.
+
 ## Changes to `050-virtual-service-scopes`
+
+### Decisions 3 and 4 (Local impersonation)
+
+In Decision 3, replace "The authorization, consent, local-issuance, and token-exchange services all
+consume it." with "The authorization, consent, local-issuance (including local impersonation), and
+token-exchange services all consume it."
+
+Add to Decision 4:
+
+> - **Local impersonation** exempts broker-prefixed scopes from the `allowed_scopes` pre-check and,
+>   after rule authorization and human delegation and before minting, applies parsing, existence,
+>   eligibility, grant coverage and usability to every requested virtual scope. Malformed, unknown,
+>   ineligible or unsatisfied scopes return `400 invalid_scope` without consent redirection; a
+>   lookup failure or transiently unverifiable usability returns `500 server_error`. A failure is
+>   terminal and does not fall through to later rules. Agent subjects
+>   ([`045-agent-subject-impersonation`](045-agent-subject-impersonation.md)) receive
+>   `invalid_scope` for any virtual scope, as `client_credentials` does. Impersonation stores no
+>   Service-Scope Binding because it issues no authorization code or refresh token.
+
 
 ### Decision 7 (Discovery)
 
@@ -104,6 +131,7 @@ with:
 
 ## Relationship to other ADRs
 
+- [`032-impersonation-requires-user-delegation`](032-impersonation-requires-user-delegation.md): its non-goal "no scope-to-grant intersection is added to impersonation" is narrowed for Virtual Service Scopes only. Provider and other scopes keep the merged behavior.
 - [`036-extproc-metadata-token-exchange-input`](036-extproc-metadata-token-exchange-input.md): extended by one optional advisory member
   of the same namespace. Its two required inputs and their handling do not change.
 - [`044-service-specific-session-recovery-url`](044-service-specific-session-recovery-url.md): its clause that ExtProc response

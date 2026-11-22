@@ -14,9 +14,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
 )
 
-// Impersonation mints local broker tokens, so the Virtual Service Scope rules of
-// specs/055-incremental-service-authorization (FR-002, FR-003, FR-020) apply to it as they do to
-// authorization and local refresh (ADR 050 decision 3).
+// US4 S5 from specs/055-incremental-service-authorization/spec.md: impersonation mints local broker
+// tokens, so the Virtual Service Scope rules (FR-002, FR-003, FR-020) apply to it as they do to
+// authorization and local refresh (050-virtual-service-scopes-revision-2).
 var _ = Describe("Impersonation with Virtual Service Scopes", func() {
 	var (
 		journey *incrementalJourney

@@ -399,9 +399,8 @@ server share the same coverage rule. No raw scope catalog is newly exposed.
 - Add a `/sessions/:service` route rendered by a new `ThirdPartySessionDetailPage`. The page reuses
   the `SessionCard` content, the confirmation dialog, and the actions.
 - On the consent page, `AgentGrantDetailPage` and `PermissionSetsList` gain:
-  - a `RequestedServiceBanner` for each requested service;
-  - a "Covers requested service" `Badge` on each candidate set;
-  - a "requested" marker on service entries;
+  - a `RequestedServiceGroup` for each requested service, with its covering sets nested under it (2026-11-22 maintainer decision; it replaced an earlier banner and per-set "Covers requested service" badges);
+  - an "Asked for" marker on requested service entries, without a second login control;
   - Save disabled while unsatisfied, with the reason linked through `aria-describedby`.
 
 These are application components built from existing design-system primitives (`Card`, `Badge`,
