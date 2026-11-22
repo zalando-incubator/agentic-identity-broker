@@ -139,19 +139,16 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			switch {
 			case errors.Is(err, ports.ErrSessionExpired):
-				h.logger.WarnContext(r.Context(), "authorization session token expired", "agent_id", agentID, "principal", principalValue)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonExpiredAuthorizationSession)
 				h.writeError(w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			case errors.Is(err, ports.ErrSessionAgentMismatch):
-				h.logger.WarnContext(r.Context(), "authorization session agent mismatch",
-					"expected_agent", parsedAgentID,
-					"principal", principalValue)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonAgentMismatch)
 				h.writeError(w, http.StatusBadRequest, "bad request", "authorization session does not match requested agent")
 			case errors.Is(err, ports.ErrSessionPrincipalMismatch):
-				h.logger.WarnContext(r.Context(), "authorization session principal mismatch", "principal", principalValue)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonPrincipalMismatch)
 				h.writeError(w, http.StatusForbidden, "forbidden", "authorization session does not belong to this user")
 			case errors.Is(err, ports.ErrSessionInvalidToken):
-				h.logger.WarnContext(r.Context(), "authorization session token invalid", "event", "consent.authorization_session.rejected",
-					"agent_id", parsedAgentID, "principal", principalValue, "reason", reasonInvalidAuthorizationSession)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonInvalidAuthorizationSession)
 				h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			default:
 				h.logger.ErrorContext(r.Context(), "unexpected error validating authorization session token", "agent_id", agentID, "principal", principalValue, "error", err)

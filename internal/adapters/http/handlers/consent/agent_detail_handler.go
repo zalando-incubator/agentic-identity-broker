@@ -44,6 +44,11 @@ var errSessionExpired = errors.New("authorization session expired")
 // errSessionExpired to allow callers to log at appropriate severity.
 var errInvalidToken = errors.New("authorization session token invalid")
 
+var (
+	errSessionAgentMismatch     = errors.New("authorization session does not match requested agent")
+	errSessionPrincipalMismatch = errors.New("authorization session does not belong to this user")
+)
+
 // errInternalSession is returned by resolveSessionContext when session validation fails
 // due to a server-side misconfiguration or invariant violation (not a bad client token).
 var errInternalSession = errors.New("internal session validation error")
@@ -256,14 +261,22 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	cimdMeta, requestedServiceIDs, err := h.resolveSessionContext(r, parsedAgentID)
 	if err != nil {
 		if errors.Is(err, errSessionExpired) {
-			h.logger.WarnContext(ctx, "authorization session expired", "agent_id", agentID)
+			logAuthorizationSessionRejected(ctx, h.logger, parsedAgentID, userPrincipal, reasonExpiredAuthorizationSession)
 			h.writeError(w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			return
 		}
 		if errors.Is(err, errInvalidToken) {
-			h.logger.WarnContext(ctx, "authorization session token invalid", "event", "consent.authorization_session.rejected",
-				"agent_id", parsedAgentID, "principal", userPrincipal, "reason", reasonInvalidAuthorizationSession)
+			logAuthorizationSessionRejected(ctx, h.logger, parsedAgentID, userPrincipal, reasonInvalidAuthorizationSession)
 			h.writeError(w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
+			return
+		}
+		if errors.Is(err, errSessionAgentMismatch) || errors.Is(err, errSessionPrincipalMismatch) {
+			reason := reasonAgentMismatch
+			if errors.Is(err, errSessionPrincipalMismatch) {
+				reason = reasonPrincipalMismatch
+			}
+			logAuthorizationSessionRejected(ctx, h.logger, parsedAgentID, userPrincipal, reason)
+			h.writeError(w, http.StatusBadRequest, "bad request", "invalid authorization session")
 			return
 		}
 		if errors.Is(err, errInternalSession) {
@@ -465,9 +478,9 @@ func (h *AgentDetailHandler) resolveSessionContext(r *http.Request, agentID id.A
 		case errors.Is(err, ports.ErrSessionExpired):
 			return nil, requested, errSessionExpired
 		case errors.Is(err, ports.ErrSessionAgentMismatch):
-			return nil, requested, errors.New("authorization session does not match requested agent")
+			return nil, requested, errSessionAgentMismatch
 		case errors.Is(err, ports.ErrSessionPrincipalMismatch):
-			return nil, requested, errors.New("authorization session does not belong to this user")
+			return nil, requested, errSessionPrincipalMismatch
 		case errors.Is(err, ports.ErrSessionInvalidToken):
 			return nil, requested, errInvalidToken
 		default:
