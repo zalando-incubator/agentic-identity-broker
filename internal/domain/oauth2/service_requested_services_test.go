@@ -135,7 +135,7 @@ func (f *requestedFixture) request(scope string) *ports.AuthorizationRequest {
 func (f *requestedFixture) continuation(req *ports.AuthorizationRequest, sessionToken string) *ports.AuthorizationRequest {
 	resumed := *req
 	resumed.OriginalURL = req.OriginalURL + "&session_token=" + url.QueryEscape(sessionToken)
-	resumed.Continuation = model.AuthorizationContinuation{Token: sessionToken, Status: model.ContinuationPresent}
+	resumed.Continuation = model.ContinuationParameter{Token: sessionToken, Status: model.ContinuationPresent}
 	return &resumed
 }
 

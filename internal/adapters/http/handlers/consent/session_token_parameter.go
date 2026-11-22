@@ -8,7 +8,7 @@ import (
 )
 
 func sessionTokenParameter(query url.Values) (string, error) {
-	continuation := httpctx.ParseAuthorizationContinuation(query)
+	continuation := httpctx.ParseContinuationParameter(query)
 	if continuation.Status == model.ContinuationInvalid {
 		return "", errInvalidToken
 	}

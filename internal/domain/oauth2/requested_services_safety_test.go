@@ -158,7 +158,7 @@ func TestContinuationRedirectBuildDiagnosticDoesNotLogURL(t *testing.T) {
 	req := f.request(requestedGitHub)
 	req.RedirectURI = "%synthetic-redirect-secret?state=synthetic-state#synthetic-fragment"
 	req.State = "synthetic-state"
-	req.Continuation = model.AuthorizationContinuation{Token: "synthetic-sealed-JWE", Status: model.ContinuationPresent}
+	req.Continuation = model.ContinuationParameter{Token: "synthetic-sealed-JWE", Status: model.ContinuationPresent}
 	req.OriginalURL = "/oauth2/authorize?code=synthetic-code&code_verifier=synthetic-PKCE#synthetic-fragment"
 	decision := svc.redirectError(context.Background(), req, "access_denied", descriptionSessionInvalid)
 	assert.Equal(t, "error", decision.Action)

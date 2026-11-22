@@ -90,9 +90,10 @@ type AuthorizationRequest struct {
 	// INTERNAL: Full original URL for redirect to consent UI
 	OriginalURL string
 
-	// OPTIONAL: Sealed authorization session JWE carried only by the server-built post-consent
-	// continuation. It is consumed locally and never forwarded upstream or to the client.
-	Continuation model.AuthorizationContinuation
+	// OPTIONAL: Parsed session_token parameter (absent, present or invalid). A present token is
+	// unauthenticated input until the sealed-session validator accepts it. It is consumed locally
+	// and never forwarded upstream or to the client.
+	Continuation model.ContinuationParameter
 }
 
 // AuthorizationDecision represents the broker's decision for an authorization request.

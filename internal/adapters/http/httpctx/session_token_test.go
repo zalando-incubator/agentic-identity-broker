@@ -9,22 +9,22 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 )
 
-func TestParseAuthorizationContinuation(t *testing.T) {
+func TestParseContinuationParameter(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		values url.Values
-		want   model.AuthorizationContinuation
+		want   model.ContinuationParameter
 	}{
-		{"absent", url.Values{}, model.AuthorizationContinuation{}},
-		{"present", url.Values{"session_token": {"synthetic-JWE"}}, model.AuthorizationContinuation{Token: "synthetic-JWE", Status: model.ContinuationPresent}},
-		{"empty", url.Values{"session_token": {""}}, model.AuthorizationContinuation{Status: model.ContinuationInvalid}},
-		{"no values", url.Values{"session_token": {}}, model.AuthorizationContinuation{Status: model.ContinuationInvalid}},
-		{"repeated", url.Values{"session_token": {"synthetic-JWE", "synthetic-JWE"}}, model.AuthorizationContinuation{Status: model.ContinuationInvalid}},
-		{"leading empty", url.Values{"session_token": {"", "synthetic-JWE"}}, model.AuthorizationContinuation{Status: model.ContinuationInvalid}},
-		{"trailing empty", url.Values{"session_token": {"synthetic-JWE", ""}}, model.AuthorizationContinuation{Status: model.ContinuationInvalid}},
+		{"absent", url.Values{}, model.ContinuationParameter{}},
+		{"present", url.Values{"session_token": {"synthetic-JWE"}}, model.ContinuationParameter{Token: "synthetic-JWE", Status: model.ContinuationPresent}},
+		{"empty", url.Values{"session_token": {""}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"no values", url.Values{"session_token": {}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"repeated", url.Values{"session_token": {"synthetic-JWE", "synthetic-JWE"}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"leading empty", url.Values{"session_token": {"", "synthetic-JWE"}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"trailing empty", url.Values{"session_token": {"synthetic-JWE", ""}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, ParseAuthorizationContinuation(tc.values))
+			assert.Equal(t, tc.want, ParseContinuationParameter(tc.values))
 		})
 	}
 }
