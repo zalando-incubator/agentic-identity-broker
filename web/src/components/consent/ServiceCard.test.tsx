@@ -171,4 +171,27 @@ describe('ServiceCard', () => {
     // Component should still render even in loading state
     expect(container).toBeInTheDocument();
   });
+
+  it('points a requested service to its request header instead of offering a second login', () => {
+    render(
+      <ServiceCard
+        service={{ ...mockService, requirementType: 'optional' }}
+        isRequested
+        inStack
+      />,
+    );
+
+    expect(screen.getByText('Asked for')).toBeInTheDocument();
+    expect(screen.queryByText('Optional')).not.toBeInTheDocument();
+    expect(screen.getByText('Connect above')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Login' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the requirement badge and Login for a service that was not requested', () => {
+    render(<ServiceCard service={{ ...mockService, requirementType: 'optional' }} inStack />);
+
+    expect(screen.getByText('Optional')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument();
+    expect(screen.queryByText('Connect above')).not.toBeInTheDocument();
+  });
 });

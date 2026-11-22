@@ -1569,44 +1569,70 @@ func (cp *ConsentPage) GetURLQueryParam(param string) (string, error) {
 	return parsed.Query().Get(param), nil
 }
 
-func (cp *ConsentPage) requestedServiceBanner(serviceName string) playwright.Locator {
-	return cp.page().Locator("[data-testid='requested-service-banner']").Filter(playwright.LocatorFilterOptions{HasText: serviceName})
+func (cp *ConsentPage) requestedServiceGroup(serviceName string) playwright.Locator {
+	title := cp.page().Locator("[data-testid='requested-service-header'] h3").Filter(playwright.LocatorFilterOptions{
+		HasText: "is asking for " + serviceName,
+	})
+	return cp.page().Locator("[data-testid='requested-service-group']").Filter(playwright.LocatorFilterOptions{Has: title})
 }
 
-// WaitForRequestedService waits for the banner naming a service requested by the client.
+// WaitForRequestedService waits for the group whose header names a service requested by the client.
 func (cp *ConsentPage) WaitForRequestedService(_ context.Context, serviceName string) error {
-	if err := cp.requestedServiceBanner(serviceName).WaitFor(playwright.LocatorWaitForOptions{
+	if err := cp.requestedServiceGroup(serviceName).WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: playwright.Float(float64(cp.timeout.Milliseconds())),
 	}); err != nil {
-		return fmt.Errorf("requested service banner for %q did not appear: %w", serviceName, err)
+		return fmt.Errorf("requested service group for %q did not appear: %w", serviceName, err)
 	}
 	return nil
 }
 
-// RequestedServiceStatus returns the banner's visible usability text for a requested service.
+// RequestedServiceStatus returns the group header's visible login status for a requested service.
 func (cp *ConsentPage) RequestedServiceStatus(_ context.Context, serviceName string) (string, error) {
-	text, err := cp.requestedServiceBanner(serviceName).Locator("[data-testid='requested-service-status']").InnerText()
+	text, err := cp.requestedServiceGroup(serviceName).Locator("[data-testid='requested-service-status']").InnerText()
 	if err != nil {
 		return "", fmt.Errorf("failed to read requested service status for %q: %w", serviceName, err)
 	}
 	return strings.TrimSpace(text), nil
 }
 
-// LoginRequestedService starts provider sign-in from the requested-service banner.
+// RequestedServiceSelection returns the group header's visible selection status for a requested service.
+func (cp *ConsentPage) RequestedServiceSelection(_ context.Context, serviceName string) (string, error) {
+	text, err := cp.requestedServiceGroup(serviceName).Locator("[data-testid='requested-service-selection']").InnerText()
+	if err != nil {
+		return "", fmt.Errorf("failed to read requested service selection for %q: %w", serviceName, err)
+	}
+	return strings.TrimSpace(text), nil
+}
+
+// LoginRequestedService starts provider sign-in from the requested-service group header.
 func (cp *ConsentPage) LoginRequestedService(_ context.Context, serviceName string) error {
-	return cp.requestedServiceBanner(serviceName).GetByRole("button", playwright.LocatorGetByRoleOptions{
+	return cp.requestedServiceGroup(serviceName).GetByRole("button", playwright.LocatorGetByRoleOptions{
 		Name: "Log in to " + serviceName,
 	}).Click()
 }
 
-// IsRequestedCandidate reports whether a permission set is marked as covering a requested service.
+// IsRequestedCandidate reports whether a permission set is nested under a requested-service group.
 func (cp *ConsentPage) IsRequestedCandidate(_ context.Context, permissionSetName string) (bool, error) {
-	count, err := cp.permissionSetCard(permissionSetName).Locator("[data-testid='requested-candidate-badge']").Count()
+	heading := cp.page().GetByRole("heading", playwright.PageGetByRoleOptions{
+		Name: permissionSetName, Level: playwright.Int(3), Exact: playwright.Bool(true),
+	})
+	count, err := cp.page().Locator("[data-testid='requested-service-group'] [data-testid^='permission-set-']").Filter(playwright.LocatorFilterOptions{
+		Has: heading,
+	}).Count()
 	if err != nil {
-		return false, fmt.Errorf("failed to read requested candidate marker for %q: %w", permissionSetName, err)
+		return false, fmt.Errorf("failed to read requested service grouping for %q: %w", permissionSetName, err)
 	}
 	return count > 0, nil
+}
+
+// ServiceConnectionAction returns the visible action text of a service under Connect Your Accounts.
+func (cp *ConsentPage) ServiceConnectionAction(_ context.Context, serviceDisplayName string) (string, error) {
+	text, err := cp.page().Locator(fmt.Sprintf(`article[aria-label="Service: %s"] [data-testid^='service-actions-']`, serviceDisplayName)).InnerText()
+	if err != nil {
+		return "", fmt.Errorf("failed to read connection action for %q: %w", serviceDisplayName, err)
+	}
+	return strings.TrimSpace(text), nil
 }
 
 // SaveDisabledReason returns the accessible description explaining why Save is disabled.

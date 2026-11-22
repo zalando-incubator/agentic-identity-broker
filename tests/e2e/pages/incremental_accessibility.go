@@ -90,7 +90,7 @@ func (p *Page) auditIncrementalContrast(ctx context.Context, selectors string) (
 }
 
 func (cp *ConsentPage) AuditRequestedServiceContrast(ctx context.Context) (string, error) {
-	return cp.auditIncrementalContrast(ctx, "[data-testid=requested-service-banner] *, [data-testid=requested-candidate-badge], #consent-save-reason, main button[title], [data-testid=permission-set-optional] button[role=switch]")
+	return cp.auditIncrementalContrast(ctx, "[data-testid=requested-service-header] *, [data-testid^=service-actions-] *, #consent-save-reason, main button[title], [data-testid=permission-set-optional] button[role=switch]")
 }
 
 func (sp *SessionsPage) AuditServiceDetailContrast(ctx context.Context) (string, error) {

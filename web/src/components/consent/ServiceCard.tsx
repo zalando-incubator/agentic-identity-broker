@@ -30,6 +30,8 @@ interface ServiceCardProps {
   isFirst?: boolean;
   /** Last row in stack — gets extra bottom padding to fill rounded corner */
   isLast?: boolean;
+  /** Requested by the client; its login lives in the requested-service group header */
+  isRequested?: boolean;
 }
 
 export function ServiceCard({
@@ -42,6 +44,7 @@ export function ServiceCard({
   inStack = false,
   isFirst = false,
   isLast = false,
+  isRequested = false,
 }: ServiceCardProps) {
   const serviceDisplayName =
     service.kind === 'scoped'
@@ -60,7 +63,11 @@ export function ServiceCard({
     service.kind === 'requirement' && service.connectionStatus === 'connected';
 
   // Requirement badge — matches PermissionSetCard style
-  const requirementBadge = service.requirementType ? (
+  const requirementBadge = isRequested ? (
+    <Badge variant="warning" size="sm" shape="rounded">
+      Asked for
+    </Badge>
+  ) : service.requirementType ? (
     <Badge
       variant={service.requirementType === 'mandatory' ? 'primary' : 'neutral'}
       size="sm"
@@ -125,7 +132,11 @@ export function ServiceCard({
 
       {/* Action button */}
       <div className="flex-shrink-0" data-testid={`service-actions-${service.serviceId}`}>
-        {!isConnected ? (
+        {!isConnected && isRequested ? (
+          <span className="text-sm text-neutral-700" data-testid="service-connect-above">
+            Connect above
+          </span>
+        ) : !isConnected ? (
           <Button
             variant="primary"
             size="sm"

@@ -93,24 +93,40 @@ describe('AgentGrantDetailPage — requested services', () => {
     vi.spyOn(useConsentModule, 'useConsent').mockReturnValue({ delegations: [], userInfo: null, loading: false, error: null, refetch: vi.fn() } as never);
   });
 
-  it('marks candidates, keeps them unselected and explains why Save is disabled', async () => {
+  const group = () =>
+    screen.getByRole('group', { name: 'Data Analysis Assistant is asking for GitHub Production' });
+
+  it('groups covering sets under the request, keeps them unselected and names every unmet condition', async () => {
     const user = userEvent.setup();
     renderWith(coverage('missing'));
-    expect(screen.getByTestId('requested-service-banner')).toHaveTextContent('GitHub Production was requested');
-    expect(screen.getAllByTestId('requested-candidate-badge')).toHaveLength(2);
-    expect(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.queryByText(/was requested/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Covers requested/)).not.toBeInTheDocument();
+    expect(within(group()).getByRole('switch', { name: 'Toggle GitHub Read Access' })).toHaveAttribute('aria-checked', 'false');
+    expect(within(group()).getByRole('switch', { name: 'Toggle GitHub Issue Triage' })).toBeInTheDocument();
+    expect(within(group()).queryByRole('heading', { name: 'Identity Access' })).not.toBeInTheDocument();
+    expect(within(group()).getByTestId('requested-service-status')).toHaveTextContent('Not connected');
+    expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('No permission set on');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(saveReason()).toContain('GitHub Production');
+    expect(saveReason()).toBe('To save: log in to GitHub Production and turn on a permission set that allows it.');
     expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
 
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' }));
     expect(saveReason()).toContain('user:email');
+    expect(saveReason()).not.toContain('Connect all required services');
     expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(saveReason()).toBe('To save: log in to GitHub Production.');
     expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
-    expect(saveReason()).toContain('Log in');
-    expect(within(screen.getByTestId('requested-service-banner')).getByRole('button', { name: 'Log in to GitHub Production' })).toBeInTheDocument();
+    expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('Permission set on');
+    expect(group()).toHaveAttribute('data-state', 'pending');
+    expect(screen.getAllByRole('button', { name: /Log in to GitHub Production|^Login$/ })).toHaveLength(1);
+    expect(within(group()).getByRole('button', { name: 'Log in to GitHub Production' })).toBeInTheDocument();
+
+    const connectCard = screen.getByRole('article', { name: 'Service: GitHub Production' });
+    expect(within(connectCard).getByText('Asked for')).toBeInTheDocument();
+    expect(within(connectCard).getByText('Connect above')).toBeInTheDocument();
+    expect(within(connectCard).queryByText('Optional')).not.toBeInTheDocument();
   });
 
   it('enables Save only while every selected candidate contribution is usable', async () => {
@@ -118,9 +134,38 @@ describe('AgentGrantDetailPage — requested services', () => {
     renderWith({ ...coverage('usable', 'unusable'), required_scopes: [] });
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(within(group()).getByTestId('requested-service-status')).toHaveTextContent('Needs reconnecting');
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Save' })).not.toHaveAttribute('aria-describedby');
+    expect(group()).toHaveAttribute('data-state', 'ready');
+    expect(within(group()).getByTestId('requested-service-status')).toHaveTextContent('Connected');
+  });
+
+  it('keeps the connect reason for an unrelated service that still needs a login', () => {
+    vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
+      agent: { ...agent(coverage('missing')), active_session_service_ids: [] },
+      services, cimdMeta: null, grants: grant, loading: false, error: null, refetch: vi.fn(),
+    } as never);
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/agents/agent-1?session_token=sealed']}>
+          <Routes>
+            <Route path="*" element={<AgentGrantDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+    expect(saveReason()).toBe(
+      'Connect all required services before saving. To save: log in to GitHub Production and turn on a permission set that allows it.',
+    );
+  });
+
+  it('explains that a request no offered set covers cannot be allowed here', () => {
+    renderWith({ ...coverage('missing'), covering_permission_sets: [] });
+    expect(group()).toHaveTextContent("None of this agent's permission sets include GitHub Production");
+    expect(within(group()).queryByRole('switch')).not.toBeInTheDocument();
+    expect(saveReason()).toBe('To save: ask an administrator to add a permission set that allows GitHub Production.');
   });
 });

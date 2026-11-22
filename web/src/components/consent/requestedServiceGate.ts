@@ -8,15 +8,24 @@
  * re-evaluates the submitted selection afresh on Save.
  */
 
-import type { RequestedServiceCoverage } from '../../types/consent';
+import type { RequestedServiceCoverage, RequestedServiceUsability } from '../../types/consent';
+
+/** Whether the selection turns on covering sets that together supply every required scope */
+export type RequestedServiceSelection = 'none' | 'incomplete' | 'on';
 
 export interface RequestedServiceResult {
   serviceId: string;
   serviceName: string;
   satisfied: boolean;
-  /** Empty when satisfied; otherwise a user-facing explanation */
+  /** Baseline usability combined with every selected candidate's contribution */
+  login: RequestedServiceUsability;
+  selection: RequestedServiceSelection;
+  missingScopes: string[];
+  /** Empty when satisfied; otherwise one sentence naming every unmet condition */
   reason: string;
 }
+
+const loginPrecedence: RequestedServiceUsability[] = ['unavailable', 'missing', 'unusable'];
 
 export function evaluateRequestedServices(
   coverage: RequestedServiceCoverage[],
@@ -24,37 +33,53 @@ export function evaluateRequestedServices(
   serviceNames: Record<string, string>,
 ): RequestedServiceResult[] {
   return coverage.map((service) => {
-    const name = serviceNames[service.service_id] ?? 'the requested service';
-    const result = (reason: string): RequestedServiceResult => ({
-      serviceId: service.service_id,
-      serviceName: name,
-      satisfied: reason === '',
-      reason,
-    });
+    const name = serviceNames[service.service_id] ?? service.service_id;
 
     const selected = service.covering_permission_sets.filter((candidate) =>
       selection[candidate.permission_set_id]?.includes(service.service_id),
     );
-    if (selected.length === 0) {
-      return result(`Select a permission set that includes ${name}.`);
-    }
-
     const supplied = new Set(selected.flatMap((candidate) => candidate.supplied_required_scopes));
-    const missing = service.required_scopes.filter((scope) => !supplied.has(scope));
-    if (missing.length > 0) {
-      return result(`${name} also needs ${missing.join(', ')}; select permission sets that together provide it.`);
-    }
+    const missingScopes =
+      selected.length === 0 ? [] : service.required_scopes.filter((scope) => !supplied.has(scope));
+    const selectionState: RequestedServiceSelection =
+      selected.length === 0 ? 'none' : missingScopes.length > 0 ? 'incomplete' : 'on';
 
     const usabilities = [service.usability, ...selected.map((candidate) => candidate.usability)];
-    if (usabilities.includes('unavailable')) {
-      return result(`${name} could not be verified right now; try again shortly.`);
-    }
-    if (usabilities.includes('missing')) {
-      return result(`Log in to ${name} before saving.`);
-    }
-    if (usabilities.includes('unusable')) {
-      return result(`Reconnect ${name}: the current session cannot provide the selected permissions.`);
-    }
-    return result('');
+    const login = loginPrecedence.find((state) => usabilities.includes(state)) ?? 'usable';
+
+    const satisfied = selectionState === 'on' && login === 'usable';
+    return {
+      serviceId: service.service_id,
+      serviceName: name,
+      satisfied,
+      login,
+      selection: selectionState,
+      missingScopes,
+      reason: satisfied ? '' : unmetSentence(service, name, login, selectionState, missingScopes),
+    };
   });
+}
+
+function unmetSentence(
+  service: RequestedServiceCoverage,
+  name: string,
+  login: RequestedServiceUsability,
+  selection: RequestedServiceSelection,
+  missingScopes: string[],
+): string {
+  if (service.covering_permission_sets.length === 0) {
+    return `To save: ask an administrator to add a permission set that allows ${name}.`;
+  }
+  const steps: string[] = [];
+  if (login === 'missing' || login === 'unusable') {
+    steps.push(`log in to ${name}`);
+  } else if (login === 'unavailable') {
+    steps.push(`retry the ${name} check`);
+  }
+  if (selection === 'none') {
+    steps.push(`turn on a permission set that allows ${steps.length > 0 ? 'it' : name}`);
+  } else if (selection === 'incomplete') {
+    steps.push(`turn on permission sets that together give ${name} ${missingScopes.join(', ')}`);
+  }
+  return `To save: ${steps.join(' and ')}.`;
 }

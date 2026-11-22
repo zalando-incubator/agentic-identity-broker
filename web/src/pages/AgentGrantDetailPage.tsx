@@ -30,7 +30,6 @@ import { RevokeGrantButton } from '@components/consent/RevokeGrantButton';
 import { CIMDSection } from '@components/consent/CIMDSection';
 import { GrantValidityControl } from '@components/consent/GrantValidityControl';
 import { PermissionSetsList } from '@components/consent/PermissionSetsList';
-import { RequestedServiceBanner } from '@components/consent/RequestedServiceBanner';
 import { evaluateRequestedServices } from '@components/consent/requestedServiceGate';
 import { useAgentGrants, useToggleGrant, useUpdateValidity } from '@hooks';
 import { loadConsentState, saveConsentSelections } from '@services/storage/session';
@@ -422,24 +421,6 @@ export function AgentGrantDetailPage() {
     }
     return names;
   }, [services]);
-  const permissionSetNames = useMemo(() => {
-    const names: Record<string, string> = {};
-    agent?.permission_sets?.forEach((entry) => {
-      names[entry.permission_set.id] = entry.permission_set.name;
-    });
-    return names;
-  }, [agent]);
-  const requestedCandidates = useMemo(() => {
-    const candidates: Record<string, string[]> = {};
-    for (const service of requestedCoverage) {
-      for (const candidate of service.covering_permission_sets) {
-        (candidates[candidate.permission_set_id] ??= []).push(
-          serviceNames[service.service_id] ?? service.service_id,
-        );
-      }
-    }
-    return candidates;
-  }, [requestedCoverage, serviceNames]);
   const requestedResults = useMemo(
     () =>
       evaluateRequestedServices(
@@ -451,20 +432,43 @@ export function AgentGrantDetailPage() {
       ),
     [requestedCoverage, perPsIncludedServiceIds, grants, serviceNames],
   );
+  const requestedServices = useMemo(
+    () =>
+      requestedCoverage.map((service, index) => ({
+        result: requestedResults[index],
+        coveringPermissionSetIds: service.covering_permission_sets.map(
+          (candidate) => candidate.permission_set_id,
+        ),
+      })),
+    [requestedCoverage, requestedResults],
+  );
+  const requestedServiceIds = useMemo(
+    () => new Set(requestedCoverage.map((service) => service.service_id)),
+    [requestedCoverage],
+  );
   const requestedBlockReasons = requestedResults
     .filter((result) => !result.satisfied)
     .map((result) => result.reason);
+  // Requested services carry their own login condition in requestedBlockReasons.
+  const hasUnconnectedUnrequestedService =
+    isApproveDisabled &&
+    dynamicServiceIds !== null &&
+    [...dynamicServiceIds].some(
+      (serviceId) =>
+        !requestedServiceIds.has(serviceId) &&
+        !agent?.active_session_service_ids?.includes(serviceId),
+    );
   const isSaveDisabled = isApproveDisabled || requestedBlockReasons.length > 0;
-  const saveDisabledReason = [
-    ...(isApproveDisabled
-      ? [
-          hasExistingGrant
-            ? 'Connect all required services before saving.'
-            : 'Connect all required services before approving.',
-        ]
-      : []),
+  const connectAllReason = hasExistingGrant
+    ? 'Connect all required services before saving.'
+    : 'Connect all required services before approving.';
+  const saveDisabledReasons = [
+    ...(hasUnconnectedUnrequestedService ? [connectAllReason] : []),
     ...requestedBlockReasons,
-  ].join(' ');
+  ];
+  const saveDisabledReason = (
+    saveDisabledReasons.length > 0 ? saveDisabledReasons : isApproveDisabled ? [connectAllReason] : []
+  ).join(' ');
 
   // Validate agentId parameter (after hooks to keep hook order stable)
   if (!agentId) {
@@ -735,21 +739,10 @@ export function AgentGrantDetailPage() {
             />
           </div>
 
-          {requestedCoverage.length > 0 && (
-            <RequestedServiceBanner
-              coverage={requestedCoverage}
-              results={requestedResults}
-              serviceNames={serviceNames}
-              permissionSetNames={permissionSetNames}
-              onLogin={handleServiceLogin}
-              onRetry={() => void refetch()}
-            />
-          )}
-
-          {/* Permission Sets section */}
-          {agent?.permission_sets && agent.permission_sets.length > 0 && (
+          {/* Permission Sets section, with requested services grouping their covering sets */}
+          {((agent?.permission_sets?.length ?? 0) > 0 || requestedServices.length > 0) && (
             <PermissionSetsList
-              permissionSets={agent.permission_sets}
+              permissionSets={agent.permission_sets ?? []}
               availableServices={services.map((s) => ({
                 id: s.serviceId,
                 display_name:
@@ -761,7 +754,10 @@ export function AgentGrantDetailPage() {
               initialGrantedPermissionSets={
                 restoredSelections ?? grants?.granted_permission_sets ?? {}
               }
-              requestedCandidates={requestedCandidates}
+              agentName={agent.displayName}
+              requestedServices={requestedServices}
+              onRequestedServiceLogin={handleServiceLogin}
+              onRequestedServiceRetry={() => void refetch()}
               onSelectionChange={(_optionalIds, perPsIncluded) => {
                 setPerPsIncludedServiceIds(perPsIncluded);
               }}
@@ -803,6 +799,7 @@ export function AgentGrantDetailPage() {
                       onDelegate={() => handleServiceConnect(service.serviceId)}
                       onRevoke={() => {}}
                       inStack
+                      isRequested={requestedServiceIds.has(service.serviceId)}
                       isFirst={index === 0}
                       isLast={
                         index === servicesWithoutActiveSessions.length - 1

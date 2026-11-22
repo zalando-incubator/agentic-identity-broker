@@ -120,12 +120,17 @@ var _ = Describe("Incremental Service Authorization UI", func() {
 				Expect(consentPage.IsPermissionSetSelected(ctx, name)).To(BeFalse())
 			}
 			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse())
-			Expect(consentPage.SaveDisabledReason(ctx)).To(ContainSubstring("GitHub Production"))
+			Expect(consentPage.SaveDisabledReason(ctx)).To(Equal("To save: log in to GitHub Production and turn on a permission set that allows it."))
+			Expect(consentPage.RequestedServiceStatus(ctx, "GitHub Production")).To(Equal("Not connected"))
+			Expect(consentPage.RequestedServiceSelection(ctx, "GitHub Production")).To(Equal("No permission set on"))
 
 			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Issue Triage")).To(Succeed())
 			Expect(consentPage.SaveDisabledReason(ctx)).To(ContainSubstring("user:email"))
 			Expect(consentPage.TogglePermissionSet(ctx, "GitHub Read Access")).To(Succeed())
 			Expect(consentPage.IsSaveButtonEnabled(ctx)).To(BeFalse(), "a missing session keeps Save disabled")
+			Expect(consentPage.SaveDisabledReason(ctx)).To(Equal("To save: log in to GitHub Production."))
+			Expect(consentPage.RequestedServiceSelection(ctx, "GitHub Production")).To(Equal("Permission set on"))
+			Expect(consentPage.ServiceConnectionAction(ctx, "GitHub Production")).To(Equal("Connect above"))
 			Expect(consentPage.VerifySaveDescription(ctx)).To(Succeed())
 			Expect(consentPage.VerifyRequestedServiceKeyboardOrder(ctx, false)).To(Succeed())
 			auditContrast(consentPage.Page, consentPage.AuditRequestedServiceContrast)

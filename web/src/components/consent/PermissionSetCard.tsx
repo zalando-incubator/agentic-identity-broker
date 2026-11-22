@@ -42,9 +42,6 @@ export interface PermissionSetCardProps {
   /** Called when user toggles an optional SR service within this PS */
   onServiceToggle?: (psId: string, serviceId: string, included: boolean) => void;
 
-  /** Names of requested services this set can cover (Virtual Service Scopes); a marker only */
-  requestedServiceNames?: string[];
-
   isFirst?: boolean;
   isLast?: boolean;
 }
@@ -60,7 +57,6 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
   onServiceToggle,
   isFirst = false,
   isLast = false,
-  requestedServiceNames = [],
 }) => {
   const isMandatory = requirementType === 'mandatory';
   const isActive = isMandatory || isSelected;
@@ -134,11 +130,6 @@ export const PermissionSetCard: React.FC<PermissionSetCardProps> = ({
             <Badge variant={badgeVariant} size="sm" shape="rounded">
               {badgeLabel}
             </Badge>
-            {requestedServiceNames.length > 0 && (
-              <Badge variant="info" size="sm" shape="rounded" className="bg-info-dark border-info-dark" data-testid="requested-candidate-badge">
-                Covers requested {requestedServiceNames.join(', ')}
-              </Badge>
-            )}
           </div>
 
           {/* Description */}
