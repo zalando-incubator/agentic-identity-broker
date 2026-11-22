@@ -93,8 +93,9 @@ metadata document itself is the deployment's responsibility. The full route is
    highlighted and its covering permission sets. Save stays disabled until the selection covers the
    service and its session is usable; the server enforces the same rule. After Save the browser
    returns to the original request, which is revalidated before a code or upstream redirect.
-   Unverifiable usability returns `temporarily_unavailable`; malformed, unknown or ineligible service
-   scopes return `invalid_scope`.
+   Unverifiable usability of a selected service returns `temporarily_unavailable`; a service the grant
+   does not select goes to consent even then. Malformed, unknown or ineligible service scopes return
+   `invalid_scope`.
 2. **Direct repair.** Any client can show the `error_uri`. The user signs in to the provider and
    returns to the service page, which shows the session, its scopes and dependent agents and offers
    refresh and termination. This repairs the session but never changes the agent's grant; a grant

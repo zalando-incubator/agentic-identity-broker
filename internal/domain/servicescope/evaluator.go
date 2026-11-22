@@ -73,9 +73,11 @@ func AllSatisfied(outcomes []Outcome) bool {
 }
 
 // AnyTransient reports whether usability of a selected requested service could not be verified.
+// An unselected service is ignored: not selected takes precedence over transient usability, as in
+// Outcome.Reason, so it leads to focused consent or a not_selected refusal instead of a retry.
 func AnyTransient(outcomes []Outcome) bool {
 	for _, outcome := range outcomes {
-		if outcome.Usability == UsabilityUnverifiableTransient {
+		if outcome.Selected && outcome.Usability == UsabilityUnverifiableTransient {
 			return true
 		}
 	}

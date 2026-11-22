@@ -1462,8 +1462,10 @@ paths:
           with `invalid_scope` and `requested service scope is not permitted`, preserving `state`.
         - Uncovered services, insufficient required-scope coverage, missing or definitively unusable
           sessions redirect to `/agents/{agent-id}?session_token=<JWE>`. The JWE seals requested
-          service IDs and scope-to-UUID bindings. Unverifiable transient usability instead redirects
-          with `temporarily_unavailable`.
+          service IDs and scope-to-UUID bindings. Unverifiable transient usability of a selected
+          service instead redirects with `temporarily_unavailable`. Not selected takes precedence:
+          a service the grant does not select redirects to consent even when its usability is
+          unverifiable.
         - When every requested service is satisfied, local issuance records exact requested scope
           forms and bindings; proxy authorization removes all virtual scopes upstream and omits
           an empty scope parameter.
@@ -1674,7 +1676,9 @@ paths:
         `scope <scope> requires interactive authorization`. A definitively unsatisfied binding
         returns `400 invalid_scope` with
         `scope <scope> is no longer satisfied; interactive authorization required`.
-        Transient unverifiability returns `500 server_error`. None of these failures rotates
+        Transient unverifiability of a selected service returns `500 server_error`; a binding
+        whose service the grant no longer selects returns the definitive `400 invalid_scope`
+        even when its usability is unverifiable. None of these failures rotates
         or revokes the refresh token. Existing revoked-grant `invalid_grant` and replay handling
         retain precedence. Only UUID scopes survive canonical-ID renames; no aliases are kept.
         `client_credentials` with a virtual scope returns `400 invalid_scope` with

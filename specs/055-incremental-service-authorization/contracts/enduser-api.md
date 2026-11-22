@@ -63,8 +63,8 @@ Outcomes once `redirect_uri` is validated. All are redirects to the client's `re
 | Condition | Result |
 |---|---|
 | Malformed virtual scope, unknown service, or service not eligible for the agent | `error=invalid_scope`, `error_description=requested service scope is not permitted` |
-| Any requested service uncovered by the active grant, lacking required-scope coverage, missing, or definitively unusable | `302` to `<public_url>/agents/<agent-id>?session_token=<JWE>` (existing consent redirect). The JWE also seals `requested_service_ids` and bindings. |
-| A requested service's usability cannot be verified (transient provider or storage failure) | `error=temporarily_unavailable` |
+| Any requested service uncovered by the active grant, lacking required-scope coverage, missing, or definitively unusable; or not selected by the grant, whatever its usability | `302` to `<public_url>/agents/<agent-id>?session_token=<JWE>` (existing consent redirect). The JWE also seals `requested_service_ids` and bindings. |
+| A selected requested service's usability cannot be verified (transient provider or storage failure) | `error=temporarily_unavailable` |
 | All requested services satisfied, local or CIMD agent | Existing code issuance. The code records the granted virtual scopes and their bindings. |
 | All requested services satisfied, proxy agent | Existing upstream `302`. The upstream `scope` has every virtual scope removed and is omitted when empty. |
 | Continuation `session_token` is empty, repeated, forged, malformed, expired, or request/principal/agent-mismatched | `302` to the validated client `redirect_uri` with `error=access_denied`, `error_description=authorization session is invalid or expired`, and the request's original `state`; no code or upstream redirect. |
@@ -117,8 +117,8 @@ rotated nor revoked**:
 | Condition | Status | Body |
 |---|---|---|
 | Request `scope` contains a virtual scope absent from the predecessor's current `Scope`, including a previously removed scope | 400 | `{"error":"invalid_scope","error_description":"scope <scope> requires interactive authorization"}` |
-| An originally bound virtual scope no longer resolves, resolves to another service, is no longer eligible, is uncovered, or is definitively unusable for the grant-derived effective provider scopes. This holds whether request `scope` is omitted or narrowed, including assurance-only bindings retained after narrowing. | 400 | `{"error":"invalid_scope","error_description":"scope <scope> is no longer satisfied; interactive authorization required"}` |
-| Usability of a granted virtual scope cannot be verified | 500 | `{"error":"server_error"}` |
+| An originally bound virtual scope no longer resolves, resolves to another service, is no longer eligible, is no longer selected by the grant (whatever its usability), is uncovered, or is definitively unusable for the grant-derived effective provider scopes. This holds whether request `scope` is omitted or narrowed, including assurance-only bindings retained after narrowing. | 400 | `{"error":"invalid_scope","error_description":"scope <scope> is no longer satisfied; interactive authorization required"}` |
+| Usability of a granted virtual scope whose service the grant selects cannot be verified | 500 | `{"error":"server_error"}` |
 
 Existing revoked-grant handling (`invalid_grant`) and replay and rotation semantics are unchanged.
 

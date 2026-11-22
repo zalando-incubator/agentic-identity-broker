@@ -239,6 +239,69 @@ var _ = Describe("Incremental Service Authorization", func() {
 		})
 	})
 
+	Context("when GitHub's usability cannot be verified because the provider is unavailable", func() {
+		var selected []storagedomain.GrantedPermissionSetEntry
+
+		BeforeEach(func() {
+			journey = newIncrementalJourney("local", nil)
+			selected = journey.currentGrant().GrantedPermissionSets
+		})
+
+		selectGitHub := func(include bool) {
+			grant := journey.currentGrant()
+			grant.GrantedPermissionSets = selected
+			if !include {
+				grant.GrantedPermissionSets = selected[:1]
+			}
+			Expect(journey.store.UserGrants().Create(context.Background(), grant)).To(Succeed())
+		}
+		unverifiableGitHub := func() {
+			journey.putSession(fixtures.ExpiredAccessWithRefresh(journey.principal, journey.cast.GitHub.ID.String(), []string{"repo", "user:email"}))
+			journey.provider.WithTransientTokenFailures(http.StatusServiceUnavailable, 1000)
+		}
+
+		// US1 S8 (not selected precedes transient usability) from specs/055-incremental-service-authorization/spec.md.
+		It("sends an unselected service to focused consent and answers temporarily_unavailable only for a selected one", func() {
+			selectGitHub(false)
+			unverifiableGitHub()
+			location, _ := journey.authorize(ordinary + " " + journey.githubScope())
+			sessionToken := journey.expectConsentRedirect(location)
+			detail := journey.consentDetail(sessionToken)
+			Expect(detail["requested_service_ids"]).To(ConsistOf(journey.cast.GitHub.ID.String()))
+			Expect(coverageFor(detail, journey.cast.GitHub.ID)["usability"]).To(Equal("unavailable"))
+
+			By("answering temporarily_unavailable once the grant selects GitHub")
+			selectGitHub(true)
+			location, _ = journey.authorize(ordinary + " " + journey.githubScope())
+			journey.expectAuthorizationError(location, "temporarily_unavailable", "requested service usability cannot be verified; retry later")
+		})
+
+		// US3 S5 (not selected precedes transient usability) from specs/055-incremental-service-authorization/spec.md.
+		It("refuses local refresh of an unselected bound service with invalid_scope and of a selected one with server_error, consuming neither", func() {
+			journey.usableGitHub()
+			refreshToken := journey.issue(ordinary + " " + journey.githubScope())["refresh_token"].(string)
+			selectGitHub(false)
+			unverifiableGitHub()
+
+			status, body := journey.refresh(refreshToken, "")
+			Expect(status).To(Equal(http.StatusBadRequest))
+			Expect(body).To(Equal(map[string]any{
+				"error":             "invalid_scope",
+				"error_description": "scope " + journey.githubScope() + " is no longer satisfied; interactive authorization required",
+			}))
+
+			By("answering server_error once the grant selects GitHub again")
+			selectGitHub(true)
+			status, body = journey.refresh(refreshToken, "")
+			Expect(status).To(Equal(http.StatusInternalServerError))
+			Expect(body["error"]).To(Equal("server_error"))
+
+			journey.usableGitHub()
+			status, body = journey.refresh(refreshToken, "")
+			Expect(status).To(Equal(http.StatusOK), "refused refreshes must not consume the token: %v", body)
+		})
+	})
+
 	Context("when two services are requested and only GitHub is satisfied", func() {
 		BeforeEach(func() {
 			journey = newIncrementalJourney("local", func(j *incrementalJourney) { j.cast.AddJiraRequirement() })

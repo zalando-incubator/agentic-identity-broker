@@ -288,6 +288,25 @@ func TestProviderRefreshRechecksBoundServices(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("an unselected service is not_selected even when its usability is unverifiable", func(t *testing.T) {
+		var logs bytes.Buffer
+		f := newServiceScopeFixture(t, slog.New(slog.NewJSONHandler(&logs, nil)))
+		token := issue(t, f)
+		grants := f.provider.fositeStorage.verifier.(*testConsentVerifier).grants
+		grant, err := grants.FindByPrincipalAndAgent(context.Background(), id.Principal("user@example.com"), f.agent.ID)
+		require.NoError(t, err)
+		grant.GrantedPermissionSets[0].IncludedServiceIDs = nil
+		require.NoError(t, grants.Update(context.Background(), grant))
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUnverifiableTransient}
+
+		_, err = f.refresh(token, "")
+		requireRFC6749(t, err, "invalid_scope", unsatisfied)
+		output := logs.String()
+		assert.Contains(t, output, `"reason":"not_selected"`)
+		assert.Contains(t, output, `"error_kind":"definitive"`)
+		assert.NotContains(t, output, `"reason":"unverifiable_transient"`)
+	})
+
 	t.Run("grant coverage loss and canonical renames fail closed without consumption", func(t *testing.T) {
 		f := newServiceScopeFixture(t)
 		token := issue(t, f)

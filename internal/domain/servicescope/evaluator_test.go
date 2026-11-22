@@ -43,7 +43,9 @@ func TestEvaluatorEvaluateRequested(t *testing.T) {
 	assert.Equal(t, 1, snapshots.reads[githubID], "one verified snapshot per service")
 	assert.False(t, AllSatisfied(outcomes))
 	assert.False(t, AnyTransient(outcomes))
-	assert.True(t, AnyTransient([]Outcome{{Usability: UsabilityUnverifiableTransient}}))
+	assert.True(t, AnyTransient([]Outcome{{Selected: true, Usability: UsabilityUnverifiableTransient}}))
+	assert.False(t, AnyTransient([]Outcome{{Usability: UsabilityUnverifiableTransient}}), "not selected precedes transient usability")
+	assert.True(t, AnyTransient([]Outcome{{Usability: UsabilityUnverifiableTransient}, {Selected: true, Usability: UsabilityUnverifiableTransient}}))
 
 	_, err = NewEvaluator(&fakePermissionSets{err: errStorage}, snapshots).Evaluate(context.Background(), "alice@example.com", castAgent(), nil, []id.ServiceID{githubID})
 	assert.ErrorIs(t, err, errStorage)

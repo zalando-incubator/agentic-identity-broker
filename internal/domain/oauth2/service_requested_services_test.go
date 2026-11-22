@@ -217,6 +217,15 @@ func TestHandleAuthorizationRequestedServices(t *testing.T) {
 		requireAuthorizationError(t, f.authorize(t, f.request("openid "+requestedGitHub)), "temporarily_unavailable", "requested service usability cannot be verified; retry later")
 	})
 
+	t.Run("an unselected service with unverifiable usability redirects to consent", func(t *testing.T) {
+		f := newRequestedFixture(t, nil, false)
+		f.snapshots.snapshot = servicescope.SessionSnapshot{Usability: servicescope.UsabilityUnverifiableTransient}
+		token := consentToken(t, f.authorize(t, f.request("openid "+requestedGitHub)))
+		session, err := f.tokens.ValidateAuthorizationSessionToken(token, f.agent.ID, requestedPrincipal)
+		require.NoError(t, err)
+		assert.Equal(t, []id.ServiceID{requestedGitHubID}, session.RequestedServiceIDs)
+	})
+
 	t.Run("protected re-entry uses sealed bindings and rejects reassignment after Save", func(t *testing.T) {
 		f := newRequestedFixture(t, nil, false)
 		req := f.request("openid " + requestedGitHub)
