@@ -455,7 +455,7 @@ Send these form fields:
 | `actor_token` | Signed JWT | Required. Its validated issuer and identity populate `act.iss` and `act.sub`. |
 | `subject_token_type` | `urn:ietf:params:oauth:token-type:jwt` | Required. |
 | `subject_token` | Signed JWT or unsigned `alg:none` JWT for a matching `verification: none` rule | Required. Its extracted identity populates human `sub`; eligible agent `sub` is target-derived. |
-| `scope` | Literal-space-separated scopes | Optional. Each non-reserved scope must be in the target `allowed_scopes`. An empty allow list permits all. `offline` and `offline_access` are reserved and permitted. |
+| `scope` | Literal-space-separated scopes | Optional. Each non-reserved scope must be in the target `allowed_scopes`. An empty allow list permits all. `offline` and `offline_access` are reserved and permitted. [Virtual service scopes](#virtual-service-scopes) are exempt from the allow list and checked separately. |
 | `requested_token_type` | `urn:ietf:params:oauth:token-type:access_token` | Optional. Another value returns `invalid_request`. |
 
 `resource` must be absent. A bare suffix or invalid suffix returns `invalid_request`. A
@@ -516,6 +516,24 @@ non-reserved scope must be in the target allow list. An empty allow list permits
 untrusted client assertion returns `invalid_client`. A valid request with no permitted rule
 returns `access_denied`. Errors do not expose credentials, signing keys, trust sources, or
 rejected scopes.
+
+#### Virtual service scopes
+
+A scope of the form `<server.enduser.public_url>/sessions/<canonical-id-or-UUID>` follows the
+same rules as authorization and local refresh. The broker checks it after the rule authorizes
+the request and after human delegation:
+
+- A human subject's scope must name an existing service that is eligible for the target agent.
+  The subject's grant must cover the service, and the subject must hold a usable session for it.
+- A malformed, unknown, ineligible or unsatisfied service scope returns `400 invalid_scope`.
+  Because impersonation is not interactive, an unsatisfied service is not redirected to consent.
+- A service, permission-set or session lookup that cannot be completed returns
+  `500 server_error`.
+- An agent subject has no user, so any service scope returns `400 invalid_scope`
+  (`service scopes require a user authorization`), as for `client_credentials`.
+
+A granted service scope appears in the response and JWT `scope` in its requested form.
+Impersonation issues no refresh token, so the broker stores no service-scope binding.
 
 ### Audit events
 

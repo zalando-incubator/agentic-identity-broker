@@ -12,6 +12,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -27,6 +28,8 @@ type Service struct {
 	issuer             ports.ImpersonationTokenIssuer
 	delegationVerifier ports.UserDelegationVerifier
 	consentBaseURL     string
+	serviceScopes      *servicescope.Resolver
+	serviceEvaluator   *servicescope.Evaluator
 	logger             *slog.Logger
 }
 
@@ -85,6 +88,15 @@ func NewService(
 	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
 }
 
+// WithServiceScopes enables Virtual Service Scopes (ADR 050) with the resolver and evaluator
+// shared by authorization, consent and local refresh. Without them every broker-prefixed scope is
+// refused.
+func (s *Service) WithServiceScopes(resolver *servicescope.Resolver, evaluator *servicescope.Evaluator) *Service {
+	s.serviceScopes = resolver
+	s.serviceEvaluator = evaluator
+	return s
+}
+
 // AuditRecord is the credential-free decision record emitted for every impersonation attempt
 // (FR-012). It never contains credential values, key material, or wholesale claims (SC-005).
 type AuditRecord struct {
@@ -114,7 +126,7 @@ func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target)
 	}
 	request := requestContext{Scope: req.Scope, GrantType: GrantType, AgentID: target.Agent.ID.String()}
 	for _, scope := range req.Scopes {
-		if !oauth2.IsScopeAllowed(target.Agent.AllowedScopes, scope) {
+		if !s.isBrokerScope(scope) && !oauth2.IsScopeAllowed(target.Agent.AllowedScopes, scope) {
 			err := invalidScope("requested scope is not permitted")
 			return &Outcome{Audit: failureAudit(target.Agent.ID.String(), nil, err)}, err
 		}
@@ -272,13 +284,14 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 
+	var delegation ports.UserDelegation
 	if res.category == SubjectCategoryHuman {
-		delegationStatus, err := s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID)
+		delegation, err = s.delegationVerifier.VerifyUserDelegation(ctx, id.Principal(subjectID), targetAgent.ID)
 		if err != nil {
 			res.abort = originError(ctx, serverError("user delegation verification failed"), err, tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable)
 			return res
 		}
-		switch delegationStatus {
+		switch delegation.Status {
 		case ports.UserDelegationActive:
 		case ports.UserDelegationMissing:
 			res.abort = consentRequired(strings.TrimRight(s.consentBaseURL, "/") + "/agents/" + targetAgent.ID.String()).
@@ -292,6 +305,11 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 			res.abort = originError(ctx, serverError("user delegation verification returned an unknown status"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
 			return res
 		}
+	}
+
+	if abort := s.checkServiceScopes(ctx, req.Scopes, res.category, id.Principal(subjectID), targetAgent, delegation.GrantedPermissionSets); abort != nil {
+		res.abort = abort
+		return res
 	}
 
 	token, err := s.issuer.IssueImpersonationToken(ctx, ports.ImpersonationMintInput{
@@ -312,6 +330,51 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 	response.Scope = strings.Join(req.Scopes, " ")
 	res.response = response
 	return res
+}
+
+func (s *Service) isBrokerScope(scope string) bool {
+	return servicescope.IsBrokerScope(scope, s.consentBaseURL)
+}
+
+// checkServiceScopes applies the authorization and local-refresh rules to the requested Virtual
+// Service Scopes: each must resolve to an existing service eligible for the agent, and the
+// user's grant must cover a usable session for it. An agent subject has no user, so, like
+// client_credentials, it never receives a service scope. The minted access token is the only
+// artifact, so there is no authorization code or refresh session to carry bindings.
+func (s *Service) checkServiceScopes(ctx context.Context, scopes []string, category SubjectCategory, principal id.Principal, agent *storage.Agent, selection []storage.GrantedPermissionSetEntry) *tokenexchange.TokenExchangeError {
+	var requested []string
+	for _, scope := range scopes {
+		if s.isBrokerScope(scope) {
+			requested = append(requested, scope)
+		}
+	}
+	if len(requested) == 0 {
+		return nil
+	}
+	if category != SubjectCategoryHuman {
+		return invalidScope("service scopes require a user authorization")
+	}
+	if s.serviceScopes == nil || s.serviceEvaluator == nil {
+		return invalidScope(serviceScopeNotPermittedDescription)
+	}
+	services, err := s.serviceScopes.Resolve(ctx, strings.Join(requested, " "), agent, nil)
+	if err != nil {
+		if servicescope.IsPermissionFailure(err) {
+			return invalidScope(serviceScopeNotPermittedDescription)
+		}
+		return originError(ctx, serverError("requested service resolution failed"), err, tokenexchange.StageScopeValidation, tokenexchange.DetailInternalUnclassified)
+	}
+	outcomes, err := s.serviceEvaluator.Evaluate(ctx, principal, agent, selection, services.ServiceIDs())
+	if err != nil {
+		return originError(ctx, serverError("requested service evaluation failed"), err, tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable)
+	}
+	if servicescope.AnyTransient(outcomes) {
+		return originError(ctx, serverError("requested service usability cannot be verified"), nil, tokenexchange.StageScopeValidation, tokenexchange.DetailInternalUnclassified)
+	}
+	if !servicescope.AllSatisfied(outcomes) {
+		return invalidScope("requested service scope is not satisfied; interactive authorization required")
+	}
+	return nil
 }
 
 func credentialError(ctx context.Context, envelope *tokenexchange.TokenExchangeError, cause error, stage tokenexchange.FailureStage) *tokenexchange.TokenExchangeError {

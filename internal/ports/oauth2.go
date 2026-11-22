@@ -298,8 +298,15 @@ const (
 	UserDelegationExpired UserDelegationStatus = "expired"
 )
 
+// UserDelegation is a principal's delegation status for an agent. An active delegation also
+// carries the grant's permission-set selection, which Virtual Service Scope evaluation needs.
+type UserDelegation struct {
+	Status                UserDelegationStatus
+	GrantedPermissionSets []storage.GrantedPermissionSetEntry
+}
+
 // UserDelegationVerifier reports whether a principal has an active delegation to an agent.
 // A non-nil error means the status could not be determined and callers must fail closed.
 type UserDelegationVerifier interface {
-	VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (UserDelegationStatus, error)
+	VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (UserDelegation, error)
 }

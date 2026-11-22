@@ -794,7 +794,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		WithCredentialFileReader(credentialfile.New())
 
 	// Virtual Service Scopes (ADR 050) share one resolver and evaluator across authorization,
-	// local issuance and consent.
+	// local issuance, impersonation and consent.
 	var serviceScopes *servicescope.Resolver
 	var serviceScopeEvaluator *servicescope.Evaluator
 	if app.ProviderService != nil && app.PermissionSetService != nil {
@@ -1277,6 +1277,9 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient, localProviders), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build impersonation service: %w", err)
+		}
+		if serviceScopes != nil {
+			svc.WithServiceScopes(serviceScopes, serviceScopeEvaluator)
 		}
 		impersonationService = svc
 		b.logger.Info("oauth2 impersonation enabled", "audience_prefix", impCfg.AudiencePrefix, "rules", len(impCfg.Rules))

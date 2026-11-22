@@ -1828,6 +1828,8 @@ target agent. `requested_token_type` is optional. When present, it must be the a
 type. `resource` must be absent. `scope` is optional and uses literal-space-separated values.
 Each non-reserved scope must be in the resolved target `allowed_scopes`. An empty allow list
 permits all non-reserved scopes. `offline` and `offline_access` are reserved and permitted.
+Virtual service scopes are exempt from the allow list and follow the
+[impersonation service-scope rules](reference/token-exchange.md#virtual-service-scopes).
 The response and minted token contain a non-empty granted scope. The target UUID and agent
 always supply `agent_id` and local CEL `agent.*`, regardless of identifier form. Local policy
 controls `aud`.

@@ -105,6 +105,11 @@ leaves the refresh token valid, and only interactive authorization can add it.
   narrowing; a refusal never rotates or revokes the refresh token. `invalid_scope` means interactive
   authorization is required, and `server_error` means usability could not be verified now.
   `client_credentials` rejects virtual scopes.
+- **Local impersonation.** A human subject's virtual scope is checked like an authorization
+  request, after delegation: an existing, eligible service covered by the subject's grant with a
+  usable session. A failure returns `invalid_scope` (or `server_error` when it cannot be verified)
+  instead of redirecting to consent. An agent subject never receives a virtual scope. See
+  [user impersonation](../reference/token-exchange.md#virtual-service-scopes).
 - **Proxy clients.** The broker checks requested services before redirecting upstream and removes
   virtual scopes from upstream authorization and refresh requests, omitting an empty `scope`.
   Before forwarding refresh, malformed, unknown or agent-ineligible broker scopes return

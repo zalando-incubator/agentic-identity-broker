@@ -1804,6 +1804,13 @@ paths:
         resolved target agent's `allowed_scopes`; an empty target allow-list is unrestricted, and
         `offline` and `offline_access` are always permitted refresh-token scopes. An out-of-list
         non-reserved value returns `invalid_scope`. The normal local JWT and response carry non-empty granted scope.
+        Virtual service scopes are exempt from `allowed_scopes` and follow local issuance: after
+        delegation, a human subject's virtual scope must name an existing service eligible for the
+        target and covered by the subject's grant with a usable session. Malformed, unknown,
+        ineligible or unsatisfied service scopes return `400 invalid_scope`; lookup failure or
+        unverifiable usability returns `500 server_error`. An agent subject with a virtual scope
+        returns `400 invalid_scope` (`service scopes require a user authorization`). Granted
+        virtual scopes appear in their requested form.
         Signed credentials are validated for signature, issuer, audience, expiry, and not-before
         before a CEL authorization predicate decides the request. Bare suffixes and suffixes matching
         neither identifier form return `invalid_request`; a well-formed UUID or canonical-ID suffix
