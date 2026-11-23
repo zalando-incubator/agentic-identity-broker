@@ -48,7 +48,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		h.logger.WarnContext(ctx, "principal not found in context")
-		h.writeError(r.Context(), w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		h.writeError(ctx, w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 
@@ -58,7 +58,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 		h.logger.ErrorContext(ctx, "failed to get agent delegations",
 			"principal", principalValue,
 			"error", err)
-		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(ctx, w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -71,7 +71,7 @@ func (h *AgentsHandler) GetAgentDelegations(w http.ResponseWriter, r *http.Reque
 		Data: delegations,
 	}
 
-	h.writeJSON(r.Context(), w, http.StatusOK, response)
+	h.writeJSON(ctx, w, http.StatusOK, response)
 }
 
 // writeJSON writes a JSON response.

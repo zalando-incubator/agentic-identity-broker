@@ -148,7 +148,7 @@ func (e *CELEvaluator) ExtractClaims(ctx context.Context, claims map[string]inte
 	}
 
 	// Extract principal (required)
-	principal, err := e.evaluateStringExpression(e.principalProgram, claims)
+	principal, err := e.evaluateStringExpression(ctx, e.principalProgram, claims)
 	if err != nil {
 		return nil, fmt.Errorf("%w: principal: %v", ErrClaimExtraction, err)
 	}
@@ -159,7 +159,7 @@ func (e *CELEvaluator) ExtractClaims(ctx context.Context, claims map[string]inte
 
 	// Extract optional display name
 	if e.displayNameProgram != nil {
-		displayName, err := e.evaluateStringExpression(e.displayNameProgram, claims)
+		displayName, err := e.evaluateStringExpression(ctx, e.displayNameProgram, claims)
 		if err != nil {
 			e.logger.WarnContext(ctx, "display_name cel expression evaluation failed, treating as absent",
 				"error", err)
@@ -170,7 +170,7 @@ func (e *CELEvaluator) ExtractClaims(ctx context.Context, claims map[string]inte
 
 	// Extract optional email
 	if e.emailProgram != nil {
-		email, err := e.evaluateStringExpression(e.emailProgram, claims)
+		email, err := e.evaluateStringExpression(ctx, e.emailProgram, claims)
 		if err != nil {
 			e.logger.WarnContext(ctx, "email cel expression evaluation failed, treating as absent",
 				"error", err)
@@ -181,7 +181,7 @@ func (e *CELEvaluator) ExtractClaims(ctx context.Context, claims map[string]inte
 
 	// Extract optional picture URL
 	if e.pictureURLProgram != nil {
-		pictureURL, err := e.evaluateStringExpression(e.pictureURLProgram, claims)
+		pictureURL, err := e.evaluateStringExpression(ctx, e.pictureURLProgram, claims)
 		if err != nil {
 			e.logger.WarnContext(ctx, "picture_url cel expression evaluation failed, treating as absent",
 				"error", err)
@@ -196,8 +196,8 @@ func (e *CELEvaluator) ExtractClaims(ctx context.Context, claims map[string]inte
 // evaluateStringExpression evaluates a compiled CEL program with the given claims
 // and returns the result as a string. Returns an error if the result is not a string
 // or if evaluation times out.
-func (e *CELEvaluator) evaluateStringExpression(program cel.Program, claims map[string]interface{}) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), e.evaluationTimeout)
+func (e *CELEvaluator) evaluateStringExpression(ctx context.Context, program cel.Program, claims map[string]interface{}) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, e.evaluationTimeout)
 	defer cancel()
 
 	variables := map[string]interface{}{

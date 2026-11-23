@@ -22,7 +22,7 @@ func TestAuthenticate_OptionalClaimLogsCarryRequestContext(t *testing.T) {
 	logger := slog.New(telemetry.NewContextHandler(slog.NewJSONHandler(&logs, nil)))
 	evaluator, err := domainjwtauth.NewCELEvaluator(domainjwtauth.CELEvaluatorConfig{
 		PrincipalExpression:   "claims.sub",
-		DisplayNameExpression: "claims.missing_name",
+		DisplayNameExpression: "claims.name",
 		EmailExpression:       "claims.missing_email",
 		PictureURLExpression:  "claims.missing_picture",
 	}, logger)
@@ -39,7 +39,7 @@ func TestAuthenticate_OptionalClaimLogsCarryRequestContext(t *testing.T) {
 	token := createSignedJWT(t, map[string]interface{}{
 		"sub":  "subject@example.com",
 		"exp":  time.Now().Add(time.Hour),
-		"name": "private-profile-name",
+		"name": []string{"private-profile-name"},
 	}, key)
 	ctx := security.WithSecurityContext(t.Context(), security.SecurityContext{
 		TraceID:     "0123456789abcdef0123456789abcdef",

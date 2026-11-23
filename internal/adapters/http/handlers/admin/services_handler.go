@@ -233,14 +233,14 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	var req ServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
 	if err != nil {
 		h.logger.WarnContext(ctx, "service validation failed", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -300,14 +300,14 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	if req.Discovery.ResourceURL != nil {
 		if err := entity.ValidateDiscoveryRequest(); err != nil {
-			h.writeDiscoveryRequestError(r.Context(), w, err)
+			h.writeDiscoveryRequestError(ctx, w, err)
 			return
 		}
 	} else if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
 		h.logger.WarnContext(ctx, "service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -334,7 +334,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 			h.logger.WarnContext(ctx, "service validation failed",
 				"client_id", entity.ClientID,
 				"error", err)
-			h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+			h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 			return
 		}
 	}
@@ -345,7 +345,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 			h.logger.WarnContext(ctx, "protected_resources validation failed",
 				"service_id", entity.ID,
 				"error", err)
-			h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+			h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 			return
 		}
 	}
@@ -362,7 +362,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	// Return the created service without exposing its secret.
 	resp := h.toResponse(entity.RedactedCopy())
-	h.writeJSON(r.Context(), w, http.StatusCreated, resp)
+	h.writeJSON(ctx, w, http.StatusCreated, resp)
 }
 
 // GetService handles GET /api/services/{service-id}
@@ -372,7 +372,7 @@ func (h *ServicesHandler) GetService(w http.ResponseWriter, r *http.Request) {
 	serviceID := chi.URLParam(r, "service-id")
 
 	if serviceID == "" {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "service ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "service ID is required", "")
 		return
 	}
 
@@ -391,7 +391,7 @@ func (h *ServicesHandler) GetService(w http.ResponseWriter, r *http.Request) {
 	// Return the service without exposing its secret.
 	w.Header().Set("ETag", strongETag(entity.Version))
 	resp := h.toResponse(entity.RedactedCopy())
-	h.writeJSON(r.Context(), w, http.StatusOK, resp)
+	h.writeJSON(ctx, w, http.StatusOK, resp)
 }
 
 // GetDiscoveryStatus reads committed state without contacting the provider.
@@ -438,26 +438,26 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	serviceID := chi.URLParam(r, "service-id")
 
 	if serviceID == "" {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "service ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "service ID is required", "")
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 	var req ServiceRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
 	if err != nil {
 		h.logger.WarnContext(ctx, "service validation failed", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -529,7 +529,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 			if errors.As(err, &storageErr) {
 				h.handleServiceMutationError(w, r, "UpdateService", err, true)
 			} else {
-				h.writeDiscoveryRequestError(r.Context(), w, err)
+				h.writeDiscoveryRequestError(ctx, w, err)
 			}
 			return
 		}
@@ -541,7 +541,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 			h.handleStorageError(w, r, "UpdateService", err)
 			return
 		}
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -573,7 +573,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 				h.handleStorageError(w, r, "UpdateService", err)
 				return
 			}
-			h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+			h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 			return
 		}
 	}
@@ -582,7 +582,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	if req.protectedResourcesProvided {
 		parsedVersion, err := parseStrongETag(r.Header.Get("If-Match"))
 		if err != nil {
-			h.writeError(r.Context(), w, http.StatusPreconditionRequired, "precondition required", "If-Match with a strong ETag is required when replacing protected_resources")
+			h.writeError(ctx, w, http.StatusPreconditionRequired, "precondition required", "If-Match with a strong ETag is required when replacing protected_resources")
 			return
 		}
 		expectedVersion = &parsedVersion
@@ -590,7 +590,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		if req.Discovery.ResourceURL == nil {
 			if err := entity.ValidateProtectedResources(); err != nil {
 				h.logger.WarnContext(ctx, "protected_resources validation failed", "service_id", entity.ID, "error", err)
-				h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+				h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 				return
 			}
 		}
@@ -599,7 +599,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	if err := h.providerService.Update(ctx, entity, expectedVersion); err != nil {
 		var storageErr *storage.StorageError
 		if expectedVersion != nil && errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindConflict && strings.Contains(storageErr.Message, "version") {
-			h.writeError(r.Context(), w, http.StatusPreconditionFailed, "precondition failed", storageErr.Message)
+			h.writeError(ctx, w, http.StatusPreconditionFailed, "precondition failed", storageErr.Message)
 			return
 		}
 		h.handleServiceMutationError(w, r, "UpdateService", err, req.Discovery.ResourceURL != nil)
@@ -614,7 +614,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 
 	resp := h.toResponse(entity.RedactedCopy())
 	w.Header().Set("ETag", strongETag(entity.Version))
-	h.writeJSON(r.Context(), w, http.StatusOK, resp)
+	h.writeJSON(ctx, w, http.StatusOK, resp)
 }
 
 func parseStrongETag(value string) (int64, error) {
@@ -642,7 +642,7 @@ func (h *ServicesHandler) DeleteService(w http.ResponseWriter, r *http.Request) 
 	serviceID := chi.URLParam(r, "service-id")
 
 	if serviceID == "" {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "service ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "service ID is required", "")
 		return
 	}
 
@@ -661,7 +661,7 @@ func (h *ServicesHandler) DeleteService(w http.ResponseWriter, r *http.Request) 
 			h.logger.WarnContext(ctx, "service deletion blocked due to existing grants",
 				"service_id", serviceID,
 				"error", message)
-			h.writeError(r.Context(), w, http.StatusConflict, "conflict", message)
+			h.writeError(ctx, w, http.StatusConflict, "conflict", message)
 			return
 		}
 
@@ -692,7 +692,7 @@ func (h *ServicesHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 		responses[i] = h.toResponse(entity.RedactedCopy())
 	}
 
-	h.writeJSON(r.Context(), w, http.StatusOK, responses)
+	h.writeJSON(ctx, w, http.StatusOK, responses)
 }
 
 // toResponse converts a ThirdpartyOAuth2ProviderEntity to ServiceResponse.

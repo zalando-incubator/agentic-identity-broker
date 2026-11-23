@@ -1,11 +1,14 @@
 package jwtauth
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types/ref"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -307,6 +310,24 @@ func TestCELEvaluator_ExtractClaims_Timeout(t *testing.T) {
 		assert.Equal(t, id.Principal("fast-user"), result.Principal)
 	})
 
+	t.Run("cancelled request stops evaluation", func(t *testing.T) {
+		evaluator, err := NewCELEvaluator(CELEvaluatorConfig{
+			PrincipalExpression: "claims.sub",
+			EvaluationTimeout:   time.Second,
+		}, testLogger())
+		require.NoError(t, err)
+		release := make(chan struct{})
+		t.Cleanup(func() { close(release) })
+		evaluator.principalProgram = blockingProgram{release: release}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, err = evaluator.ExtractClaims(ctx, map[string]interface{}{"sub": "user"})
+
+		require.ErrorIs(t, err, ErrClaimExtraction)
+		assert.ErrorContains(t, err, "CEL evaluation cancelled")
+	})
+
 	t.Run("default timeout is 100ms", func(t *testing.T) {
 		config := CELEvaluatorConfig{
 			PrincipalExpression: "claims.sub",
@@ -355,4 +376,14 @@ func TestCELEvaluator_PrincipalRequired(t *testing.T) {
 // strPtr is a helper to create a *string from a string literal.
 func strPtr(s string) *string {
 	return &s
+}
+
+type blockingProgram struct {
+	cel.Program
+	release <-chan struct{}
+}
+
+func (p blockingProgram) Eval(any) (ref.Val, *cel.EvalDetails, error) {
+	<-p.release
+	return nil, nil, context.Canceled
 }

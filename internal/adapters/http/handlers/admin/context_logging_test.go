@@ -43,7 +43,7 @@ func TestResponseWriter_LogsCarryRequestContext(t *testing.T) {
 					var w http.ResponseWriter = httptest.NewRecorder()
 					var data any = map[string]any{"client_secret": "response-credential-marker"}
 					if failure == "encoding" {
-						data = make(chan int)
+						data = map[string]any{"client_secret": "response-credential-marker", "unsupported": make(chan int)}
 					} else {
 						w = &contextLoggingFailedWriter{ResponseRecorder: httptest.NewRecorder()}
 					}

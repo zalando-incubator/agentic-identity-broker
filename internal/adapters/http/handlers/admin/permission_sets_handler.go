@@ -88,14 +88,14 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req CreatePermissionSetRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	// Validate request
 	if err := h.validateCreateRequest(ctx, &req); err != nil {
 		h.logger.WarnContext(ctx, "validation failed", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -103,7 +103,7 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	serviceScopes, err := h.convertServiceScopes(ctx, req.ServiceScopes)
 	if err != nil {
 		h.logger.WarnContext(ctx, "invalid service scopes", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	resp := h.toResponse(ps)
 	w.Header().Set("Location", fmt.Sprintf("/api/permission-sets/%s", ps.ID))
-	h.writeJSON(r.Context(), w, http.StatusCreated, resp)
+	h.writeJSON(ctx, w, http.StatusCreated, resp)
 }
 
 // Get handles GET /api/permission-sets/:id
@@ -138,7 +138,7 @@ func (h *PermissionSetsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	psIDStr := chi.URLParam(r, "id")
 
 	if psIDStr == "" {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "permission set ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "permission set ID is required", "")
 		return
 	}
 
@@ -165,7 +165,7 @@ func (h *PermissionSetsHandler) Get(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Preference-Applied", "reference-id=canonical")
 		}
 	}
-	h.writeJSON(r.Context(), w, http.StatusOK, resp)
+	h.writeJSON(ctx, w, http.StatusOK, resp)
 }
 
 // List handles GET /api/permission-sets
@@ -190,7 +190,7 @@ func (h *PermissionSetsHandler) List(w http.ResponseWriter, r *http.Request) {
 			parsedServiceID, err = id.ParseServiceID(serviceIDStr)
 		}
 		if err != nil {
-			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid service_id", err.Error())
+			h.writeError(ctx, w, http.StatusBadRequest, "invalid service_id", err.Error())
 			return
 		}
 		serviceID = parsedServiceID
@@ -225,7 +225,7 @@ func (h *PermissionSetsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := PermissionSetListResponse{Items: items}
-	h.writeJSON(r.Context(), w, http.StatusOK, resp)
+	h.writeJSON(ctx, w, http.StatusOK, resp)
 }
 
 // Update handles PUT /api/permission-sets/:id
@@ -234,7 +234,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	psIDStr := chi.URLParam(r, "id")
 
 	if psIDStr == "" {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "permission set ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "permission set ID is required", "")
 		return
 	}
 
@@ -246,18 +246,18 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 	var req CreatePermissionSetRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 	var rawFields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &rawFields); err != nil {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 	_, canonicalIDPresent := rawFields["canonical_id"]
@@ -265,7 +265,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Validate request
 	if err := h.validateCreateRequest(ctx, &req); err != nil {
 		h.logger.WarnContext(ctx, "validation failed", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -273,7 +273,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	serviceScopes, err := h.convertServiceScopes(ctx, req.ServiceScopes)
 	if err != nil {
 		h.logger.WarnContext(ctx, "invalid service scopes", "error", err)
-		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -309,7 +309,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Return updated permission set
 	resp := h.toResponse(ps)
-	h.writeJSON(r.Context(), w, http.StatusOK, resp)
+	h.writeJSON(ctx, w, http.StatusOK, resp)
 }
 
 // Delete handles DELETE /api/permission-sets/:id
@@ -318,7 +318,7 @@ func (h *PermissionSetsHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	psIDStr := chi.URLParam(r, "id")
 
 	if psIDStr == "" {
-		h.writeError(r.Context(), w, http.StatusBadRequest, "permission set ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "permission set ID is required", "")
 		return
 	}
 

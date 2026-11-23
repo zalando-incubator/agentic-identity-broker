@@ -61,7 +61,7 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 			Data: userInfo,
 		}
 
-		h.writeJSON(r.Context(), w, http.StatusOK, response)
+		h.writeJSON(ctx, w, http.StatusOK, response)
 		return
 	}
 
@@ -69,7 +69,7 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 	principalValue, ok := principal.FromContext(ctx)
 	if !ok || principalValue == "" {
 		h.logger.WarnContext(ctx, "principal not found in context")
-		h.writeError(r.Context(), w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		h.writeError(ctx, w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *UserInfoHandler) GetUserInfo(w http.ResponseWriter, r *http.Request) {
 		Data: userInfo,
 	}
 
-	h.writeJSON(r.Context(), w, http.StatusOK, response)
+	h.writeJSON(ctx, w, http.StatusOK, response)
 }
 
 // writeJSON writes a JSON response.
