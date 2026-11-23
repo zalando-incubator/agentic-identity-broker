@@ -15,9 +15,15 @@ import (
 type Operation string
 
 const (
-	OperationExchange         Operation = "exchange"
+	// OperationExchange means the token exchange with the broker, including the wait for a shared exchange; ExtProc
+	// also uses it for an unknown operation.
+	OperationExchange Operation = "exchange"
+	// OperationAssertionRefresh means the refresh of ExtProc's own client assertion at the OAuth provider; an
+	// exchange that finds the assertion expired also reports it.
 	OperationAssertionRefresh Operation = "assertion_refresh"
-	OperationConfiguration    Operation = "configuration"
+	// OperationConfiguration means building the token exchanger at startup; a failure stops ExtProc, so no span or
+	// metric carries this value.
+	OperationConfiguration Operation = "configuration"
 )
 
 // ErrorKind and Dependency are bounded telemetry values, never provider text.
@@ -25,18 +31,40 @@ type ErrorKind string
 type Dependency string
 
 const (
-	KindNone             ErrorKind = "none"
-	KindConfiguration    ErrorKind = "configuration"
-	KindUnavailable      ErrorKind = "unavailable"
-	KindRejected         ErrorKind = "rejected"
-	KindInvalidResponse  ErrorKind = "invalid_response"
-	KindCallerCanceled   ErrorKind = "caller_canceled"
+	// KindNone means nothing failed; ExtProc never sets `error.type` to it.
+	KindNone ErrorKind = "none"
+	// KindConfiguration means ExtProc's own configuration is unusable, such as a client assertion type that it does
+	// not support or a token endpoint that it cannot build a request for.
+	KindConfiguration ErrorKind = "configuration"
+	// KindUnavailable means the broker or the OAuth provider was unreachable, timed out or answered 5xx or 429, or
+	// ExtProc had no usable grant context.
+	KindUnavailable ErrorKind = "unavailable"
+	// KindRejected means the broker or the OAuth provider answered with a 4xx error, or ExtProc rejected the
+	// request's token-exchange metadata and answered 503.
+	KindRejected ErrorKind = "rejected"
+	// KindInvalidResponse means the broker or the OAuth provider answered with a body that ExtProc could not use, or
+	// the delegation permit carried an invalid grant timestamp.
+	KindInvalidResponse ErrorKind = "invalid_response"
+	// KindCallerCanceled means the request was canceled, or its deadline passed, while ExtProc waited for the
+	// exchange; ExtProc sets no error status for it.
+	KindCallerCanceled ErrorKind = "caller_canceled"
+	// KindAssertionExpired means ExtProc's own client assertion had expired when an exchange needed it, so ExtProc
+	// answered 503 without calling the broker.
 	KindAssertionExpired ErrorKind = "assertion_expired"
-	KindCircuitOpen      ErrorKind = "circuit_open"
-	KindInternal         ErrorKind = "internal"
+	// KindCircuitOpen means ExtProc's circuit breaker for the broker was open, or half-open with no free probe, so
+	// ExtProc answered 503 without calling the broker; failures inside ExtProc also count toward opening it.
+	KindCircuitOpen ErrorKind = "circuit_open"
+	// KindInternal means ExtProc could not classify the error; it is also the fallback for an unknown kind.
+	KindInternal ErrorKind = "internal"
 
-	DependencyLocal         Dependency = "local"
-	DependencyBroker        Dependency = "broker"
+	// DependencyLocal means ExtProc itself, without an outbound call, such as its configuration or its expired
+	// client assertion; ExtProc also uses it for an unknown dependency.
+	DependencyLocal Dependency = "local"
+	// DependencyBroker means the broker's token endpoint, which ExtProc calls for the token exchange behind its
+	// circuit breaker.
+	DependencyBroker Dependency = "broker"
+	// DependencyOAuthProvider means the OAuth provider that issues ExtProc's client assertion through the client
+	// credentials grant, not a provider behind the broker.
 	DependencyOAuthProvider Dependency = "oauth_provider"
 )
 

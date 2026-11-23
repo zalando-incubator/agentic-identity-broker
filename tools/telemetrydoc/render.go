@@ -13,30 +13,15 @@ import (
 var pageTemplate string
 
 var page = template.Must(template.New("page").Funcs(template.FuncMap{
-	"anchor":     anchor,
-	"code":       code,
-	"codes":      codes,
-	"documented": documented,
-	"text":       text,
-	"values":     values,
+	"anchor": anchor,
+	"code":   code,
+	"codes":  codes,
+	"text":   text,
+	"values": values,
 }).Parse(pageTemplate))
 
 // Write renders ref with the descriptions d as the telemetry reference page.
 func Write(w io.Writer, ref *Reference, d *Descriptions) error {
-	enums := map[string][]EnumValue{}
-	collect := func(attrs map[string]*Attr) {
-		for _, a := range attrs {
-			if a.EnumType != "" {
-				enums[a.EnumType] = a.Enum
-			}
-		}
-	}
-	for _, s := range ref.Spans {
-		collect(s.Attrs)
-	}
-	for _, m := range ref.Metrics {
-		collect(m.Attrs)
-	}
 	attrs := map[string]string{}
 	for k := range allAttrKeys(ref) {
 		attrs[k] = d.Attributes[k]
@@ -48,7 +33,7 @@ func Write(w io.Writer, ref *Reference, d *Descriptions) error {
 		Metrics          map[string]*Metric
 		Attributes       map[string]string
 		Enums            map[string][]EnumValue
-	}{ref.Spans, d.Spans, ref.Metrics, attrs, enums})
+	}{ref.Spans, d.Spans, ref.Metrics, attrs, allEnums(ref)})
 	if err != nil {
 		return err
 	}
@@ -71,14 +56,23 @@ func values(a *Attr) string {
 	return strings.Join(vals, ", ")
 }
 
-// documented reports whether any of the values has a doc comment.
-func documented(values []EnumValue) bool {
-	for _, e := range values {
-		if e.Doc != "" {
-			return true
+// allEnums returns the constants of each enumerated attribute type in ref.
+func allEnums(ref *Reference) map[string][]EnumValue {
+	enums := map[string][]EnumValue{}
+	collect := func(attrs map[string]*Attr) {
+		for _, a := range attrs {
+			if a.EnumType != "" {
+				enums[a.EnumType] = a.Enum
+			}
 		}
 	}
-	return false
+	for _, s := range ref.Spans {
+		collect(s.Attrs)
+	}
+	for _, m := range ref.Metrics {
+		collect(m.Attrs)
+	}
+	return enums
 }
 
 func code(s string) string {
