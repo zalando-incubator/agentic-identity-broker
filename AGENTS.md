@@ -11,6 +11,12 @@ Maintain shared instructions in the root or nearest child `AGENTS.md`.
 Keep tool-specific instruction files limited to scope metadata and routes to those owners.
 Read routed files before implementation or review. A route is not a substitute for its instructions.
 
+## Documentation Scope
+
+Use `docs/` only for end-user documentation. Explain what the product does and how to use it.
+Do not add operational procedures, runbooks, or detailed implementation descriptions to `docs/`.
+Do not use existing internal material in `docs/` as a precedent for new content.
+
 ## Docs Index (Retrieval Targets)
 
 Read the source that governs the change. The summaries here do not replace the constitution, accepted ADRs, or API contracts.
