@@ -486,7 +486,7 @@ var _ = Describe("Session Metrics", func() {
 				Postgres: ports.PostgresConfig{ConnectionURL: postgres.ConnectionURL},
 				Timeouts: ports.StorageTimeouts{Read: time.Second, Write: 10 * time.Second},
 			}
-			store, err = storageadapter.NewAdapter(&config.Storage)
+			store, err = storageadapter.NewAdapter(&config.Storage, slog.New(slog.DiscardHandler))
 			Expect(err).NotTo(HaveOccurred())
 			db, err = sql.Open("pgx", postgres.ConnectionURL)
 			Expect(err).NotTo(HaveOccurred())

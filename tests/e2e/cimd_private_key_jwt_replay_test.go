@@ -138,10 +138,10 @@ var _ = Describe("CIMD private_key_jwt assertion replay protection", func() {
 			Postgres: ports.PostgresConfig{ConnectionURL: postgres.ConnectionURL},
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second},
 		}
-		storageA, err := storageadapter.NewAdapter(&storageConfig)
+		storageA, err := storageadapter.NewAdapter(&storageConfig, slog.New(slog.DiscardHandler))
 		Expect(err).To(Succeed())
 		defer func() { Expect(storageA.Close(ctx)).To(Succeed()) }()
-		storageB, err := storageadapter.NewAdapter(&storageConfig)
+		storageB, err := storageadapter.NewAdapter(&storageConfig, slog.New(slog.DiscardHandler))
 		Expect(err).To(Succeed())
 		defer func() { Expect(storageB.Close(ctx)).To(Succeed()) }()
 

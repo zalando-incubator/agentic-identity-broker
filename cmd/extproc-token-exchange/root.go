@@ -200,8 +200,8 @@ func run(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to initialize approval client: %w", err)
 		}
-		cache := approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness)
-		approvalGate = approval.NewGate(cache, client)
+		cache := approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness, logger)
+		approvalGate = approval.NewGate(cache, client, logger)
 		approvalSync = approval.NewSyncer(cache, client, time.Duration(cfg.ToolApprovals.LongPollTimeoutSeconds)*time.Second, logger)
 	}
 

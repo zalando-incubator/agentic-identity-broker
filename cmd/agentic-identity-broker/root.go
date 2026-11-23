@@ -66,7 +66,7 @@ func run(cmd *cobra.Command, args []string) error {
 		"log_format", cfg.Log.Format)
 
 	// Initialize storage adapter
-	storage, err := storageAdapter.NewAdapter(&cfg.Storage)
+	storage, err := storageAdapter.NewAdapter(&cfg.Storage, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create storage adapter: %w", err)
 	}

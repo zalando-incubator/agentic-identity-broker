@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -30,7 +31,7 @@ func setupCredentialSourcePostgresHarness(t *testing.T) *credentialSourcePostgre
 	// Reuse the suite's shared container, current-schema template and adapter lifecycle.
 	ctx, providers, _, shared, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
 	t.Cleanup(cleanup)
-	adapter, err := postgres.NewAdapter(&ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: shared.ConnectionString(dbName)}})
+	adapter, err := postgres.NewAdapter(&ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: shared.ConnectionString(dbName)}}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
 	t.Cleanup(func() { require.NoError(t, adapter.Close(ctx)) })

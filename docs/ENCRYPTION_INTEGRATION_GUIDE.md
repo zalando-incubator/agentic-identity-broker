@@ -64,7 +64,7 @@ The application builder initializes encryption with the configured backend:
 
 ```go
 // From internal/app/builder.go - automatic initialization
-encryptor, branchKeyManager, err := awsencryption.NewEncryptionAdapter(&config.Encryption)
+encryptor, branchKeyManager, err := awsencryption.NewEncryptionAdapter(&config.Encryption, logger)
 if err != nil {
     return nil, fmt.Errorf("failed to initialize encryption adapter: %w", err)
 }
@@ -373,6 +373,7 @@ func TestEncryptionWithRealAdapter(t *testing.T) {
         "arn:aws:kms:eu-central-1:123456789012:key/12345678",
         "IdentityBrokerEncryptionBranchKeys",
         1*time.Hour,
+        slog.New(slog.DiscardHandler),
     )
     require.NoError(t, err)
 

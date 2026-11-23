@@ -40,6 +40,7 @@ func TestCreateBranchKeyPostCallContextExpiry(t *testing.T) {
 		const internalTimeout = 1 * time.Millisecond
 
 		ks := &KeyStore{
+			logger:          slog.New(slog.DiscardHandler),
 			dynamoDBTimeout: internalTimeout,
 			createKeyFn: func(ctx context.Context, _ keystoretypes.CreateKeyInput) (*keystoretypes.CreateKeyOutput, error) {
 				select {
@@ -61,6 +62,7 @@ func TestCreateBranchKeyPostCallContextExpiry(t *testing.T) {
 		ctx, cancelCause := context.WithCancelCause(context.Background())
 
 		ks := &KeyStore{
+			logger:          slog.New(slog.DiscardHandler),
 			dynamoDBTimeout: 1 * time.Second,
 			createKeyFn: func(_ context.Context, _ keystoretypes.CreateKeyInput) (*keystoretypes.CreateKeyOutput, error) {
 				cancelCause(context.DeadlineExceeded)
@@ -78,6 +80,7 @@ func TestCreateBranchKeyPostCallContextExpiry(t *testing.T) {
 
 	t.Run("create_key_failure_no_context_error", func(t *testing.T) {
 		ks := &KeyStore{
+			logger:          slog.New(slog.DiscardHandler),
 			dynamoDBTimeout: 0,
 			createKeyFn: func(_ context.Context, _ keystoretypes.CreateKeyInput) (*keystoretypes.CreateKeyOutput, error) {
 				return nil, errors.New("DynamoDB: provisioned throughput exceeded")
@@ -97,12 +100,8 @@ func TestCreateBranchKeyLogsNonTimeoutFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	var logBuf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
-	originalLogger := slog.Default()
-	slog.SetDefault(logger)
-	defer slog.SetDefault(originalLogger)
-
 	ks := &KeyStore{
+		logger: slog.New(slog.NewJSONHandler(&logBuf, nil)),
 		createKeyFn: func(_ context.Context, _ keystoretypes.CreateKeyInput) (*keystoretypes.CreateKeyOutput, error) {
 			return nil, errors.New("ProvisionedThroughputExceededException")
 		},
@@ -123,6 +122,7 @@ func TestCreateBranchKeyAppliesTimeoutToGetActiveBranchKey(t *testing.T) {
 	observedCause := make(chan error, 1)
 
 	ks := &KeyStore{
+		logger:          slog.New(slog.DiscardHandler),
 		dynamoDBTimeout: 1 * time.Millisecond,
 		getActiveBranchKeyFn: func(ctx context.Context, _ keystoretypes.GetActiveBranchKeyInput) (*keystoretypes.GetActiveBranchKeyOutput, error) {
 			select {
@@ -155,6 +155,7 @@ func TestCreateBranchKeyGetActiveBranchKeyTimeoutDoesNotFallThroughToCreateKey(t
 	createKeyCalled := false
 
 	ks := &KeyStore{
+		logger:          slog.New(slog.DiscardHandler),
 		dynamoDBTimeout: 1 * time.Millisecond,
 		getActiveBranchKeyFn: func(ctx context.Context, _ keystoretypes.GetActiveBranchKeyInput) (*keystoretypes.GetActiveBranchKeyOutput, error) {
 			<-ctx.Done()

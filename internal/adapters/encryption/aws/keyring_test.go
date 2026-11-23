@@ -2,6 +2,7 @@ package aws
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestKeyStoreConfig(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create minimal AWS config for test
 			awsConfig := &ports.AWSKMSConfig{KeyARN: tt.config.KMSKeyARN}
-			_, err := createKeyStore(context.Background(), tt.config, awsConfig, "TestKeyStore")
+			_, err := createKeyStore(context.Background(), tt.config, awsConfig, "TestKeyStore", slog.New(slog.DiscardHandler))
 
 			if tt.expectedError {
 				if err == nil {
@@ -157,7 +158,7 @@ func TestKMSARNValidationInKeyStore(t *testing.T) {
 
 			// Create minimal AWS config for test
 			awsConfig := &ports.AWSKMSConfig{KeyARN: config.KMSKeyARN}
-			_, err := createKeyStore(context.Background(), config, awsConfig, "TestKeyStore")
+			_, err := createKeyStore(context.Background(), config, awsConfig, "TestKeyStore", slog.New(slog.DiscardHandler))
 
 			if !tt.shouldFail && err != nil {
 				t.Errorf("expected no error, got: %v", err)
@@ -235,7 +236,7 @@ func TestKeyStoreInitialization(t *testing.T) {
 	// Should fail on KMS key verification, not on configuration
 	// Create minimal AWS config for test
 	awsConfig := &ports.AWSKMSConfig{KeyARN: config.KMSKeyARN}
-	_, err := createKeyStore(context.Background(), config, awsConfig, "TestKeyStore")
+	_, err := createKeyStore(context.Background(), config, awsConfig, "TestKeyStore", slog.New(slog.DiscardHandler))
 	if err == nil {
 		t.Fatal("expected error due to invalid KMS key in test")
 	}

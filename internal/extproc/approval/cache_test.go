@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -27,7 +28,7 @@ func approvedRecord(id, toolPattern string, params map[string]string, persistenc
 
 func TestCacheStopsMatchingAfterMaxStaleness(t *testing.T) {
 	identity := Identity{Principal: "alice", AgentID: "agent"}
-	cache := NewCache(time.Minute, 50*time.Millisecond)
+	cache := NewCache(time.Minute, 50*time.Millisecond, slog.New(slog.DiscardHandler))
 	cache.Replace([]Pair{{
 		Identity:  identity,
 		Approvals: []Record{approvedRecord("permanent", "tool", map[string]string{}, "permanent", time.Now().UTC())},
@@ -47,7 +48,7 @@ func TestCacheStopsMatchingAfterMaxStaleness(t *testing.T) {
 
 func TestCacheMatchFiltersScopeAndMissingDecisionTime(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	otherIdentity := Identity{Principal: "bob", AgentID: "agent"}
 	cache.Replace([]Pair{
@@ -81,7 +82,7 @@ func TestCacheMatchesSharedVectors(t *testing.T) {
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	for _, vector := range toolpattern.MatchVectors() {
 		t.Run(vector.Name, func(t *testing.T) {
-			cache := NewCache(time.Minute, time.Minute)
+			cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 			cache.Replace([]Pair{{
 				Identity:  identity,
 				Approvals: []Record{approvedRecord("vector", vector.ToolPattern, vector.ParamsPattern, "permanent", now)},
@@ -103,7 +104,7 @@ func TestCacheUsesPrecedenceVectors(t *testing.T) {
 				require.NoError(t, err)
 				records = append(records, approvedRecord(candidate.ID, candidate.ToolPattern, candidate.ParamsPattern, "permanent", decidedAt))
 			}
-			cache := NewCache(time.Minute, time.Minute)
+			cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 			cache.Replace([]Pair{{Identity: identity, Approvals: records}}, `"v1"`)
 			record, matched := cache.Match(identity, "", vector.ToolName, vector.Arguments)
 			require.True(t, matched)
@@ -114,7 +115,7 @@ func TestCacheUsesPrecedenceVectors(t *testing.T) {
 
 func TestCacheReservesOnceApprovalExactlyOnce(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{approvedRecord("once", "tool", map[string]string{}, "once", now)}}}, `"v1"`)
 
@@ -133,7 +134,7 @@ func TestCacheReservesOnceApprovalExactlyOnce(t *testing.T) {
 }
 
 func TestCacheReservationIsCompareAndSwap(t *testing.T) {
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{approvedRecord("once", "tool", map[string]string{}, "once", time.Now().UTC())}}}, `"v1"`)
 
@@ -157,7 +158,7 @@ func TestCacheReservationIsCompareAndSwap(t *testing.T) {
 
 func TestCacheReplacesGlobalAndTargetedSnapshots(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	alice := Identity{Principal: "alice", AgentID: "agent-a"}
 	bob := Identity{Principal: "bob", AgentID: "agent-b"}
 	cache.Replace([]Pair{
@@ -187,7 +188,7 @@ func TestCacheReplacesGlobalAndTargetedSnapshots(t *testing.T) {
 
 func TestReplaceForPrincipalRejectsOlderVersion(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{
 		Identity:  identity,
@@ -217,7 +218,7 @@ func TestCacheDoesNotRestoreRevocationsFromOlderSnapshots(t *testing.T) {
 	for _, targetedRevocation := range []bool{false, true} {
 		for _, targetedReplay := range []bool{false, true} {
 			t.Run(fmt.Sprintf("targeted_revocation=%t/targeted_replay=%t", targetedRevocation, targetedReplay), func(t *testing.T) {
-				cache := NewCache(time.Minute, time.Minute)
+				cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 				identity := Identity{Principal: "alice", AgentID: "agent"}
 				old := []Pair{{Identity: identity, Approvals: []Record{approvedRecord("revoked", "tool", map[string]string{}, "permanent", time.Now().UTC())}}}
 				cache.Replace(old, `"v1"`)
@@ -251,7 +252,7 @@ func TestCacheDoesNotRestoreRevocationsFromOlderSnapshots(t *testing.T) {
 func TestCacheOlderPollDoesNotRefreshOtherPrincipals(t *testing.T) {
 	for _, unchanged := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unchanged=%t", unchanged), func(t *testing.T) {
-			cache := NewCache(time.Minute, time.Minute)
+			cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 			bob := Identity{Principal: "bob", AgentID: "agent"}
 			old := []Pair{{Identity: bob, Approvals: []Record{approvedRecord("stale", "tool", map[string]string{}, "permanent", time.Now().UTC())}}}
 			cache.Replace(old, `"v1"`)
@@ -295,7 +296,7 @@ func TestParseSyncVersion(t *testing.T) {
 func TestCacheEvictsInactiveSessionsAndIdlePairs(t *testing.T) {
 	idleTTL := time.Minute
 	now := time.Now().UTC()
-	cache := NewCache(idleTTL, time.Minute)
+	cache := NewCache(idleTTL, time.Minute, slog.New(slog.DiscardHandler))
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.RecordSession("expired-session")
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{
@@ -325,7 +326,7 @@ func TestCacheEvictsInactiveSessionsAndIdlePairs(t *testing.T) {
 func TestCacheEvictsExpiredSessionBeforeRecordingRequest(t *testing.T) {
 	const sessionID = "session-a"
 	idleTTL := 10 * time.Millisecond
-	cache := NewCache(idleTTL, time.Minute)
+	cache := NewCache(idleTTL, time.Minute, slog.New(slog.DiscardHandler))
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	key := pairKey{principal: identity.Principal, agentID: identity.AgentID}
 

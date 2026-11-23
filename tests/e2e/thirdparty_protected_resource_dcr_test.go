@@ -437,7 +437,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			postgres, err = bootstrap.NewPostgresFixture(context.Background())
 			Expect(err).NotTo(HaveOccurred())
 			config := dcrPostgresConfig(postgres.ConnectionURL)
-			storage, err = storageadapter.NewAdapter(&config)
+			storage, err = storageadapter.NewAdapter(&config, slog.New(slog.DiscardHandler))
 			Expect(err).NotTo(HaveOccurred())
 			newProvider(fixtures.ConfidentialDCRProtectedResource())
 		})
@@ -455,7 +455,7 @@ var _ = Describe("Protected-resource discovery through dynamic client registrati
 			storage = nil
 			var err error
 			config := dcrPostgresConfig(postgres.ConnectionURL)
-			storage, err = storageadapter.NewAdapter(&config)
+			storage, err = storageadapter.NewAdapter(&config, slog.New(slog.DiscardHandler))
 			Expect(err).NotTo(HaveOccurred())
 			openServers(provider, scenario)
 			read := dcrReadService(admin, principal, serviceID)

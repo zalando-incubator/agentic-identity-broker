@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestAgentRepositoryServiceRequirements_Memory(t *testing.T) {
 			Write: 0,
 		},
 	}
-	adapter, err := storageadapter.NewAdapter(config)
+	adapter, err := storageadapter.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	permissionSets := []domainStorage.AgentPermissionSetEntry{{

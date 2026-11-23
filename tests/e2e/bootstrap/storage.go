@@ -84,7 +84,7 @@ func (f *StorageFactory) NewTestStorage() (*storageadapter.Adapter, error) {
 
 	// Use production storage factory
 	// This creates fresh memory adapters for all repositories
-	adapter, err := storageadapter.NewAdapter(config)
+	adapter, err := storageadapter.NewAdapter(config, slog.New(slog.DiscardHandler))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create test storage: %w", err)
 	}

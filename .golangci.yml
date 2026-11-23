@@ -168,12 +168,6 @@ linters:
       # Existing violations. Remove each rule when the change that fixes it lands, so that the
       # rule then holds for the whole repository.
 
-      # LOGGING.md section 1: these adapters log through the global logger because their
-      # constructors do not take a *slog.Logger yet.
-      - path: ^internal/(adapters/encryption/aws/(adapter|keystore)|adapters/storage/postgres/adapter|extproc/approval/(cache|gate))\.go$
-        linters:
-          - sloglint
-        text: default logger should not be used
       # #349: approval spans set approval.principal as a plain string until #356 provides
       # id.Principal.SpanAttribute.
       - path: ^internal/domain/approval/service\.go$

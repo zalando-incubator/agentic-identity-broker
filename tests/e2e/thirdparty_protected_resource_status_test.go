@@ -235,7 +235,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 				Postgres: ports.PostgresConfig{ConnectionURL: postgres.ConnectionURL},
 				Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second},
 			}
-			store, err = storageadapter.NewAdapter(&config.Storage)
+			store, err = storageadapter.NewAdapter(&config.Storage, slog.New(slog.DiscardHandler))
 		} else {
 			store, err = storageFactory.NewTestStorage()
 		}
@@ -392,7 +392,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 				store = nil
 
 				var err error
-				store, err = storageadapter.NewAdapter(&config.Storage)
+				store, err = storageadapter.NewAdapter(&config.Storage, slog.New(slog.DiscardHandler))
 				Expect(err).NotTo(HaveOccurred())
 				application, err := bootstrap.NewServerFactory(config, logger).BuildAppWithProtectedResource(store, provider.Server, hosts...)
 				Expect(err).NotTo(HaveOccurred())
