@@ -58,7 +58,7 @@ The consent page uses the target UUID, even if the request audience used its
 without a challenge or recovery URI. Browser authorization instead redirects
 to consent with sealed JWE state. Neither response exposes grant details.
 See the [token exchange reference](../reference/token-exchange.md#user-impersonation)
-and [accepted decision](../../adrs/20261120-145501-human-impersonation-consent-status.md).
+and [accepted decision](https://github.com/zalando-incubator/agentic-identity-broker/blob/release/v0.2/adrs/20261120-145501-human-impersonation-consent-status.md).
 
 ### Migrate from End-User API 1.x
 
