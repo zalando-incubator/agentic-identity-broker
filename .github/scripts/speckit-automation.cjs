@@ -309,16 +309,6 @@ function managedPR(pr, repo, state = "open") {
     pr.head.ref === `speckit/issue-${issue[1]}` ? Number(issue[1]) : 0;
 }
 
-async function tracked(github, repo, ref, name) {
-  try {
-    await github.rest.repos.getContent({ ...repo, ref, path: name });
-    return true;
-  } catch (error) {
-    if (error.status === 404) return false;
-    throw error;
-  }
-}
-
 async function readBlob(github, repo, ref, name, optional = false) {
   let data;
   try {
@@ -619,11 +609,6 @@ async function prepare({ github, context, inputs }) {
     if (!managedPR(pr, context.repo)) throw new Error("Only managed, same-repository draft PRs are eligible");
     if (!pr.title?.startsWith(titlePrefix)) {
       throw new Error(`Rename the pull request title to start with \`${titlePrefix.trim()}\`, then repeat the command`);
-    }
-    // The agent checks out the head, and git replaces ignored files there with tracked ones.
-    if (await tracked(github, context.repo, pr.head.sha, ".pi")) {
-      throw new Error("The pull request tracks files under `.pi/`, which would replace the installed skills and " +
-        "sub-agents. Remove them from the branch, then repeat the command");
     }
     const current = await artifacts(github, context.repo, pr);
     const entries = await reports(github, context.repo, pr.number);
