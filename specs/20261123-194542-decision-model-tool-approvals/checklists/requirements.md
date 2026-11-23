@@ -31,27 +31,36 @@
 
 ## Notes
 
-- **Implementation details.** The functional requirements, user stories, and success criteria name
-  no language, framework, or code structure. The example journeys contain configuration keys, HTTP
-  exchanges, and a policy excerpt, because Constitution Principle XIV requires them. The spec
-  marks key names, wire encoding, and log field names as examples that the planning phase fixes
-  (API-006).
-- **Audience.** The operator and the approver are the users. The policy excerpt and the decision
-  request are for reviewers of the security model. Each journey ends with an observable result in
-  plain language.
-- **Examples were checked.** All YAML and JSON blocks parse. The policy excerpt was evaluated with
-  the repository's OPA library against the inputs of journeys 1 to 3 and returned the results
-  that the journeys state. Both wireframes were rendered from their sources.
-- **No clarification markers.** Decisions with more than one reasonable answer are recorded as
-  assumptions. Review these five first, because they change scope or the security model:
-  1. The model gets the tool definition that the MCP server lists. The operator writes no tool
-     descriptions. This depends on tool listings being visible at the gateway.
-  2. The static policy risk level is not sent to the model.
-  3. An automatically approved call creates no approval record and is visible in the audit log only.
-  4. The approver can see a `routine` recommendation.
-  5. Automatic approval requires the evaluation record of User Story 5.
-- **Revision.** The first draft required an operator-written description of every tool and
-  argument. The spec was revised on 2026-11-23 to use server-supplied tool definitions. All
-  examples were validated again after the revision.
+- **Implementation details.** The functional requirements, user stories, and success criteria
+  name no language, framework, or code structure. The example journeys contain configuration
+  keys, HTTP exchanges, and a policy excerpt, because Constitution Principle XIV requires them.
+  The spec identifies key names, wire encoding, and log field names as examples. The planning
+  phase sets them (API-006).
+- **Audience.** The users are the operator and the approver. The policy excerpt and the decision
+  request are for reviewers of the security model. Each journey ends with an observable result
+  in plain language.
+- **Examples.** All YAML and JSON blocks parse. The OPA library of the repository evaluated the
+  policy excerpt against the inputs of journeys 1 to 3. The results agree with the journeys. The
+  renderer made the two wireframes from their sources.
+- **No clarification markers.** The assumptions record each decision that has more than one
+  possible answer. The section "Decisions to review first" lists the most important decisions.
+- **Revisions.** On 2026-11-23, three revisions changed the first draft. First, the model gets
+  the tool definitions that the servers list, and the operator describes no tools. Second,
+  disclosure became one deployment-wide setting, and entries for each server became optional
+  exceptions. Third, all prose obeys the Simple English rules of the project skill.
+- **Language.** The prose uses the structural rules of Simplified Technical English in the
+  pragmatic mode. Each clause of a Given/When/Then scenario counts as one sentence. Code,
+  identifiers, quoted source text, and interface text did not change.
 - **Research.** [decision-model-research.md](../decision-model-research.md) records the sources
-  for the requirements that cite `R-01` to `R-20`.
+  for the requirements that refer to `R-01` to `R-20`.
+
+## Decisions to review first
+
+These decisions change the scope or the security model:
+
+- The model gets the tool definition that the MCP server lists. This is possible only if the gateway can see tool listings.
+- If the deployment-wide setting permits it, the system sends argument values of all servers to the decision endpoint.
+- The system does not send the static policy risk level to the model.
+- An automatic approval creates no approval record. It is visible only in the audit log.
+- The approver can see a `routine` recommendation.
+- Automatic approval requires the evaluation record of User Story 5.

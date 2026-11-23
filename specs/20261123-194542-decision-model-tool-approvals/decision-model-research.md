@@ -4,258 +4,277 @@
 
 **Feature**: [spec.md](spec.md)
 
-**Purpose**: Record what vendor documentation, an independent classifier deployment, and early
-evaluation papers say about decision models. Each finding states its consequence for the
-specification. The spec cites the finding IDs (`R-01` to `R-20`).
+**Purpose**: This document records the published guidance about decision models. The sources are
+vendor documentation, one report about a classifier in production, and early evaluation papers.
+Each finding gives its consequence for the specification. The spec refers to the finding
+identifiers (`R-01` to `R-20`).
 
-**Limits of this research**: It is a reading of published material. No model was called. The
-evaluation papers are preprints from September and October 2026 and are not peer reviewed. Vendor
-documentation describes vendor products. Third-party guides are marked as such.
+**Limits of this research**: The research used only published material. It did not call a model.
+The evaluation papers are preprints from September and October 2026 without peer review. Vendor
+documentation describes the products of the vendor. The source list marks third-party guides.
 
 ## Model and contract names
 
-OpenAI's documentation names `gpt-6-luna` as the only model that `POST /v1/decisions` supports. It
-does not list a `gpt-6-luna-decision` identifier. The spec therefore refers to "the configured
-decision model" and uses `gpt-6-luna` and `jev-1.14.0` only as example values.
+The OpenAI documentation names `gpt-6-luna` as the only model for `POST /v1/decisions`. It does
+not list a `gpt-6-luna-decision` identifier. Thus, the spec uses the term "the configured decision
+model". It uses `gpt-6-luna` and `jev-1.14.0` only as example values.
 
 | Aspect | OpenAI Decisions | System One (Jev) | Through agentgateway |
 |---|---|---|---|
-| Endpoint | `/v1/decisions` | `/v1/systemone` | `/v1/decisions` for both |
+| Endpoint | `/v1/decisions` | `/v1/systemone` | `/v1/decisions` for the two models |
 | Shared evidence | `input`: text, or messages with text, image, and `input_json` parts | `state`: string, object, or array | OpenAI shape |
-| Questions | Array; optional `name` echoed in the answer | Map keyed by a name; the name is not sent to the model | OpenAI shape |
-| Yes/no | `predicate` → `probability` | `noul` → `noul`; optional `criteria.true` and `criteria.false` | `predicate` |
-| One of several | `choice` with `choices[].value` and `description` | `choice` with `criteria` map | `choice` |
-| Ordered scale | `score` with 2–10 `levels[]` (`label`, `description`) | `score` with ordered `criteria` | `score` |
+| Questions | Array. The answer repeats the optional `name`. | Map with a name as the key. The model does not receive the name. | OpenAI shape |
+| Yes/no | `predicate` → `probability` | `noul` → `noul`. Optional `criteria.true` and `criteria.false`. | `predicate` |
+| One of a set | `choice` with `choices[].value` and `description` | `choice` with a `criteria` map | `choice` |
+| Ordered scale | `score` with 2 to 10 `levels[]` (`label`, `description`) | `score` with ordered `criteria` | `score` |
 | Scale answer | `score` (probability-weighted mean), `probabilities[]`, `confidence` | The same three values | OpenAI shape |
-| No answer | Per-question `refusal` answer; other answers still returned | Not present in the schema read for this research | Client must handle `refusal` |
-| Model identity | `model` in the response | `model` in the response is the versioned ID behind an alias | Virtual model name selects the upstream |
+| No answer | A `refusal` answer for one question. The other answers stay. | Not in the schema that this research read | The client must process `refusal` |
+| Model identity | `model` in the response | `model` in the response is the versioned identifier behind an alias | The virtual model name selects the upstream model |
 
 ## Findings
 
 ### A. Role of the model
 
-**R-01 — An answer is a signal, not an authorization.** agentgateway states that a probability can
-cause a challenge, review, or rejection, but must not grant authority that identity, delegation,
-and baseline policy did not already permit. It does not convert a signal into allow or deny. The
-caller owns thresholds, fallback, and review. TypeSafe gives the same rule: control flow,
-deterministic rules, and side effects stay in code.
-*Consequence*: the policy alone decides. A model answer cannot change a denial, and cannot widen
-what the caller can already do.
+**R-01 — An answer is a signal, not an authorization.** agentgateway states that a probability
+can cause a challenge, a review, or a rejection. It must not grant an authority that identity,
+delegation, and baseline policy did not permit. agentgateway does not change a signal into allow
+or deny. The caller owns the thresholds, the fallback, and the review. TypeSafe gives the same
+rule: control flow, deterministic rules, and side effects stay in code.
+*Consequence*: Only the policy decides. A model answer cannot change a denial. It cannot increase
+the authority of the caller.
 
-**R-02 — Do not ask the model for the decision.** A generative judge that writes "allow" or "block"
-applies a threshold of 0.5 that nobody configured. A typed probability lets the operator choose the
-threshold per deployment.
-*Consequence*: no question asks whether to approve. A question whose wording asks for an approval
-verdict is invalid configuration.
+**R-02 — Do not ask the model for the decision.** A generative judge that writes "allow" or
+"block" applies a threshold of 0.5. No person configured that threshold. A typed probability
+lets the operator select the threshold for each deployment.
+*Consequence*: No question asks whether to approve. A question that asks for an approval verdict
+is invalid configuration.
 
-**R-03 — A single answer must not be the last control before an irreversible action.** This rule
-appears in a third-party Jev guide and agrees with R-01.
-*Consequence*: automatic approval needs a deterministic eligibility rule first, and then several
-independent answers that all agree. One answer is never sufficient.
+**R-03 — One answer must not be the last control before an irreversible action.** This rule is in
+a third-party Jev guide, and it agrees with R-01.
+*Consequence*: Automatic approval first needs a deterministic eligibility rule. Then it needs
+two or more independent answers that all agree. One answer is never sufficient.
 
 ### B. Question design
 
-**R-04 — One observable condition per question.** TypeSafe calls question decomposition "probably
-the most important concept". OpenAI says to write questions around observable criteria and to
-separate concerns. A question with two conditions returns a value that means less.
-*Consequence*: each question judges one property of the call. Compound wording is invalid.
+**R-04 — One observable condition for each question.** TypeSafe calls the decomposition of
+questions "probably the most important concept". OpenAI tells writers to use observable criteria
+and to keep concerns apart. If a question has two conditions, the returned value has less
+meaning.
+*Consequence*: Each question examines one property of the call. Compound wording is invalid.
 
-**R-05 — The model reads literally.** Jev "answers the question you wrote, not the one you meant".
-Scoping words, negations, and implied conditions are read at face value. Double negatives and
-multi-hop questions cost accuracy. Contradictory instructions and criteria confuse the model.
-*Consequence*: each question states the exact condition, in the positive form. A high value always
-means the risk property is present. Each yes/no question has explicit descriptions of what counts
-as yes and as no, including boundary cases.
+**R-05 — The model reads literally.** Jev "answers the question you wrote, not the one you
+meant". It reads scoping words, negations, and implied conditions as written. Double negatives
+and questions with two or more reasoning steps decrease accuracy. Instructions and criteria that
+contradict each other also decrease accuracy.
+*Consequence*: Each question states the exact condition in the positive form. A high value always
+shows that the risk property is present. Each yes/no question has explicit descriptions of yes
+and of no, with the boundary cases.
 
-**R-06 — Option names and order are part of the prompt.** OpenAI: changing a choice `value` can
-change the result. One audit reports that swapping yes/no names across rubrics moved an AUC from
-0.815 to 0.581. Jev's documentation says option order can affect the answer. A paired evaluation
-found that rewording only the instructions moved accuracy by 5 to 15 points.
-*Consequence*: question name, wording, criteria, level labels, level order, and type together form
-one versioned unit. Any edit is a new version. Thresholds belong to a version.
+**R-06 — Option names and option sequence are part of the prompt.** OpenAI says that a changed
+choice `value` can change the result. One audit reports that swapped yes/no names moved an AUC
+from 0.815 to 0.581. The Jev documentation says that the option sequence can change the answer. A
+paired evaluation found that new wording of only the instructions moved accuracy by 5 to 15
+points.
+*Consequence*: The name, wording, criteria, level labels, level sequence, and type of a question
+are one versioned unit. Each edit makes a new version. Thresholds belong to one version.
 
-**R-07 — Use the right type.** A yes/no value is a probability, not a degree. Use an ordered scale
-for degree and a fixed set for categories. Add a fallback option such as `other` or `not stated`
-when the options do not cover every input.
-*Consequence*: yes/no and ordered-scale questions are the base. Each ordered scale has a top level
-that also covers "cannot be determined from the supplied context".
+**R-07 — Use the correct type.** A yes/no value is a probability, not a degree. An ordered scale
+is correct for a degree, and a fixed set is correct for categories. If the options do not include
+each possible input, add an option such as `other` or `not stated`.
+*Consequence*: The basic types are yes/no questions and ordered-scale questions. The top level of
+each ordered scale also includes "cannot be determined from the supplied context".
 
-**R-08 — Questions in one request are independent.** Both vendors evaluate the questions in
+**R-08 — Questions in one request are independent.** The two vendors evaluate the questions in
 parallel against shared evidence. A question that depends on an earlier answer needs a second
 request.
-*Consequence*: one request per tool call. The question set contains independent questions only.
-There is no question chaining.
+*Consequence*: The system sends one request for each tool call. The question set contains only
+independent questions. Questions do not depend on each other.
 
-**R-09 — Keep arithmetic, counting, dates, and opaque identifiers out of questions.** Jev does not
-count or compare dates and numbers reliably. It handles semantic text better than numeric or
-encoded values. OpenAI advises meaningful labels over opaque identifiers such as a UUID.
-*Consequence*: facts that code can compute are computed before the model call and supplied as named
-facts, or evaluated in the policy. Examples: "the recipient domain is not an organisation domain",
-"the call names 214 recipients". The model judges meaning only.
+**R-09 — Keep arithmetic, counts, dates, and opaque identifiers out of questions.** Jev does not
+count reliably. It does not compare dates or numbers reliably. It processes semantic text better
+than numeric or encoded values. OpenAI recommends meaningful labels instead of opaque identifiers
+such as a UUID.
+*Consequence*: If code can compute a fact, the policy evaluates that fact. Examples are "the
+recipient domain is not an organization domain" and "the call names 214 recipients". The model
+judges only meaning.
 
 ### C. Context design
 
-**R-10 — Supply the context the question needs. Do not rely on model knowledge.** TypeSafe: "Do not
-rely on knowledge stored in model weights when current information can come from your own
-knowledge base." A server name such as `google-drive-mcp` carries no reliable meaning for a model.
-Missing context produces guesses, and an ordered scale then shows low confidence or a flat
-distribution.
-*Consequence*: the context includes what the tool does and what each supplied argument means,
-taken from the tool definition that the MCP server lists, and what "the organisation" is, written
-once by the operator. A call for which this context is missing is not assessed.
+**R-10 — Supply the context that the question needs. Do not rely on model knowledge.** TypeSafe:
+"Do not rely on knowledge stored in model weights when current information can come from your
+own knowledge base." A server name such as `google-drive-mcp` has no reliable meaning for a
+model. If context is missing, the model guesses. An ordered scale then shows low confidence or a
+flat distribution.
+*Consequence*: The context includes the function of the tool and the meaning of each supplied
+argument. This information comes from the tool definition that the MCP server lists. The context
+also includes a description of "the organization", which the operator writes once. If this
+context is missing for a call, the system does not assess the call.
 
-**R-11 — Supply only that context.** Accuracy falls as unrelated content grows ("context rot").
-Large state also hides which input caused a wrong answer.
-*Consequence*: the context has a fixed set of sections and a size limit. Session history, agent
-messages, and unrelated tools are excluded. An oversized context is a failed assessment.
+**R-11 — Supply only that context.** Accuracy decreases as unrelated content increases ("context
+rot"). A large state also hides the input that caused a wrong answer.
+*Consequence*: The context has a fixed set of sections and a size limit. It excludes session
+history, agent messages, and unrelated tools. An oversized context is a failed assessment.
 
-**R-12 — Use structure, and point questions at fields.** Use nested data with named fields. Refer
-to a field by its path in the question. A single string that mixes application facts with
-untrusted text is the worst shape, because injected text reads as context.
-*Consequence*: the context is a structured document with named sections. Questions name the
-sections they inspect.
+**R-12 — Use structure, and refer to fields in the questions.** Use nested data with named
+fields. Refer to a field by its path in the question. One string that mixes application facts
+with untrusted text is the worst shape, because the model reads injected text as context.
+*Consequence*: The context is a structured document with named sections. Each question names the
+sections that it examines.
 
-**R-13 — Separate trusted facts from untrusted content.** agentgateway: keep user input, retrieved
-documents, and tool output separate from trusted policy state. A third-party Jev guide adds two
-rules: question text is constant and is never built from untrusted text, and application facts are
-written by the application, not copied from fields that the other party controls.
-*Consequence*: operator text is in trusted sections. The server's tool definition is in its own
-section, marked as the server's claims. Tool-call arguments are in an untrusted section. Question
-text never contains argument values or definition text.
+**R-13 — Keep trusted facts apart from untrusted content.** agentgateway says to keep user input,
+retrieved documents, and tool output apart from trusted policy state. A third-party Jev guide
+adds two rules. First, question text is constant, and code never makes it from untrusted text.
+Second, the application writes its own facts and does not copy them from fields that a different
+party controls.
+*Consequence*: Operator text is in trusted sections. The tool definition of the server is in its
+own section, with the server as the named author. Tool-call arguments are in an untrusted
+section. Question text never contains argument values or definition text.
 
-**R-14 — Withhold the agent's own account of the call.** Anthropic's auto mode classifier sees user
-messages and bare tool calls only. Assistant text and tool results are removed so that the agent
-cannot argue the classifier into a wrong call, and because tool results are where hostile content
-enters. Including them lowered measured performance. The cost is lost provenance.
-*Consequence*: the context never contains agent-written rationale, agent-written call descriptions,
-or tool results.
+**R-14 — Do not send the account that the agent gives of the call.** The auto mode classifier of
+Anthropic sees only user messages and bare tool calls. Anthropic removes assistant text. Thus,
+the agent cannot argue the classifier into a wrong decision. Anthropic also removes tool results,
+because hostile content enters through them. With this content, the measured performance
+decreased. The cost is that the classifier does not know the origin of a value.
+*Consequence*: The context never contains a rationale from the agent, a call description from the
+agent, or tool results.
 
 **R-15 — Tool descriptions and annotations from a server are hints.** The MCP specification says
-annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) do not
-guarantee behavior, and that clients must treat them as untrusted unless the server is trusted.
-OWASP lists tool poisoning (instructions hidden in descriptions or schemas) and rug pulls (a
-definition changes after approval), and recommends pinning the reviewed definition.
-*Consequence*: a first draft of the spec excluded server-supplied definitions and required the
-operator to describe every tool and argument. That replicates a tool registry and does not scale,
-so the spec now uses the server's own definition (R-10) and treats it as a claim. Four controls
-apply. The definition is in a separate section and never reaches the approver. A policy rule must
-cover the call. The exact definition is part of a fingerprint that
-the evaluation record must contain, so a changed definition stops automatic approval for that
-tool. A question detects definition text addressed to a reviewer. A server that describes a tool
-falsely and consistently remains a residual risk.
+that annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) do not
+guarantee behavior. It says that clients must not trust them unless the server is trusted. OWASP
+lists two attacks. Tool poisoning hides instructions in descriptions or schemas. In a rug pull, a
+definition changes after approval. OWASP recommends that clients pin the reviewed definition.
+*Consequence*: The first draft of the spec excluded definitions from servers. The operator had to
+describe each tool and argument. That design copies a tool registry and is not practical for
+hundreds of servers. The spec uses the definition of the server (R-10) and reads it as a claim.
 
-### D. Reading answers
+Four controls apply to the definition of a server:
 
-**R-16 — Thresholds are per question, per action, and set by the cost of the error.** OpenAI and
-TypeSafe both say to set thresholds from labeled examples of the application and from the cost of
-false positives and false negatives. TypeSafe: riskier actions get higher thresholds, and the band
-between "yes" and "no" gets its own outcome in code. Its starting values (0.7 and 0.3) are for
-routing, not for security gates.
-*Consequence*: there is no product default threshold that enables automatic approval. The costly
-error here is a false "harmless" answer, so thresholds are asymmetric: a value near zero permits,
-and everything else keeps the human in the loop.
+- The definition is in a separate section, and the approver never sees it.
+- A policy rule must apply to the call.
+- The evaluation record must contain a fingerprint of the exact definition. A changed definition stops automatic approval for that tool.
+- One question finds definition text that addresses a reviewer.
+
+A server that describes a tool falsely, with a description that does not change, stays a
+residual risk.
+
+### D. How to read answers
+
+**R-16 — Thresholds apply to one question and one action, and the cost of the error sets them.**
+OpenAI and TypeSafe say to set thresholds from labeled examples of the application. They say to
+use the cost of false positives and false negatives. TypeSafe gives riskier actions higher
+thresholds. It gives the band between "yes" and "no" its own outcome in code. Its start values
+(0.7 and 0.3) are for routing, not for security gates.
+*Consequence*: The product has no default threshold that enables automatic approval. The
+expensive error is a false "harmless" answer. Thus, the thresholds are not symmetric. A value
+near zero permits the call, and each other value keeps the person in the decision.
 
 **R-17 — Read the distribution of an ordered scale, not its mean.** The `score` is a weighted
-mean and can sit between two levels that split the answer. `confidence` measures how concentrated
-the distribution is. It is not the probability that the answer is correct, and a split between
-neighboring levels barely lowers it. TypeSafe recommends adding up the probabilities of the levels
-on the side that matters.
-*Consequence*: the policy receives the full per-level distribution. Rules for automatic approval
-bound the probability of the risky levels.
+mean. It can be between two levels that divide the answer. `confidence` measures the
+concentration of the distribution. It is not the probability that the answer is correct. A
+division between two adjacent levels decreases it only a small quantity. TypeSafe recommends
+adding the probabilities of the levels on the important side.
+*Consequence*: The policy receives the full distribution for each level. Rules for automatic
+approval set a limit for the probability of the risky levels.
 
-**R-18 — A refusal, a missing answer, and an uncertain answer are separate outcomes.** OpenAI: a
-refusal is an answer type, differs from a low probability, and needs an explicit path.
-*Consequence*: the policy can distinguish answered, refused, missing, invalid, and timed out. None
-of these states can satisfy a rule for automatic approval.
+**R-18 — A refusal, a missing answer, and an uncertain answer are different outcomes.** OpenAI
+says that a refusal is an answer type. It is different from a low probability, and it needs an
+explicit path.
+*Consequence*: The policy can see these states: answered, refused, missing, invalid, and timed
+out. Only an answered question can satisfy a rule for automatic approval.
 
 ### E. Evaluation and change
 
-**R-19 — Calibration holds for groups, not for one answer, and differs by question.** TypeSafe:
-calibration "does not guarantee that an individual answer is correct". Preprints report that
-miscalibration changes direction between questions of the same model, that wrong tool calls had a
-mean confidence of 0.778, that 26% of one model's answers at confidence 0.9 or above were wrong,
-and that adversarially optimized context moved 45% of initially correct decisions to a confident
-wrong answer. Thresholds picked and scored on the same data keep their promise by construction.
-On held-out data, a 5% miss target was exceeded in about half of the splits unless several hundred
-positive examples or a safety margin were used. Anthropic's classifier, with full reasoning,
-missed 17% of real overeager actions and blocked 0.4% of benign ones.
-*Consequence*: automatic approval needs evidence measured on held-out, labeled tool calls for the
-exact model version, question versions, and context version in use. The evidence reports the
-false-approval rate with an upper bound, not an average accuracy.
+**R-19 — Calibration is true for groups, not for one answer, and it is different for each
+question.** TypeSafe says that calibration "does not guarantee that an individual answer is
+correct". The preprints report these results:
 
-**R-20 — Every version change can move answers.** A model alias such as `jev-latest` moves when a
-release ships. The response names the model that answered. TypeSafe: if thresholds were tuned
-against one version, send that version's ID. Third-party guidance: keep a fixed adversarial set
-and run it again for each change to a question, threshold, or model version.
-*Consequence*: the evaluated combination is recorded. If the answering model, a question, or the
-context shape differs from the evaluated combination, automatic approval stops and the human
-decides. The audit record names all versions.
+- The direction of miscalibration changes between questions of the same model.
+- Wrong tool calls had a mean confidence of 0.778.
+- For one model, 26% of the answers with a confidence of 0.9 or more were wrong.
+- Adversarially optimized context moved 45% of initially correct decisions to a confident wrong answer.
+- A 5% miss target failed on held-out data in approximately half of the splits. Several hundred positive examples or a safety margin prevented this.
+
+If the same data selects and scores a threshold, the result is correct by construction and
+proves nothing. The Anthropic classifier, with full reasoning, missed 17% of real overeager
+actions and blocked 0.4% of benign actions.
+*Consequence*: Automatic approval needs evidence from labeled tool calls on held-out data. The
+evidence must use the exact model version, question versions, and context version of production.
+The evidence reports the false-approval rate with an upper bound, not a mean accuracy.
+
+**R-20 — Each version change can move the answers.** A model alias such as `jev-latest` moves
+with each release. The response names the model that answered. If an operator tuned
+thresholds against one version, TypeSafe says to send the identifier of that version. Third-party guidance says to keep a
+fixed adversarial set. It says to run that set again for each change to a question, a threshold,
+or a model version.
+*Consequence*: The system records the evaluated combination. If the answering model, a question,
+or the context shape is different from that combination, automatic approval stops. The person
+then decides. The audit record names all versions.
 
 ## Worked examples
 
-The examples use the tool call of the spec: `drive.share_file` on `google-drive-mcp`. They were
-written for this feature unless a source is named. No model was called, so the stated answers
-show the expected direction and are not measurements.
+The examples use the tool call of the spec: `drive.share_file` on `google-drive-mcp`. This
+research wrote the examples for this feature, unless the text names a source. The research called
+no model. Thus, the stated answers show the expected direction and are not measurements.
 
-### E-01 — What the operator writes once
+### E-01 — The text that the operator writes once
 
-The organisation description gives every "outside the organisation" question its reference point
-(R-10). The question set is the fixed list of typed questions for every assessed call.
+The organization description is the reference for each "outside the organization" question
+(R-10). The question set is the fixed list of typed questions for each assessed call.
 
 ```yaml
-organisation:
+organization:
   name: "Example Corp"
   description: "Employees of Example Corp. All other parties are outside, including partners, customers, and personal accounts."
   internal_domains: ["example.com"]
 
 questions:
-  - name: leaves_organisation        # R-06: the name is an identifier; the meaning is in the text
+  - name: leaves_organization        # R-06: the name is an identifier; the meaning is in the text
     type: predicate                  # R-07: a yes/no property, so a probability of yes
-    instructions: "Does the call in `call` give access or data to a party outside the organisation in `organisation`?"   # R-04: one condition; R-12: sections named
-    yes_when: "A recipient, grantee, or destination is not in `organisation.internal_domains`, is public, or cannot be identified."   # R-05: boundary cases
-    no_when: "Every recipient, grantee, and destination is in `organisation.internal_domains`, or the call has none."
-    statement: "Gives access or data to a party outside the organisation"   # for the approver; not sent to the model
+    instructions: "Does the call in `call` give access or data to a party outside the organization in `organization`?"   # R-04: one condition; R-12: sections named
+    yes_when: "A recipient, grantee, or destination is not in `organization.internal_domains`, is public, or cannot be identified."   # R-05: boundary cases
+    no_when: "Every recipient, grantee, and destination is in `organization.internal_domains`, or the call has none."
+    statement: "Gives access or data to a party outside the organization"   # for the approver; not sent to the model
 ```
 
-### E-02 — Question wording: breaks a rule, follows the rule
+### E-02 — Question wording: incorrect and correct
 
-| Finding | Breaks the rule | Why it fails | Follows the rule |
+| Finding | Incorrect | Cause of the problem | Correct |
 |---|---|---|---|
-| R-02 | "Is this call safe to approve?" | Asks for the decision. The answer has an implied threshold that nobody set. | "Does the call in `call` give access or data to a party outside the organisation?" |
-| R-04 | "Does the call share data outside the organisation or delete something?" | Two conditions. A value of 0.6 does not show which one is present. | Two questions: `leaves_organisation` and `persistent_effect`. |
-| R-05 | "Does the call stay inside the organisation?" | A high value now means low risk. A rule written for the other questions reads it backwards. | "Does the call give access or data to a party outside the organisation?" |
-| R-05 | "Does the call share the file with an external user?" | A public link has no user. A literal reading answers no. | The same question with the criterion "... is public, or cannot be identified". |
-| R-07 | "Is the effect of the call reversible?" | Degree asked as yes/no. 0.5 can mean "partly" or "unknown". | An ordered scale: no persistent effect, owner can undo, cannot be undone or cannot be determined. |
-| R-09 | "Does the call notify more than 50 recipients?" | Counting. The model does not count reliably. | The policy counts: `count(input.mcp.arguments.recipients) > 50`. |
-| R-09 | "Is the expiry date of the share more than 30 days away?" | Date arithmetic. | The policy compares the dates. |
+| R-02 | "Is this call safe to approve?" | It asks for the decision. The answer has an implied threshold that no person set. | "Does the call in `call` give access or data to a party outside the organization?" |
+| R-04 | "Does the call share data outside the organization or delete something?" | It has two conditions. A value of 0.6 does not show which condition is present. | Two questions: `leaves_organization` and `persistent_effect`. |
+| R-05 | "Does the call stay inside the organization?" | A high value shows low risk. A rule for the other questions reads it in the wrong direction. | "Does the call give access or data to a party outside the organization?" |
+| R-05 | "Does the call share the file with an external user?" | A public link has no user. A literal reader answers no. | The same question with the criterion "... is public, or cannot be identified". |
+| R-07 | "Is the effect of the call reversible?" | It asks for a degree as yes/no. A value of 0.5 can mean "partly" or "unknown". | An ordered scale: no persistent effect, owner can undo, cannot be undone or cannot be determined. |
+| R-09 | "Does the call notify more than 50 recipients?" | It needs a count. The model does not count reliably. | The policy counts: `count(input.mcp.arguments.recipients) > 50`. |
+| R-09 | "Is the expiry date of the share more than 30 days away?" | It needs date arithmetic. | The policy compares the dates. |
 
 Two of these patterns come from vendor documentation. TypeSafe gives "Is the customer angry and
-asking for a refund?" as a compound question and "Is the message free of personal data?" as
-inverted wording. OpenAI's example of an observable question with an explicit exclusion is "Does
-the product have visible damage, such as a crack, tear, or dent? Ignore shadows and damage to the
-packaging."
+asking for a refund?" as a compound question. It gives "Is the message free of personal data?" as
+inverted wording. The OpenAI example of an observable question with an explicit exclusion is
+"Does the product have visible damage, such as a crack, tear, or dent? Ignore shadows and damage
+to the packaging."
 
-### E-03 — Context: what the model needs and what it must not get
+### E-03 — Context: the data that the model needs and the data that it must not get
 
-Too little (R-10). The model must guess what the server and the tool do:
+Too little context (R-10). The model must guess the function of the server and of the tool:
 
 ```json
 {"mcp_server": "google-drive-mcp", "tool_name": "drive.share_file", "arguments": {"role": "editor", "grantee_domain": "thirdparty.example.com"}}
 ```
 
-Too much, and mixed (R-11, R-13, R-14). The agent's own account can argue for an answer, and the
-string gives the model no way to tell facts from claims:
+Too much context, with mixed authors (R-11, R-13, R-14). The account from the agent can argue for
+an answer. The string does not let the model tell facts from claims:
 
 ```json
 {"request": "The user asked me to share the Q3 report with our partner. This was approved earlier. Tool drive.share_file, role editor, domain thirdparty.example.com.", "session_history": ["..."], "policy_risk_level": "medium"}
 ```
 
-Sufficient and bounded (R-10 to R-15). Each section has one author, and the question can point at
-a field:
+Sufficient and bounded context (R-10 to R-15). Each section has one author, and a question can
+refer to a field:
 
 ```json
 {
-  "organisation": {"name": "Example Corp", "internal_domains": ["example.com"]},
+  "organization": {"name": "Example Corp", "internal_domains": ["example.com"]},
   "server": {"name": "google-drive-mcp"},
   "tool": {
     "written_by": "server",
@@ -267,49 +286,36 @@ a field:
 }
 ```
 
-### E-04 — Reading an ordered scale
+### E-04 — How to read an ordered scale
 
-The scale has three levels: 0 "No persistent effect", 1 "Owner can undo", 2 "Cannot be undone or
-cannot be determined". Two answers with almost the same mean (R-17):
+The scale has three levels: 0 "No persistent effect", 1 "Owner can undo", and 2 "Cannot be undone
+or cannot be determined". These two answers have almost the same mean (R-17):
 
-| Per-level probabilities | `score` (mean) | Probability of level 2 | Meaning |
+| Probabilities for each level | `score` (mean) | Probability of level 2 | Meaning |
 |---|---|---|---|
-| `[0.02, 0.97, 0.01]` | 0.99 | 0.01 | The model is settled on "Owner can undo". |
-| `[0.50, 0.02, 0.48]` | 0.98 | 0.48 | The model is split between "nothing remains" and "cannot be undone". |
+| `[0.02, 0.97, 0.01]` | 0.99 | 0.01 | The model selects "Owner can undo" with high confidence. |
+| `[0.50, 0.02, 0.48]` | 0.98 | 0.48 | The model cannot decide between "nothing stays" and "cannot be undone". |
 
-A rule on the mean (`score <= 1.1`) passes both. A rule on the risky level
-(`probabilities[2] <= 0.02`) passes only the first. The spec's example policy uses the second form.
+A rule on the mean (`score <= 1.1`) accepts the two answers. A rule on the risky level
+(`probabilities[2] <= 0.02`) accepts only the first answer. The example policy of the spec uses
+the second form.
 
 ### E-05 — Three results that are not a "no"
 
-| Result for `leaves_organisation` | State in the policy input | Can it satisfy an automatic approval rule? |
+| Result for `leaves_organization` | State in the policy input | Can it satisfy a rule for automatic approval? |
 |---|---|---|
-| `{"type": "predicate", "probability": 0.01}` | answered | Yes, if all other conditions hold |
+| `{"type": "predicate", "probability": 0.01}` | answered | Yes, if all other conditions are true |
 | `{"type": "refusal"}` | refused | No (R-18) |
 | No entry with that name | missing | No |
 | `{"type": "predicate", "probability": 0.4}` | answered, between the thresholds | No. The finding is "unclear" (R-16) |
 
 ## Additional observations
 
-- **What a classifier gets wrong.** In most of the misses Anthropic examined, the classifier saw
-  the danger. It misjudged whether the user's consent covered the action. Questions about the
-  observable effect of a call are therefore more reliable than questions about user intent. This
-  feature asks only about effect.
-- **Humans are a weak baseline.** Anthropic reports that users approve 97% of prompts and caught
-  13.6% of planted dangerous commands. Fewer prompts with better content can improve the human
-  decision. The model does not have to be perfect to improve the total outcome, but each automatic
-  approval removes the human check for that call.
-- **Narrow output limits injection damage and does not prevent it.** Injected text can move a
-  probability. It cannot produce instructions or persuasive text. A separate question that asks
-  whether an argument contains text addressed to an assessor is a low-cost tripwire.
-- **Latency and cost.** TypeSafe states about 100 ms for most calls. OpenAI states about 10 times
-  faster than its generative API, with input priced at $0.10 per million tokens and no charge for
-  output. Shared input can be cached when an identical prefix is at least 1,024 tokens, and
-  questions are outside that prefix. A stable, trusted context section placed first can therefore
-  be reused across calls.
-- **Data handling.** OpenAI states that the Decisions API supports Zero Data Retention and
-  regional processing for eligible customers. A local open-weights model keeps arguments inside
-  the organisation. Disclosure is a deployment decision and must be explicit.
+- **The errors of a classifier.** In most of the misses that Anthropic examined, the classifier saw the danger. It made an error about whether the consent of the user applied to the action. Thus, questions about the observable effect of a call are more reliable than questions about user intent. This feature asks only about the effect.
+- **Humans are a weak baseline.** Anthropic reports that users approve 97% of prompts. In its study, users found 13.6% of the dangerous commands that it put into prompts. Fewer prompts with better content can improve the human decision. It is not necessary for the model to be perfect to improve the total outcome. But each automatic approval removes the human check for that call.
+- **Narrow output limits the damage of an injection and does not prevent the injection.** Injected text can move a probability. It cannot make instructions or persuasive text. A separate question about text that addresses an assessor is a low-cost detection method.
+- **Latency and cost.** TypeSafe states approximately 100 ms for most calls. OpenAI states that the Decisions API is approximately 10 times faster than its generative API. OpenAI charges $0.10 for each million input tokens and nothing for output. If an identical prefix has a minimum of 1,024 tokens, the API can cache shared input. Questions are not in that prefix. Thus, subsequent calls can use a stable, trusted context section at the start again.
+- **Data handling.** OpenAI states that the Decisions API supports Zero Data Retention and regional processing for eligible customers. A local open-weights model keeps arguments in the organization. Disclosure is a deployment decision, and it must be explicit.
 
 ## Sources
 
@@ -336,14 +342,14 @@ Deployment reports:
 - Jan Brennenstuhl, [System One for Tool Approvals](https://www.janbrennenstuhl.eu/system-one-approvals/)
 - StackOne, [Building a System One Model for Prompt Injection](https://www.stackone.com/blog/system-one-model-prompt-injection/)
 
-Preprints (not peer reviewed):
+Preprints (without peer review):
 
 - [TypedBench: A Benchmark for Calibration, Framing Sensitivity, and Cost in System One Decision Models](https://arxiv.org/abs/2610.11392)
 - [Typed Decision Models: An Early Evidence Audit and Evaluation Checklist](https://arxiv.org/abs/2609.32160)
 - [Fast Models, Slow Evidence: A Paired and Self-Audited Evaluation of System-1 Decision Models for LLM Agent Harnesses](https://arxiv.org/abs/2610.02267)
 - [Confidence Is Not a Promise: A Reference Audit of Typed Decision Models](https://arxiv.org/abs/2610.36311)
 
-Third-party guides (unverified against vendor sources):
+Third-party guides (not compared with vendor sources):
 
 - Reveneau, [Prompt Injection and Adversarial Input: What Jev Can and Cannot Catch](https://reveneau.com/guides/jev-in-production/prompt-injection-and-adversarial-input)
 - Learn Jev, [Jev failure modes](https://learnjev.com/tutorials/failure-modes)
