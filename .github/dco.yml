@@ -1,0 +1,3 @@
+allowRemediationCommits:
+  individual: true
+  thirdParty: true   # lets you remediate on behalf of someone else, with their sign-off
