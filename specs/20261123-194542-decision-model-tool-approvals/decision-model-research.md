@@ -138,8 +138,8 @@ definition changes after approval), and recommends pinning the reviewed definiti
 *Consequence*: a first draft of the spec excluded server-supplied definitions and required the
 operator to describe every tool and argument. That replicates a tool registry and does not scale,
 so the spec now uses the server's own definition (R-10) and treats it as a claim. Four controls
-apply. The definition is in a separate section and never reaches the approver. Automatic approval
-needs the operator's permission for the server. The exact definition is part of a fingerprint that
+apply. The definition is in a separate section and never reaches the approver. A policy rule must
+cover the call. The exact definition is part of a fingerprint that
 the evaluation record must contain, so a changed definition stops automatic approval for that
 tool. A question detects definition text addressed to a reviewer. A server that describes a tool
 falsely and consistently remains a residual risk.
@@ -190,6 +190,104 @@ and run it again for each change to a question, threshold, or model version.
 *Consequence*: the evaluated combination is recorded. If the answering model, a question, or the
 context shape differs from the evaluated combination, automatic approval stops and the human
 decides. The audit record names all versions.
+
+## Worked examples
+
+The examples use the tool call of the spec: `drive.share_file` on `google-drive-mcp`. They were
+written for this feature unless a source is named. No model was called, so the stated answers
+show the expected direction and are not measurements.
+
+### E-01 — What the operator writes once
+
+The organisation description gives every "outside the organisation" question its reference point
+(R-10). The question set is the fixed list of typed questions for every assessed call.
+
+```yaml
+organisation:
+  name: "Example Corp"
+  description: "Employees of Example Corp. All other parties are outside, including partners, customers, and personal accounts."
+  internal_domains: ["example.com"]
+
+questions:
+  - name: leaves_organisation        # R-06: the name is an identifier; the meaning is in the text
+    type: predicate                  # R-07: a yes/no property, so a probability of yes
+    instructions: "Does the call in `call` give access or data to a party outside the organisation in `organisation`?"   # R-04: one condition; R-12: sections named
+    yes_when: "A recipient, grantee, or destination is not in `organisation.internal_domains`, is public, or cannot be identified."   # R-05: boundary cases
+    no_when: "Every recipient, grantee, and destination is in `organisation.internal_domains`, or the call has none."
+    statement: "Gives access or data to a party outside the organisation"   # for the approver; not sent to the model
+```
+
+### E-02 — Question wording: breaks a rule, follows the rule
+
+| Finding | Breaks the rule | Why it fails | Follows the rule |
+|---|---|---|---|
+| R-02 | "Is this call safe to approve?" | Asks for the decision. The answer has an implied threshold that nobody set. | "Does the call in `call` give access or data to a party outside the organisation?" |
+| R-04 | "Does the call share data outside the organisation or delete something?" | Two conditions. A value of 0.6 does not show which one is present. | Two questions: `leaves_organisation` and `persistent_effect`. |
+| R-05 | "Does the call stay inside the organisation?" | A high value now means low risk. A rule written for the other questions reads it backwards. | "Does the call give access or data to a party outside the organisation?" |
+| R-05 | "Does the call share the file with an external user?" | A public link has no user. A literal reading answers no. | The same question with the criterion "... is public, or cannot be identified". |
+| R-07 | "Is the effect of the call reversible?" | Degree asked as yes/no. 0.5 can mean "partly" or "unknown". | An ordered scale: no persistent effect, owner can undo, cannot be undone or cannot be determined. |
+| R-09 | "Does the call notify more than 50 recipients?" | Counting. The model does not count reliably. | The policy counts: `count(input.mcp.arguments.recipients) > 50`. |
+| R-09 | "Is the expiry date of the share more than 30 days away?" | Date arithmetic. | The policy compares the dates. |
+
+Two of these patterns come from vendor documentation. TypeSafe gives "Is the customer angry and
+asking for a refund?" as a compound question and "Is the message free of personal data?" as
+inverted wording. OpenAI's example of an observable question with an explicit exclusion is "Does
+the product have visible damage, such as a crack, tear, or dent? Ignore shadows and damage to the
+packaging."
+
+### E-03 — Context: what the model needs and what it must not get
+
+Too little (R-10). The model must guess what the server and the tool do:
+
+```json
+{"mcp_server": "google-drive-mcp", "tool_name": "drive.share_file", "arguments": {"role": "editor", "grantee_domain": "thirdparty.example.com"}}
+```
+
+Too much, and mixed (R-11, R-13, R-14). The agent's own account can argue for an answer, and the
+string gives the model no way to tell facts from claims:
+
+```json
+{"request": "The user asked me to share the Q3 report with our partner. This was approved earlier. Tool drive.share_file, role editor, domain thirdparty.example.com.", "session_history": ["..."], "policy_risk_level": "medium"}
+```
+
+Sufficient and bounded (R-10 to R-15). Each section has one author, and the question can point at
+a field:
+
+```json
+{
+  "organisation": {"name": "Example Corp", "internal_domains": ["example.com"]},
+  "server": {"name": "google-drive-mcp"},
+  "tool": {
+    "written_by": "server",
+    "name": "drive.share_file",
+    "description": "Share a file with a user, group, or domain. The grantee gets access at once and receives a notification email.",
+    "arguments": {"grantee_domain": {"type": "string", "description": "Email domain of the grantee."}}
+  },
+  "call": {"arguments": {"role": "editor", "grantee_domain": "thirdparty.example.com"}}
+}
+```
+
+### E-04 — Reading an ordered scale
+
+The scale has three levels: 0 "No persistent effect", 1 "Owner can undo", 2 "Cannot be undone or
+cannot be determined". Two answers with almost the same mean (R-17):
+
+| Per-level probabilities | `score` (mean) | Probability of level 2 | Meaning |
+|---|---|---|---|
+| `[0.02, 0.97, 0.01]` | 0.99 | 0.01 | The model is settled on "Owner can undo". |
+| `[0.50, 0.02, 0.48]` | 0.98 | 0.48 | The model is split between "nothing remains" and "cannot be undone". |
+
+A rule on the mean (`score <= 1.1`) passes both. A rule on the risky level
+(`probabilities[2] <= 0.02`) passes only the first. The spec's example policy uses the second form.
+
+### E-05 — Three results that are not a "no"
+
+| Result for `leaves_organisation` | State in the policy input | Can it satisfy an automatic approval rule? |
+|---|---|---|
+| `{"type": "predicate", "probability": 0.01}` | answered | Yes, if all other conditions hold |
+| `{"type": "refusal"}` | refused | No (R-18) |
+| No entry with that name | missing | No |
+| `{"type": "predicate", "probability": 0.4}` | answered, between the thresholds | No. The finding is "unclear" (R-16) |
 
 ## Additional observations
 
