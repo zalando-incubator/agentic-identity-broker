@@ -10,32 +10,31 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-// EvaluateAuthorizationReadiness applies the same grant, included-session and
-// mandatory-service checks to browser authorization and human impersonation.
-// It reads session metadata only: no token decryption or provider refresh occurs.
-func EvaluateAuthorizationReadiness(
+// CheckConsent determines whether the user must return to the agent consent page.
+// It reads grant and session metadata without decrypting tokens or refreshing them.
+func CheckConsent(
 	ctx context.Context,
 	grants ports.UserGrantRepository,
 	sessions ports.UserSessionRepository,
 	principal id.Principal,
 	agent *storage.Agent,
-) (ports.AuthorizationReadiness, error) {
+) (ports.ConsentStatus, error) {
 	grant, err := grants.FindByPrincipalAndAgent(ctx, principal, agent.ID)
 	if err != nil && !ports.IsNotFoundErr(err) {
-		return ports.AuthorizationReadiness{Reason: ports.ReadinessGrantLookupFailed}, fmt.Errorf("find user grant: %w", err)
+		return ports.ConsentStatus{Reason: ports.ConsentGrantLookupFailed}, fmt.Errorf("find user grant: %w", err)
 	}
 	if grant == nil || ports.IsNotFoundErr(err) {
-		return ports.AuthorizationReadiness{Reason: ports.ReadinessGrantMissing}, nil
+		return ports.ConsentStatus{Reason: ports.ConsentGrantMissing}, nil
 	}
 	if !grant.IsActive() {
-		return ports.AuthorizationReadiness{Reason: ports.ReadinessGrantExpired}, nil
+		return ports.ConsentStatus{Reason: ports.ConsentGrantExpired}, nil
 	}
 
 	for _, entry := range grant.GrantedPermissionSets {
 		if !slices.ContainsFunc(agent.PermissionSets, func(declared storage.AgentPermissionSetEntry) bool {
 			return declared.PermissionSetID == entry.PermissionSetID
 		}) {
-			return ports.AuthorizationReadiness{Reason: ports.ReadinessPermissionSetUndeclared, PermissionSetID: entry.PermissionSetID}, nil
+			return ports.ConsentStatus{Reason: ports.ConsentPermissionSetUndeclared, PermissionSetID: entry.PermissionSetID}, nil
 		}
 	}
 
@@ -49,13 +48,13 @@ func EvaluateAuthorizationReadiness(
 			}
 			session, err := sessions.FindByPrincipalAndService(ctx, principal, serviceID)
 			if err != nil {
-				return ports.AuthorizationReadiness{Reason: ports.ReadinessSessionLookupFailed, ServiceID: serviceID}, fmt.Errorf("find included session for service %s: %w", serviceID, err)
+				return ports.ConsentStatus{Reason: ports.ConsentSessionLookupFailed, ServiceID: serviceID}, fmt.Errorf("find included session for service %s: %w", serviceID, err)
 			}
 			if session == nil {
-				return ports.AuthorizationReadiness{Reason: ports.ReadinessIncludedSessionMissing, ServiceID: serviceID}, nil
+				return ports.ConsentStatus{Reason: ports.ConsentIncludedSessionMissing, ServiceID: serviceID}, nil
 			}
 			if session.RequiresReauthentication() {
-				return ports.AuthorizationReadiness{Reason: ports.ReadinessIncludedSessionUnusable, ServiceID: serviceID}, nil
+				return ports.ConsentStatus{Reason: ports.ConsentIncludedSessionUnusable, ServiceID: serviceID}, nil
 			}
 			if seen == nil {
 				seen = make(map[id.ServiceID]*storage.UserSession)
@@ -73,7 +72,7 @@ func EvaluateAuthorizationReadiness(
 			var err error
 			session, err = sessions.FindByPrincipalAndService(ctx, principal, requirement.ServiceID)
 			if err != nil {
-				return ports.AuthorizationReadiness{Reason: ports.ReadinessSessionLookupFailed, ServiceID: requirement.ServiceID}, fmt.Errorf("find mandatory session for service %s: %w", requirement.ServiceID, err)
+				return ports.ConsentStatus{Reason: ports.ConsentSessionLookupFailed, ServiceID: requirement.ServiceID}, fmt.Errorf("find mandatory session for service %s: %w", requirement.ServiceID, err)
 			}
 			if session != nil && !session.RequiresReauthentication() {
 				if seen == nil {
@@ -83,22 +82,21 @@ func EvaluateAuthorizationReadiness(
 			}
 		}
 		if session == nil {
-			return ports.AuthorizationReadiness{Reason: ports.ReadinessMandatorySessionMissing, ServiceID: requirement.ServiceID}, nil
+			return ports.ConsentStatus{Reason: ports.ConsentMandatorySessionMissing, ServiceID: requirement.ServiceID}, nil
 		}
 		if session.RequiresReauthentication() {
-			return ports.AuthorizationReadiness{Reason: ports.ReadinessMandatorySessionUnusable, ServiceID: requirement.ServiceID}, nil
+			return ports.ConsentStatus{Reason: ports.ConsentMandatorySessionUnusable, ServiceID: requirement.ServiceID}, nil
 		}
 		for _, scope := range requirement.RequiredScopes {
 			if !slices.Contains(session.Scope, scope) {
-				return ports.AuthorizationReadiness{Reason: ports.ReadinessMandatoryScopeInsufficient, ServiceID: requirement.ServiceID}, nil
+				return ports.ConsentStatus{Reason: ports.ConsentMandatoryScopeInsufficient, ServiceID: requirement.ServiceID}, nil
 			}
 		}
 	}
-	return ports.AuthorizationReadiness{}, nil
+	return ports.ConsentStatus{}, nil
 }
 
-// EvaluateAuthorizationReadiness uses the consent service's repositories for
-// the already-resolved target agent; it does not fetch the agent again.
-func (s *Service) EvaluateAuthorizationReadiness(ctx context.Context, principal id.Principal, agent *storage.Agent) (ports.AuthorizationReadiness, error) {
-	return EvaluateAuthorizationReadiness(ctx, s.grantRepo, s.sessionRepo, principal, agent)
+// CheckConsent uses the consent service's repositories and the resolved agent.
+func (s *Service) CheckConsent(ctx context.Context, principal id.Principal, agent *storage.Agent) (ports.ConsentStatus, error) {
+	return CheckConsent(ctx, s.grantRepo, s.sessionRepo, principal, agent)
 }

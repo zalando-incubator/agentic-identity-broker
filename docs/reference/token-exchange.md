@@ -423,7 +423,7 @@ The existing request-security logger decorator supplies authenticated `actor` an
 User impersonation is a separate RFC 8693 profile on this endpoint. It is available only
 when `oauth2_authorization_server.mode` is `local`. Proxy and hybrid modes reject it
 without upstream forwarding. Impersonation does not accept `resource` or return a
-third-party token. Human subjects require browser-equivalent consent readiness.
+third-party token. Human subjects require a browser-equivalent consent check.
 Eligible signed or predicate-bound unsigned self-agent subjects do not ([ADR 045](../../adrs/045-agent-subject-impersonation.md)).
 
 The token contains subject claim `sub` and actor claim `act`. In RFC 8693 terms, this is
@@ -488,7 +488,7 @@ issues an email claim.
 
 `allowed_subject_categories` is rule-local: omission means `[human]`; `[agent]` permits only agents and `[human, agent]` permits both (either order). A request is agent-category only when its signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target UUID. An unsigned subject with that exact `sub` is agent-category only when the rule's authorization predicate binds `subject_token.sub`. A `sub` or extracted subject principal that is another registered agent's canonical UUID is rejected on every rule, without human fallback. Other subjects are human. No aliases, UUID normalization, principal-expression mapping or request category input selects agent issuance. Signed equality is ineligible on human-only/omitted rules even with active same-text delegation. Ineligibility falls through, and no eligible rule returns generic `403 access_denied` (`impersonation not permitted`) without `error_uri`.
 
-Every principal extraction and CEL authorization remains mandatory. Eligible agents skip consent readiness and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and consent principal. Their consent readiness uses the same checks as local browser `/oauth2/authorize`: active grant, current declared permission sets, usable sessions for every included service, and mandatory service presence, usable sessions, and required scopes. Missing, expired, or stale grants and unmet service conditions are terminal consent denials. A denied human never retries as an agent. An unsigned rule may list `agent`, but only an unsigned subject with a target-matching `sub` and a predicate that binds `subject_token.sub` qualifies. See [20261120-145501-human-impersonation-consent-readiness](../../adrs/20261120-145501-human-impersonation-consent-readiness.md).
+Every principal extraction and CEL authorization remains mandatory. Eligible agents skip the human consent check and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and consent principal. Their consent status uses the same checks as local browser `/oauth2/authorize`: active grant, current declared permission sets, usable sessions for every included service, and mandatory service presence, usable sessions, and required scopes. Missing, expired, or stale grants and unmet service conditions are terminal consent denials. A denied human never retries as an agent. An unsigned rule may list `agent`, but only an unsigned subject with a target-matching `sub` and a predicate that binds `subject_token.sub` qualifies. See [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md).
 
 ### Response and errors
 
@@ -513,7 +513,7 @@ untrusted client assertion returns `invalid_client`. A valid request with no per
 returns `access_denied`. Errors do not expose credentials, signing keys, trust sources, or
 rejected scopes.
 
-For human consent-readiness denials, the response includes both the body recovery URI
+For human consent denials, the response includes both the body recovery URI
 and a Bearer challenge when the URI is safe under RFC 6750:
 
 ```http

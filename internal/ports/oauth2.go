@@ -275,34 +275,34 @@ type ImpersonationTokenIssuer interface {
 	IssueImpersonationToken(ctx context.Context, input ImpersonationMintInput) (string, error)
 }
 
-// AuthorizationReadinessReason identifies why browser consent is required.
-// An empty reason means the user can proceed.
-type AuthorizationReadinessReason string
+// ConsentReason identifies why the user must return to the agent consent page.
+// An empty reason means that issuance can proceed.
+type ConsentReason string
 
 const (
-	ReadinessReady                      AuthorizationReadinessReason = ""
-	ReadinessGrantMissing               AuthorizationReadinessReason = "grant_missing"
-	ReadinessGrantExpired               AuthorizationReadinessReason = "grant_expired"
-	ReadinessPermissionSetUndeclared    AuthorizationReadinessReason = "permission_set_undeclared"
-	ReadinessIncludedSessionMissing     AuthorizationReadinessReason = "included_session_missing"
-	ReadinessIncludedSessionUnusable    AuthorizationReadinessReason = "included_session_unusable"
-	ReadinessMandatorySessionMissing    AuthorizationReadinessReason = "mandatory_session_missing"
-	ReadinessMandatorySessionUnusable   AuthorizationReadinessReason = "mandatory_session_unusable"
-	ReadinessMandatoryScopeInsufficient AuthorizationReadinessReason = "mandatory_scope_insufficient"
-	ReadinessGrantLookupFailed          AuthorizationReadinessReason = "grant_lookup_failed"
-	ReadinessSessionLookupFailed        AuthorizationReadinessReason = "session_lookup_failed"
+	ConsentReady                      ConsentReason = ""
+	ConsentGrantMissing               ConsentReason = "grant_missing"
+	ConsentGrantExpired               ConsentReason = "grant_expired"
+	ConsentPermissionSetUndeclared    ConsentReason = "permission_set_undeclared"
+	ConsentIncludedSessionMissing     ConsentReason = "included_session_missing"
+	ConsentIncludedSessionUnusable    ConsentReason = "included_session_unusable"
+	ConsentMandatorySessionMissing    ConsentReason = "mandatory_session_missing"
+	ConsentMandatorySessionUnusable   ConsentReason = "mandatory_session_unusable"
+	ConsentMandatoryScopeInsufficient ConsentReason = "mandatory_scope_insufficient"
+	ConsentGrantLookupFailed          ConsentReason = "grant_lookup_failed"
+	ConsentSessionLookupFailed        ConsentReason = "session_lookup_failed"
 )
 
-// AuthorizationReadiness carries a credential-free reason and affected entity.
-// A non-nil evaluation error always fails closed, regardless of the reason.
-type AuthorizationReadiness struct {
-	Reason          AuthorizationReadinessReason
+// ConsentStatus carries a credential-free reason and the affected entity.
+// A non-nil error always fails closed, regardless of the reason.
+type ConsentStatus struct {
+	Reason          ConsentReason
 	ServiceID       id.ServiceID
 	PermissionSetID id.PermissionSetID
 }
 
-// AuthorizationReadinessVerifier evaluates human consent after the impersonation
-// rule authorizes the request. Agent-category subjects do not use this port.
-type AuthorizationReadinessVerifier interface {
-	EvaluateAuthorizationReadiness(ctx context.Context, principal id.Principal, agent *storage.Agent) (AuthorizationReadiness, error)
+// ConsentChecker checks whether a human needs the agent consent page after
+// the impersonation rule authorizes the request. Agent subjects skip this port.
+type ConsentChecker interface {
+	CheckConsent(ctx context.Context, principal id.Principal, agent *storage.Agent) (ConsentStatus, error)
 }

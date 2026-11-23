@@ -216,57 +216,57 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	}
 
-	readiness, err := consent.EvaluateAuthorizationReadiness(ctx, s.grantRepo, s.sessionRepo, principal, agent)
+	consentStatus, err := consent.CheckConsent(ctx, s.grantRepo, s.sessionRepo, principal, agent)
 	if err != nil {
 		if s.logger != nil {
-			if readiness.ServiceID.IsZero() {
-				s.logger.ErrorContext(ctx, "authorization readiness check failed", "agent_id", agent.ID, "reason", readiness.Reason)
+			if consentStatus.ServiceID.IsZero() {
+				s.logger.ErrorContext(ctx, "consent check failed", "agent_id", agent.ID, "reason", consentStatus.Reason)
 			} else {
-				s.logger.ErrorContext(ctx, "authorization readiness check failed", "agent_id", agent.ID,
-					"service_id", readiness.ServiceID, "reason", readiness.Reason)
+				s.logger.ErrorContext(ctx, "consent check failed", "agent_id", agent.ID,
+					"service_id", consentStatus.ServiceID, "reason", consentStatus.Reason)
 			}
 		}
 		return &ports.AuthorizationDecision{
 			Action: "error", ErrorCode: "server_error",
-			ErrorDesc:   "Failed to check authorization readiness",
+			ErrorDesc:   "Failed to check consent status",
 			RedirectURL: s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error"),
 		}, nil
 	}
 
-	switch readiness.Reason {
-	case "":
-	case ports.ReadinessGrantMissing, ports.ReadinessGrantExpired, ports.ReadinessPermissionSetUndeclared:
-	case ports.ReadinessIncludedSessionMissing, ports.ReadinessIncludedSessionUnusable:
+	switch consentStatus.Reason {
+	case ports.ConsentReady:
+	case ports.ConsentGrantMissing, ports.ConsentGrantExpired, ports.ConsentPermissionSetUndeclared:
+	case ports.ConsentIncludedSessionMissing, ports.ConsentIncludedSessionUnusable:
 		if s.logger != nil {
 			reason := "session_missing"
-			if readiness.Reason == ports.ReadinessIncludedSessionUnusable {
+			if consentStatus.Reason == ports.ConsentIncludedSessionUnusable {
 				reason = "reauthentication_required"
 			}
 			s.logger.WarnContext(ctx, "delegated session unusable",
 				"event", "oauth2.delegated_session.unusable", "agent_id", agent.ID,
-				"principal", principal, "service_id", readiness.ServiceID, "reason", reason)
+				"principal", principal, "service_id", consentStatus.ServiceID, "reason", reason)
 		}
-	case ports.ReadinessMandatorySessionMissing, ports.ReadinessMandatorySessionUnusable, ports.ReadinessMandatoryScopeInsufficient:
+	case ports.ConsentMandatorySessionMissing, ports.ConsentMandatorySessionUnusable, ports.ConsentMandatoryScopeInsufficient:
 		if s.logger != nil {
 			reason := "session_not_found"
-			switch readiness.Reason {
-			case ports.ReadinessMandatorySessionUnusable:
+			switch consentStatus.Reason {
+			case ports.ConsentMandatorySessionUnusable:
 				reason = "reauthentication_required"
-			case ports.ReadinessMandatoryScopeInsufficient:
+			case ports.ConsentMandatoryScopeInsufficient:
 				reason = "scope_mismatch"
 			}
 			s.logger.WarnContext(ctx, "mandatory requirement not met",
 				"event", "oauth2.mandatory_requirement.not_met", "agent_id", agent.ID,
-				"service_id", readiness.ServiceID, "reason", reason)
+				"service_id", consentStatus.ServiceID, "reason", reason)
 		}
 	default:
 		if s.logger != nil {
-			s.logger.ErrorContext(ctx, "unknown authorization readiness reason", "agent_id", agent.ID)
+			s.logger.ErrorContext(ctx, "unknown consent status", "agent_id", agent.ID)
 		}
-		return ports.ErrorDecision("server_error", "Failed to check authorization readiness",
+		return ports.ErrorDecision("server_error", "Failed to check consent status",
 			s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")), nil
 	}
-	if readiness.Reason != "" {
+	if consentStatus.Reason != ports.ConsentReady {
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 		if buildErr != nil {
 			if s.logger != nil {

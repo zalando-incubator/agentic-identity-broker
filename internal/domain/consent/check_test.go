@@ -13,29 +13,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type readinessGrantStore struct {
+type consentGrantStore struct {
 	ports.UserGrantRepository
 	grant *storage.UserGrant
 	err   error
 }
 
-func (r readinessGrantStore) FindByPrincipalAndAgent(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error) {
+func (r consentGrantStore) FindByPrincipalAndAgent(context.Context, id.Principal, id.AgentID) (*storage.UserGrant, error) {
 	return r.grant, r.err
 }
 
-type readinessSessionStore struct {
+type consentSessionStore struct {
 	ports.UserSessionRepository
 	sessions map[id.ServiceID]*storage.UserSession
 	calls    map[id.ServiceID]int
 	err      error
 }
 
-func (r *readinessSessionStore) FindByPrincipalAndService(_ context.Context, _ id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
+func (r *consentSessionStore) FindByPrincipalAndService(_ context.Context, _ id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
 	r.calls[serviceID]++
 	return r.sessions[serviceID], r.err
 }
 
-func TestEvaluateAuthorizationReadiness(t *testing.T) {
+func TestCheckConsent(t *testing.T) {
 	principal := id.NewPrincipal("user@example.com")
 	serviceID, optionalID := id.NewServiceID(), id.NewServiceID()
 	permissionSetID, secondSetID := id.NewPermissionSetID(), id.NewPermissionSetID()
@@ -52,26 +52,26 @@ func TestEvaluateAuthorizationReadiness(t *testing.T) {
 		optional     bool
 		session      *storage.UserSession
 		sessionError error
-		want         ports.AuthorizationReadinessReason
+		want         ports.ConsentReason
 		calls        int
 		wantError    error
 	}{
-		{name: "missing grant", grantMissing: true, want: ports.ReadinessGrantMissing},
-		{name: "missing grant reported as not found", grantError: ports.ErrNotFound, want: ports.ReadinessGrantMissing},
-		{name: "storage not-found grant means consent", grantError: storage.NewStorageError("find grant", storage.ErrorKindNotFound, nil, "not found"), want: ports.ReadinessGrantMissing},
-		{name: "expired grant", grantExpiry: &past, want: ports.ReadinessGrantExpired},
-		{name: "undeclared granted permission set", included: true, want: ports.ReadinessPermissionSetUndeclared},
-		{name: "selected service needs a connection", declared: true, included: true, want: ports.ReadinessIncludedSessionMissing, calls: 1},
-		{name: "selected service has no usable token", declared: true, included: true, session: &storage.UserSession{AccessTokenExpiresAt: &past}, want: ports.ReadinessIncludedSessionUnusable, calls: 1},
-		{name: "provider rejected refresh while access token still valid", declared: true, included: true, session: &storage.UserSession{AccessTokenExpiresAt: &future, EncryptedRefreshToken: []byte("encrypted"), RefreshRejectedAt: &past}, want: ports.ReadinessIncludedSessionUnusable, calls: 1},
-		{name: "mandatory service needs a connection", mandatory: true, want: ports.ReadinessMandatorySessionMissing, calls: 1},
-		{name: "mandatory session needs reauthentication", mandatory: true, session: &storage.UserSession{AccessTokenExpiresAt: &past}, want: ports.ReadinessMandatorySessionUnusable, calls: 1},
-		{name: "mandatory service lacks required scope", mandatory: true, session: &storage.UserSession{Scope: []string{"read"}}, want: ports.ReadinessMandatoryScopeInsufficient, calls: 1},
+		{name: "missing grant", grantMissing: true, want: ports.ConsentGrantMissing},
+		{name: "missing grant reported as not found", grantError: ports.ErrNotFound, want: ports.ConsentGrantMissing},
+		{name: "storage not-found grant means consent", grantError: storage.NewStorageError("find grant", storage.ErrorKindNotFound, nil, "not found"), want: ports.ConsentGrantMissing},
+		{name: "expired grant", grantExpiry: &past, want: ports.ConsentGrantExpired},
+		{name: "undeclared granted permission set", included: true, want: ports.ConsentPermissionSetUndeclared},
+		{name: "selected service needs a connection", declared: true, included: true, want: ports.ConsentIncludedSessionMissing, calls: 1},
+		{name: "selected service has no usable token", declared: true, included: true, session: &storage.UserSession{AccessTokenExpiresAt: &past}, want: ports.ConsentIncludedSessionUnusable, calls: 1},
+		{name: "provider rejected refresh while access token still valid", declared: true, included: true, session: &storage.UserSession{AccessTokenExpiresAt: &future, EncryptedRefreshToken: []byte("encrypted"), RefreshRejectedAt: &past}, want: ports.ConsentIncludedSessionUnusable, calls: 1},
+		{name: "mandatory service needs a connection", mandatory: true, want: ports.ConsentMandatorySessionMissing, calls: 1},
+		{name: "mandatory session needs reauthentication", mandatory: true, session: &storage.UserSession{AccessTokenExpiresAt: &past}, want: ports.ConsentMandatorySessionUnusable, calls: 1},
+		{name: "mandatory service lacks required scope", mandatory: true, session: &storage.UserSession{Scope: []string{"read"}}, want: ports.ConsentMandatoryScopeInsufficient, calls: 1},
 		{name: "refreshable selected mandatory session is ready", declared: true, included: true, mandatory: true, secondSet: true, session: &storage.UserSession{Scope: []string{"read", "write"}, AccessTokenExpiresAt: &past, EncryptedRefreshToken: []byte("encrypted")}, calls: 1},
 		{name: "unselected optional service does not block", optional: true},
-		{name: "repository failure is not consent", grantError: assert.AnError, want: ports.ReadinessGrantLookupFailed, wantError: assert.AnError},
-		{name: "session repository failure is not consent", declared: true, included: true, sessionError: assert.AnError, want: ports.ReadinessSessionLookupFailed, calls: 1, wantError: assert.AnError},
-		{name: "mandatory session repository failure is not consent", mandatory: true, sessionError: assert.AnError, want: ports.ReadinessSessionLookupFailed, calls: 1, wantError: assert.AnError},
+		{name: "repository failure is not consent", grantError: assert.AnError, want: ports.ConsentGrantLookupFailed, wantError: assert.AnError},
+		{name: "session repository failure is not consent", declared: true, included: true, sessionError: assert.AnError, want: ports.ConsentSessionLookupFailed, calls: 1, wantError: assert.AnError},
+		{name: "mandatory session repository failure is not consent", mandatory: true, sessionError: assert.AnError, want: ports.ConsentSessionLookupFailed, calls: 1, wantError: assert.AnError},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			agent := &storage.Agent{ID: id.NewAgentID()}
@@ -100,8 +100,8 @@ func TestEvaluateAuthorizationReadiness(t *testing.T) {
 			if tc.grantMissing {
 				grant = nil
 			}
-			store := &readinessSessionStore{sessions: map[id.ServiceID]*storage.UserSession{serviceID: tc.session}, calls: make(map[id.ServiceID]int), err: tc.sessionError}
-			got, err := EvaluateAuthorizationReadiness(context.Background(), readinessGrantStore{grant: grant, err: tc.grantError}, store, principal, agent)
+			store := &consentSessionStore{sessions: map[id.ServiceID]*storage.UserSession{serviceID: tc.session}, calls: make(map[id.ServiceID]int), err: tc.sessionError}
+			got, err := CheckConsent(context.Background(), consentGrantStore{grant: grant, err: tc.grantError}, store, principal, agent)
 			if tc.wantError == nil {
 				require.NoError(t, err)
 			} else {
@@ -110,7 +110,7 @@ func TestEvaluateAuthorizationReadiness(t *testing.T) {
 			assert.Equal(t, tc.want, got.Reason)
 			assert.Equal(t, tc.calls, store.calls[serviceID])
 			assert.Zero(t, store.calls[optionalID])
-			if tc.want == ports.ReadinessPermissionSetUndeclared {
+			if tc.want == ports.ConsentPermissionSetUndeclared {
 				assert.Equal(t, permissionSetID, got.PermissionSetID)
 			}
 			if tc.calls > 0 && tc.want != "" {

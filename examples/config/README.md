@@ -468,7 +468,7 @@ Key settings:
 
 ### `impersonation.yaml` — RFC 8693 User Impersonation
 
-This `local`-mode example configures RFC 8693 user impersonation. A privileged client presents signed client-assertion and actor JWTs plus a subject credential. The broker authorizes the rule, resolves the target agent from the suffixed audience, and checks browser-equivalent consent readiness for human subjects before minting. The token's `sub` represents the human subject; `act` identifies the actor. Exactly one `audience` of `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` activates the request.
+This `local`-mode example configures RFC 8693 user impersonation. A privileged client presents signed client-assertion and actor JWTs plus a subject credential. The broker authorizes the rule, resolves the target agent from the suffixed audience, and checks browser-equivalent consent checks for human subjects before minting. The token's `sub` represents the human subject; `act` identifies the actor. Exactly one `audience` of `<audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` activates the request.
 
 Key settings (`oauth2_authorization_server.impersonation`):
 - `audience_prefix` — routing-only HTTP(S) URI prefix; requests append one target agent's canonical lower-case UUID or `canonical_id`. It is not an issued-token audience.
@@ -488,7 +488,7 @@ Every authorized human request, including one with an unverified subject, needs 
 
 ### `impersonation-agent-subject.yaml` — Signed Self-Agent Issuance
 
-Complete local-mode configuration for [feature 054 Journeys 1–2](../../specs/054-agent-subject-impersonation/spec.md). Replace example trust URLs and register the target Agent. The signed subject's raw `sub` must exactly equal the audience-selected target UUID. The example binds client, actor, subject and target explicitly in CEL and enables `allowed_subject_categories: [agent]`. It needs no human consent and creates no grant/session. The token has reserved `sub == agent_id`, existing `act`, and no category claim. Human-only and dual alternatives are included; nonmatching human subjects require browser-equivalent consent readiness.
+Complete local-mode configuration for [feature 054 Journeys 1–2](../../specs/054-agent-subject-impersonation/spec.md). Replace example trust URLs and register the target Agent. The signed subject's raw `sub` must exactly equal the audience-selected target UUID. The example binds client, actor, subject and target explicitly in CEL and enables `allowed_subject_categories: [agent]`. It needs no human consent and creates no grant/session. The token has reserved `sub == agent_id`, existing `act`, and no category claim. Human-only and dual alternatives are included; nonmatching human subjects require a browser-equivalent consent check.
 
 Omitting `allowed_subject_categories` means `[human]`; signed exact-target collisions are rejected even with active same-text delegation. An unsigned subject is agent-category only when the rule's predicate binds `subject_token.sub`. The [token-exchange example](token-exchange.yaml) describes default third-party rejection, replacing overrides and their security responsibility.
 

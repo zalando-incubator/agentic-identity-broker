@@ -356,11 +356,11 @@ WWW-Authenticate: Bearer error="insufficient_scope", error_uri="https://broker.e
 }
 ```
 
-The human request uses the existing consent page plus a safe Bearer challenge. Expired delegation has the same external outcome. Human grant and service-session readiness follow [20261120-145501-human-impersonation-consent-readiness](../../adrs/20261120-145501-human-impersonation-consent-readiness.md). This feature introduces no new consent UI.
+The human request uses the existing consent page plus a safe Bearer challenge. Expired delegation has the same external outcome. Human grant and service-session requirements follow [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md). This feature introduces no new consent UI.
 
 **Step 3 — Operator compares outcomes**
 
-An otherwise authorized agent request on the dual-category rule follows Journey 1 with no consent requirement. A human request succeeds only after Alice has consent readiness through the existing process, yielding `sub: alice@example.com`, the target UUID as `agent_id`, and the same verified actor attribution. Existing rules with the setting omitted do not acquire machine access. An agent-only rule rejects nonmatching subjects. Human-only rules reject signed exact-equality requests as ineligible, including with active human delegation; they do not retry those requests as humans.
+An otherwise authorized agent request on the dual-category rule follows Journey 1 with no consent requirement. A human request succeeds only after Alice has consent through the existing process, yielding `sub: alice@example.com`, the target UUID as `agent_id`, and the same verified actor attribution. Existing rules with the setting omitted do not acquire machine access. An agent-only rule rejects nonmatching subjects. Human-only rules reject signed exact-equality requests as ineligible, including with active human delegation; they do not retry those requests as humans.
 
 **Observable result**: Explicit agent enablement permits consent-free issuance only for the exact signed target UUID. Nonmatching human subjects retain consent requirements. There is no new category-selection input in either HTTP journey.
 

@@ -34,7 +34,7 @@ See the [token endpoint contract](https://github.com/zalando-incubator/agentic-i
 ## Human Impersonation Consent Recovery
 
 In local mode, a privileged client can mint an agent token for an authorized human
-subject through `POST /oauth2/token`. The broker checks consent readiness after
+subject through `POST /oauth2/token`. The broker checks whether consent is required after
 the impersonation rule authorizes the request. The check matches local browser
 `/oauth2/authorize`: the subject needs an active grant with current permission
 sets, usable sessions for all included services, and satisfied mandatory service
@@ -58,7 +58,7 @@ The consent page uses the target UUID, even if the request audience used its
 without a challenge or recovery URI. Browser authorization instead redirects
 to consent with sealed JWE state. Neither response exposes grant details.
 See the [token exchange reference](../reference/token-exchange.md#user-impersonation)
-and [accepted decision](../../adrs/20261120-145501-human-impersonation-consent-readiness.md).
+and [accepted decision](../../adrs/20261120-145501-human-impersonation-consent-status.md).
 
 ### Migrate from End-User API 1.x
 
@@ -72,11 +72,11 @@ Classification is rule-local: the raw string `sub` must exactly equal the audien
 
 | `allowed_subject_categories` | Human | Exact-target agent subject |
 | --- | --- | --- |
-| Omitted or `[human]` | Consent readiness required | Ineligible, even with same-text human delegation |
+| Omitted or `[human]` | Consent required | Ineligible, even with same-text human delegation |
 | `[agent]` | Ineligible | No human consent required |
-| `[human, agent]` (either order) | Consent readiness required | No human consent required |
+| `[human, agent]` (either order) | Consent required | No human consent required |
 
-Category-ineligible rules fall through. A human consent-readiness failure is terminal, with the recovery `error_uri` and Bearer `insufficient_scope` challenge described above; no automatic agent retry is allowed. An unsigned-subject rule may list `agent`; it permits consent-free self-agent issuance only if the subject's raw `sub` equals the target UUID and the predicate binds `subject_token.sub`.
+Category-ineligible rules fall through. A human consent failure is terminal, with the recovery `error_uri` and Bearer `insufficient_scope` challenge described above; no automatic agent retry is allowed. An unsigned-subject rule may list `agent`; it permits consent-free self-agent issuance only if the subject's raw `sub` equals the target UUID and the predicate binds `subject_token.sub`.
 
 ### Request and signed response
 

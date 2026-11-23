@@ -1302,7 +1302,7 @@ paths:
 
         **Local/Hybrid Mode**:
         When the broker acts as its own OAuth2 authorization server, it uses the same
-        consent-readiness check as local human-category impersonation:
+        consent check as local human-category impersonation:
         - A ready grant continues to authorization-code issuance.
         - Missing, expired, or stale grants, unusable sessions for included services,
           and missing, unusable, or scope-deficient mandatory services redirect the
@@ -1590,7 +1590,7 @@ paths:
         No-match precedence is `access_denied` > `invalid_request` > `invalid_client`.
 
         After a rule authorizes a human-category request, the broker checks the extracted
-        subject and resolved target agent with the same consent-readiness criteria as
+        subject and resolved target agent with the same consent criteria as
         local `/oauth2/authorize`. Missing, expired, or stale grants require consent.
         So does a missing or unusable session for an included service, or a missing,
         unusable, or scope-deficient mandatory service. The denial is terminal
@@ -1626,7 +1626,7 @@ paths:
         `403 access_denied` (`impersonation not permitted`) without `error_uri` or
         `WWW-Authenticate`. Signed exact equality on human-only or omitted-category
         rules is ineligible even with active same-text human delegation. Eligible,
-        CEL-authorized agents need no consent readiness, never return a consent-required
+        CEL-authorized agents need no human consent, never return a consent-required
         `error_uri` or challenge, and create no grant or session. Human consent denials
         remain terminal and are never retried as agents.
 
@@ -1866,12 +1866,12 @@ paths:
                     error_description: "client assertion is not trusted for impersonation"
         "403":
           description: >-
-            Forbidden. Only human-category local impersonation consent-readiness denials
+            Forbidden. Only human-category local impersonation consent denials
             include the Bearer insufficient_scope challenge; other token errors do not.
           headers:
             WWW-Authenticate:
               description: >-
-                Present only for human-category local impersonation consent-readiness
+                Present only for human-category local impersonation consent
                 denials. Bearer error="insufficient_scope" includes error_uri when the
                 body recovery URI satisfies RFC 6750 challenge-value safety rules.
                 Otherwise the header omits error_uri while the body retains it.
@@ -1921,7 +1921,7 @@ paths:
                     error_description: "User authorization is insufficient. Please re-consent."
                     error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
         "500":
-          description: Internal Server Error; consent-readiness repository failures have no recovery URI or challenge
+          description: Internal Server Error; consent-check repository failures have no recovery URI or challenge
           content:
             application/json:
               schema:

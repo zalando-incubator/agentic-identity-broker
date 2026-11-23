@@ -1630,9 +1630,9 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 **Description**: Configures RFC 8693 impersonation on `POST /oauth2/token` in `local` mode. Exactly one `audience` of `<impersonation.audience_prefix>/<AgentID UUID or canonical_id>` selects the registered target before the third-party `resource` check. Both forms retain the target UUID as minted `agent_id`. The target supplies local-token CEL `agent.*`; the signed client assertion supplies privileged-client authorization and audit identity.
 
-After rule authorization, a human subject must pass the same consent-readiness check as browser `/oauth2/authorize`. The extracted subject is the grant principal without normalization. The broker checks an active grant with currently declared permission sets, usable sessions for selected services, and mandatory service sessions and scopes. This applies to signed and unverified humans with no configuration opt-out. Eligible self-agent subjects remain exempt under [045-agent-subject-impersonation](../adrs/045-agent-subject-impersonation.md).
+After rule authorization, a human subject must pass the same consent criteria as browser `/oauth2/authorize`. The extracted subject is the grant principal without normalization. The broker checks an active grant with currently declared permission sets, usable sessions for selected services, and mandatory service sessions and scopes. This applies to signed and unverified humans with no configuration opt-out. Eligible self-agent subjects remain exempt under [045-agent-subject-impersonation](../adrs/045-agent-subject-impersonation.md).
 
-When consent is not ready, the broker returns terminal `403 access_denied` with body `error_uri=<server.enduser.public_url>/agents/<target-agent-id>`. It also sends a Bearer `insufficient_scope` challenge with that URI when the URI is safe under RFC 6750. An unsafe challenge URI stays in the body only. Repository errors return `500 server_error` without a recovery URI or challenge. See [20261120-145501-human-impersonation-consent-readiness](../adrs/20261120-145501-human-impersonation-consent-readiness.md).
+When consent is required, the broker returns terminal `403 access_denied` with body `error_uri=<server.enduser.public_url>/agents/<target-agent-id>`. It also sends a Bearer `insufficient_scope` challenge with that URI when the URI is safe under RFC 6750. An unsafe challenge URI stays in the body only. Repository errors return `500 server_error` without a recovery URI or challenge. See [20261120-145501-human-impersonation-consent-status](../adrs/20261120-145501-human-impersonation-consent-status.md).
 
 The routing prefix never sets issued `aud`. The normal local `token_claims_expression` controls that claim. The subject role accepts signed (`verification: jwks`) JWTs and explicitly enabled broker-profile unverified (`verification: none`) JWTs.
 
@@ -1644,9 +1644,9 @@ The broker classifies a request as `agent` only after the rule's signed subject 
 
 | Allowed categories | Human subject | Exact-target agent subject |
 | --- | --- | --- |
-| Omitted / `[human]` | Consent readiness required | Ineligible |
+| Omitted / `[human]` | Consent required | Ineligible |
 | `[agent]` | Ineligible | No human consent required |
-| `[human, agent]` / `[agent, human]` | Consent readiness required | No human consent required |
+| `[human, agent]` / `[agent, human]` | Consent required | No human consent required |
 
 Agents still require principal extraction and CEL authorization. The minted `sub` and reserved `agent_id` are the target UUID, and `act` keeps verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email, and creates no human grant or session. Human consent denial is terminal; it never retries as agent. An unsigned-subject rule can list `agent`, but an unsigned subject is agent-category only if its raw `sub` equals the target UUID and the rule predicate binds `subject_token.sub`. The other controls in [031-unverified-subject-unsigned-jwt](../adrs/031-unverified-subject-unsigned-jwt.md) remain unchanged.
 

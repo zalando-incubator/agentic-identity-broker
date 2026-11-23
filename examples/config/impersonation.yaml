@@ -81,7 +81,7 @@ oauth2_authorization_server:
     # registered. This does not set the issued token's `aud`; local token_claims_expression remains authoritative.
     audience_prefix: "https://broker.example.com/impersonation"
 
-    # After a rule authorizes a human subject, browser-equivalent consent readiness is required:
+    # After a rule authorizes a human subject, a browser-equivalent consent check is required:
     # an active grant with declared permission sets, usable included-service sessions, and
     # mandatory service sessions with required scopes. This includes verification:none humans.
     # An unmet condition returns 403 access_denied with the target agent's consent error_uri

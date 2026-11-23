@@ -20,14 +20,14 @@ import (
 // Service orchestrates impersonation rule selection, credential validation, authorization,
 // target-agent context, and local token minting. It is safe for concurrent use.
 type Service struct {
-	audiencePrefix    string
-	rules             []*compiledRule
-	agents            ports.AgentRepository
-	canonicalAgents   ports.AgentCanonicalIDRepository
-	issuer            ports.ImpersonationTokenIssuer
-	readinessVerifier ports.AuthorizationReadinessVerifier
-	consentBaseURL    string
-	logger            *slog.Logger
+	audiencePrefix  string
+	rules           []*compiledRule
+	agents          ports.AgentRepository
+	canonicalAgents ports.AgentCanonicalIDRepository
+	issuer          ports.ImpersonationTokenIssuer
+	consentChecker  ports.ConsentChecker
+	consentBaseURL  string
+	logger          *slog.Logger
 }
 
 // NewService compiles the impersonation rules at startup and validates direct construction.
@@ -38,7 +38,7 @@ func NewService(
 	issuer ports.ImpersonationTokenIssuer,
 	clockSkew time.Duration,
 	logger *slog.Logger,
-	readinessVerifier ports.AuthorizationReadinessVerifier,
+	consentChecker ports.ConsentChecker,
 	consentBaseURL string,
 ) (*Service, error) {
 	if cfg == nil {
@@ -54,8 +54,8 @@ func NewService(
 	if issuer == nil {
 		return nil, fmt.Errorf("impersonation token issuer is nil")
 	}
-	if readinessVerifier == nil {
-		return nil, fmt.Errorf("impersonation authorization readiness verifier is nil")
+	if consentChecker == nil {
+		return nil, fmt.Errorf("impersonation consent checker is nil")
 	}
 	if consentBaseURL == "" {
 		return nil, fmt.Errorf("impersonation consent base URL is required")
@@ -82,7 +82,7 @@ func NewService(
 		}
 		rules = append(rules, rule)
 	}
-	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, readinessVerifier: readinessVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
+	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, consentChecker: consentChecker, consentBaseURL: consentBaseURL, logger: logger}, nil
 }
 
 // AuditRecord is the credential-free decision record emitted for every impersonation attempt
@@ -273,36 +273,36 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 	}
 
 	if res.category == SubjectCategoryHuman {
-		readiness, err := s.readinessVerifier.EvaluateAuthorizationReadiness(ctx, id.Principal(subjectID), targetAgent)
+		status, err := s.consentChecker.CheckConsent(ctx, id.Principal(subjectID), targetAgent)
 		if err != nil {
 			stage, detail := tokenexchange.StageGrantAuthorization, tokenexchange.DetailGrantRepositoryUnavailable
-			if readiness.Reason == ports.ReadinessSessionLookupFailed {
+			if status.Reason == ports.ConsentSessionLookupFailed {
 				stage, detail = tokenexchange.StageSessionLookup, tokenexchange.DetailSessionRepositoryUnavailable
 			}
-			res.abort = originError(ctx, serverError("user authorization readiness check failed"), err, stage, detail)
+			res.abort = originError(ctx, serverError("user consent check failed"), err, stage, detail)
 			return res
 		}
 		var detail tokenexchange.FailureDetail
-		switch readiness.Reason {
-		case "":
-		case ports.ReadinessGrantMissing:
+		switch status.Reason {
+		case ports.ConsentReady:
+		case ports.ConsentGrantMissing:
 			detail = tokenexchange.DetailGrantMissing
-		case ports.ReadinessGrantExpired:
+		case ports.ConsentGrantExpired:
 			detail = tokenexchange.DetailGrantExpired
-		case ports.ReadinessPermissionSetUndeclared:
+		case ports.ConsentPermissionSetUndeclared:
 			detail = tokenexchange.DetailGrantPermissionSetUndeclared
-		case ports.ReadinessIncludedSessionMissing:
+		case ports.ConsentIncludedSessionMissing:
 			detail = tokenexchange.DetailConsentIncludedSessionMissing
-		case ports.ReadinessIncludedSessionUnusable:
+		case ports.ConsentIncludedSessionUnusable:
 			detail = tokenexchange.DetailConsentIncludedSessionUnusable
-		case ports.ReadinessMandatorySessionMissing:
+		case ports.ConsentMandatorySessionMissing:
 			detail = tokenexchange.DetailConsentMandatorySessionMissing
-		case ports.ReadinessMandatorySessionUnusable:
+		case ports.ConsentMandatorySessionUnusable:
 			detail = tokenexchange.DetailConsentMandatorySessionUnusable
-		case ports.ReadinessMandatoryScopeInsufficient:
+		case ports.ConsentMandatoryScopeInsufficient:
 			detail = tokenexchange.DetailConsentMandatoryScopeInsufficient
 		default:
-			res.abort = originError(ctx, serverError("user authorization readiness result is unknown"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
+			res.abort = originError(ctx, serverError("user consent status is unknown"), nil, tokenexchange.StageGrantAuthorization, tokenexchange.DetailInternalUnclassified)
 			return res
 		}
 		if detail != "" {

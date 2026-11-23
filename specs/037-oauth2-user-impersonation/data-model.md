@@ -108,8 +108,8 @@ Output of signed validation or unverified parse.
 
 Invariant: actor == subject permitted; yields `act.sub == sub` (FR-006, clarification).
 
-### AuthorizationReadiness
-After rule authorization, a human subject is converted without alteration to `id.Principal`. The resolved target agent is passed to `ports.AuthorizationReadinessVerifier` without another agent lookup. The shared consent evaluator checks the grant, declared permission sets, selected service sessions, and mandatory service sessions and scopes. An eligible agent-category subject skips this evaluation.
+### ConsentStatus
+After rule authorization, a human subject is converted without alteration to `id.Principal`. The resolved target agent is passed to `ports.ConsentChecker` without another agent lookup. The shared consent evaluator checks the grant, declared permission sets, selected service sessions, and mandatory service sessions and scopes. An eligible agent-category subject skips this evaluation.
 
 | Result | Effect |
 |---|---|
@@ -177,7 +177,7 @@ sequenceDiagram
     participant S as ImpersonationService
     participant V as SignedValidator
     participant E as CEL Evaluator
-    participant D as Consent Readiness Verifier
+    participant D as Consent Checker
     participant I as Local Issuer
     C->>H: POST /oauth2/token (audience=<audience_prefix>/<agent UUID or canonical ID>)
     H->>H: resolve registered Target{Agent}; reject a suffix matching neither identifier form or a missing target
@@ -192,7 +192,7 @@ sequenceDiagram
                 I-->>S: normal local-policy signed token
                 S-->>H: success
             else human category
-                S->>D: EvaluateAuthorizationReadiness(subject, target agent)
+                S->>D: CheckConsent(subject, target agent)
                 alt grant and sessions ready
                     S->>I: IssueImpersonationToken(sub, act.iss/act.sub, target agent, email?, scopes)
                     I-->>S: normal local-policy signed token

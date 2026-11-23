@@ -399,15 +399,15 @@ token values (T024 covers S1–S3).
       without delegation return 403 `access_denied` plus the exact target-agent `error_uri` (US5.2–US5.4,
       Principles VIII, XIII).
 - [X] T089 [P] Write failing `internal/domain/impersonation/service_test.go` cases for active,
-      missing, expired, and unavailable human consent readiness. Prove that policy denial
+      missing, expired, and unavailable human consent. Prove that policy denial
       does not query consent and that consent denial is terminal.
-- [X] T090 Add `ports.AuthorizationReadinessVerifier` and its typed readiness result in
+- [X] T090 Add `ports.ConsentChecker` and its typed `ports.ConsentStatus` result in
       `internal/ports/oauth2.go`; use the shared consent evaluator through
-      `internal/app/impersonation_readiness.go` (FR-017, Principle VI).
+      `internal/app/impersonation_consent.go` (FR-017, Principle VI).
 - [X] T091 Implement `consentRequired` in `internal/domain/impersonation/errors.go` and enforce
-      terminal human consent readiness after rule authorization and before minting in
+      a terminal human consent check after rule authorization and before minting in
       `internal/domain/impersonation/service.go` (FR-017a/017b/018/019).
-- [X] T092 Wire the verifier and end-user public URL in `internal/app/builder.go`, failing startup
+- [X] T092 Wire the consent checker and end-user public URL in `internal/app/builder.go`, failing startup
       when mandatory dependencies are unavailable (CR-010).
 - [X] T093 Run the focused US5 E2E suite, `just check`, `just test`, and `just verify`; confirm the
       consent URL is actionable for a first-time delegation and audits remain credential-free.
@@ -429,10 +429,10 @@ token values (T024 covers S1–S3).
 
 ## Amendment 2026-11-20: browser consent parity (#367)
 
-Tasks T086–T094 describe the original agent-level delegation check. The accepted [20261120-145501-human-impersonation-consent-readiness](../../adrs/20261120-145501-human-impersonation-consent-readiness.md) supersedes that narrow policy and response for human-category local impersonation.
+Tasks T086–T094 describe the original agent-level delegation check. The accepted [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md) supersedes that narrow policy and response for human-category local impersonation.
 
-- [X] T095 Update the existing feature specification, OpenAPI, architecture, accepted decision, and end-user guides for a shared consent-readiness policy and human Bearer challenge.
-- [X] T096 Add shared consent readiness evaluation in `internal/domain/consent/`, pass the resolved target through `ports.AuthorizationReadinessVerifier`, and remove the browser's duplicate checks.
+- [X] T095 Update the existing feature specification, OpenAPI, architecture, accepted decision, and end-user guides for a shared consent policy and human Bearer challenge.
+- [X] T096 Add shared consent checks in `internal/domain/consent/`, pass the resolved target through `ports.ConsentChecker`, and remove the browser's duplicate checks.
 - [X] T097 After rule authorization, deny human impersonation on the same consent prerequisites as browser authorization; keep eligible agent-category and third-party exchanges unchanged.
 - [X] T098 Map consent denials to terminal 403 `access_denied`, body `error_uri` and a safe Bearer `insufficient_scope` challenge; fail closed without recovery on repository errors.
 - [X] T099 Exercise browser redirect, impersonation denial and reconnect success in production-bootstrap E2E; run affected Go tests and the repository checks.

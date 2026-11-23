@@ -2098,7 +2098,7 @@ func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 	assert.True(t, strings.HasPrefix(consentURL, "https://broker.example.com/agents/"+agentID.String()+"?session_token="))
 }
 
-func TestHandleAuthorizationReadinessLogReasons(t *testing.T) {
+func TestHandleAuthorizationConsentLogReasons(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		included  bool
