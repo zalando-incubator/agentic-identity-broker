@@ -111,6 +111,8 @@ func domainEventStorageError(operation string, err error, message string) error 
 	var netErr net.Error
 	kind := storage.ErrorKindUnknown
 	switch {
+	case errors.As(err, &connectErr):
+		kind = storage.ErrorKindConnection
 	case errors.As(err, &pgErr):
 		switch {
 		case pgErr.Code == "23505":
@@ -120,7 +122,7 @@ func domainEventStorageError(operation string, err error, message string) error 
 		}
 	case errors.Is(err, driver.ErrBadConn), errors.Is(err, pgconn.ErrConnClosed),
 		errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF),
-		errors.As(err, &connectErr), errors.As(err, &netErr):
+		errors.As(err, &netErr):
 		kind = storage.ErrorKindConnection
 	}
 	return storage.NewStorageError(operation, kind, err, message)

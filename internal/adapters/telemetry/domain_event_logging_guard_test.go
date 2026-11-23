@@ -42,19 +42,20 @@ func TestDomainEventDefinitionsUseEventKey(t *testing.T) {
 }
 
 func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
+	initializers, appendArgs := domainEventGuardBindings(info, file)
 	var offenders []ast.Expr
-	checkPairs := func(exprs []ast.Expr) {
+	checkPairs := func(exprs []ast.Expr, after token.Pos) {
 		for len(exprs) > 0 {
 			key := exprs[0]
 			if len(exprs) > 1 && (types.Identical(info.TypeOf(key), types.Typ[types.String]) ||
 				types.Identical(info.TypeOf(key), types.Typ[types.UntypedString])) {
-				if isDomainEventType(info.TypeOf(exprs[1])) && !isDomainEventKey(info, key) {
+				if exprs[1].Pos() > after && isDomainEventType(info.TypeOf(exprs[1])) && !isDomainEventKey(info, key) {
 					offenders = append(offenders, exprs[1])
 				}
 				exprs = exprs[2:]
 				continue
 			}
-			if isDomainEventType(info.TypeOf(key)) {
+			if key.Pos() > after && isDomainEventType(info.TypeOf(key)) {
 				offenders = append(offenders, key)
 			}
 			exprs = exprs[1:]
@@ -64,6 +65,10 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 		switch n := node.(type) {
 		case *ast.CallExpr:
 			if isAppendToAnySlice(info, n) {
+				if args, known := appendArgs[n]; known {
+					checkPairs(args, n.Args[0].End())
+					break
+				}
 				// An append can start with the value of a key in the destination slice.
 				for i, arg := range n.Args[1:] {
 					if isDomainEventType(info.TypeOf(arg)) && (i == 0 || !isDomainEventKey(info, n.Args[i])) {
@@ -82,11 +87,11 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 					}
 					args = args[fixed:]
 				}
-				checkPairs(args)
+				checkPairs(args, token.NoPos)
 			}
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(n)) {
-				checkPairs(n.Elts)
+				checkPairs(n.Elts, token.NoPos)
 			}
 			if typ := info.TypeOf(n); typ == nil || typ.String() != "log/slog.Attr" {
 				break
@@ -107,6 +112,9 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 					value = element
 				}
 			}
+			if name, ok := value.(*ast.Ident); ok {
+				value = initializers[info.ObjectOf(name)]
+			}
 			call, ok := value.(*ast.CallExpr)
 			if !ok || len(call.Args) != 1 || !callsSlog(info, call) {
 				break
@@ -118,6 +126,78 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 		return true
 	})
 	return offenders
+}
+
+func domainEventGuardBindings(info *types.Info, file *ast.File) (map[types.Object]ast.Expr, map[*ast.CallExpr][]ast.Expr) {
+	initializers := make(map[types.Object]ast.Expr)
+	appendArgs := make(map[*ast.CallExpr][]ast.Expr)
+	bind := func(name ast.Expr, value ast.Expr) {
+		if ident, ok := name.(*ast.Ident); ok {
+			obj := info.ObjectOf(ident)
+			if _, assigned := initializers[obj]; assigned {
+				value = nil
+			}
+			initializers[obj] = value
+		}
+	}
+	for node := range ast.Preorder(file) {
+		switch n := node.(type) {
+		case *ast.AssignStmt:
+			for i, name := range n.Lhs {
+				var value ast.Expr
+				if len(n.Lhs) == len(n.Rhs) {
+					value = n.Rhs[i]
+				}
+				bind(name, value)
+			}
+		case *ast.ValueSpec:
+			for i, name := range n.Names {
+				var value ast.Expr
+				if len(n.Names) == len(n.Values) {
+					value = n.Values[i]
+				}
+				bind(name, value)
+			}
+		case *ast.BlockStmt:
+			collectDomainEventAppendArgs(info, n, appendArgs)
+		}
+	}
+	return initializers, appendArgs
+}
+
+func collectDomainEventAppendArgs(info *types.Info, block *ast.BlockStmt, appendArgs map[*ast.CallExpr][]ast.Expr) {
+	var name types.Object
+	var args []ast.Expr
+	// Track consecutive assignments to a fresh argument slice, not aliases or control flow.
+	for _, stmt := range block.List {
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			name = nil
+			continue
+		}
+		lhs, ok := assign.Lhs[0].(*ast.Ident)
+		if !ok {
+			name = nil
+			continue
+		}
+		obj := info.ObjectOf(lhs)
+		switch rhs := assign.Rhs[0].(type) {
+		case *ast.CompositeLit:
+			if isAnySlice(info.TypeOf(rhs)) {
+				name, args = obj, rhs.Elts
+				continue
+			}
+		case *ast.CallExpr:
+			if name != nil && obj == name && isAppendToAnySlice(info, rhs) && !rhs.Ellipsis.IsValid() {
+				if dst, ok := rhs.Args[0].(*ast.Ident); ok && info.ObjectOf(dst) == name {
+					args = append(args, rhs.Args[1:]...)
+					appendArgs[rhs] = args
+					continue
+				}
+			}
+		}
+		name = nil
+	}
 }
 
 func isDomainEventKey(info *types.Info, expr ast.Expr) bool {
@@ -161,12 +241,16 @@ func TestDomainEventGuardDetectsWrongKeys(t *testing.T) {
 		{"group", `_ = slog.Group("details", "action", definition)`, 1},
 		{"attr literal", `_ = slog.Attr{Key: "action", Value: slog.AnyValue(definition)}`, 1},
 		{"positional literal", `_ = slog.Attr{"action", slog.AnyValue(definition)}`, 1},
+		{"local attr value", `value := slog.AnyValue(definition); _ = slog.Attr{Key: "action", Value: value}`, 1},
+		{"correct local attr value", `value := slog.AnyValue(definition); _ = slog.Attr{Key: "event", Value: value}`, 0},
 		{"correct literal", `_ = slog.Attr{Key: "event", Value: slog.AnyValue(definition)}`, 0},
 		{"slice", `args := []any{"action", definition}; logger.InfoContext(nil, "record", args...)`, 1},
 		{"append", `args := []any{}; args = append(args, "action", definition); logger.InfoContext(nil, "record", args...)`, 1},
 		{"correct append", `args := []any{}; args = append(args, "event", definition); logger.InfoContext(nil, "record", args...)`, 0},
 		{"split append", `args := []any{"action"}; args = append(args, "a value", "event", definition); logger.InfoContext(nil, "record", args...)`, 0},
 		{"operational string", `logger.InfoContext(nil, "record", "action", "operational.event.recorded")`, 0},
+		{"appended attribute value is not a key", `args := []any{}; args = append(args, "action", "event", definition); logger.InfoContext(nil, "record", args...)`, 1},
+		{"append completes event pair", `args := []any{}; args = append(args, "event"); args = append(args, definition); logger.InfoContext(nil, "record", args...)`, 0},
 		{"nonlog definition", `_ = definition`, 0},
 		{"alias", `type Alias = domainevent.Definition; var alias Alias; logger.InfoContext(nil, "record", "action", alias)`, 1},
 		{"different typed value", `logger.InfoContext(nil, "record", "action", 42)`, 0},
@@ -183,7 +267,7 @@ func fixture(logger *slog.Logger, definition domainevent.Definition) { ` + tc.st
 			fset := token.NewFileSet()
 			file, err := parser.ParseFile(fset, "fixture.go", source, 0)
 			require.NoError(t, err)
-			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Uses: make(map[*ast.Ident]types.Object)}
+			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue), Defs: make(map[*ast.Ident]types.Object), Uses: make(map[*ast.Ident]types.Object)}
 			checker := types.Config{Importer: imports}
 			_, err = checker.Check("fixture", fset, []*ast.File{file}, info)
 			require.NoError(t, err)

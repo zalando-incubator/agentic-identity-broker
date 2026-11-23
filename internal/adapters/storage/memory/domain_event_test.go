@@ -29,9 +29,14 @@ func TestDomainEventAppendStoresIsolatedCopy(t *testing.T) {
 	event.Principal, event.Actor = &principal, &actor
 	event.TraceID = "0123456789abcdef0123456789abcdef"
 	event.RecordedAt = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+	type detail struct{ Names []string }
+	label := "original"
+	entry := detail{Names: []string{"original"}}
 	event.Attributes = map[string]any{
 		"nested": map[string]any{"items": []any{map[string]any{"value": "original"}}},
 		"array":  [1]map[string]any{{"items": []string{"original"}}},
+		"label":  &label,
+		"detail": entry,
 	}
 	before := time.Now()
 	require.NoError(t, adapter.Append(context.Background(), event))
@@ -49,11 +54,15 @@ func TestDomainEventAppendStoresIsolatedCopy(t *testing.T) {
 	principal, actor = "changed owner", "changed actor"
 	event.Attributes["nested"].(map[string]any)["items"].([]any)[0].(map[string]any)["value"] = "changed"
 	event.Attributes["array"].([1]map[string]any)[0]["items"].([]string)[0] = "changed"
+	label = "changed"
+	entry.Names[0] = "changed"
 	event.Event = "test.ledger.changed"
 	assert.Equal(t, "policy:owner", *stored.Principal)
 	assert.Equal(t, "policy:operator", *stored.Actor)
 	assert.Equal(t, "original", stored.Attributes["nested"].(map[string]any)["items"].([]any)[0].(map[string]any)["value"])
 	assert.Equal(t, "original", stored.Attributes["array"].([1]map[string]any)[0]["items"].([]string)[0])
+	assert.Equal(t, "original", *stored.Attributes["label"].(*string))
+	assert.Equal(t, []string{"original"}, stored.Attributes["detail"].(detail).Names)
 	assert.Equal(t, "test.ledger.recorded", stored.Event)
 }
 

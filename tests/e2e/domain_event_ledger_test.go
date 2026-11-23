@@ -118,6 +118,17 @@ var _ = Describe("Domain event ledger", Label("docker"), func() {
 	})
 
 	Context("when the ledger is enabled and Alice has created a grant", func() {
+		BeforeEach(func() {
+			// The insert takes longer than the default timeout but fits the configured one.
+			cfg.DomainEvents.WriteTimeout = 4 * time.Second
+			_, err := db.ExecContext(context.Background(), `
+				CREATE FUNCTION delay_domain_event_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN PERFORM pg_sleep(2); RETURN NEW; END; $$;
+				CREATE TRIGGER delay_domain_event BEFORE INSERT ON domain_events
+				FOR EACH ROW EXECUTE FUNCTION delay_domain_event_insert()`)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
 		// Scenario US1.1 from specs/20261118-125900-domain-event-ledger/spec.md (User Story 1)
 		It("stores exactly one consent.grant.revoked event with request and resource identities", func() {
 			traceID := revoke(http.StatusNoContent)
@@ -162,6 +173,9 @@ var _ = Describe("Domain event ledger", Label("docker"), func() {
 		})
 
 		AfterEach(func() {
+			if db == nil {
+				return
+			}
 			_, err := db.ExecContext(context.Background(), "DROP TRIGGER IF EXISTS reject_refresh_cleanup ON refresh_token_sessions")
 			Expect(err).NotTo(HaveOccurred())
 			_, err = db.ExecContext(context.Background(), "DROP FUNCTION IF EXISTS reject_refresh_cleanup()")
@@ -170,7 +184,9 @@ var _ = Describe("Domain event ledger", Label("docker"), func() {
 
 		// Scenario US1.5 from specs/20261118-125900-domain-event-ledger/spec.md (User Story 1)
 		It("stores the deleted grant snapshot when refresh cleanup returns an HTTP error", func() {
+			started := time.Now()
 			traceID := revoke(http.StatusInternalServerError)
+			finished := time.Now()
 			events := helpers.CommittedDomainEvents(db)
 			Expect(events).To(HaveLen(1))
 			Expect(events).To(matchers.HaveDomainEvent("consent.grant.revoked", fixtures.DefaultPrincipal().String()))
@@ -185,7 +201,10 @@ var _ = Describe("Domain event ledger", Label("docker"), func() {
 				"permission_set_id":    fixtures.PlaceholderPermissionSetID.String(),
 				"included_service_ids": []any{fixtures.PlaceholderServiceID.String()},
 			}}))
-			Expect(events[0].Attributes).To(HaveKeyWithValue("revoked_at", MatchRegexp(`Z$`)))
+			Expect(events[0].Attributes).To(HaveKeyWithValue("revoked_at", And(BeAssignableToTypeOf(""), HaveSuffix("Z"))))
+			revokedAt, err := time.Parse(time.RFC3339Nano, events[0].Attributes["revoked_at"].(string))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(revokedAt).To(And(BeTemporally(">=", started), BeTemporally("<=", finished)))
 			var grants, pendingRefresh int
 			Expect(db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM user_grants WHERE id = $1", grantID).Scan(&grants)).To(Succeed())
 			Expect(grants).To(BeZero())

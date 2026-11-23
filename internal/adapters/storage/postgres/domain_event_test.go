@@ -128,6 +128,14 @@ func TestDomainEventDeleteStorageSpans(t *testing.T) {
 }
 
 func TestDomainEventStorageErrorClassification(t *testing.T) {
+	cfg, err := pgconn.ParseConfig("host=127.0.0.1 user=broker sslmode=disable")
+	require.NoError(t, err)
+	cfg.DialFunc = func(context.Context, string, string) (net.Conn, error) {
+		return nil, &pgconn.PgError{Code: "28P01"}
+	}
+	_, startupErr := pgconn.ConnectConfig(t.Context(), cfg)
+	require.ErrorAs(t, startupErr, new(*pgconn.ConnectError))
+	require.ErrorAs(t, startupErr, new(*pgconn.PgError))
 	for _, test := range []struct {
 		name  string
 		cause error
@@ -145,6 +153,7 @@ func TestDomainEventStorageErrorClassification(t *testing.T) {
 		{name: "EOF", cause: io.EOF, kind: storage.ErrorKindConnection},
 		{name: "unexpected EOF", cause: io.ErrUnexpectedEOF, kind: storage.ErrorKindConnection},
 		{name: "network failure", cause: &net.OpError{Op: "read", Net: "tcp", Err: errors.New("connection reset")}, kind: storage.ErrorKindConnection},
+		{name: "startup rejection", cause: startupErr, kind: storage.ErrorKindConnection},
 		{name: "connection exception", cause: &pgconn.PgError{Code: "08006"}, kind: storage.ErrorKindConnection},
 		{name: "admin shutdown", cause: &pgconn.PgError{Code: "57P01"}, kind: storage.ErrorKindConnection},
 		{name: "crash shutdown", cause: &pgconn.PgError{Code: "57P02"}, kind: storage.ErrorKindConnection},

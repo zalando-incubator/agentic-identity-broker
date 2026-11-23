@@ -68,6 +68,7 @@ func TestLedgerHandlerRecognitionAndOccurrence(t *testing.T) {
 		{name: "absent"},
 		{name: "zero", attrs: []slog.Attr{slog.Any("event", domainevent.Definition{})}},
 		{name: "explicit group", attrs: []slog.Attr{slog.Group("details", slog.Any("event", ledgerTestEvent))}},
+		{name: "unnamed group", attrs: []slog.Attr{slog.Group("", slog.Any("event", ledgerTestEvent))}, want: ledgerTestEvent.Name()},
 		{name: "logger group", attrs: []slog.Attr{slog.Any("event", ledgerTestEvent)}, group: "details"},
 		{name: "inherited", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, want: ledgerTestEvent.Name()},
 		{name: "string overrides inherited", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, attrs: []slog.Attr{slog.String("event", "operational.event.recorded")}},
@@ -289,31 +290,31 @@ func TestLedgerHandlerPromotesGroupedRequestIdentity(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		ctx   context.Context
-		actor bool
+		actor string
 		trace string
 	}{
-		{name: "request", ctx: security.WithSecurityContext(t.Context(), security.SecurityContext{Actor: id.NewPrincipal(actor), TraceID: traceID}), actor: true, trace: traceID},
-		{name: "span only", ctx: trace.ContextWithSpanContext(t.Context(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}})), trace: trace.TraceID{1}.String()},
-		{name: "no context identity", ctx: t.Context()},
+		{name: "request", ctx: security.WithSecurityContext(t.Context(), security.SecurityContext{Actor: id.NewPrincipal(actor), TraceID: traceID}), actor: actor, trace: traceID},
+		{name: "span only", ctx: trace.ContextWithSpanContext(t.Context(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: trace.TraceID{1}, SpanID: trace.SpanID{2}})), actor: "root-actor", trace: trace.TraceID{1}.String()},
+		{name: "no context identity", ctx: t.Context(), actor: "root-actor", trace: "root-trace"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			appender := &ledgerCaptureAppender{}
 			var operational bytes.Buffer
 			fanout := NewMultiHandler(slog.NewJSONHandler(&operational, nil), NewLedgerHandler(appender, enabledNoopHandler{}, time.Second))
-			logger := slog.New(NewContextHandler(newPrincipalPolicyHandler(fanout, policy))).With("event", ledgerTestEvent).WithGroup("outer").WithGroup("details")
+			logger := slog.New(NewContextHandler(newPrincipalPolicyHandler(fanout, policy))).
+				With("event", ledgerTestEvent, "actor", id.NewPrincipal("root-actor"), "trace_id", "root-trace").
+				WithGroup("outer").WithGroup("details")
 			logger.InfoContext(test.ctx, "domain event recorded", "actor", id.NewPrincipal("group-actor"), "trace_id", "group-trace")
 
 			require.Len(t, appender.events, 1)
 			event := appender.events[0]
-			if test.actor {
-				require.NotNil(t, event.Actor)
-				assert.Equal(t, policy(actor), *event.Actor)
-			} else {
-				assert.Nil(t, event.Actor)
-			}
+			require.NotNil(t, event.Actor)
+			assert.Equal(t, policy(test.actor), *event.Actor)
 			assert.Equal(t, test.trace, event.TraceID)
 			decoded := decodeLedgerJSON(t, operational.Bytes())
 			delete(decoded, "event")
+			delete(decoded, "actor")
+			delete(decoded, "trace_id")
 			assert.Equal(t, decoded, normalizeLedgerJSON(t, event.Attributes), "keep the operational group intact")
 		})
 	}

@@ -653,3 +653,15 @@ func TestHelmDomainEventsRetainsExistingResources(t *testing.T) {
 	}
 	require.Equal(t, resources[0], resources[1], "ledger retention must run in the existing broker Deployment without new resources")
 }
+
+func TestHelmDomainEventsRevokeRuntimeUpdate(t *testing.T) {
+	output := renderHelmTemplate(t, "--show-only", "templates/configmap-grants.yaml",
+		"--set", "storage.type=postgres", "--set", "migration.enabled=true", "--set", "migration.grants.enabled=true")
+	var configMap credentialHelmObject
+	require.NoError(t, yaml.Unmarshal([]byte(output), &configMap))
+	grants := configMap.Data["grants.sql"]
+	grant := strings.Index(grants, "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I")
+	require.GreaterOrEqual(t, grant, 0)
+	revoke := strings.Index(grants, "REVOKE UPDATE ON TABLE public.domain_events FROM %I', :'broker_user'")
+	require.Greater(t, revoke, grant, "revoke ledger UPDATE after the runtime role receives table grants")
+}

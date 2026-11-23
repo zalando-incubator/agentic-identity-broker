@@ -10,7 +10,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -123,7 +122,7 @@ func (h *ledgerHandler) Handle(ctx context.Context, record slog.Record) error {
 
 func ledgerOccurrence(occurredAt time.Time, name string, document, recordAttrs ledgerObject, identity groupedIdentity) *model.DomainEvent {
 	event := &model.DomainEvent{
-		ID:         id.DomainEventID(uuid.Must(uuid.NewV7())),
+		ID:         id.NewDomainEventID(),
 		Event:      name,
 		OccurredAt: occurredAt.UTC(),
 		Attributes: document,

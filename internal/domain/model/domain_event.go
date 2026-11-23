@@ -80,6 +80,22 @@ func copyDomainEventValue(value reflect.Value) reflect.Value {
 			copy.Index(i).Set(copyDomainEventValue(value.Index(i)))
 		}
 		return copy
+	case reflect.Pointer:
+		if value.IsNil() {
+			return value
+		}
+		copy := reflect.New(value.Type().Elem())
+		copy.Elem().Set(copyDomainEventValue(value.Elem()))
+		return copy.Convert(value.Type())
+	case reflect.Struct:
+		copy := reflect.New(value.Type()).Elem()
+		copy.Set(value)
+		for i := range value.NumField() {
+			if field := copy.Field(i); field.CanSet() {
+				field.Set(copyDomainEventValue(value.Field(i)))
+			}
+		}
+		return copy
 	default:
 		return value
 	}
