@@ -3,13 +3,26 @@ package memory
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"slices"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
+
+type storedDomainEvent struct {
+	ID         id.DomainEventID
+	Event      string
+	OccurredAt time.Time
+	RecordedAt time.Time
+	Principal  *string
+	Actor      *string
+	TraceID    string
+	attributes []byte
+}
 
 // Append stores an isolated occurrence and returns its storage time to the caller.
 func (a *Adapter) Append(ctx context.Context, event *model.DomainEvent) error {
@@ -23,6 +36,16 @@ func (a *Adapter) Append(ctx context.Context, event *model.DomainEvent) error {
 	if err := event.Validate(); err != nil {
 		return storage.NewStorageError(operation, storage.ErrorKindValidation, err, "invalid domain event")
 	}
+	var attributes []byte
+	if event.Attributes == nil {
+		attributes = []byte("{}")
+	} else {
+		var err error
+		attributes, err = json.Marshal(event.Attributes)
+		if err != nil {
+			return storage.NewStorageError(operation, storage.ErrorKindValidation, err, "invalid domain event attributes")
+		}
+	}
 
 	if err := a.ledgerLock.Acquire(ctx, 1); err != nil {
 		return storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
@@ -33,9 +56,17 @@ func (a *Adapter) Append(ctx context.Context, event *model.DomainEvent) error {
 			return storage.NewStorageError(operation, storage.ErrorKindConflict, nil, "domain event already exists")
 		}
 	}
-	stored := event.Copy()
-	if stored.Attributes == nil {
-		stored.Attributes = make(map[string]any)
+	stored := &storedDomainEvent{
+		ID: event.ID, Event: event.Event, OccurredAt: event.OccurredAt,
+		TraceID: event.TraceID, attributes: attributes,
+	}
+	if event.Principal != nil {
+		principal := *event.Principal
+		stored.Principal = &principal
+	}
+	if event.Actor != nil {
+		actor := *event.Actor
+		stored.Actor = &actor
 	}
 	if err := ctx.Err(); err != nil {
 		return storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
@@ -66,7 +97,7 @@ func (a *Adapter) DeleteRecordedBefore(ctx context.Context, cutoff time.Time, li
 		return 0, storage.NewStorageError(operation, storage.ErrorKindTimeout, err, "operation cancelled or timed out")
 	}
 	defer a.ledgerLock.Release(1)
-	slices.SortFunc(a.domainEvents, func(left, right *model.DomainEvent) int {
+	slices.SortFunc(a.domainEvents, func(left, right *storedDomainEvent) int {
 		if ordering := left.RecordedAt.Compare(right.RecordedAt); ordering != 0 {
 			return ordering
 		}

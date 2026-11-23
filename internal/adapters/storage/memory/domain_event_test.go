@@ -30,8 +30,13 @@ func TestDomainEventAppendStoresIsolatedCopy(t *testing.T) {
 	event.TraceID = "0123456789abcdef0123456789abcdef"
 	event.RecordedAt = time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	type detail struct{ Names []string }
+	type embeddedDetail struct {
+		detail
+		Parent *embeddedDetail `json:"-"`
+	}
 	label := "original"
-	entry := detail{Names: []string{"original"}}
+	entry := &embeddedDetail{detail: detail{Names: []string{"original"}}}
+	entry.Parent = entry
 	event.Attributes = map[string]any{
 		"nested": map[string]any{"items": []any{map[string]any{"value": "original"}}},
 		"array":  [1]map[string]any{{"items": []string{"original"}}},
@@ -47,7 +52,6 @@ func TestDomainEventAppendStoresIsolatedCopy(t *testing.T) {
 	require.Len(t, adapter.domainEvents, 1)
 	stored := adapter.domainEvents[0]
 	assert.Equal(t, event.ID, stored.ID)
-	require.NotSame(t, event, stored)
 	assert.True(t, event.RecordedAt.Equal(stored.RecordedAt))
 	assert.Equal(t, event.TraceID, stored.TraceID)
 
@@ -59,10 +63,7 @@ func TestDomainEventAppendStoresIsolatedCopy(t *testing.T) {
 	event.Event = "test.ledger.changed"
 	assert.Equal(t, "policy:owner", *stored.Principal)
 	assert.Equal(t, "policy:operator", *stored.Actor)
-	assert.Equal(t, "original", stored.Attributes["nested"].(map[string]any)["items"].([]any)[0].(map[string]any)["value"])
-	assert.Equal(t, "original", stored.Attributes["array"].([1]map[string]any)[0]["items"].([]string)[0])
-	assert.Equal(t, "original", *stored.Attributes["label"].(*string))
-	assert.Equal(t, []string{"original"}, stored.Attributes["detail"].(detail).Names)
+	assert.JSONEq(t, `{"nested":{"items":[{"value":"original"}]},"array":[{"items":["original"]}],"label":"original","detail":{"Names":["original"]}}`, string(stored.attributes))
 	assert.Equal(t, "test.ledger.recorded", stored.Event)
 }
 
@@ -92,8 +93,7 @@ func TestDomainEventAppendNilAttributesAndDuplicate(t *testing.T) {
 	require.Len(t, adapter.domainEvents, 1)
 	stored := adapter.domainEvents[0]
 	assert.Equal(t, event.ID, stored.ID)
-	assert.NotNil(t, stored.Attributes)
-	assert.Empty(t, stored.Attributes)
+	assert.JSONEq(t, `{}`, string(stored.attributes))
 	assert.Nil(t, stored.Principal)
 	assert.Nil(t, stored.Actor)
 	assert.Nil(t, event.Attributes, "normalization must not mutate caller attributes")
@@ -113,7 +113,7 @@ func TestDomainEventAppendPreservesNUL(t *testing.T) {
 	event.Attributes = map[string]any{"nested": []any{"a\x00b"}}
 	require.NoError(t, adapter.Append(t.Context(), event))
 	require.Len(t, adapter.domainEvents, 1)
-	assert.Equal(t, event.Attributes, adapter.domainEvents[0].Attributes)
+	assert.JSONEq(t, `{"nested":["a\u0000b"]}`, string(adapter.domainEvents[0].attributes))
 }
 
 func TestDomainEventAppendRejectsInvalidInput(t *testing.T) {
@@ -125,6 +125,10 @@ func TestDomainEventAppendRejectsInvalidInput(t *testing.T) {
 		{"zero ID", func(event *model.DomainEvent) *model.DomainEvent { event.ID = id.DomainEventID{}; return event }},
 		{"empty event", func(event *model.DomainEvent) *model.DomainEvent { event.Event = ""; return event }},
 		{"zero occurrence", func(event *model.DomainEvent) *model.DomainEvent { event.OccurredAt = time.Time{}; return event }},
+		{"invalid attributes", func(event *model.DomainEvent) *model.DomainEvent {
+			event.Attributes = map[string]any{"attribute": make(chan int)}
+			return event
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			adapter := NewAdapter()
@@ -148,9 +152,7 @@ func TestDomainEventDeleteRecordedBeforeOrdersAndLimits(t *testing.T) {
 	}
 	// The highest ID is oldest. The next two tie and must be ordered by ID.
 	for index, recordedAt := range []time.Time{cutoff.Add(-time.Hour), cutoff.Add(-time.Hour), cutoff, cutoff.Add(time.Hour), cutoff.Add(-2 * time.Hour)} {
-		event := memoryDomainEvent()
-		event.ID, event.RecordedAt = ids[index], recordedAt
-		adapter.domainEvents = append(adapter.domainEvents, event)
+		adapter.domainEvents = append(adapter.domainEvents, &storedDomainEvent{ID: ids[index], RecordedAt: recordedAt})
 	}
 	deleted, err := adapter.DeleteRecordedBefore(context.Background(), cutoff, 1)
 	require.NoError(t, err)

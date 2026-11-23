@@ -174,10 +174,10 @@ The index remains useful for retention and queries. The consuming feature define
 
 ## Memory adapter
 
-A slice ordered by insertion, guarded by the adapter's lock. `Append` stores a deep copy and sets
-`RecordedAt`. `DeleteRecordedBefore` removes the oldest matching events, up to the limit. A
-duplicate ID returns `StorageError{Kind: Conflict}` in both adapters. Same-package memory tests
-inspect private state; no read API is added for tests.
+A slice ordered by insertion, guarded by the adapter's lock. `Append` stores detached event metadata
+and an owned JSON snapshot of the attributes. It sets `RecordedAt`. `DeleteRecordedBefore` removes
+the oldest matching events, up to the limit. A duplicate ID returns `StorageError{Kind: Conflict}`
+in both adapters. Same-package memory tests inspect private state; the adapter has no read API for tests.
 
 ## State
 

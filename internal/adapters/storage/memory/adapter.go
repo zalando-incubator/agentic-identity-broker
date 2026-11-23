@@ -11,7 +11,6 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -22,7 +21,7 @@ type Adapter struct {
 	mu           sync.RWMutex
 	users        map[id.UserID]*ports.User
 	ledgerLock   *semaphore.Weighted
-	domainEvents []*model.DomainEvent
+	domainEvents []*storedDomainEvent
 }
 
 // NewAdapter creates a new in-memory storage adapter.

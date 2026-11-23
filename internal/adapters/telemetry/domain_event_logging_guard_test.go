@@ -113,7 +113,11 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 				}
 			}
 			if name, ok := value.(*ast.Ident); ok {
-				value = initializers[info.ObjectOf(name)]
+				initializer := initializers[info.ObjectOf(name)]
+				value = nil
+				if initializer != nil && initializer.End() <= name.Pos() {
+					value = initializer
+				}
 			}
 			call, ok := value.(*ast.CallExpr)
 			if !ok || len(call.Args) != 1 || !callsSlog(info, call) {
@@ -151,12 +155,10 @@ func domainEventGuardBindings(info *types.Info, file *ast.File) (map[types.Objec
 				bind(name, value)
 			}
 		case *ast.ValueSpec:
-			for i, name := range n.Names {
-				var value ast.Expr
-				if len(n.Names) == len(n.Values) {
-					value = n.Values[i]
+			if len(n.Names) == len(n.Values) {
+				for i, value := range n.Values {
+					bind(n.Names[i], value)
 				}
-				bind(name, value)
 			}
 		case *ast.BlockStmt:
 			collectDomainEventAppendArgs(info, n, appendArgs)
@@ -170,18 +172,16 @@ func collectDomainEventAppendArgs(info *types.Info, block *ast.BlockStmt, append
 	var args []ast.Expr
 	// Track consecutive assignments to a fresh argument slice, not aliases or control flow.
 	for _, stmt := range block.List {
-		assign, ok := stmt.(*ast.AssignStmt)
-		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
-			name = nil
-			continue
-		}
-		lhs, ok := assign.Lhs[0].(*ast.Ident)
-		if !ok {
+		lhs, rhs := domainEventSliceBinding(stmt)
+		if lhs == nil || !isAnySlice(info.TypeOf(lhs)) {
 			name = nil
 			continue
 		}
 		obj := info.ObjectOf(lhs)
-		switch rhs := assign.Rhs[0].(type) {
+		switch rhs := ast.Unparen(rhs).(type) {
+		case nil:
+			name, args = obj, nil
+			continue
 		case *ast.CompositeLit:
 			if isAnySlice(info.TypeOf(rhs)) {
 				name, args = obj, rhs.Elts
@@ -198,6 +198,29 @@ func collectDomainEventAppendArgs(info *types.Info, block *ast.BlockStmt, append
 		}
 		name = nil
 	}
+}
+
+func domainEventSliceBinding(stmt ast.Stmt) (*ast.Ident, ast.Expr) {
+	switch stmt := stmt.(type) {
+	case *ast.AssignStmt:
+		if len(stmt.Lhs) == 1 && len(stmt.Rhs) == 1 {
+			name, _ := stmt.Lhs[0].(*ast.Ident)
+			return name, stmt.Rhs[0]
+		}
+	case *ast.DeclStmt:
+		decl, ok := stmt.Decl.(*ast.GenDecl)
+		if !ok || decl.Tok != token.VAR || len(decl.Specs) != 1 {
+			break
+		}
+		spec := decl.Specs[0].(*ast.ValueSpec)
+		if len(spec.Names) == 1 {
+			if len(spec.Values) == 1 {
+				return spec.Names[0], spec.Values[0]
+			}
+			return spec.Names[0], nil
+		}
+	}
+	return nil, nil
 }
 
 func isDomainEventKey(info *types.Info, expr ast.Expr) bool {
@@ -243,6 +266,8 @@ func TestDomainEventGuardDetectsWrongKeys(t *testing.T) {
 		{"positional literal", `_ = slog.Attr{"action", slog.AnyValue(definition)}`, 1},
 		{"local attr value", `value := slog.AnyValue(definition); _ = slog.Attr{Key: "action", Value: value}`, 1},
 		{"correct local attr value", `value := slog.AnyValue(definition); _ = slog.Attr{Key: "event", Value: value}`, 0},
+		{"assigned local attr value", `var value slog.Value; value = slog.AnyValue(definition); _ = slog.Attr{Key: "action", Value: value}`, 1},
+		{"attr before local assignment", `var value slog.Value; _ = slog.Attr{Key: "action", Value: value}; value = slog.AnyValue(definition)`, 0},
 		{"correct literal", `_ = slog.Attr{Key: "event", Value: slog.AnyValue(definition)}`, 0},
 		{"slice", `args := []any{"action", definition}; logger.InfoContext(nil, "record", args...)`, 1},
 		{"append", `args := []any{}; args = append(args, "action", definition); logger.InfoContext(nil, "record", args...)`, 1},
@@ -250,6 +275,8 @@ func TestDomainEventGuardDetectsWrongKeys(t *testing.T) {
 		{"split append", `args := []any{"action"}; args = append(args, "a value", "event", definition); logger.InfoContext(nil, "record", args...)`, 0},
 		{"operational string", `logger.InfoContext(nil, "record", "action", "operational.event.recorded")`, 0},
 		{"appended attribute value is not a key", `args := []any{}; args = append(args, "action", "event", definition); logger.InfoContext(nil, "record", args...)`, 1},
+		{"append after var declaration", `var args = []any{"action"}; args = append(args, "event", definition); logger.InfoContext(nil, "record", args...)`, 1},
+		{"valid append after var declaration", `var args = []any{"event"}; args = append(args, definition); logger.InfoContext(nil, "record", args...)`, 0},
 		{"append completes event pair", `args := []any{}; args = append(args, "event"); args = append(args, definition); logger.InfoContext(nil, "record", args...)`, 0},
 		{"nonlog definition", `_ = definition`, 0},
 		{"alias", `type Alias = domainevent.Definition; var alias Alias; logger.InfoContext(nil, "record", "action", alias)`, 1},
