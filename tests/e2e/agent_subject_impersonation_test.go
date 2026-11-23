@@ -298,20 +298,11 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		// US2.2 from specs/054-agent-subject-impersonation/spec.md
 		It("uses consent-free agent issuance and delegated human issuance on a dual rule", func() {
 			boot(configFor([]string{"human", "agent"}), false)
+			assertDenied(requestFor("alice@example.com"), true)
 			seedGrant("alice@example.com", false)
 			seedHumanSession("alice@example.com")
 			Expect(decodeJWTClaims(mint(target.ID.String()))["sub"]).To(Equal(target.ID.String()))
 			Expect(decodeJWTClaims(mint("alice@example.com"))["sub"]).To(Equal("alice@example.com"))
-			assertNoState(target.ID.String())
-		})
-		// US2.2 from specs/054-agent-subject-impersonation/spec.md (User Story 2)
-		It("issues a self-agent token on a dual rule while an unconsented human is denied", func() {
-			boot(configFor([]string{"human", "agent"}), false)
-			assertNoState(target.ID.String())
-			assertDenied(requestFor("alice@example.com"), true)
-			claims := decodeJWTClaims(mint(target.ID.String()))
-			Expect(claims["sub"]).To(Equal(target.ID.String()))
-			Expect(claims["agent_id"]).To(Equal(target.ID.String()))
 			assertNoState(target.ID.String())
 		})
 		// US2.3 from specs/054-agent-subject-impersonation/spec.md

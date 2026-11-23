@@ -57,8 +57,7 @@ The consent page uses the target UUID, even if the request audience used its
 `error_uri`; the body retains it. Repository failures return `500 server_error`
 without a challenge or recovery URI. Browser authorization instead redirects
 to consent with sealed JWE state. Neither response exposes grant details.
-See the [token exchange reference](../reference/token-exchange.md#user-impersonation)
-and [accepted decision](https://github.com/zalando-incubator/agentic-identity-broker/blob/release/v0.2/adrs/20261120-145501-human-impersonation-consent-status.md).
+See the [token exchange reference](../reference/token-exchange.md#user-impersonation).
 
 ### Migrate from End-User API 1.x
 
@@ -68,7 +67,7 @@ The published `1.2.0` contract could mint a human impersonation token with an ac
 
 In local mode, a privileged client can request a token for a registered agent acting for itself. The [canonical OpenAPI](../../api/enduser/openapi.yaml) defines the contract. Use the complete [agent-subject configuration](../../examples/config/impersonation-agent-subject.yaml) and [configuration reference](../configuration.md#subject-categories-and-self-agent-issuance).
 
-Classification is rule-local: the raw string `sub` must exactly equal the audience-selected target's canonical UUID, and the subject must be signed and verified or, for an unsigned (`verification: none`) subject, the rule's predicate must bind `subject_token.sub`. Everything else is human. There is no request category field. Aliases and alternate UUID spellings never select agent issuance, and a different registered agent's UUID is rejected without falling back to human delegation. The target must exist and existing scope limits still apply. Every credential validation, principal extraction and CEL authorization must succeed. The actor and client assertion always require signatures.
+Classification is rule-local. A raw string `sub` equal to the audience-selected target UUID is agent-category when the subject is signed and verified or, for an unsigned (`verification: none`) subject, the rule predicate binds `subject_token.sub`. A signed subject, or a predicate-bound unsigned subject, whose `sub` or extracted principal names another registered agent is also agent-category but always ineligible. Other subjects are human. There is no request category field. Aliases and alternate UUID spellings never select agent issuance. The target must exist, and existing scope limits still apply. Every credential validation, principal extraction and CEL authorization must succeed. The actor and client assertion always require signatures.
 
 | `allowed_subject_categories` | Human | Exact-target agent subject |
 | --- | --- | --- |

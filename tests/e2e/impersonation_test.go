@@ -736,7 +736,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 		})
 	})
 
-	Context("when an active human grant includes a mandatory service without a usable session", func() {
+	Context("when an active human grant has no mandatory service session", func() {
 		const redirectURI = "https://client.example.com/cb"
 		var (
 			principal     string
@@ -748,14 +748,21 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 			principal = fixtures.DefaultPrincipal().String()
 			targetAgent.ClientID = nil
 			targetAgent.RedirectURIs = []string{redirectURI}
+			targetAgent.PermissionSets = append(targetAgent.PermissionSets, storagedomain.AgentPermissionSetEntry{
+				PermissionSetID: fixtures.SecondaryPlaceholderPermissionSetID,
+				RequirementType: storagedomain.RequirementTypeOptional,
+			})
 			targetAgent.ServiceRequirements = []storagedomain.ServiceRequirement{{
-				ServiceID:       fixtures.PlaceholderServiceID,
+				ServiceID:       fixtures.SecondaryPlaceholderServiceID,
 				RequirementType: storagedomain.RequirementTypeMandatory,
-				RequiredScopes:  []string{"read"},
+				RequiredScopes:  []string{"write"},
 			}}
 			Expect(testStorage.Agents().Update(context.Background(), targetAgent)).To(Succeed())
 			Expect(testStorage.UserGrants().Create(context.Background(), fixtures.ActiveGrant(
 				principal, targetAgent.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"},
+			))).To(Succeed())
+			Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForServiceWithScopes(
+				principal, fixtures.PlaceholderServiceID.String(), []string{"read"},
 			))).To(Succeed())
 			authorizePath = "/oauth2/authorize?" + url.Values{
 				"client_id":             {targetAgent.ID.String()},
@@ -772,7 +779,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 
 		// Scenario US5 S6 from specs/037-oauth2-user-impersonation/spec.md (User Story 5).
 		It("should deny impersonation and redirect browser consent until the mandatory service is connected", func() {
-			By("redirecting the browser with sealed consent state while the active grant has no service session")
+			By("redirecting the browser while the included session is usable but the mandatory session is missing")
 			browserResp, err := enduserServer.AuthenticatedGET(authorizePath, principal)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(browserResp.StatusCode).To(Equal(http.StatusFound))
@@ -798,7 +805,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 
 			By("connecting the mandatory service with its required scopes and retrying both paths")
 			Expect(testStorage.UserSessions().Create(context.Background(), fixtures.SessionForServiceWithScopes(
-				principal, fixtures.PlaceholderServiceID.String(), []string{"read"},
+				principal, fixtures.SecondaryPlaceholderServiceID.String(), []string{"write"},
 			))).To(Succeed())
 			browserResp, err = enduserServer.AuthenticatedGET(authorizePath, principal)
 			Expect(err).NotTo(HaveOccurred())
