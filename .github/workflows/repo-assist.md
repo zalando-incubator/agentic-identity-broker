@@ -203,8 +203,10 @@ safe-outputs:
         - README.md
     max: 4
   push-to-pull-request-branch:
-    # A merge from the base branch as a format-patch carries every base change since the fork and exceeds the patch size limit.
+    # Base-branch merges count only the conflict resolution against the size limit when the push is an unsigned bundle that contains the current base tip.
+    # Signed pushes measure every base change since the fork and squash the merge commit.
     patch-format: bundle
+    signed-commits: false
     github-token-for-extra-empty-commit: none
     # Reading branch protection needs Administration, which the App does not hold; GitHub still enforces protection on the push.
     check-branch-protection: false
