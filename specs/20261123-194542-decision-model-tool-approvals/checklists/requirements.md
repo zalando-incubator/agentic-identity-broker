@@ -43,10 +43,15 @@
   the repository's OPA library against the inputs of journeys 1 to 3 and returned the results
   that the journeys state. Both wireframes were rendered from their sources.
 - **No clarification markers.** Decisions with more than one reasonable answer are recorded as
-  assumptions. Review these four first, because they change scope or the security model:
-  1. The static policy risk level and server-supplied tool descriptions are not sent to the model.
-  2. An automatically approved call creates no approval record and is visible in the audit log only.
-  3. The approver can see a `routine` recommendation.
-  4. The evaluation run (User Story 5) is part of this feature.
+  assumptions. Review these five first, because they change scope or the security model:
+  1. The model gets the tool definition that the MCP server lists. The operator writes no tool
+     descriptions. This depends on tool listings being visible at the gateway.
+  2. The static policy risk level is not sent to the model.
+  3. An automatically approved call creates no approval record and is visible in the audit log only.
+  4. The approver can see a `routine` recommendation.
+  5. Automatic approval requires the evaluation record of User Story 5.
+- **Revision.** The first draft required an operator-written description of every tool and
+  argument. The spec was revised on 2026-11-23 to use server-supplied tool definitions. All
+  examples were validated again after the revision.
 - **Research.** [decision-model-research.md](../decision-model-research.md) records the sources
   for the requirements that cite `R-01` to `R-20`.

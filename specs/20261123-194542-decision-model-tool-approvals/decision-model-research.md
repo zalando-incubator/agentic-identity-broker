@@ -100,9 +100,9 @@ rely on knowledge stored in model weights when current information can come from
 knowledge base." A server name such as `google-drive-mcp` carries no reliable meaning for a model.
 Missing context produces guesses, and an ordered scale then shows low confidence or a flat
 distribution.
-*Consequence*: the context includes what the target server is, what the tool does, what each
-supplied argument means, and what "the organisation" is. A call for which this context is missing
-is not eligible for automatic approval.
+*Consequence*: the context includes what the tool does and what each supplied argument means,
+taken from the tool definition that the MCP server lists, and what "the organisation" is, written
+once by the operator. A call for which this context is missing is not assessed.
 
 **R-11 — Supply only that context.** Accuracy falls as unrelated content grows ("context rot").
 Large state also hides which input caused a wrong answer.
@@ -119,8 +119,9 @@ sections they inspect.
 documents, and tool output separate from trusted policy state. A third-party Jev guide adds two
 rules: question text is constant and is never built from untrusted text, and application facts are
 written by the application, not copied from fields that the other party controls.
-*Consequence*: operator-authored descriptions and deterministic facts are in trusted sections.
-Tool-call arguments are in an untrusted section. Question text never contains argument values.
+*Consequence*: operator text is in trusted sections. The server's tool definition is in its own
+section, marked as the server's claims. Tool-call arguments are in an untrusted section. Question
+text never contains argument values or definition text.
 
 **R-14 — Withhold the agent's own account of the call.** Anthropic's auto mode classifier sees user
 messages and bare tool calls only. Assistant text and tool results are removed so that the agent
@@ -134,10 +135,14 @@ annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint
 guarantee behavior, and that clients must treat them as untrusted unless the server is trusted.
 OWASP lists tool poisoning (instructions hidden in descriptions or schemas) and rug pulls (a
 definition changes after approval), and recommends pinning the reviewed definition.
-*Consequence*: tool and server descriptions that the model sees are operator-reviewed text, not
-text read from the server at call time. A server-supplied description can be a starting point for
-the operator, but it enters the trusted context only after review. A changed description is a new
-context version.
+*Consequence*: a first draft of the spec excluded server-supplied definitions and required the
+operator to describe every tool and argument. That replicates a tool registry and does not scale,
+so the spec now uses the server's own definition (R-10) and treats it as a claim. Four controls
+apply. The definition is in a separate section and never reaches the approver. Automatic approval
+needs the operator's permission for the server. The exact definition is part of a fingerprint that
+the evaluation record must contain, so a changed definition stops automatic approval for that
+tool. A question detects definition text addressed to a reviewer. A server that describes a tool
+falsely and consistently remains a residual risk.
 
 ### D. Reading answers
 
@@ -222,6 +227,8 @@ Vendor and protocol documentation:
   [Model jaggedness](https://docs.typesafe.ai/model-jaggedness), [Models](https://docs.typesafe.ai/models),
   [System One API](https://docs.typesafe.ai/api/system-one)
 - agentgateway, [Using OpenAI's Decisions API and Jev through agentgateway](https://agentgateway.dev/blog/2026-10-12-openai-decisions-api-jev-agentgateway/)
+- agentgateway, [External processing (ExtProc)](https://agentgateway.dev/docs/standalone/latest/documentation/configuration/traffic-management/extproc/) and
+  [Guardrail processors](https://agentgateway.dev/docs/standalone/main/documentation/mcp/guardrails/processors/), for the visibility of `tools/list` results at the gateway
 - Model Context Protocol, [Tool Annotations as Risk Vocabulary](https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/)
 - OWASP, [MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html)
 
