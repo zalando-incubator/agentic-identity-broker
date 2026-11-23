@@ -146,26 +146,22 @@ The mismatch case makes **zero** evaluation requests.
 
 ## 5. Manual smoke test (optional, local compose)
 
-1. Before starting ExtProc, add to `configs/config.extproc.docker.yaml`:
-   `grant_context: {enabled: true}` and `authorization.enabled: true`. Use a policy that
-   keys on canonical IDs. ExtProc reads this file only at startup, so restart it after any
-   later edit.
-2. Set the broker's `server.enduser.public_url` to `http://identity-broker:8000`, the
-   identifier ExtProc expects by default (the origin of its `oauth2.token_endpoint`) and a base
-   the ExtProc container can reach. The stock Compose value `http://localhost:3000` does not
-   match, so ExtProc refuses to start. The broker also uses this base for consent links and
-   OAuth2 callbacks, so the browser must reach it too; the stock Compose stack does not provide
-   a name that both resolve. See the
-   [Compose grant-context prerequisites](../../docs/docker-compose-setup.md#configsconfigextprocdockeryaml-extproc).
-   Start the broker, check that
-   `curl http://localhost:8000/.well-known/authzen-configuration` returns
-   `"policy_decision_point":"http://identity-broker:8000"`, then start ExtProc with
-   `just compose-extproc-up` and confirm that its log shows no discovery error.
-3. Configure canonical IDs `data-assistant`, `repo-reader`, and `repo-api` through the admin API.
-   Grant consent in the SPA.
-4. Send an MCP `tools/call` through agentgateway. **Expected**: The request is allowed.
-5. Revoke consent in the SPA. Wait 60 s and repeat the request. **Expected**: 403
-   `access_denied` with the consent URL.
+1. Configure the [shared development hostname](../../docs/docker-compose-setup.md#shared-development-hostname)
+   and uncomment the complete `grant_context` block in `configs/config.extproc.docker.yaml`.
+   Keep `authorization.enabled: true`. The explicit PDP is `http://aib.localhost:3000`;
+   token exchange continues to use the internal broker endpoint.
+2. Start the stock stack with `just compose-up-detached`. Check AuthZEN discovery from
+   both the host and the Compose network as described in
+   [Enable ExtProc grant context](../../docs/docker-compose-setup.md#enable-extproc-grant-context).
+   Both must advertise the same PDP and evaluation endpoint; ExtProc must start without
+   a discovery mismatch.
+3. Follow [Get started](../../docs/get-started/index.md) with the seeded Local Research Agent.
+   Grant consent and connect the mock service in the SPA at `http://aib.localhost:3000`.
+   Use the Local Client token, whose principal matches Vite's `dev@example.com`.
+4. Send the documented `whoami` MCP call through agentgateway. **Expected**: allowed.
+5. Revoke that agent's grant in the SPA, wait beyond `max_staleness` (60 seconds by
+   default), and repeat. **Expected**: HTTP 403 `access_denied` with a consent URL
+   on `http://aib.localhost:3000`.
 
 ## 6. Full gate
 
