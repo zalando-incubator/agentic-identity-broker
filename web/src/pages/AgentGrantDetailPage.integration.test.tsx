@@ -265,7 +265,7 @@ describe('AgentGrantDetailPage - Integration', () => {
       { timeout: 5000 },
     );
   });
-  it('replaces service images after Save while retaining loaded permission switches and the Save node during refetch', async () => {
+  it('recovers failed service images from fresh data after Save', async () => {
     const source = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="3"/></svg>';
     const replacement = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>';
     const agent: AgentDetail = {
@@ -298,24 +298,16 @@ describe('AgentGrantDetailPage - Integration', () => {
     vi.mocked(consentApi.createOrUpdateGrant).mockResolvedValue({ kind: 'created', grant });
     const { container } = renderPage();
     const save = await screen.findByRole('button', { name: 'Save' });
-    const toggle = screen.getByRole('switch', { name: 'Exclude Birch Files' });
-    const expiration = screen.getByRole('checkbox', { name: 'Specific end date' });
-    fireEvent.click(expiration);
-    const suggestion = screen.getByRole('button', { name: /^1 year/ });
-    expect(suggestion).toBeEnabled();
     expect(container.querySelectorAll('img[src^="data:image/svg+xml"]')).toHaveLength(2);
     container.querySelectorAll('img[src^="data:image/svg+xml"]').forEach((icon) => fireEvent.error(icon));
+    expect(container.querySelectorAll('img[src^="data:image/svg+xml"]')).toHaveLength(0);
     const pending = Promise.withResolvers<{ agent: AgentDetail; services: typeof services }>();
     vi.mocked(consentApi.getAgentDetail).mockReturnValueOnce(pending.promise);
     fireEvent.click(save);
     await waitFor(() => expect(consentApi.getAgentDetail).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole('button', { name: 'Save' })).toBe(save);
-    expect(screen.getByRole('switch', { name: 'Exclude Birch Files' })).toBe(toggle);
-    fireEvent.click(save);
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Exclude Birch Files' })).not.toBeInTheDocument();
     expect(consentApi.createOrUpdateGrant).toHaveBeenCalledTimes(1);
-    expect(save).toBeDisabled();
-    expect(expiration).toBeDisabled();
-    expect(suggestion).toBeDisabled();
     await act(async () => {
       pending.resolve({ agent, services: services.map((service) => ({ ...service, iconSvg: replacement })) });
     });
@@ -324,14 +316,10 @@ describe('AgentGrantDetailPage - Integration', () => {
     images.forEach((icon) => {
       expect(icon).toHaveAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(replacement)}`);
       fireEvent.load(icon);
-      expect(icon).toBeVisible();
     });
-    expect(screen.getByRole('button', { name: 'Save' })).toBe(save);
-    expect(screen.getByRole('switch', { name: 'Exclude Birch Files' })).toBe(toggle);
-    expect(save).toBeEnabled();
-    expect(screen.getByRole('checkbox', { name: 'Specific end date' })).toBe(expiration);
-    expect(screen.getByRole('button', { name: /^1 year/ })).toBe(suggestion);
-    expect(expiration).toBeEnabled();
-    expect(suggestion).toBeEnabled();
+    await waitFor(() => images.forEach((icon) => expect(icon).toBeVisible()));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('switch', { name: 'Exclude Birch Files' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Specific end date' })).toBeEnabled();
   });
 });

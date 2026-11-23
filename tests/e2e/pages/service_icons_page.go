@@ -65,7 +65,7 @@ func (p *ServiceIconsPage) identity(surface ServiceIconSurface, serviceID, name 
 func (p *ServiceIconsPage) ReadIdentity(surface ServiceIconSurface, serviceID, name string) (ServiceIconIdentity, error) {
 	var result ServiceIconIdentity
 	root := p.identity(surface, serviceID, name)
-	if err := root.WaitFor(); err != nil {
+	if err := root.ScrollIntoViewIfNeeded(); err != nil {
 		return result, err
 	}
 	value, err := root.Evaluate(`(root, name) => {
@@ -159,18 +159,14 @@ func (p *ServiceIconsPage) FailImage(surface ServiceIconSurface, serviceID, name
 	return p.identity(surface, serviceID, name).Locator("img").DispatchEvent("error", nil)
 }
 
-// RememberControls retains actual DOM nodes and the document identity. A changed
-// image must not recover by replacing its surrounding action controls or page.
-func (p *ServiceIconsPage) RememberControls() error {
-	_, err := p.GetPlaywrightPage().Evaluate(`() => {
-		window.__serviceIconControls = [...document.querySelectorAll('button,input')].filter(el => !el.closest('[role="dialog"]'));
-		window.__serviceIconDocument = document;
-	}`)
+// RememberDocument records the document before the service data refresh.
+func (p *ServiceIconsPage) RememberDocument() error {
+	_, err := p.GetPlaywrightPage().Evaluate(`() => { window.__serviceIconDocument = document }`)
 	return err
 }
 
-func (p *ServiceIconsPage) ControlsPreserved() (bool, error) {
-	value, err := p.GetPlaywrightPage().Evaluate(`() => window.__serviceIconDocument === document && window.__serviceIconControls.length > 0 && window.__serviceIconControls.every(el => el.isConnected)`)
+func (p *ServiceIconsPage) DocumentPreserved() (bool, error) {
+	value, err := p.GetPlaywrightPage().Evaluate(`() => window.__serviceIconDocument === document`)
 	if err != nil {
 		return false, err
 	}

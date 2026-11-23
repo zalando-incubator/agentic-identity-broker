@@ -28,8 +28,6 @@ interface GrantValidityControlProps {
   value: GrantValidityState;
   /** Callback when validity state changes */
   onChange: (state: GrantValidityState) => void;
-  /** Disable editing while the grant is saved and refreshed. */
-  disabled?: boolean;
   /** Additional CSS classes */
   className?: string;
 }
@@ -41,7 +39,6 @@ interface GrantValidityControlProps {
 export function GrantValidityControl({
   value,
   onChange,
-  disabled = false,
   className = '',
 }: GrantValidityControlProps) {
   const today = useMemo(() => new Date(), []);
@@ -101,7 +98,6 @@ export function GrantValidityControl({
         id="grant-expires"
         checked={hasExpiration}
         onChange={handleCheckboxChange}
-        disabled={disabled}
         label="Specific end date"
       />
 
@@ -111,7 +107,6 @@ export function GrantValidityControl({
           <DatePicker
             value={value.expiresAt || null}
             onChange={handleDateChange}
-            disabled={disabled}
             minDate={tomorrow}
             label="End date"
             errorMessage={
@@ -131,7 +126,6 @@ export function GrantValidityControl({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  disabled={disabled}
                   onClick={() => handleSuggestedDateClick(suggestion.date)}
                   className="bg-neutral-100 text-neutral-700 hover:bg-neutral-200"
                 >

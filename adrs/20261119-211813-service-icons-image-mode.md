@@ -25,7 +25,7 @@ The SPA URI-encodes exact source into `data:image/svg+xml;charset=utf-8,...` and
 
 The built SPA keeps DENY and nosniff headers and uses `frame-ancestors 'none'; object-src 'none'`. It adds no `default-src` or `img-src` restriction. Existing remote user avatars and agent images keep their present behavior. Parent CSP does not supply SVG image isolation.
 
-Only image state is keyed by source. Callers retain their original fallback, visible name, and controls during loading, errors, replacement, and clearing. Existing five-minute consent and two-minute session caches remain unchanged.
+Only image state is keyed by source. Callers keep their existing fallbacks, visible names, and controls. Page-level data refresh retains the existing loading skeletons. Existing five-minute consent and two-minute session caches remain unchanged.
 
 ## Security analysis
 

@@ -72,7 +72,7 @@ Skip preparatory refactoring and entity scaffolding: no demonstrated structural 
 ### Canonical acceptance mapping
 
 Each scenario has exactly one canonical Ginkgo It. Backend journeys use `tests/e2e/service_icons_test.go`; browser journeys use `tests/e2e/frontend/service_icons_test.go`.
-The browser journeys run only in built mode (`built-frontend`). US3.1 uses the `migrated-service` label and requires Docker or Podman for PostgreSQL.
+The browser journeys run only in built mode (`built-frontend`) with in-memory storage. The migration integration test checks that pre-feature PostgreSQL rows have no icon.
 
 | Scenario | Suite | Canonical It |
 |---|---|---|
@@ -84,9 +84,9 @@ The browser journeys run only in built mode (`built-frontend`). US3.1 uses the `
 | US2.2 | Browser | should replace every fresh service identity without changing an identical-source peer [US2.2] |
 | US2.3 | Browser | should reject named active constructs atomically and isolate accepted external references [US2.3] |
 | US2.4 | Backend | should protect every icon delivery response and preserve ownership and rejected-write atomicity |
-| US3.1 | Browser | should preserve pre-feature initials name-only session identities and existing actions [US3.1] |
+| US3.1 | Browser | should preserve initials name-only session identities and existing actions without an icon [US3.1] |
 | US3.2 | Browser | should retain original fallbacks and working controls after deterministic image errors [US3.2] |
-| US3.3 | Browser | should recover changed source in open consent and session views without remounting controls [US3.3] |
+| US3.3 | Browser | should recover changed source in open consent and session views without a full page reload [US3.3] |
 | US3.4 | Browser | should preserve decorative semantics readable names and keyboard actions at narrow and wide sizes [US3.4] |
 
 Backend cases belong in `tests/e2e/service_icons_test.go`; browser cases in `tests/e2e/frontend/service_icons_test.go`, using existing bootstrap/page objects and isolated fixtures. US1.1 uses the existing backend Docker restart pattern in `thirdparty_protected_resource_status_test.go`, retaining PostgreSQL data without reseeding. PostgreSQL integration tests cover exact-source persistence too. Do not add restart support to the browser harness. Supplemental checks do not duplicate canonical mappings.

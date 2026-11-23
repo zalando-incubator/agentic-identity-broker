@@ -330,8 +330,6 @@ The [frontend harness](frontend/frontend_suite_test.go) owns browser startup and
 The [frontend instructions](frontend/AGENTS.md) describe page objects, selectors, screenshots, and browser cleanup.
 
 For built assets, use `just test-e2e-frontend` ([recipe](../../justfile)).
-The `migrated-service` browser scenario starts a PostgreSQL container. Start Docker or Podman before you run the full built suite.
-For a focused run without a container runtime, pass `--label-filter='!migrated-service'` to Ginkgo.
 Built mode is recommended until the development identities match.
 The [Vite proxy](../../web/vite.config.ts) sends `dev@example.com`, but consent tests seed sessions for `user@example.com`.
 This mismatch can leave the approval button disabled. A single worker does not fix it.

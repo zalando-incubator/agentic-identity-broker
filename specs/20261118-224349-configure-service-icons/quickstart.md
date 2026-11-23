@@ -54,7 +54,7 @@ GO-2026-6911 already has a maintained exception for the local `mocks/sample-agen
 
 After those reruns, `PATH=/opt/homebrew/opt/bash/bin:$PATH just verify` passed with Bash 5.3.20. All verification tiers completed, including 76 of 76 frontend cases. Later consent chip fit and spacing changes received the focused checks in [Acceptance evidence](#acceptance-evidence).
 
-US3.1 also passed against PostgreSQL: the fixture seeded services without `icon_svg`, rolled back to schema 48, and reapplied migration 49 before opening consent and sessions. The browser exercised the resulting fallbacks and actions without a broker restart.
+US3.1 uses in-memory storage to check fallbacks and controls for services without icons. The [migration integration test](../../tests/integration/migrations/service_icons_migration_test.go) checks that pre-feature PostgreSQL rows keep a null icon.
 
 Review found that the first historical-fixture workaround reduced successful upgrades from `MigrateTo(0)` to `MigrateTo(47)`. That reduction is corrected. Current provider columns require migration `049` before the legacy broker can start, so `PostgresFixture.ApplyMigrationFile` supplies the column temporarily. Successful paths remove that temporary column and run the complete migration chain with `MigrateTo(0)`. Normal rollback to `046` removes `049` before full reapply. Only the deliberately blocked case targets `047`. API remediation, duplicate reports, dirty-state checks and relationship-preservation assertions are unchanged.
 
@@ -64,7 +64,7 @@ US1.1–US1.4 cover exact Admin lifecycle, real PostgreSQL restart, preserved id
 
 US2.1–US2.4 cover original effects, text, styles, local reuse, embedded PNG, animation, aliases and permitted DOCTYPE exports. Chromium decoded the exact API/data-URI source with positive natural width. Accepted attribute, CSS and animated references caused no observed external loads or execution. The signed-profile remote avatar still rendered under the revised CSP. Every actual source-bearing end-user response enforced existing principal/ownership boundaries.
 
-US3.1–US3.4 cover original initials/name-only fallbacks, native image errors against valid stored source and usable actions. They also prove fresh-source recovery without replacing the open document or action nodes. Accessible names and keyboard operation pass at 390px and 1280px. Uploaded images had no accessibility node or keyboard stop. Existing accessible scope-badge images remain permitted.
+US3.1–US3.4 cover original initials and name-only fallbacks, native image errors against valid stored source, and usable actions. US3.3 checks fresh-source recovery without a full page reload. Accessible names and keyboard operation pass at 390px and 1280px. Uploaded images had no accessibility node or keyboard stop. Existing accessible scope-badge images remain permitted.
 
 The square-icon regression in US3.4 failed before the clipping fix. After the fix, Chromium confirmed that all four image corners fit in required and optional consent chips at 390px and 1280px. `just check`, `just web-build`, and 56 focused Vitest tests passed. The configured consent screenshots were refreshed at both widths.
 
@@ -78,11 +78,11 @@ service_icons_{configured,failed,recovered,unset}_{narrow,wide}_{consent_require
 
 Representative configured narrow consent and failed-image narrow session captures were inspected. Screenshot capture used `E2E_CAPTURE_SCREENSHOTS=true` with one worker. Feature cases contain no pending/skipped placeholders. Filtered runs skipped unrelated scenarios only.
 
-The screenshot workflow refreshes these same generated basenames and removes only captures no longer produced. Initial tracked captures therefore remain compatible with CI publication. Detail-header variants cover required identity surfaces, not additional artwork fixtures.
+The screenshot workflow publishes updated captures and removes files that the suite no longer produces. Two pending-refetch captures and three `unset_pre_feature` captures remain tracked until the workflow runs on the updated PR. The suite now produces `unset_no_icon` captures.
 
 Plain Save and named session actions use maintained `ConsentPage` and `SessionsPage` methods. The icon helper keeps observations and keyboard traversal. The consent waiter ignores success toasts already present before each Save.
 
-The US3.3 browser test pauses the post-save consent refresh. The [pending Save screenshot](../../tests/e2e/screenshots/service_icons_consent_save_pending.png) shows that Save stays disabled without unmounting the editor. The focused Vitest test checks that a second click sends no extra write.
+On the final PR #523 patch, `just check` passed. One focused Vitest run passed all 52 tests in six files. One focused Chromium run with screenshot capture passed all 16 journeys, including all four icon states at both widths. The production frontend build and `TestServiceIconsMigrationUpDownUpPreservesExistingData` also passed during review.
 
 ## Security and quality limits
 

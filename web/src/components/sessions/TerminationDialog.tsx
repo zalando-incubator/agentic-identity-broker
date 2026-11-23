@@ -93,12 +93,7 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
             >
               Terminate Session?
             </h2>
-            <div className="mt-3 flex min-w-0 items-center gap-3">
-              <ServiceIcon iconSvg={serviceIconSvg} />
-              <h3 className="min-w-0 break-words text-base font-semibold text-trust">
-                {serviceName}
-              </h3>
-            </div>
+            <ServiceIcon iconSvg={serviceIconSvg} className="mt-3" />
             <p
               id="termination-dialog-description"
               className="mt-2 text-sm text-neutral-600"

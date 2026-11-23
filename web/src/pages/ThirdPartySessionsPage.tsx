@@ -56,13 +56,7 @@ interface AlertState {
 export const ThirdPartySessionsPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { sessions: loadedSessions, loading, error, refetch } = useSessions();
-  const [terminatedSessionIds, setTerminatedSessionIds] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const sessions = terminatedSessionIds.size === 0
-    ? loadedSessions
-    : loadedSessions.filter((session) => !terminatedSessionIds.has(session.id));
+  const { sessions, loading, error, refetch } = useSessions();
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     null,
   );
@@ -160,7 +154,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
   };
 
   const handleTerminationConfirm = async () => {
-    if (!selectedSessionId || !selectedSessionDetails) return;
+    if (!selectedSessionId) return;
 
     try {
       setTerminatingLoading(true);
@@ -168,9 +162,6 @@ export const ThirdPartySessionsPage: React.FC = () => {
 
       // Call API to terminate session (DELETE endpoint)
       await sessionsApi.terminateSession(selectedSessionId);
-      setTerminatedSessionIds((previous) =>
-        new Set(previous).add(selectedSessionDetails.session.id),
-      );
 
       // Close dialog and refetch sessions
       setSelectedSessionId(null);
@@ -236,7 +227,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
   };
 
   // Loading state with skeleton cards
-  if (loading && sessions.length === 0) {
+  if (loading) {
     return (
       <AppLayout>
         <PageTransition>

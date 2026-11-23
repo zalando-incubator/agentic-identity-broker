@@ -228,15 +228,10 @@ func (j *iconBrowserJourney) open(sources []string) {
 
 func (j *iconBrowserJourney) refresh(sources []string) {
 	GinkgoHelper()
-	j.refreshAfterSave(sources, func() error { return j.consent.SaveConsent(j.ctx) })
-}
-
-func (j *iconBrowserJourney) refreshAfterSave(sources []string, save func() error) {
-	GinkgoHelper()
 	// Save and Refresh are the existing production invalidation paths for the
 	// five-minute consent and two-minute session/detail caches, respectively.
 	Expect(j.consent.ExpectGrantSuccess(func() error {
-		j.fresh(j.consent.GetPlaywrightPage(), "/api/consent/agents/"+j.agentID, save, sources)
+		j.fresh(j.consent.GetPlaywrightPage(), "/api/consent/agents/"+j.agentID, func() error { return j.consent.SaveConsent(j.ctx) }, sources)
 		return nil
 	})).To(Succeed())
 	j.fresh(j.sessions.GetPlaywrightPage(), "/api/third-party/sessions", func() error { return j.sessions.RefreshSession(j.ctx, j.services[0].Name) }, sources)
@@ -592,19 +587,10 @@ var _ = Describe("Configurable service icons", Label("built-frontend"), func() {
 			expectServiceIconIdentity(j.sessionIcons, pages.ServiceIconDetail, service, "")
 			Expect(j.sessions.TakeDetailScreenshot(j.ctx, "service_icons_failed_detail_"+service.Name)).To(Succeed())
 			page := j.sessions.GetPlaywrightPage()
-			pending := make(chan playwright.Route, 1)
-			Expect(page.Route("**/api/third-party/sessions", func(route playwright.Route) { pending <- route })).To(Succeed())
 			response, err := page.ExpectResponse(func(response playwright.Response) bool {
 				target, err := url.Parse(response.URL())
 				return err == nil && target.Path == "/api/third-party/sessions" && response.Request().Method() == http.MethodGet
-			}, func() error {
-				Expect(j.sessions.ConfirmTermination(j.ctx, service.Name)).To(Succeed())
-				var route playwright.Route
-				Eventually(pending).Should(Receive(&route))
-				Eventually(j.sessions.GetTerminateButtonCount).WithArguments(j.ctx).Should(Equal(1))
-				Expect(j.sessions.TakeScreenshot(j.ctx, "service_icons_session_terminated_pending_refetch")).To(Succeed())
-				return route.Continue()
-			})
+			}, func() error { return j.sessions.ConfirmTermination(j.ctx, service.Name) })
 			Expect(err).NotTo(HaveOccurred())
 			Expect(response.Status()).To(Equal(http.StatusOK))
 			var list struct {
@@ -617,37 +603,24 @@ var _ = Describe("Configurable service icons", Label("built-frontend"), func() {
 			Expect(response.JSON(&list)).To(Succeed())
 			Expect(list.Data.Sessions).To(ConsistOf(HaveField("ServiceID", j.services[0].ID)))
 			Expect(j.sessions.WaitForSuccessMessage(j.ctx, "Session terminated successfully.")).To(Succeed())
+			Expect(j.sessions.GetTerminateButtonCount(j.ctx)).To(Equal(1))
 			j.expectIsolation()
 		})
 
 		// US3.3 from specs/20261118-224349-configure-service-icons/spec.md (User Story 3).
-		It("should recover changed source in open consent and session views without remounting controls [US3.3]", func() {
+		It("should recover changed source in open consent and session views without a full page reload [US3.3]", func() {
 			sources := []string{j.visuals[0], j.visuals[0]}
 			j.open(sources)
 			j.failConnected(sources)
-			Expect(j.consentIcons.RememberControls()).To(Succeed())
-			Expect(j.sessionIcons.RememberControls()).To(Succeed())
+			Expect(j.consentIcons.RememberDocument()).To(Succeed())
+			Expect(j.sessionIcons.RememberDocument()).To(Succeed())
 			j.update(0, map[string]any{"icon_svg": j.visuals[1]}, http.StatusOK)
 			sources[0] = j.visuals[1]
-			page := j.consent.GetPlaywrightPage()
-			path := "/api/consent/agents/" + j.agentID
-			pending := make(chan playwright.Route, 1)
-			Expect(page.Route("**"+path, func(route playwright.Route) { pending <- route })).To(Succeed())
-			j.refreshAfterSave(sources, func() error {
-				Expect(j.consent.SaveConsent(j.ctx)).To(Succeed())
-				var route playwright.Route
-				Eventually(pending).Should(Receive(&route))
-				Consistently(j.consent.IsSaveButtonEnabled).WithArguments(j.ctx).Should(BeFalse())
-				Expect(j.consent.IsExpirationCheckboxEnabled()).To(BeFalse())
-				Expect(j.consent.TakeScreenshot(j.ctx, "service_icons_consent_save_pending")).To(Succeed())
-				return route.Continue()
-			})
-			Expect(page.Unroute("**" + path)).To(Succeed())
+			j.refresh(sources)
 			Expect(j.consent.IsSaveButtonEnabled(j.ctx)).To(BeTrue())
-			Expect(j.consent.IsExpirationCheckboxEnabled()).To(BeTrue())
-			j.expectConnected([]string{sources[0], ""})
-			Expect(j.consentIcons.ControlsPreserved()).To(BeTrue(), "source changes must not remount consent actions")
-			Expect(j.sessionIcons.ControlsPreserved()).To(BeTrue(), "source changes must not remount session actions")
+			j.expectConnected(sources)
+			Expect(j.consentIcons.DocumentPreserved()).To(BeTrue(), "consent recovery must not reload the page")
+			Expect(j.sessionIcons.DocumentPreserved()).To(BeTrue(), "session recovery must not reload the page")
 			j.expectAdminSource(0, sources[0])
 			j.freshDetail(0, sources[0], func() error { return j.sessions.OpenSessionDetails(j.ctx, j.services[0].Name) })
 			expectServiceIconIdentity(j.sessionIcons, pages.ServiceIconDetail, j.services[0], sources[0])
@@ -658,9 +631,9 @@ var _ = Describe("Configurable service icons", Label("built-frontend"), func() {
 			j.update(0, map[string]any{"icon_svg": nil}, http.StatusOK)
 			sources[0] = ""
 			j.refresh(sources)
-			j.expectConnected([]string{"", ""})
-			Expect(j.consentIcons.ControlsPreserved()).To(BeTrue())
-			Expect(j.sessionIcons.ControlsPreserved()).To(BeTrue())
+			j.expectConnected(sources)
+			Expect(j.consentIcons.DocumentPreserved()).To(BeTrue())
+			Expect(j.sessionIcons.DocumentPreserved()).To(BeTrue())
 		})
 
 		// US3.4 from specs/20261118-224349-configure-service-icons/spec.md (User Story 3).
@@ -772,7 +745,11 @@ var _ = Describe("Configurable service icons", Label("built-frontend"), func() {
 						return j.sessionIcons.KeyboardActivate(pages.ServiceIconSession, j.services[0].ID, j.services[0].Name, "Refresh")
 					}, apiSources)
 					Expect(j.sessions.WaitForSuccessMessage(j.ctx, "Session token refreshed successfully.")).To(Succeed())
-					j.expectConnected(expected)
+					if state == "failed" {
+						j.failConnected(sources)
+					} else {
+						j.expectConnected(expected)
+					}
 					j.screenshots(state + "_" + size)
 					if state == "unset" {
 						service := j.services[1]
@@ -827,17 +804,15 @@ var _ = Describe("Configurable service icons", Label("built-frontend"), func() {
 		})
 	})
 
-	Context("when services predate optional icon metadata", func() {
+	Context("when services have no icon metadata", func() {
 		BeforeEach(func() { j.seed([]string{"", ""}) })
 
 		// US3.1 from specs/20261118-224349-configure-service-icons/spec.md (User Story 3).
-		It("should preserve pre-feature initials name-only session identities and existing actions [US3.1]", Label("migrated-service"), func() {
-			Expect(migrateServiceFixture.MigrateTo(48)).To(Succeed())
-			Expect(migrateServiceFixture.MigrateTo(0)).To(Succeed())
+		It("should preserve initials name-only session identities and existing actions without an icon [US3.1]", func() {
 			sources := []string{"", ""}
 			j.open(sources)
 			j.expectAll(sources)
-			j.screenshots("unset_pre_feature")
+			j.screenshots("unset_no_icon")
 			j.connectAccounts()
 			j.refresh(sources)
 			Expect(j.consent.IsSaveButtonEnabled(j.ctx)).To(BeTrue())

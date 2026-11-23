@@ -5,7 +5,6 @@
 package e2e_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -19,7 +18,6 @@ import (
 	"time"
 
 	storageadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/bootstrap"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
@@ -265,31 +263,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 // 3. Create fresh app instance with test config
 // 4. Create fresh test server
 // 5. Create fresh Playwright context and page
-var migrateServiceFixture *bootstrap.PostgresFixture
-
 var _ = BeforeEach(func() {
-	var err error
-
 	// Step 1: Create fresh test storage
 	storageFactory := bootstrap.NewStorageFactory(suiteCtx.Logger)
-	var storage *storageadapter.Adapter
-	configStorage := ports.StorageConfig{}
-	migrated, err := CurrentSpecReport().MatchesLabelFilter("migrated-service")
-	Expect(err).NotTo(HaveOccurred())
-	if migrated {
-		pg, err := bootstrap.NewPostgresFixture(context.Background())
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() error { return pg.Close(context.Background()) })
-		configStorage = ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: pg.ConnectionURL}, Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second}}
-		AddReportEntry("service migration", "PostgreSQL fixture")
-		migrateServiceFixture = pg
-		DeferCleanup(func() { migrateServiceFixture = nil })
-		storage, err = storageadapter.NewAdapter(&configStorage)
-		Expect(err).NotTo(HaveOccurred())
-	} else {
-		storage, err = storageFactory.NewTestStorage()
-		Expect(err).NotTo(HaveOccurred())
-	}
+	storage, err := storageFactory.NewTestStorage()
+	Expect(err).NotTo(HaveOccurred(), "Failed to create test storage")
 	DeferCleanup(func() error { return storageFactory.CloseStorage(storage) })
 
 	// Step 2: Create fresh mock upstream server
@@ -297,9 +275,6 @@ var _ = BeforeEach(func() {
 
 	// Step 3: Create fresh app instance with test config
 	config := fixtures.OAuth2ConfigWithUpstream(mockUpstream.Server.URL)
-	if configStorage.Backend != "" {
-		config.Storage = configStorage
-	}
 	serverFactory := bootstrap.NewServerFactory(config, suiteCtx.Logger)
 	appInstance, err := serverFactory.BuildApp(storage)
 	Expect(err).NotTo(HaveOccurred(), "Failed to build app instance")

@@ -527,10 +527,6 @@ func (cp *ConsentPage) IsSaveButtonEnabled(ctx context.Context) (bool, error) {
 	return cp.isConsentActionEnabled("Save")
 }
 
-func (cp *ConsentPage) IsExpirationCheckboxEnabled() (bool, error) {
-	return cp.expirationCheckbox().IsEnabled()
-}
-
 // GetSuccessMessage retrieves the success message after form submission.
 //
 // Parameters:

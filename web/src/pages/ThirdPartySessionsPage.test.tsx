@@ -35,32 +35,32 @@ describe('ThirdPartySessionsPage current icon metadata', () => {
     vi.mocked(consentApi.getAgentDelegations).mockResolvedValue([]);
   });
 
-  it('keeps Refresh and Terminate mounted during refetch and carries fresh detail source to its identity header', async () => {
+  it('recovers a failed list icon on refresh and uses fresh detail metadata in the dialog', async () => {
     vi.mocked(sessionsApi.listSessions).mockResolvedValueOnce([{ ...session, service_icon_svg: source }]);
     vi.mocked(sessionsApi.refreshSession).mockResolvedValue({ ...session, service_icon_svg: replacement });
     const { container } = render(<MemoryRouter><ThirdPartySessionsPage /></MemoryRouter>);
     const refresh = await screen.findByRole('button', { name: 'Refresh' });
-    const terminate = screen.getByRole('button', { name: 'Terminate' });
     fireEvent.error(container.querySelector('img[src^="data:image/svg+xml"]')!);
+    expect(container.querySelector('img[src^="data:image/svg+xml"]')).toBeNull();
     const pending = pendingSessionList();
     vi.mocked(sessionsApi.listSessions).mockReturnValueOnce(pending.promise);
     fireEvent.click(refresh);
     await waitFor(() => expect(sessionsApi.listSessions).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole('button', { name: /refresh/i })).toBe(refresh);
-    expect(screen.getByRole('button', { name: 'Terminate' })).toBe(terminate);
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Terminate' })).not.toBeInTheDocument();
     await act(async () => pending.resolve([{ ...session, service_icon_svg: replacement }]));
     const recovered = container.querySelector('img[src^="data:image/svg+xml"]')!;
     expect(recovered).toHaveAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(replacement)}`);
     fireEvent.load(recovered);
-    expect(recovered).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBe(refresh);
-    expect(screen.getByRole('button', { name: 'Terminate' })).toBe(terminate);
+    await waitFor(() => expect(recovered).toBeVisible());
+    const refreshedButton = screen.getByRole('button', { name: 'Refresh' });
+    expect(refreshedButton).toBeEnabled();
     vi.mocked(sessionsApi.getSessionDetails).mockResolvedValue({
       session: { ...session, service_icon_svg: detailSource }, dependent_agents: [],
     });
-    fireEvent.click(terminate);
+    fireEvent.click(screen.getByRole('button', { name: 'Terminate' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByRole('heading', { name: 'Atlas Files' })).toBeVisible();
+    expect(dialog).toHaveAccessibleDescription('Are you sure you want to terminate your session with Atlas Files?');
     const detailImage = dialog.querySelector('img')!;
     expect(detailImage).toHaveAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(detailSource)}`);
     expect(recovered).toHaveAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(replacement)}`);
@@ -69,16 +69,16 @@ describe('ThirdPartySessionsPage current icon metadata', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel session termination' }));
     const cleared = pendingSessionList();
     vi.mocked(sessionsApi.listSessions).mockReturnValueOnce(cleared.promise);
-    fireEvent.click(refresh);
+    fireEvent.click(refreshedButton);
     await waitFor(() => expect(sessionsApi.listSessions).toHaveBeenCalledTimes(3));
-    expect(recovered).toBeInTheDocument();
+    expect(recovered).not.toBeInTheDocument();
     await act(async () => cleared.resolve([session]));
     expect(container.querySelector('img[src^="data:image/svg+xml"]')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBe(refresh);
-    expect(screen.getByRole('heading', { name: 'Atlas Files' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Atlas Files' })).toBeVisible());
   });
 
-  it('removes the terminated session while its peer stays actionable during refetch', async () => {
+  it('shows only the remaining actionable session after termination refetches the list', async () => {
     const peer = { ...session, id: 'peer', service_id: 'cobalt', service_display_name: 'Cobalt Notes' };
     const pending = pendingSessionList();
     vi.mocked(sessionsApi.listSessions)
@@ -87,15 +87,15 @@ describe('ThirdPartySessionsPage current icon metadata', () => {
     vi.mocked(sessionsApi.getSessionDetails).mockResolvedValue({ session, dependent_agents: [] });
     vi.mocked(sessionsApi.terminateSession).mockResolvedValue(undefined);
     render(<MemoryRouter><ThirdPartySessionsPage /></MemoryRouter>);
-    const [terminate, peerTerminate] = await screen.findAllByRole('button', { name: 'Terminate' });
+    const [terminate] = await screen.findAllByRole('button', { name: 'Terminate' });
     fireEvent.click(terminate);
     fireEvent.click(await screen.findByRole('button', { name: 'Terminate session with Atlas Files' }));
     await waitFor(() => expect(sessionsApi.listSessions).toHaveBeenCalledTimes(2));
     expect(sessionsApi.terminateSession).toHaveBeenCalledWith('atlas');
-    expect(terminate).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Terminate' })).toBe(peerTerminate);
-    expect(peerTerminate).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Terminate' })).not.toBeInTheDocument();
     await act(async () => pending.resolve([peer]));
-    expect(screen.getByRole('button', { name: 'Terminate' })).toBe(peerTerminate);
+    expect(screen.queryByRole('heading', { name: 'Atlas Files' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Cobalt Notes' })).toBeVisible());
+    expect(screen.getByRole('button', { name: 'Terminate' })).toBeEnabled();
   });
 });
