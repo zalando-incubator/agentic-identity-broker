@@ -175,10 +175,10 @@ Tests use `bootstrap.NewInMemoryTracerProvider()` to get a `*tracetest.SpanRecor
 On normal shutdown, both HTTP servers drain. Then the CLI calls `App.Shutdown` with the configured `server.shutdown.timeout`. Startup failures after application construction also call `App.Shutdown`.
 
 ```
-HTTP servers drain → local/hybrid OAuth2 cleanup stops → admitted session refreshes drain → remaining application resources and telemetry shut down → shared upstream transport closes idle connections
+HTTP servers drain → local/hybrid OAuth2 cleanup stops → ledger retention stops → admitted session refreshes drain → remaining application resources and telemetry shut down → shared upstream transport closes idle connections
 ```
 
-The builder composes one `App.Shutdown` function. It stops the local/hybrid `SessionCleanup` worker first. Then `OAuth2SessionService.Close` rejects new submissions and waits for admitted background refreshes within the shutdown deadline. It cancels refresh contexts after the drain or when the deadline expires. Telemetry remains active during this drain, and the shared upstream transport closes idle connections last. Expiry of the deadline can still interrupt a provider call after refresh-token rotation.
+The builder composes one `App.Shutdown` function. It stops the local/hybrid `SessionCleanup` worker first. If the ledger is enabled, shutdown cancels the retention worker and waits for it to exit. Then `OAuth2SessionService.Close` rejects new submissions and waits for admitted background refreshes within the shutdown deadline. It cancels refresh contexts after the drain or when the deadline expires. Telemetry remains active during this drain, and the shared upstream transport closes idle connections last. Expiry of the deadline can still interrupt a provider call after refresh-token rotation.
 
 **Token exchange diagnostic boundary**:
 

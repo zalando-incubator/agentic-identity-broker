@@ -116,7 +116,7 @@ The TODO was written speculatively for a future soft-delete scenario. That scena
 ## 8. Audit Logging Location
 
 ### Decision
-Structured audit log entry (`slog.Info`) with fields `principal`, `agent_id`, `grant_id`, `action=grant_revoked`, `timestamp` is emitted from the `RevokeConsentForPrincipal` service method (domain service), not the HTTP handler.
+`RevokeConsentForPrincipal` emits the typed audit event `consent.grant.revoked` after grant deletion commits. The record includes `principal`, `agent_id`, `grant_id`, and `revoked_at`. The HTTP handler does not emit this record.
 
 ### Rationale
 Security-critical operations are logged at the domain layer (Principle I). This ensures the audit event fires regardless of which HTTP path triggers revocation (new DELETE endpoint, or future programmatic revocation). The existing logger infrastructure (`*slog.Logger`) is passed to the service at construction.

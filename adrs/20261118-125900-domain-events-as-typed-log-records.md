@@ -17,7 +17,7 @@ with an `event` identifier for each security-critical operation (section 8), fix
 shape and the canonical attribute keys (section 2), and forbids credentials and profile data in
 any record (section 6). One handler chain, built in `internal/app/builder.go`, processes every
 record: `telemetry.ContextHandler` adds `trace_id`, `actor`, and `calling_peer` from the request
-security context (ADR 033), and the principal policy handler renders each `id.Principal`.
+security context (`033-request-security-context-propagation`), and the principal policy handler renders each `id.Principal`.
 
 The first design for a ledger (PR #381) added a separate recorder API. Each producing service
 called it inside the storage transaction of the state change, and each event type had a JSON
@@ -116,7 +116,7 @@ the metric name are set in the implementing pull requests and their contracts in
 - The ledger has no operation that erases the events of one principal. A row stays until
   retention deletes it. If a deployment needs erasure on request, that is a later decision, and
   the operation must delete whole rows (Decision 9).
-- ExtProc must not import broker domain packages (ADR 027) and cannot use the typed definition.
+- ExtProc must not import broker domain packages (`027-extproc-telemetry-shared-dependency`) and cannot use the typed definition.
   Events from ExtProc and agentgateway need a different ingest path and are not part of this
   decision.
 - A record below the enabled level does not reach a handler. Log domain events selected for the

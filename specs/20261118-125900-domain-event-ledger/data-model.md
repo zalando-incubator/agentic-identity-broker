@@ -8,7 +8,7 @@
 |---|---|---|---|
 | Domain Event Definition | Value object | `internal/domain/domainevent` | Immutable declaration of an event identifier and owner-visibility flag. It marks an audit record as eligible for the ledger. |
 | Domain Event Occurrence | Entity (append-only) | `internal/domain/model` | `model.DomainEvent`, the immutable ledger representation of one occurrence. |
-| Domain Event ID | Typed ID | `internal/domain/id` | `id.DomainEventID`, a UUIDv7 that identifies the occurrence (ADR 013, research R6). |
+| Domain Event ID | Typed ID | `internal/domain/id` | `id.DomainEventID`, a UUIDv7 that identifies the occurrence (`013-strongly-typed-entity-ids`, research R6). |
 | Domain Event Ledger | Repository | `internal/ports` | Append occurrences and delete expired rows. Production consumers introduce read ports when needed. |
 
 A domain event describes what happened, not how the broker reports it. See the [architecture glossary](../../ARCHITECTURE.md#rfc-8693-token-exchange).

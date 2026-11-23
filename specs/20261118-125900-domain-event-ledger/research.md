@@ -87,14 +87,13 @@ counts when token events are onboarded.
 
 ## R6. Event ID
 
-**Decision**: UUIDv7, minted by the handler with `uuid.NewV7()` from `github.com/google/uuid`
-v1.6.0 (already a dependency), as a typed `id.DomainEventID` (ADR 013).
+**Decision**: The handler calls `id.NewDomainEventID()` to mint a typed UUIDv7
+(`013-strongly-typed-entity-ids`).
 
 **Rationale**: UUIDv7 is time-ordered, so index inserts are local. It does not define commit order
 and is not a delivery cursor (see [Consumer cursor visibility](./data-model.md#consumer-cursor-visibility)).
 The ID can later be the SSF `jti` and an idempotency key for an ingest path.
-`gen_ids.go` generates `New<Type>()` with `uuid.New()` (version 4); the handler does not use that
-constructor and converts the version 7 value instead.
+`gen_ids.go` generates `id.NewDomainEventID()` with UUIDv7. Other typed UUID constructors use UUIDv4.
 
 **Alternatives**: `BIGSERIAL`: leaks volume and cannot be minted before the insert. UUIDv4: no
 order, random index inserts.
@@ -164,7 +163,7 @@ CronJob and works with the memory adapter. A batched `DELETE ... WHERE id IN (SE
 keeps lock time short. Several replicas run the same idempotent delete; no leader election is
 needed.
 
-ADR 038 rejects a per-replica ticker for the Session Sweep, which calls providers and rotates
+`038-proactive-token-refresh` rejects a per-replica ticker for the Session Sweep, which calls providers and rotates
 refresh tokens under a row lock. This retention job makes no provider calls and deletes only
 expired rows. Concurrent replicas can repeat scans and wait on row locks, but do not need a
 leader for correctness. After another replica deletes a batch, a delete can return fewer rows
@@ -222,7 +221,7 @@ it. The retention service is in the subpackage `internal/domain/domainevent/rete
 
 **Rationale**: `internal/domain/architecture_test.go` enforces zero infrastructure imports in the
 domain. `internal/adapters/telemetry` already imports `internal/domain/id` and
-`internal/domain/security`. ADR 027 forbids broker domain imports in ExtProc; ExtProc keeps string
+`internal/domain/security`. `027-extproc-telemetry-shared-dependency` forbids broker domain imports in ExtProc; ExtProc keeps string
 `event` values and is out of scope.
 
 ## R14. Configuration precedence and duplicate attributes

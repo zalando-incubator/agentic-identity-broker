@@ -17,7 +17,7 @@ The [justfile](../../justfile) defines these separate entry points:
 | Suite | Scope and source | Command |
 |---|---|---|
 | Broker HTTP | Production application and HTTP scenarios in [this package](.) | `just test-e2e-backend` |
-| Docker-tagged broker HTTP | Agentgateway policy scenarios in [this package](.) | `just test-e2e-docker` |
+| Docker-tagged broker HTTP | Agentgateway policy and PostgreSQL ledger scenarios in [this package](.) | `just test-e2e-docker` |
 | ExtProc | Separate acceptance scenarios in [extproc/](extproc/) | `just test-e2e-extproc` |
 | Frontend | Browser journeys through the [Playwright harness](frontend/frontend_suite_test.go) | `just test-e2e-frontend` |
 | Integration | Self-contained component tests under [tests/integration/](../integration/AGENTS.md) | `just test-integration` |
@@ -46,7 +46,8 @@ just test-e2e-coverage
 ```
 
 Backend functional recipes exclude the `performance` and `docker` labels and build frontend assets first.
-The Docker-tagged backend recipe uses a real agentgateway container and requires Docker.
+The Docker-tagged backend recipe starts Agentgateway for the policy scenario and PostgreSQL for the ledger scenarios.
+The ledger scenarios require Docker or Podman. See [the E2E test instructions](AGENTS.md#running-e2e-tests).
 `AGENTGATEWAY_IMAGE` overrides its pinned image.
 The backend coverage recipe writes `coverage/e2e-backend.html`. It does not open a browser.
 The [recipes](../../justfile) define both behaviors.

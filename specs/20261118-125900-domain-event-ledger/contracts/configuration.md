@@ -60,6 +60,20 @@ Choose a retention period that meets your privacy requirements. There is no prin
 For PostgreSQL, apply migrations through `049_create_domain_events` before you enable the ledger.
 To enable it, copy the [YAML example](../../../examples/config/domain-events.yaml) into the broker configuration. Then restart the broker.
 For Helm, set `broker.domainEvents.enabled` to `true`.
+For a first upgrade from a pre-ledger release with `--reuse-values`, provide the full block.
+The reused values do not include the new chart defaults.
+
+```yaml
+broker:
+  domainEvents:
+    enabled: true
+    writeTimeout: 1s
+    retention:
+      period: 2160h
+      interval: 1h
+      batchSize: 1000
+```
+
 If `storage.type=postgres` and `migration.enabled=true`, the chart runs the migration job.
 If you disable that job for PostgreSQL, apply the migrations separately before you enable the ledger.
 

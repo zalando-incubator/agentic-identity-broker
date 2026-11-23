@@ -150,8 +150,10 @@ UPDATE domain_events SET recorded_at = now() - interval '2 days' WHERE id = '<id
 
 During healthy operation, the next scheduled run deletes the row within one minute plus that run's duration.
 No log record reports the deletion. Failed runs retry at the next scheduled interval, with no fixed maximum row age (SC-005).
-Set `domain_events.enabled: false`, restart, and repeat with another old row: it stays, because
-retention runs only with the ledger enabled.
+While the ledger is still enabled, create and revoke a new test grant. Record the ID of its ledger row.
+Set `domain_events.enabled: false` and restart the broker. Age the new row with the SQL above using its ID
+and the test database role that can update `recorded_at`. Wait longer than the configured interval.
+Verify that the row remains. The disabled ledger does not run retention.
 
 ## Automated verification
 
