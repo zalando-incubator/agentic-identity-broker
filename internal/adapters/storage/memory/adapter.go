@@ -19,10 +19,10 @@ import (
 // Adapter implements storage repository and lifecycle helpers
 // using in-memory storage with sync.RWMutex for thread-safety.
 type Adapter struct {
-	mu             sync.RWMutex
-	users          map[id.UserID]*ports.User
-	ledgerLock     *semaphore.Weighted
-	businessEvents []*model.BusinessEvent
+	mu           sync.RWMutex
+	users        map[id.UserID]*ports.User
+	ledgerLock   *semaphore.Weighted
+	domainEvents []*model.DomainEvent
 }
 
 // NewAdapter creates a new in-memory storage adapter.
@@ -78,7 +78,7 @@ func (a *Adapter) Close(ctx context.Context) error {
 
 	// Clear all data
 	a.users = make(map[id.UserID]*ports.User)
-	a.businessEvents = nil
+	a.domainEvents = nil
 
 	return nil
 }

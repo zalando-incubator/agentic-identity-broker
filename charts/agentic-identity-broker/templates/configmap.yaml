@@ -74,9 +74,9 @@ data:
       trace:
         response_enabled: {{ .Values.broker.requestContext.trace.responseEnabled }}
 
-    {{- with .Values.broker.businessEvents }}
-    # Business event ledger configuration
-    business_events:
+    {{- with .Values.broker.domainEvents }}
+    # Domain event ledger configuration
+    domain_events:
       enabled: {{ .enabled }}
       write_timeout: {{ .writeTimeout | quote }}
       retention:

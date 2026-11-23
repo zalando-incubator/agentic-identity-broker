@@ -319,7 +319,7 @@ migration:
     #   GRANT CONNECT ON DATABASE ... TO <broker_user>
     #   GRANT USAGE ON SCHEMA public TO <broker_user>
     #   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO <broker_user>
-    #   REVOKE UPDATE ON TABLE public.business_events FROM <broker_user> (if the table exists)
+    #   REVOKE UPDATE ON TABLE public.domain_events FROM <broker_user> (if the table exists)
     #   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO <broker_user>
     # Use the psql variable :broker_user to reference the broker username.
     sql: ""
@@ -412,8 +412,8 @@ broker:
       # -- Emit the additive W3C traceresponse response header on HTTP responses
       responseEnabled: true
 
-  # Business event ledger and retention in each broker replica
-  businessEvents:
+  # Domain event ledger and retention in each broker replica
+  domainEvents:
     # -- Enable ledger writes and retention. Disabling leaves existing rows unchanged.
     enabled: false
     # -- Append context deadline (Go duration, 100ms-10s inclusive), not total logging or request latency.

@@ -1,5 +1,5 @@
 package consent
 
-import "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/bizevent"
+import "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/domainevent"
 
-var GrantRevoked = bizevent.MustDefine("consent.grant.revoked", bizevent.OwnerVisible())
+var GrantRevoked = domainevent.MustDefine("consent.grant.revoked", domainevent.OwnerVisible())

@@ -121,9 +121,9 @@ Implement the same required contracts in both storage backends.
 Put schema changes in `migrations/` with go-migrate names.
 Use `docs/STORAGE_TROUBLESHOOTING.md` for operational faults.
 
-Business-event append and retention live in `internal/adapters/storage/memory/business_event.go`
-and `internal/adapters/storage/postgres/business_event.go`. Read
-`specs/20261118-125900-business-event-ledger/contracts/ports.md` before changes. Both PostgreSQL methods use
+Domain-event append and retention live in `internal/adapters/storage/memory/domain_event.go`
+and `internal/adapters/storage/postgres/domain_event.go`. Read
+`specs/20261118-125900-domain-event-ledger/contracts/ports.md` before changes. Both PostgreSQL methods use
 the connection pool, not a transaction from context. Keep these ports write-only. Memory tests
 inspect the private occurrence slice; PostgreSQL tests use explicit-column SQL. Store rendered
 principal values unchanged, and add no principal attributes to storage spans.

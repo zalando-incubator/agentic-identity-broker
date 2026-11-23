@@ -63,8 +63,8 @@ type Adapter struct {
 	authorizationCodes     ports.AuthorizationCodeRepository
 	pkceSessions           ports.PKCESessionRepository
 	clientAssertionReplays ports.ClientAssertionReplayRepository
-	businessEvents         ports.BusinessEventAppender
-	businessEventRetention ports.BusinessEventRetention
+	domainEvents           ports.DomainEventAppender
+	domainEventRetention   ports.DomainEventRetention
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -125,8 +125,8 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           noOpStorageTransactionManager{},
 		pkceSessions:           memory.NewPKCESessionStore(),
 		clientAssertionReplays: memory.NewClientAssertionReplayStore(),
-		businessEvents:         memAdapter,
-		businessEventRetention: memAdapter,
+		domainEvents:           memAdapter,
+		domainEventRetention:   memAdapter,
 	}, nil
 }
 
@@ -168,8 +168,8 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           pgAdapter,
 		pkceSessions:           postgres.NewPKCESessionRepo(pgAdapter),
 		clientAssertionReplays: postgres.NewClientAssertionReplayRepo(pgAdapter),
-		businessEvents:         pgAdapter,
-		businessEventRetention: pgAdapter,
+		domainEvents:           pgAdapter,
+		domainEventRetention:   pgAdapter,
 	}, nil
 }
 
@@ -339,10 +339,10 @@ func (a *Adapter) ClientAssertionReplays() ports.ClientAssertionReplayRepository
 	return a.clientAssertionReplays
 }
 
-func (a *Adapter) BusinessEvents() ports.BusinessEventAppender {
-	return a.businessEvents
+func (a *Adapter) DomainEvents() ports.DomainEventAppender {
+	return a.domainEvents
 }
 
-func (a *Adapter) BusinessEventRetention() ports.BusinessEventRetention {
-	return a.businessEventRetention
+func (a *Adapter) DomainEventRetention() ports.DomainEventRetention {
+	return a.domainEventRetention
 }

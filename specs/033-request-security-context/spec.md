@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Establish a system-wide mechanism to capture and propagate security context for every incoming request to the identity broker. To maintain a forensic audit trail, every business event must be bound to the actor who initiated it. Developers should not have to manually pass network metadata (IP, User-Agent) through the business logic layers; it must happen seamlessly and implicitly. Capture core security metadata at the HTTP/gRPC perimeter (who is the actor, what is the context of the request). Generate or propagate a unique Trace ID for every request to enable end-to-end log correlation. Inject this metadata safely into the request context so it is accessible by downstream business logic and database layers. If metadata is missing (e.g., an unauthenticated request), the system must degrade gracefully and record the actor as 'anonymous' rather than failing the request."
+**Input**: User request: Establish a system-wide mechanism to capture and propagate security context for every incoming request to the identity broker. To maintain a forensic audit trail, every domain event must be bound to the actor who initiated it. Developers should not have to manually pass network metadata (IP, User-Agent) through the business logic layers; it must happen seamlessly and implicitly. Capture core security metadata at the HTTP/gRPC perimeter (who is the actor, what is the context of the request). Generate or propagate a unique Trace ID for every request to enable end-to-end log correlation. Inject this metadata safely into the request context so it is accessible by downstream business logic and database layers. If metadata is missing (e.g., an unauthenticated request), the system must degrade gracefully and record the actor as 'anonymous' rather than failing the request.
 
 ## Clarifications
 
@@ -175,7 +175,7 @@ sequenceDiagram
 - **TraceID**: The correlation identifier for the request — either propagated from the inbound request or newly generated. Invariant: always present and unique-per-request when generated.
 
 **Domain Events** (state changes of business significance):
-- **SecurityContextCaptured**: Occurs at the perimeter the instant a request's security context is established; it is the anchor to which all subsequent log records and business events for that request are bound.
+- **SecurityContextCaptured**: Occurs at the perimeter the instant a request's security context is established; it is the anchor to which all subsequent log records and domain events for that request are bound.
 
 *All domain terms (SecurityContext, Actor, CallingPeer, anonymous actor, Trace ID) should be added to the ARCHITECTURE.md Glossary section per Constitution Principle V.*
 

@@ -598,10 +598,10 @@
             }
           }
         },
-        "businessEvents": {
+        "domainEvents": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Business event ledger and retention in each broker replica",
+          "description": "Domain event ledger and retention in each broker replica",
           "required": ["enabled", "writeTimeout", "retention"],
           "properties": {
             "enabled": {

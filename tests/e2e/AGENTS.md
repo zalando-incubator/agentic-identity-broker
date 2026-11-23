@@ -177,10 +177,10 @@ ginkgo -v --label-filter="!performance && !docker" --focus="pattern" ./tests/e2e
 ```
 
 Use `just test-e2e-extproc` for the ExtProc suite. Some agentgateway scenarios require Docker.
-Use `just test-e2e-docker` for the backend agentgateway `oauthTokenExchange` policy scenario and all six business-event ledger acceptance scenarios.
+Use `just test-e2e-docker` for the backend agentgateway `oauthTokenExchange` policy scenario and all six domain-event ledger acceptance scenarios.
 The policy scenario uses a real agentgateway container and the production broker.
-The ledger scenarios use PostgreSQL and production bootstrap from `tests/e2e/business_event_ledger_test.go`.
-They cover US1.1–US1.5 and US2.1 from `specs/20261118-125900-business-event-ledger/spec.md`.
+The ledger scenarios use PostgreSQL and production bootstrap from `tests/e2e/domain_event_ledger_test.go`.
+They cover US1.1–US1.5 and US2.1 from `specs/20261118-125900-domain-event-ledger/spec.md`.
 These scenarios require Docker or Podman. `AGENTGATEWAY_IMAGE` overrides the pinned agentgateway image.
 Default backend recipes exclude Docker-tagged scenarios.
 
@@ -188,12 +188,12 @@ Backend functional recipes build the frontend first. Before a direct Ginkgo run 
 `just test-e2e-performance` runs both measurements with one Ginkgo worker:
 
 - The warmed, local-mode, signed-subject 100-request SC-001 measurement from `tests/e2e/impersonation_test.go`.
-- The PostgreSQL-backed SC-004 ledger measurement from `tests/e2e/business_event_ledger_performance_test.go`. It requires Docker or Podman.
+- The PostgreSQL-backed SC-004 ledger measurement from `tests/e2e/domain_event_ledger_performance_test.go`. It requires Docker or Podman.
 
 SC-001 reports successes plus p95, maximum, and minimum duration.
 Record its verbose `SC-001: <ok>/100 succeeded; p95=<duration> max=<duration> min=<duration>` result in PR #464.
 SC-004 compares enabled and disabled revocation latency and verifies committed rows for every block.
-Follow `specs/20261118-125900-business-event-ledger/plan.md` — SC-004 Measurement Protocol.
+Follow `specs/20261118-125900-domain-event-ledger/plan.md` — SC-004 Measurement Protocol.
 Record the required environment, both p99 values, their difference, and both medians in the ledger PR description.
 Include failed runs.
 Functional recipes exclude both machine-sensitive measurements.

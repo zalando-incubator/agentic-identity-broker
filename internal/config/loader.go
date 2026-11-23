@@ -23,11 +23,11 @@ import (
 )
 
 var ledgerEnvPaths = map[string]string{
-	"IDENTITY_BROKER_BUSINESS_EVENTS_ENABLED":              configutil.Key("business_events", "enabled"),
-	"IDENTITY_BROKER_BUSINESS_EVENTS_WRITE_TIMEOUT":        configutil.Key("business_events", "write_timeout"),
-	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_PERIOD":     configutil.Key("business_events", "retention", "period"),
-	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_INTERVAL":   configutil.Key("business_events", "retention", "interval"),
-	"IDENTITY_BROKER_BUSINESS_EVENTS_RETENTION_BATCH_SIZE": configutil.Key("business_events", "retention", "batch_size"),
+	"IDENTITY_BROKER_DOMAIN_EVENTS_ENABLED":              configutil.Key("domain_events", "enabled"),
+	"IDENTITY_BROKER_DOMAIN_EVENTS_WRITE_TIMEOUT":        configutil.Key("domain_events", "write_timeout"),
+	"IDENTITY_BROKER_DOMAIN_EVENTS_RETENTION_PERIOD":     configutil.Key("domain_events", "retention", "period"),
+	"IDENTITY_BROKER_DOMAIN_EVENTS_RETENTION_INTERVAL":   configutil.Key("domain_events", "retention", "interval"),
+	"IDENTITY_BROKER_DOMAIN_EVENTS_RETENTION_BATCH_SIZE": configutil.Key("domain_events", "retention", "batch_size"),
 }
 
 // Loader implements the ConfigPort interface using Viper, Cobra, and godotenv.
@@ -155,11 +155,11 @@ func (l *Loader) setDefaults() {
 	l.v.SetDefault(configutil.Key("storage", "timeouts", "read"), "5s")
 	l.v.SetDefault(configutil.Key("storage", "timeouts", "write"), "10s")
 
-	l.v.SetDefault(configutil.Key("business_events", "enabled"), false)
-	l.v.SetDefault(configutil.Key("business_events", "write_timeout"), "1s")
-	l.v.SetDefault(configutil.Key("business_events", "retention", "period"), "2160h")
-	l.v.SetDefault(configutil.Key("business_events", "retention", "interval"), "1h")
-	l.v.SetDefault(configutil.Key("business_events", "retention", "batch_size"), 1000)
+	l.v.SetDefault(configutil.Key("domain_events", "enabled"), false)
+	l.v.SetDefault(configutil.Key("domain_events", "write_timeout"), "1s")
+	l.v.SetDefault(configutil.Key("domain_events", "retention", "period"), "2160h")
+	l.v.SetDefault(configutil.Key("domain_events", "retention", "interval"), "1h")
+	l.v.SetDefault(configutil.Key("domain_events", "retention", "batch_size"), 1000)
 
 	requestContextDefaults := ports.DefaultRequestContextConfig()
 	l.v.SetDefault(configutil.Key("request_context", "trusted_proxy", "enabled"), requestContextDefaults.TrustedProxy.Enabled)
@@ -344,8 +344,8 @@ func (l *Loader) setDefaults() {
 			"server.admin.port", "server.admin.bind", "server.admin.public_url",
 			"server.shutdown.timeout",
 			"storage.backend", "storage.timeouts.read", "storage.timeouts.write",
-			"business_events.enabled", "business_events.write_timeout",
-			"business_events.retention.period", "business_events.retention.interval", "business_events.retention.batch_size",
+			"domain_events.enabled", "domain_events.write_timeout",
+			"domain_events.retention.period", "domain_events.retention.interval", "domain_events.retention.batch_size",
 			"request_context.trusted_proxy.enabled",
 			"request_context.trusted_proxy.forwarded_header",
 			"request_context.trace.response_enabled",
@@ -570,7 +570,7 @@ func (l *Loader) expandEnvVars() error {
 			continue
 		}
 		// Explicit ledger flags are bound after expansion and already carry typed values.
-		if l.cmd != nil && strings.HasPrefix(key, "business_events"+configutil.Delimiter) &&
+		if l.cmd != nil && strings.HasPrefix(key, "domain_events"+configutil.Delimiter) &&
 			l.cmd.Flags().Changed(strings.ReplaceAll(key, configutil.Delimiter, ".")) {
 			continue
 		}
@@ -894,30 +894,30 @@ func (l *Loader) bindFlags() error {
 		cliKeys = append(cliKeys, "token_refresh.health_metrics.query_timeout")
 	}
 
-	if l.cmd.Flags().Changed("business_events.enabled") {
-		enabled, _ := l.cmd.Flags().GetBool("business_events.enabled")
-		l.v.Set(configutil.Key("business_events", "enabled"), enabled)
-		cliKeys = append(cliKeys, "business_events.enabled")
+	if l.cmd.Flags().Changed("domain_events.enabled") {
+		enabled, _ := l.cmd.Flags().GetBool("domain_events.enabled")
+		l.v.Set(configutil.Key("domain_events", "enabled"), enabled)
+		cliKeys = append(cliKeys, "domain_events.enabled")
 	}
-	if l.cmd.Flags().Changed("business_events.write_timeout") {
-		timeout, _ := l.cmd.Flags().GetDuration("business_events.write_timeout")
-		l.v.Set(configutil.Key("business_events", "write_timeout"), timeout)
-		cliKeys = append(cliKeys, "business_events.write_timeout")
+	if l.cmd.Flags().Changed("domain_events.write_timeout") {
+		timeout, _ := l.cmd.Flags().GetDuration("domain_events.write_timeout")
+		l.v.Set(configutil.Key("domain_events", "write_timeout"), timeout)
+		cliKeys = append(cliKeys, "domain_events.write_timeout")
 	}
-	if l.cmd.Flags().Changed("business_events.retention.period") {
-		period, _ := l.cmd.Flags().GetDuration("business_events.retention.period")
-		l.v.Set(configutil.Key("business_events", "retention", "period"), period)
-		cliKeys = append(cliKeys, "business_events.retention.period")
+	if l.cmd.Flags().Changed("domain_events.retention.period") {
+		period, _ := l.cmd.Flags().GetDuration("domain_events.retention.period")
+		l.v.Set(configutil.Key("domain_events", "retention", "period"), period)
+		cliKeys = append(cliKeys, "domain_events.retention.period")
 	}
-	if l.cmd.Flags().Changed("business_events.retention.interval") {
-		interval, _ := l.cmd.Flags().GetDuration("business_events.retention.interval")
-		l.v.Set(configutil.Key("business_events", "retention", "interval"), interval)
-		cliKeys = append(cliKeys, "business_events.retention.interval")
+	if l.cmd.Flags().Changed("domain_events.retention.interval") {
+		interval, _ := l.cmd.Flags().GetDuration("domain_events.retention.interval")
+		l.v.Set(configutil.Key("domain_events", "retention", "interval"), interval)
+		cliKeys = append(cliKeys, "domain_events.retention.interval")
 	}
-	if l.cmd.Flags().Changed("business_events.retention.batch_size") {
-		batchSize, _ := l.cmd.Flags().GetInt("business_events.retention.batch_size")
-		l.v.Set(configutil.Key("business_events", "retention", "batch_size"), batchSize)
-		cliKeys = append(cliKeys, "business_events.retention.batch_size")
+	if l.cmd.Flags().Changed("domain_events.retention.batch_size") {
+		batchSize, _ := l.cmd.Flags().GetInt("domain_events.retention.batch_size")
+		l.v.Set(configutil.Key("domain_events", "retention", "batch_size"), batchSize)
+		cliKeys = append(cliKeys, "domain_events.retention.batch_size")
 	}
 
 	// Bind third_party_oauth2.client_name flag

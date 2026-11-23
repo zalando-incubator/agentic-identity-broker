@@ -23,7 +23,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/bizevent"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/domainevent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
@@ -31,16 +31,16 @@ import (
 )
 
 var (
-	ledgerTestEvent  = bizevent.MustDefine("telemetry.ledger_test.recorded")
-	ledgerOtherEvent = bizevent.MustDefine("telemetry.ledger_test.replaced")
+	ledgerTestEvent  = domainevent.MustDefine("telemetry.ledger_test.recorded")
+	ledgerOtherEvent = domainevent.MustDefine("telemetry.ledger_test.replaced")
 )
 
 type ledgerCaptureAppender struct {
-	events   []*model.BusinessEvent
-	appendFn func(context.Context, *model.BusinessEvent) error
+	events   []*model.DomainEvent
+	appendFn func(context.Context, *model.DomainEvent) error
 }
 
-func (a *ledgerCaptureAppender) Append(ctx context.Context, event *model.BusinessEvent) error {
+func (a *ledgerCaptureAppender) Append(ctx context.Context, event *model.DomainEvent) error {
 	copy := *event
 	a.events = append(a.events, &copy)
 	if a.appendFn != nil {
@@ -50,7 +50,7 @@ func (a *ledgerCaptureAppender) Append(ctx context.Context, event *model.Busines
 }
 
 func ledgerRecord(attrs ...slog.Attr) slog.Record {
-	record := slog.NewRecord(time.Date(2001, 2, 3, 4, 5, 6, 123456789, time.FixedZone("offset", -7*3600)), slog.LevelInfo, "business event recorded", 0)
+	record := slog.NewRecord(time.Date(2001, 2, 3, 4, 5, 6, 123456789, time.FixedZone("offset", -7*3600)), slog.LevelInfo, "domain event recorded", 0)
 	record.AddAttrs(attrs...)
 	return record
 }
@@ -66,12 +66,12 @@ func TestLedgerHandlerRecognitionAndOccurrence(t *testing.T) {
 		{name: "typed", attrs: []slog.Attr{slog.Any("event", ledgerTestEvent)}, want: ledgerTestEvent.Name()},
 		{name: "string", attrs: []slog.Attr{slog.String("event", ledgerTestEvent.Name())}},
 		{name: "absent"},
-		{name: "zero", attrs: []slog.Attr{slog.Any("event", bizevent.Definition{})}},
+		{name: "zero", attrs: []slog.Attr{slog.Any("event", domainevent.Definition{})}},
 		{name: "explicit group", attrs: []slog.Attr{slog.Group("details", slog.Any("event", ledgerTestEvent))}},
 		{name: "logger group", attrs: []slog.Attr{slog.Any("event", ledgerTestEvent)}, group: "details"},
 		{name: "inherited", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, want: ledgerTestEvent.Name()},
 		{name: "string overrides inherited", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, attrs: []slog.Attr{slog.String("event", "operational.event.recorded")}},
-		{name: "zero overrides inherited", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, attrs: []slog.Attr{slog.Any("event", bizevent.Definition{})}},
+		{name: "zero overrides inherited", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, attrs: []slog.Attr{slog.Any("event", domainevent.Definition{})}},
 		{name: "last typed wins", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, attrs: []slog.Attr{slog.Any("event", ledgerOtherEvent)}, want: ledgerOtherEvent.Name()},
 		{name: "record duplicates", attrs: []slog.Attr{slog.Any("event", ledgerOtherEvent), slog.Any("event", ledgerTestEvent)}, want: ledgerTestEvent.Name()},
 		{name: "group cannot override", inherited: []slog.Attr{slog.Any("event", ledgerTestEvent)}, attrs: []slog.Attr{slog.Group("details", slog.Any("event", ledgerOtherEvent))}, want: ledgerTestEvent.Name()},
@@ -301,7 +301,7 @@ func TestLedgerHandlerPromotesGroupedRequestIdentity(t *testing.T) {
 			var operational bytes.Buffer
 			fanout := NewMultiHandler(slog.NewJSONHandler(&operational, nil), NewLedgerHandler(appender, enabledNoopHandler{}, time.Second))
 			logger := slog.New(NewContextHandler(newPrincipalPolicyHandler(fanout, policy))).With("event", ledgerTestEvent).WithGroup("outer").WithGroup("details")
-			logger.InfoContext(test.ctx, "business event recorded", "actor", id.NewPrincipal("group-actor"), "trace_id", "group-trace")
+			logger.InfoContext(test.ctx, "domain event recorded", "actor", id.NewPrincipal("group-actor"), "trace_id", "group-trace")
 
 			require.Len(t, appender.events, 1)
 			event := appender.events[0]
@@ -333,7 +333,7 @@ func TestLedgerHandlerLevelIndependenceAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.WithValue(trace.ContextWithSpanContext(context.Background(), spanContext), contextKey{}, "preserved"))
 	cancel()
 	var appendContext context.Context
-	appender.appendFn = func(ctx context.Context, _ *model.BusinessEvent) error {
+	appender.appendFn = func(ctx context.Context, _ *model.DomainEvent) error {
 		appendContext = ctx
 		assert.NoError(t, ctx.Err())
 		assert.Equal(t, "preserved", ctx.Value(contextKey{}))
@@ -343,7 +343,7 @@ func TestLedgerHandlerLevelIndependenceAndCancellation(t *testing.T) {
 		assert.WithinDuration(t, time.Now().Add(time.Second), deadline, 100*time.Millisecond)
 		return nil
 	}
-	logger.InfoContext(ctx, "business event recorded", "event", ledgerTestEvent)
+	logger.InfoContext(ctx, "domain event recorded", "event", ledgerTestEvent)
 	require.Len(t, appender.events, 1)
 	assert.Empty(t, operational.String())
 	require.NotNil(t, appendContext)
@@ -372,18 +372,18 @@ func TestLedgerHandlerWriteMetricsAndSafeFallback(t *testing.T) {
 	require.NoError(t, handler.Handle(ctx, ledgerRecord(slog.Any("event", ledgerTestEvent))))
 	kinds := []storage.ErrorKind{storage.ErrorKindConnection, storage.ErrorKindTimeout, storage.ErrorKindValidation, storage.ErrorKindNotFound, storage.ErrorKindConflict, storage.ErrorKindUnknown}
 	for _, kind := range kinds {
-		appender.appendFn = func(context.Context, *model.BusinessEvent) error {
+		appender.appendFn = func(context.Context, *model.DomainEvent) error {
 			return fmt.Errorf("wrapped: %w", &storage.StorageError{Kind: kind, Cause: errors.New("raw-cause-must-not-leak")})
 		}
 		require.NoError(t, handler.Handle(ctx, ledgerRecord(slog.Any("event", ledgerTestEvent), slog.Any("principal", id.NewPrincipal("failed-owner")), slog.String("sensitive_attribute", "must-not-copy"))))
 	}
-	appender.appendFn = func(context.Context, *model.BusinessEvent) error { return errors.New("raw-unclassified-error") }
+	appender.appendFn = func(context.Context, *model.DomainEvent) error { return errors.New("raw-unclassified-error") }
 	require.NoError(t, handler.Handle(ctx, ledgerRecord(slog.Any("event", ledgerTestEvent))))
 	lines := bytes.Split(bytes.TrimSpace(fallback.Bytes()), []byte("\n"))
 	require.Len(t, lines, len(kinds)+1)
 	for i, line := range lines {
 		attrs := decodeLedgerJSON(t, line)
-		assert.Equal(t, "business_event.ledger.write_failed", attrs["event"])
+		assert.Equal(t, "domain_event.ledger.write_failed", attrs["event"])
 		assert.Equal(t, ledgerTestEvent.Name(), attrs["failed_event"])
 		assert.Equal(t, "request-trace", attrs["trace_id"])
 		assert.Equal(t, "policy-actor", attrs["actor"])
@@ -408,7 +408,7 @@ func TestLedgerHandlerWriteMetricsAndSafeFallback(t *testing.T) {
 
 func TestLedgerHandlerAppendTimeout(t *testing.T) {
 	reader := ledgerMetricReader(t)
-	appender := &ledgerCaptureAppender{appendFn: func(ctx context.Context, _ *model.BusinessEvent) error {
+	appender := &ledgerCaptureAppender{appendFn: func(ctx context.Context, _ *model.DomainEvent) error {
 		<-ctx.Done()
 		return fmt.Errorf("append: %w", ctx.Err())
 	}}
@@ -428,13 +428,13 @@ func assertLedgerMetrics(t *testing.T, reader *sdkmetric.ManualReader, durations
 	gotDurations := map[string]uint64{}
 	gotFailures := map[string]int64{}
 	for _, scope := range collected.ScopeMetrics {
-		if scope.Scope.Name != "business_events" {
+		if scope.Scope.Name != "domain_events" {
 			continue
 		}
 		for _, instrument := range scope.Metrics {
 			assert.NotEmpty(t, instrument.Description)
 			switch instrument.Name {
-			case "business_events.write.duration":
+			case "domain_events.write.duration":
 				assert.Equal(t, "s", instrument.Unit)
 				data, ok := instrument.Data.(metricdata.Histogram[float64])
 				require.True(t, ok)
@@ -445,7 +445,7 @@ func assertLedgerMetrics(t *testing.T, reader *sdkmetric.ManualReader, durations
 					gotDurations[value.AsString()] += point.Count
 					assert.GreaterOrEqual(t, point.Sum, float64(0))
 				}
-			case "business_events.write_failures":
+			case "domain_events.write_failures":
 				assert.Equal(t, "{event}", instrument.Unit)
 				data, ok := instrument.Data.(metricdata.Sum[int64])
 				require.True(t, ok)
@@ -491,7 +491,7 @@ func (m ledgerFailingMeter) Int64Counter(name string, opts ...metric.Int64Counte
 func TestLedgerHandlerInstrumentFailuresWarnAndContinue(t *testing.T) {
 	reader := ledgerMetricReader(t)
 	otel.SetMeterProvider(ledgerFailingMeterProvider{MeterProvider: otel.GetMeterProvider()})
-	appender := &ledgerCaptureAppender{appendFn: func(context.Context, *model.BusinessEvent) error {
+	appender := &ledgerCaptureAppender{appendFn: func(context.Context, *model.DomainEvent) error {
 		return &storage.StorageError{Kind: storage.ErrorKindConnection}
 	}}
 	var fallback bytes.Buffer
@@ -502,14 +502,14 @@ func TestLedgerHandlerInstrumentFailuresWarnAndContinue(t *testing.T) {
 	for _, line := range lines {
 		attrs := decodeLedgerJSON(t, line)
 		assert.Len(t, attrs, 2)
-		assert.Equal(t, "business_event.instrument.initialization_failed", attrs["event"])
+		assert.Equal(t, "domain_event.instrument.initialization_failed", attrs["event"])
 		instruments = append(instruments, attrs["instrument"].(string))
 		assert.NotContains(t, string(line), "raw-instrument")
 		var raw map[string]any
 		require.NoError(t, json.Unmarshal(line, &raw))
 		assert.Equal(t, "WARN", raw["level"])
 	}
-	assert.ElementsMatch(t, []string{"business_events.write.duration", "business_events.write_failures"}, instruments)
+	assert.ElementsMatch(t, []string{"domain_events.write.duration", "domain_events.write_failures"}, instruments)
 	assert.Empty(t, appender.events)
 	require.NoError(t, handler.Handle(context.Background(), ledgerRecord(slog.Any("event", ledgerTestEvent))))
 	require.NoError(t, handler.WithAttrs(nil).WithGroup("").Handle(context.Background(), ledgerRecord(slog.Any("event", ledgerTestEvent))))
@@ -536,7 +536,7 @@ func TestLedgerHandlerIdentifierRendersInJSONAndOTel(t *testing.T) {
 	var operational bytes.Buffer
 	appender := &ledgerCaptureAppender{}
 	logger := slog.New(NewPrincipalPolicyHandler(NewMultiHandler(slog.NewJSONHandler(&operational, nil), otelslog.NewHandler("ledger-test", otelslog.WithLoggerProvider(provider)), NewLedgerHandler(appender, enabledNoopHandler{}, time.Second))))
-	logger.InfoContext(context.Background(), "business event recorded", "event", ledgerTestEvent)
+	logger.InfoContext(context.Background(), "domain event recorded", "event", ledgerTestEvent)
 	require.Len(t, appender.events, 1)
 	assert.Equal(t, ledgerTestEvent.Name(), decodeLedgerJSON(t, operational.Bytes())["event"])
 	require.Len(t, exporter.records, 1)
@@ -601,7 +601,7 @@ func TestLedgerHandlerDuplicateObjectsAndImmutableDerivation(t *testing.T) {
 }
 
 func TestLedgerHandlerFallbackOwnsContextEnrichment(t *testing.T) {
-	appender := &ledgerCaptureAppender{appendFn: func(context.Context, *model.BusinessEvent) error {
+	appender := &ledgerCaptureAppender{appendFn: func(context.Context, *model.DomainEvent) error {
 		return &storage.StorageError{Kind: storage.ErrorKindConnection}
 	}}
 	var fallback bytes.Buffer

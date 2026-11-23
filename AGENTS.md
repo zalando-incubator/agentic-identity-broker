@@ -205,7 +205,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
-| 20261118-125900-business-events-as-typed-log-records | `adrs/20261118-125900-business-events-as-typed-log-records.md` | Business events are typed audit log records; a slog handler persists them to the ledger after commit |
+| 20261118-125900-domain-events-as-typed-log-records | `adrs/20261118-125900-domain-events-as-typed-log-records.md` | Typed audit records for selected domain events enter the ledger after commit |
 
 ## Domain Glossary
 

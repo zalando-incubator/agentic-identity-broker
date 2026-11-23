@@ -209,9 +209,9 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 	}
 }
 
-type grantAuditEventAppender func(context.Context, *model.BusinessEvent) error
+type grantAuditEventAppender func(context.Context, *model.DomainEvent) error
 
-func (f grantAuditEventAppender) Append(ctx context.Context, event *model.BusinessEvent) error {
+func (f grantAuditEventAppender) Append(ctx context.Context, event *model.DomainEvent) error {
 	return f(ctx, event)
 }
 
@@ -224,7 +224,7 @@ func (r grantAuditFailingRefreshRepo) RevokeByPrincipalAndAgent(context.Context,
 	return 0, r.err
 }
 
-func TestGrantLifecycleAudit_RevocationBusinessEventPipeline(t *testing.T) {
+func TestGrantLifecycleAudit_RevocationDomainEventPipeline(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		cleanupErr error
@@ -248,8 +248,8 @@ func TestGrantLifecycleAudit_RevocationBusinessEventPipeline(t *testing.T) {
 			if tc.cleanupErr != nil {
 				refreshRepo = grantAuditFailingRefreshRepo{refreshRepo, tc.cleanupErr}
 			}
-			var events []*model.BusinessEvent
-			appender := grantAuditEventAppender(func(ctx context.Context, event *model.BusinessEvent) error {
+			var events []*model.DomainEvent
+			appender := grantAuditEventAppender(func(ctx context.Context, event *model.DomainEvent) error {
 				_, err := grants.FindByPrincipalAndAgent(ctx, grant.Principal, grant.AgentID)
 				require.ErrorIs(t, err, ports.ErrNotFound, "audit emission must follow committed deletion")
 				events = append(events, event.Copy())

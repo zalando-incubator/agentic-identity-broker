@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/bizevent"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/domainevent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
@@ -92,7 +92,7 @@ func (h *principalPolicyHandler) render(attr slog.Attr) slog.Attr {
 			return slog.String(attr.Key, h.policy(principal.String()))
 		}
 		if attr.Key == "event" {
-			if _, ok := attr.Value.Any().(bizevent.Definition); ok {
+			if _, ok := attr.Value.Any().(domainevent.Definition); ok {
 				return attr
 			}
 		}

@@ -37,7 +37,7 @@ func TestEncryptionConfigBackend_AWSKMSBackend(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -72,7 +72,7 @@ func TestEncryptionConfigBackend_MemoryBackend(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -109,7 +109,7 @@ func TestEncryptionConfigBackend_BothBackends(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -143,7 +143,7 @@ func TestEncryptionConfigBackend_NoBackends(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -253,7 +253,7 @@ func TestEncryptionConfigValidation_AWSKMSValidation(t *testing.T) {
 				},
 				OAuth2AuthServer: createValidOAuth2Config(),
 				TokenRefresh:     validTokenRefreshConfig(),
-				BusinessEvents:   validBusinessEventsConfig(),
+				DomainEvents:     validDomainEventsConfig(),
 			}
 
 			err := Validate(cfg)
@@ -334,7 +334,7 @@ func TestEncryptionConfigValidation_MemoryValidation(t *testing.T) {
 				},
 				OAuth2AuthServer: createValidOAuth2Config(),
 				TokenRefresh:     validTokenRefreshConfig(),
-				BusinessEvents:   validBusinessEventsConfig(),
+				DomainEvents:     validDomainEventsConfig(),
 			}
 
 			err := Validate(cfg)
@@ -416,7 +416,7 @@ func TestValidateEncryptionConfigMissingBackend(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -448,7 +448,7 @@ func TestValidateEncryptionConfigValidAWSKMSARN(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -475,7 +475,7 @@ func TestValidateEncryptionConfigValidMemoryBackend(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -502,7 +502,7 @@ func TestValidateEncryptionConfigInvalidMemoryKey(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -532,7 +532,7 @@ func TestValidateEncryptionConfigWrongMemoryKeyLength(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)
@@ -559,7 +559,7 @@ func TestValidateEncryptionConfigInvalidAWSKMSARN(t *testing.T) {
 		},
 		OAuth2AuthServer: createValidOAuth2Config(),
 		TokenRefresh:     validTokenRefreshConfig(),
-		BusinessEvents:   validBusinessEventsConfig(),
+		DomainEvents:     validDomainEventsConfig(),
 	}
 
 	err := Validate(cfg)

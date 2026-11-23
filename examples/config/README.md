@@ -22,10 +22,10 @@ GO_ENV=production ./agentic-identity-broker --config ./examples/config/config.pr
 
 ## Configuration Files
 
-### `business-events.yaml`
+### `domain-events.yaml`
 
-This [broker configuration excerpt](business-events.yaml) enables the business event ledger with a 90-day retention period.
-Copy its `business_events` block into your broker configuration file.
+This [broker configuration excerpt](domain-events.yaml) enables the domain event ledger with a 90-day retention period.
+Copy its `domain_events` block into your broker configuration file.
 It includes all five keys, with default values except `enabled: true`.
 
 Retention runs inside each broker replica while the ledger is enabled.
@@ -34,7 +34,7 @@ Use PostgreSQL for durable rows. Memory storage loses rows on process exit.
 
 The write timeout limits the append call, not total logging or request latency.
 A timed-out write can still commit. The ledger has an accepted post-commit loss window and no principal-erasure operation.
-See the [ledger configuration contract](../../specs/20261118-125900-business-event-ledger/contracts/configuration.md) for bounds, retention changes, and recovery.
+See the [ledger configuration contract](../../specs/20261118-125900-domain-event-ledger/contracts/configuration.md) for bounds, retention changes, and recovery.
 
 ### `extproc-tool-approvals.yaml`
 

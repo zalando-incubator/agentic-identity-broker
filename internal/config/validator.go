@@ -89,7 +89,7 @@ func Validate(cfg *ports.Config) error {
 	if err := validateTokenRefreshConfig(&cfg.TokenRefresh); err != nil {
 		return err
 	}
-	if err := validateBusinessEventsConfig(&cfg.BusinessEvents); err != nil {
+	if err := validateDomainEventsConfig(&cfg.DomainEvents); err != nil {
 		return err
 	}
 
@@ -331,18 +331,18 @@ func validateStorageTimeouts(st *ports.StorageTimeouts) error {
 	return nil
 }
 
-func validateBusinessEventsConfig(cfg *ports.BusinessEventsConfig) error {
+func validateDomainEventsConfig(cfg *ports.DomainEventsConfig) error {
 	if cfg.WriteTimeout < 100*time.Millisecond || cfg.WriteTimeout > 10*time.Second {
-		return formatValidationError("business_events.write_timeout", cfg.WriteTimeout.String(), "a duration between 100ms and 10s inclusive", nil)
+		return formatValidationError("domain_events.write_timeout", cfg.WriteTimeout.String(), "a duration between 100ms and 10s inclusive", nil)
 	}
 	if cfg.Retention.Period < 24*time.Hour || cfg.Retention.Period > 8760*time.Hour {
-		return formatValidationError("business_events.retention.period", cfg.Retention.Period.String(), "a duration between 24h and 8760h inclusive", nil)
+		return formatValidationError("domain_events.retention.period", cfg.Retention.Period.String(), "a duration between 24h and 8760h inclusive", nil)
 	}
 	if cfg.Retention.Interval < time.Second || cfg.Retention.Interval > 24*time.Hour {
-		return formatValidationError("business_events.retention.interval", cfg.Retention.Interval.String(), "a duration between 1s and 24h inclusive", nil)
+		return formatValidationError("domain_events.retention.interval", cfg.Retention.Interval.String(), "a duration between 1s and 24h inclusive", nil)
 	}
 	if cfg.Retention.BatchSize < 1 || cfg.Retention.BatchSize > 10000 {
-		return formatValidationError("business_events.retention.batch_size", strconv.Itoa(cfg.Retention.BatchSize), "between 1 and 10000 inclusive", nil)
+		return formatValidationError("domain_events.retention.batch_size", strconv.Itoa(cfg.Retention.BatchSize), "between 1 and 10000 inclusive", nil)
 	}
 	return nil
 }

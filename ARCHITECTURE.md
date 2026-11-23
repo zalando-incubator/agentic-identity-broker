@@ -1209,17 +1209,17 @@ Type: DynamoDB table keyed by `branch-key-id` and `type` (ADR 010)
 
 Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker caches active branch keys in memory and uses fresh data keys to encrypt individual values (ADR 009). This table does not store grants or user sessions.
 
-### 4.3. Business event ledger
+### 4.3. Domain event ledger
 
-The builder installs a ledger handler after the context and principal policy handlers when `business_events.enabled` is true. It stores typed business-event audit records after the mutation commits, outside the mutation transaction. Both PostgreSQL and memory adapters support append and retention deletion. The builder runs retention in each enabled broker replica. The ledger is disabled by default.
+The builder installs a ledger handler after the context and principal policy handlers when `domain_events.enabled` is true. It stores typed domain-event audit records after the mutation commits, outside the mutation transaction. Both PostgreSQL and memory adapters support append and retention deletion. The builder runs retention in each enabled broker replica. The ledger is disabled by default.
 Each retention run fixes its cutoff from the clock that assigns `recorded_at`. PostgreSQL retention uses the database clock.
 
 The consent package declares `GrantRevoked` for `consent.grant.revoked`, the first stored event. Both committed grant-deletion branches emit it, including refresh-cleanup failure. The scope is broker-only storage and retention, without a reader API, UI, or SSF delivery.
 
 A process stop between commit and logging can lose the event without a failure metric. A timed-out append has an unknown outcome and can still commit. These are accepted limits, not transactional delivery guarantees.
 
-Non-functional requirements remain in the [success criteria](specs/20261118-125900-business-event-ledger/spec.md#success-criteria-mandatory), [configuration contract](specs/20261118-125900-business-event-ledger/contracts/configuration.md), [storage and retention contract](specs/20261118-125900-business-event-ledger/contracts/ports.md), and [observability contract](specs/20261118-125900-business-event-ledger/contracts/observability.md).
-[20261118-125900-business-events-as-typed-log-records](adrs/20261118-125900-business-events-as-typed-log-records.md) governs principal policy, post-commit persistence, and the accepted loss window.
+Non-functional requirements remain in the [success criteria](specs/20261118-125900-domain-event-ledger/spec.md#success-criteria-mandatory), [configuration contract](specs/20261118-125900-domain-event-ledger/contracts/configuration.md), [storage and retention contract](specs/20261118-125900-domain-event-ledger/contracts/ports.md), and [observability contract](specs/20261118-125900-domain-event-ledger/contracts/observability.md).
+[20261118-125900-domain-events-as-typed-log-records](adrs/20261118-125900-domain-events-as-typed-log-records.md) governs principal policy, post-commit persistence, and the accepted loss window.
 
 ## 5. External Integrations / APIs
 
@@ -1360,7 +1360,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) | Accepted | Self-agent issuance without human delegation. Partly supersedes ADR 032 |
 | [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
-| [20261118-125900-business-events-as-typed-log-records.md](adrs/20261118-125900-business-events-as-typed-log-records.md) | Accepted | Typed audit log records; policy-rendered post-commit ledger projection; append and retention only |
+| [20261118-125900-domain-events-as-typed-log-records.md](adrs/20261118-125900-domain-events-as-typed-log-records.md) | Accepted | Typed audit log records; policy-rendered post-commit ledger projection; append and retention only |
 
 ## 11. Project Identification
 
@@ -1625,20 +1625,15 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a committed grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation. Unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields describe state read before a write, not a transactionally guaranteed predecessor.
 
-As [LOGGING.md section 8](coding-standards/LOGGING.md#8-audit-records) requires, the record stays outside the mutation transaction. A lifecycle audit becomes a Business Event only through a typed Business Event Definition under `event`. Both committed grant-deletion branches use `consent.GrantRevoked`. Failed refresh cleanup retains `refresh_cleanup=failed` and the returned error, without changing the fact that grant deletion committed.
+As [LOGGING.md section 8](coding-standards/LOGGING.md#8-audit-records) requires, the record stays outside the mutation transaction. Both committed grant-deletion branches use the typed definition `consent.GrantRevoked`. Failed refresh cleanup retains `refresh_cleanup=failed` and the returned error without changing the fact that grant deletion committed.
 
-**Domain Event**: A security-relevant fact in a bounded context, such as GrantRevoked or ApprovalApproved. This term describes meaning, not a second event bus, recorder API, or persistence guarantee.
+**Domain Event**: A fact of domain significance, such as GrantRevoked, ApprovalApproved, or JWTValidationFailed. The term describes what happened, not how the broker reports or stores it. An audit record can report a domain event without adding it to the ledger.
 
-The four business-event terms implement [20261118-125900-business-events-as-typed-log-records](adrs/20261118-125900-business-events-as-typed-log-records.md).
-The [business event ledger](#43-business-event-ledger) section describes storage and its limits.
+**Domain Event Definition**: An immutable declaration of an event identifier and its authoritative owner-visibility permission, represented by `domainevent.Definition`. The service logs the definition under `event` to make the record eligible for the ledger. For example, the consent package declares `consent.GrantRevoked` once with identifier `consent.grant.revoked` and explicit owner visibility.
 
-**Business Event Definition**: An immutable declaration of an identifier and authoritative owner-visibility permission, represented by `bizevent.Definition`. A service logs the definition under `event` to mark an audit record as a Business Event. The consent package declares `consent.GrantRevoked` once with explicit owner visibility and identifier `consent.grant.revoked`. It records the existing GrantRevoked domain fact.
+**Domain Event Occurrence**: One recorded instance of a domain event. `model.DomainEvent` is its ledger representation. The handler mints an `id.DomainEventID` (UUIDv7) to identify each occurrence separately from its event type.
 
-**Business Event**: One immutable stored occurrence of a Business Event Definition, represented by `model.BusinessEvent`. Its Business Event ID distinguishes it from other occurrences. A domain event describes a fact. A business event records that fact through the audit logger, not a separate event bus or recorder API.
-
-**Business Event ID**: The typed identity of one Business Event, `id.BusinessEventID`. The ledger handler mints a UUIDv7 for each occurrence.
-
-**Business Event Ledger**: The repository of Business Events, exposed through `BusinessEventAppender` and `BusinessEventRetention`. Both storage adapters implement append and retention deletion, without updates or reads.
+**Domain Event Ledger**: The post-commit projection of audit records that carry a typed Domain Event Definition. It adds no event bus, recorder API, or transactional guarantee. The `DomainEventAppender` and `DomainEventRetention` ports expose append and retention deletion, not updates or reads. See the [ledger design](#43-domain-event-ledger) and [20261118-125900-domain-events-as-typed-log-records](adrs/20261118-125900-domain-events-as-typed-log-records.md).
 
 **Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
 

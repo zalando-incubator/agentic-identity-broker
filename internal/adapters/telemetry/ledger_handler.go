@@ -15,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/bizevent"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/domainevent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
@@ -23,37 +23,37 @@ import (
 )
 
 const (
-	ledgerDurationInstrument = "business_events.write.duration"
-	ledgerFailuresInstrument = "business_events.write_failures"
+	ledgerDurationInstrument = "domain_events.write.duration"
+	ledgerFailuresInstrument = "domain_events.write_failures"
 )
 
 type ledgerObject map[string]any
 
 type ledgerHandler struct {
-	appender     ports.BusinessEventAppender
+	appender     ports.DomainEventAppender
 	fallback     *slog.Logger
 	writeTimeout time.Duration
 	duration     metric.Float64Histogram
 	failures     metric.Int64Counter
 	attrs        ledgerObject
-	definition   bizevent.Definition
+	definition   domainevent.Definition
 	groups       []string
 	openGroups   int
 }
 
-// NewLedgerHandler persists typed business events after principal policy. The fallback
+// NewLedgerHandler persists typed domain events after principal policy. The fallback
 // must begin with a context handler and must not include this ledger handler.
-func NewLedgerHandler(appender ports.BusinessEventAppender, fallback slog.Handler, writeTimeout time.Duration) slog.Handler {
+func NewLedgerHandler(appender ports.DomainEventAppender, fallback slog.Handler, writeTimeout time.Duration) slog.Handler {
 	h := &ledgerHandler{appender: appender, fallback: slog.New(fallback), writeTimeout: writeTimeout}
-	meter := otel.Meter("business_events")
+	meter := otel.Meter("domain_events")
 	var err error
 	h.duration, err = meter.Float64Histogram(ledgerDurationInstrument,
-		metric.WithDescription("Duration of business event ledger write attempts"), metric.WithUnit("s"))
+		metric.WithDescription("Duration of domain event ledger write attempts"), metric.WithUnit("s"))
 	if err != nil {
 		h.instrumentWarning(ledgerDurationInstrument)
 	}
 	h.failures, err = meter.Int64Counter(ledgerFailuresInstrument,
-		metric.WithDescription("Failed business event ledger write attempts"), metric.WithUnit("{event}"))
+		metric.WithDescription("Failed domain event ledger write attempts"), metric.WithUnit("{event}"))
 	if err != nil {
 		h.instrumentWarning(ledgerFailuresInstrument)
 	}
@@ -61,8 +61,8 @@ func NewLedgerHandler(appender ports.BusinessEventAppender, fallback slog.Handle
 }
 
 func (h *ledgerHandler) instrumentWarning(instrument string) {
-	h.fallback.WarnContext(context.Background(), "business event instrument creation failed",
-		"event", "business_event.instrument.initialization_failed", "instrument", instrument)
+	h.fallback.WarnContext(context.Background(), "domain event instrument creation failed",
+		"event", "domain_event.instrument.initialization_failed", "instrument", instrument)
 }
 
 func (h *ledgerHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -75,7 +75,7 @@ func (h *ledgerHandler) Handle(ctx context.Context, record slog.Record) error {
 	}
 	definition := h.definition
 	var attrs ledgerObject
-	var marker *bizevent.Definition
+	var marker *domainevent.Definition
 	if len(h.groups) == 0 {
 		attrs = cloneLedgerObject(h.attrs)
 		marker = &definition
@@ -114,16 +114,16 @@ func (h *ledgerHandler) Handle(ctx context.Context, record slog.Record) error {
 	if err != nil {
 		kind := ledgerErrorKind(err)
 		h.failures.Add(measurementCtx, 1, metric.WithAttributes(attribute.String("error_kind", string(kind))))
-		h.fallback.ErrorContext(ctx, "business event write failed",
-			"event", "business_event.ledger.write_failed", "failed_event", definition.Name(),
+		h.fallback.ErrorContext(ctx, "domain event write failed",
+			"event", "domain_event.ledger.write_failed", "failed_event", definition.Name(),
 			"error_kind", string(kind), "duration_ms", elapsed.Milliseconds())
 	}
 	return nil
 }
 
-func ledgerOccurrence(occurredAt time.Time, name string, document, recordAttrs ledgerObject, identity groupedIdentity) *model.BusinessEvent {
-	event := &model.BusinessEvent{
-		ID:         id.BusinessEventID(uuid.Must(uuid.NewV7())),
+func ledgerOccurrence(occurredAt time.Time, name string, document, recordAttrs ledgerObject, identity groupedIdentity) *model.DomainEvent {
+	event := &model.DomainEvent{
+		ID:         id.DomainEventID(uuid.Must(uuid.NewV7())),
 		Event:      name,
 		OccurredAt: occurredAt.UTC(),
 		Attributes: document,
@@ -155,7 +155,7 @@ func (h *ledgerHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	}
 	clone := *h
 	var encoded ledgerObject
-	var marker *bizevent.Definition
+	var marker *domainevent.Definition
 	if len(h.groups) == 0 {
 		encoded = cloneLedgerObject(h.attrs)
 		marker = &clone.definition
@@ -201,7 +201,7 @@ func (h *ledgerHandler) hasDefinition(record slog.Record) bool {
 
 func hasLedgerDefinition(attr slog.Attr) bool {
 	if attr.Key == "event" && attr.Value.Kind() == slog.KindLogValuer {
-		definition, ok := attr.Value.Any().(bizevent.Definition)
+		definition, ok := attr.Value.Any().(domainevent.Definition)
 		return ok && definition.Name() != ""
 	}
 	if attr.Key == "" && attr.Value.Kind() == slog.KindGroup {
@@ -214,11 +214,11 @@ func hasLedgerDefinition(attr slog.Attr) bool {
 	return false
 }
 
-func encodeLedgerAttr(dst ledgerObject, attr slog.Attr, marker *bizevent.Definition) {
-	var definition bizevent.Definition
+func encodeLedgerAttr(dst ledgerObject, attr slog.Attr, marker *domainevent.Definition) {
+	var definition domainevent.Definition
 	var typed bool
 	if marker != nil && attr.Key == "event" && attr.Value.Kind() == slog.KindLogValuer {
-		definition, typed = attr.Value.Any().(bizevent.Definition)
+		definition, typed = attr.Value.Any().(domainevent.Definition)
 	}
 	value := attr.Value.Resolve()
 	if (slog.Attr{Key: attr.Key, Value: value}).Equal(slog.Attr{}) {
@@ -227,7 +227,7 @@ func encodeLedgerAttr(dst ledgerObject, attr slog.Attr, marker *bizevent.Definit
 	var encoded any
 	if value.Kind() == slog.KindGroup {
 		group := make(ledgerObject, len(value.Group()))
-		var nestedMarker *bizevent.Definition
+		var nestedMarker *domainevent.Definition
 		if attr.Key == "" {
 			nestedMarker = marker
 		}
@@ -252,7 +252,7 @@ func encodeLedgerAttr(dst ledgerObject, attr slog.Attr, marker *bizevent.Definit
 		if typed {
 			*marker = definition
 		} else {
-			*marker = bizevent.Definition{}
+			*marker = domainevent.Definition{}
 		}
 	}
 }

@@ -4,7 +4,7 @@ This standard applies to all Go code in `cmd/` and `internal/`. Read it before y
 
 Scope: log records only. OpenTelemetry traces and metrics follow `coding-standards/OPENTELEMETRY.md`.
 
-Related binding sources: 011-opentelemetry-provider-pattern and 027-extproc-telemetry-shared-dependency (OpenTelemetry), 033-request-security-context-propagation (request security context), 20261118-125900-business-events-as-typed-log-records (business events),
+Related binding sources: 011-opentelemetry-provider-pattern and 027-extproc-telemetry-shared-dependency (OpenTelemetry), 033-request-security-context-propagation (request security context), 20261118-125900-domain-events-as-typed-log-records (domain events),
 `docs/reference/token-exchange.md#diagnostic-attributes`, and Constitution Principle I.
 
 ## 1. Logger Plumbing
@@ -53,7 +53,7 @@ oauth2_server.token.issued
 
 - Use only the key `event`. Do not use `action` or other discriminator keys.
 - An event identifier is a contract for dashboards and alerts. A rename is a breaking change. Record the rename under `Breaking changes` in the pull request description. That section is the changelog record. Generated release notes link to that description without copying its contents.
-- For a business event, declare one `bizevent.Definition` with a package-level `bizevent.MustDefine` call in the emitting service package. Log the definition only under `event`, not its string identifier. A string `event` is an operational record only.
+- A domain event is a fact of domain significance, such as a grant revocation or an approval decision. An audit record can report a domain event without making it eligible for the ledger. Refer to section 8.
 - A diagnostic record that is not an audit, security, or lifecycle record can omit `event`.
 
 ### 2.3 Attribute Keys
@@ -200,10 +200,12 @@ These data classes are prohibited at all levels, including `Debug`.
 
 Audit records are structured operational logs. An audit record is not a transactional ledger: the write of a record is not atomic with the mutation that it reports.
 
-The business event ledger is a projection of audit records ([20261118-125900-business-events-as-typed-log-records](../adrs/20261118-125900-business-events-as-typed-log-records.md)). When the ledger is enabled, a handler in the builder chain stores each record whose `event` value is a typed business event definition. The ledger is disabled by default. A failed or timed-out write is counted and logged. A confirmed insert failure leaves no row. A timed-out write has an unknown outcome: the database can still commit the insert, so the row can exist. A record whose `event` value is a string is not stored. Do not add a second API that records the same fact.
+The [domain event ledger](../adrs/20261118-125900-domain-events-as-typed-log-records.md) stores selected audit records. To make a record eligible, declare one `domainevent.Definition` with a package-level `domainevent.MustDefine` call in the emitting service package. Log the record at `Info` or above with the definition as the top-level `event` value. Do not use its string identifier in place of the definition. Operational sinks render the definition as that identifier. A record with a string `event` does not enter the ledger. Do not add a second API that records the same fact.
 
-- Write the record after the mutation commits. Do not write a success record for an operation that changed nothing.
-- Do not write an audit record inside a storage transaction. The record reaches stdout, OpenTelemetry, and the ledger immediately, and it is false if the transaction rolls back.
+If the ledger is enabled, the handler in the builder chain attempts to store each eligible record. The ledger is disabled by default. The handler counts and logs failed or timed-out writes. A confirmed insert failure leaves no row. The outcome of a timeout is unknown because the database can still commit the insert.
+
+- If an audit record reports a state change, write it after the mutation commits. Do not write a success record for an operation that changed nothing.
+- Do not write an audit record inside a storage transaction. The record can reach the sinks before commit. If the transaction rolls back, the record reports a change that did not happen.
 - Each audit record contains `event`, the IDs of the affected resources, and `principal` or `operator_principal`.
 - Use a `*Context` method. The context supplies `trace_id`, `actor`, and `calling_peer`.
 - Use the prefix `previous_observed_` for state that the operation read before the write.
@@ -215,14 +217,14 @@ The business event ledger is a projection of audit records ([20261118-125900-bus
 - For each path that handles a credential, assert that the buffer does not contain the credential under test. Examples: `internal/extproc/server/exchange_safety_test.go`, `internal/extproc/authorization/authorizer_safety_test.go`.
 - For each path that logs a principal, assert that the attribute value is the policy output.
 - `TestLoggedPrincipalsAreTyped` (`internal/adapters/telemetry`) type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It fails when a value under a reserved principal key is not an `id.Principal`. It checks key-value arguments, key-value pairs in `[]any` literals and in `append` calls on a `[]any` (lists spread with `args...`), and `slog.Attr` literals, where the value must be `slog.AnyValue` of an `id.Principal` (section 5.1, rules 2 and 5).
-- The guard test in `internal/adapters/telemetry/business_event_logging_guard_test.go` type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It rejects a `bizevent.Definition` under a key other than `event`.
+- The guard test in `internal/adapters/telemetry/domain_event_logging_guard_test.go` type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It rejects a `domainevent.Definition` under a key other than `event`.
 - Assert `event` and the key attributes. Do not assert message text.
 
 ## 10. Review Checklist
 
 - [ ] The call uses a `*Context` method with the request `ctx`.
 - [ ] The message is a constant lowercase phrase. Audit and security records have `event`.
-- [ ] Each business event has one package-local definition, logged as a `bizevent.Definition` only under `event`.
+- [ ] For a domain event selected for the ledger, the audit record uses one package-level `domainevent.Definition` only under `event`.
 - [ ] Keys are `snake_case` and canonical (section 2.3). The error key is `error`.
 - [ ] The level agrees with section 3. The failure is logged one time.
 - [ ] Principals are logged as `id.Principal` under a reserved key and only where section 5 permits.

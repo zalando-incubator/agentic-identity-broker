@@ -259,23 +259,23 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.requestContext.trace.responseEnabled` | Emit the additive W3C `traceresponse` response header | `true` |
 | `extraObjects` | Additional manifests deployed with the release, rendered with `tpl` (see [Extra Objects](#extra-objects)) | `[]` |
 
-### Business event ledger
+### Domain event ledger
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `broker.businessEvents.enabled` | `boolean` | `false` | Enable ledger writes and retention in each broker replica. |
-| `broker.businessEvents.writeTimeout` | `string` (Go duration) | `"1s"` | Append context deadline, `100ms`–`10s` inclusive. Not total logging or request latency. |
-| `broker.businessEvents.retention.period` | `string` (Go duration) | `"2160h"` | Retention age by storage time, `24h`–`8760h` inclusive. Default is 90 days, maximum is 365 days. |
-| `broker.businessEvents.retention.interval` | `string` (Go duration) | `"1h"` | Time between runs, `1s`–`24h` inclusive. Startup and re-enable trigger immediate cleanup. |
-| `broker.businessEvents.retention.batchSize` | `integer` | `1000` | Maximum rows per delete statement, 1–10000 inclusive. |
+| `broker.domainEvents.enabled` | `boolean` | `false` | Enable ledger writes and retention in each broker replica. |
+| `broker.domainEvents.writeTimeout` | `string` (Go duration) | `"1s"` | Append context deadline, `100ms`–`10s` inclusive. Not total logging or request latency. |
+| `broker.domainEvents.retention.period` | `string` (Go duration) | `"2160h"` | Retention age by storage time, `24h`–`8760h` inclusive. Default is 90 days, maximum is 365 days. |
+| `broker.domainEvents.retention.interval` | `string` (Go duration) | `"1h"` | Time between runs, `1s`–`24h` inclusive. Startup and re-enable trigger immediate cleanup. |
+| `broker.domainEvents.retention.batchSize` | `integer` | `1000` | Maximum rows per delete statement, 1–10000 inclusive. |
 
-The chart maps these values to `business_events.*` in the broker ConfigMap.
+The chart maps these values to `domain_events.*` in the broker ConfigMap.
 The schema enforces value types and batch-size bounds. The broker validates Go-duration syntax and inclusive duration bounds at startup, even when disabled.
 Go durations include fractional and compound values such as `0.75s` and `1h30m`. Day suffixes such as `90d` are not valid.
 
 ```yaml
 broker:
-  businessEvents:
+  domainEvents:
     enabled: true
     writeTimeout: "1s"
     retention:
@@ -293,7 +293,7 @@ There is no principal-erasure operation or ledger-read API.
 During healthy continuous operation, retention deletes an expired row within one interval plus the duration of its deleting run.
 This requires every run to succeed, finish before the next scheduled start, and start no more than one interval apart.
 Failures, downtime, disabled operation, and recovery have no fixed maximum row age.
-See the [ledger configuration contract](../../specs/20261118-125900-business-event-ledger/contracts/configuration.md) for retention changes, startup cleanup, and recovery across concurrent replicas.
+See the [ledger configuration contract](../../specs/20261118-125900-domain-event-ledger/contracts/configuration.md) for retention changes, startup cleanup, and recovery across concurrent replicas.
 
 ### Protected-resource discovery
 

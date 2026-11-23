@@ -548,7 +548,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 	})
 }
 
-func TestHelmBusinessEventsConfiguration(t *testing.T) {
+func TestHelmDomainEventsConfiguration(t *testing.T) {
 	cases := []struct {
 		name         string
 		enabled      bool
@@ -567,7 +567,7 @@ func TestHelmBusinessEventsConfiguration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var args []string
 			if tc.name != "defaults" {
-				values := map[string]any{"broker": map[string]any{"businessEvents": map[string]any{
+				values := map[string]any{"broker": map[string]any{"domainEvents": map[string]any{
 					"enabled": tc.enabled, "writeTimeout": tc.writeTimeout,
 					"retention": map[string]any{"period": tc.period, "interval": tc.interval, "batchSize": tc.batchSize},
 				}}}
@@ -577,19 +577,19 @@ func TestHelmBusinessEventsConfiguration(t *testing.T) {
 			require.Equal(t, map[string]any{
 				"enabled": tc.enabled, "write_timeout": tc.writeTimeout,
 				"retention": map[string]any{"period": tc.period, "interval": tc.interval, "batch_size": tc.batchSize},
-			}, configuration["business_events"])
+			}, configuration["domain_events"])
 		})
 	}
 }
 
-func TestHelmBusinessEventsAbsentFromLegacyValues(t *testing.T) {
-	// A pre-ledger release reused on upgrade has no businessEvents defaults.
-	output := renderHelmTemplate(t, "--set", "broker.businessEvents=null")
+func TestHelmDomainEventsAbsentFromLegacyValues(t *testing.T) {
+	// A pre-ledger release reused on upgrade has no domainEvents defaults.
+	output := renderHelmTemplate(t, "--set", "broker.domainEvents=null")
 	configuration, _, _ := credentialHelmConfiguration(t, output)
-	require.NotContains(t, configuration, "business_events")
+	require.NotContains(t, configuration, "domain_events")
 }
 
-func TestHelmBusinessEventsRejectInvalidValues(t *testing.T) {
+func TestHelmDomainEventsRejectInvalidValues(t *testing.T) {
 	cases := []struct {
 		name      string
 		field     string
@@ -618,13 +618,13 @@ func TestHelmBusinessEventsRejectInvalidValues(t *testing.T) {
 				name = "enabled/" + tc.name
 			}
 			t.Run(name, func(t *testing.T) {
-				businessEvents := map[string]any{"enabled": enabled}
+				domainEvents := map[string]any{"enabled": enabled}
 				if tc.retention {
-					businessEvents["retention"] = map[string]any{tc.field: tc.value}
+					domainEvents["retention"] = map[string]any{tc.field: tc.value}
 				} else {
-					businessEvents[tc.field] = tc.value
+					domainEvents[tc.field] = tc.value
 				}
-				values := map[string]any{"broker": map[string]any{"businessEvents": businessEvents}}
+				values := map[string]any{"broker": map[string]any{"domainEvents": domainEvents}}
 				output, err := runHelmTemplate(t, "-f", credentialHelmValuesFile(t, values))
 				require.Error(t, err, output)
 				require.Contains(t, output, tc.field)
@@ -633,10 +633,10 @@ func TestHelmBusinessEventsRejectInvalidValues(t *testing.T) {
 	}
 }
 
-func TestHelmBusinessEventsRetainsExistingResources(t *testing.T) {
+func TestHelmDomainEventsRetainsExistingResources(t *testing.T) {
 	resources := make([]map[string]bool, 0, 2)
 	for _, enabled := range []string{"false", "true"} {
-		output := renderHelmTemplate(t, "--set", "broker.businessEvents.enabled="+enabled)
+		output := renderHelmTemplate(t, "--set", "broker.domainEvents.enabled="+enabled)
 		credentialHelmConfiguration(t, output)
 		decoder := yaml.NewDecoder(strings.NewReader(output))
 		names := map[string]bool{}

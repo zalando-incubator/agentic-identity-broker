@@ -46,14 +46,14 @@ type StorageTransactionManager interface {
 	Rollback(ctx context.Context) error
 }
 
-// BusinessEventAppender stores immutable occurrences outside any transaction in ctx.
-type BusinessEventAppender interface {
+// DomainEventAppender stores immutable occurrences outside any transaction in ctx.
+type DomainEventAppender interface {
 	// Append assigns RecordedAt. A duplicate ID returns a storage Conflict.
-	Append(ctx context.Context, event *model.BusinessEvent) error
+	Append(ctx context.Context, event *model.DomainEvent) error
 }
 
-// BusinessEventRetention removes expired occurrences, oldest first.
-type BusinessEventRetention interface {
+// DomainEventRetention removes expired occurrences, oldest first.
+type DomainEventRetention interface {
 	// StorageTime samples the clock that assigns RecordedAt, outside any transaction in ctx.
 	StorageTime(ctx context.Context) (time.Time, error)
 	DeleteRecordedBefore(ctx context.Context, cutoff time.Time, limit int) (int64, error)
