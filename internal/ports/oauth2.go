@@ -275,8 +275,8 @@ type ImpersonationTokenIssuer interface {
 	IssueImpersonationToken(ctx context.Context, input ImpersonationMintInput) (string, error)
 }
 
-// ConsentReason identifies why the user must return to the agent consent page.
-// An empty reason means that issuance can proceed.
+// ConsentReason classifies a consent check, including repository failures.
+// An empty reason permits issuance. Lookup failures are not consent denials.
 type ConsentReason string
 
 const (
