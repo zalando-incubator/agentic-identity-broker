@@ -10,6 +10,7 @@ Compose. It includes hot reload for the backend and frontend.
 - Docker installed and running, with Docker Compose v2 (`docker compose`)
 - OpenSSL for host-side key generation
 - [just](https://github.com/casey/just), installed with `brew install just` or `cargo install just`
+- `jq` for PostgreSQL Compose mode
 
 For plain Docker Compose commands and a complete consent-to-tool journey,
 see [Get started](get-started/index.md).
@@ -17,14 +18,14 @@ see [Get started](get-started/index.md).
 ### Step 1: Start All Services
 
 ```bash
-just dev-docker
+just compose-up
 ```
 
 This command does the following:
 
-1. Creates `.env.compose` from `.env.compose.example` when required.
-2. Builds Docker images for all services.
-3. Starts all services with hot reload.
+1. Creates `.env.compose` when required.
+2. Builds images for the local services.
+3. Starts the in-memory development stack.
 4. Runs seed-data scripts.
 
 The command shows service startup messages and container logs. Seed-data scripts finish after
@@ -67,6 +68,8 @@ Press `Ctrl+C` in the terminal, or:
 just compose-down
 ```
 
+`just compose-down` preserves PostgreSQL data when you started the PostgreSQL mode. Use `just compose-down-volumes` only when you intend to delete local database data.
+
 ---
 
 ## Services Overview
@@ -74,12 +77,29 @@ just compose-down
 | Service | Port | Purpose | Notes |
 |---------|------|---------|-------|
 | `identity-broker` | 8000, 14000 | Main backend API | Hot reload with Air |
+| `postgres` | 5433 | Optional broker PostgreSQL database | Enabled with the `postgres` startup argument |
+| `broker-migrate` | - | Applies schema migrations | One-shot service, only in PostgreSQL mode |
 | `frontend` | 3000 | React UI (Vite dev server) | HMR enabled |
 | `upstream-oauth2` | 9001 | Mock upstream OAuth2 provider | Fixed build |
 | `third-party-oauth2` | 9000 | Mock third-party service | Fixed build |
 | `sample-agent` | 9002 | Sample OAuth2 client | Fixed build |
 | `seed-broker-data` | - | Runs seed script once | Auto-seed agents/services |
 | `seed-third-party` | - | Registers mock service once | Auto-seed mock OAuth2 service |
+
+### Optional PostgreSQL mode
+
+Pass `postgres` to the usual startup recipe to use persistent local storage:
+
+```bash
+just compose-up postgres             # foreground with logs
+just compose-up-detached postgres     # background, then print service URLs
+```
+
+This adds a dedicated PostgreSQL service and runs migrations before the broker starts. Host clients connect on `localhost:5433` by default; Compose services use `postgres:5432`. Credentials are in `.env.compose` and are for local development only.
+
+Use only letters, digits, dots, underscores, tildes, and hyphens in the PostgreSQL database name, user, and password. The startup recipe rejects other characters because it uses these values in connection URLs.
+
+`just compose-down` preserves the database volume. `just compose-down-volumes` and `just compose-clean` delete it. The encryption key in `.env.compose.key` must be kept while the database volume exists.
 
 ---
 
@@ -280,6 +300,8 @@ just compose-down
 just compose-clean
 ```
 
+`just compose-clean` also removes Compose volumes, including PostgreSQL data. Use `just compose-down` for an ordinary stop.
+
 ---
 
 ## Troubleshooting
@@ -438,10 +460,15 @@ All ports (8000, 3000, 9000-9002) auto-forward to host:
 ```bash
 IDENTITY_BROKER_LOG_LEVEL=debug              # Log verbosity
 IDENTITY_BROKER_LOG_FORMAT=text               # text or json
-IDENTITY_BROKER_JWE_SIGNING_KEY=...          # Encryption key
-IDENTITY_BROKER_STATE_TOKEN_TTL=10m          # Token lifetime
-IDENTITY_BROKER_STORAGE_BACKEND=memory       # memory or postgres
+IDENTITY_BROKER_STORAGE_BACKEND=memory
+IDENTITY_BROKER_POSTGRES_DB=agentic_identity_broker
+IDENTITY_BROKER_POSTGRES_USER=aib_dev
+IDENTITY_BROKER_POSTGRES_PASSWORD=aib_dev_password  # Local development only
+IDENTITY_BROKER_POSTGRES_HOST_PORT=5433
 ```
+The PostgreSQL settings are used when you pass `postgres` to `just compose-up` or `just compose-up-detached`. This mode stores its stable encryption key in the ignored `.env.compose.key` file.
+The broker connects to `postgres:5432` inside Compose; host clients connect to `localhost:5433`.
+
 
 ### Frontend (.env.compose)
 

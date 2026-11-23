@@ -274,6 +274,8 @@ After Go, test, or infrastructure changes, run `just check`. Then run the smalle
 After a Go change under `internal/` or `cmd/`, run `just telemetry-doc` and commit `docs/reference/telemetry.md` if it changed.
 The page also lists the files that start spans and create metrics, and the doc comments of value constants, so it can change without a telemetry change.
 Do not rely only on editor diagnostics. Before a pull request, run the full gate from `CONTRIBUTING.md`.
+Sign off your commits with `git commit -s`. The DCO check requires an author-matching `Signed-off-by` trailer.
+When Copilot commits, keep its required `Co-authored-by` trailer. Read `CONTRIBUTING.md` before you commit.
 
 ## Code Style
 

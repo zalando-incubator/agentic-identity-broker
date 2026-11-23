@@ -66,6 +66,9 @@ Proposed ADRs do not become accepted because their implementation exists.
 
 ## Before Committing
 
+Sign off each commit with `git commit -s`. The DCO check requires a `Signed-off-by` trailer
+that matches the commit author. A `Co-authored-by` trailer does not replace the sign-off.
+
 Run the gates defined in the [justfile](justfile):
 ```bash
 just check    # Non-mutating format, vet, and lint checks
