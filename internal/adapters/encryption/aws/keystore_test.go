@@ -111,7 +111,7 @@ func TestCreateBranchKeyLogsNonTimeoutFailure(t *testing.T) {
 	_, err = ks.CreateBranchKey(context.Background(), subject)
 	require.Error(t, err)
 
-	assert.Contains(t, logBuf.String(), "\"msg\":\"branch_key_creation_failed\"")
+	assert.Contains(t, logBuf.String(), "\"event\":\"encryption.branch_key.creation_failed\"")
 	assert.Contains(t, logBuf.String(), "\"branch_key_id\":\""+expectedBranchKeyID+"\"")
 	assert.Contains(t, logBuf.String(), "\"service_id\":\"550e8400-e29b-41d4-a716-446655440000\"")
 	assert.Contains(t, logBuf.String(), "\"subject_kind\":\"service\"")

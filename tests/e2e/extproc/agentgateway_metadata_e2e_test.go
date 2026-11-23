@@ -168,7 +168,7 @@ func startMetadataGatewayMCPServer(observer *metadataMCPAuthorizationObserver) (
 
 	go func() {
 		if serveErr := httpServer.Serve(listener); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
-			metadataGatewayLogger.Error("metadata MCP server error", "err", serveErr)
+			metadataGatewayLogger.Error("metadata MCP server error", "error", serveErr)
 		}
 	}()
 

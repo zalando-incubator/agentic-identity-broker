@@ -57,7 +57,7 @@ func (h *SPAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Check if index.html exists
 		if _, err := os.Stat(indexPath); err != nil {
-			h.logger.ErrorContext(r.Context(), "SPA index.html not found",
+			h.logger.ErrorContext(r.Context(), "spa index.html not found",
 				"path", indexPath,
 				"error", err)
 			http.Error(w, "SPA not configured", http.StatusNotFound)

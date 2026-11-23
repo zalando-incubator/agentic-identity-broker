@@ -30,6 +30,11 @@ You do not need Go, Node.js, PostgreSQL, or cloud credentials on your host.
 The stack uses an in-memory store and generates local encryption keys at startup.
 This development stack trusts a simulated user identity. Do not expose it to other machines.
 
+Use `http://aib.localhost:3000` for browser consent. Browsers resolve this name
+to loopback; Compose resolves it to the frontend. If your host resolver needs
+an explicit mapping, add `127.0.0.1 aib.localhost` to your hosts file
+(`/etc/hosts` on macOS/Linux or `C:\Windows\System32\drivers\etc\hosts` on Windows).
+
 ## Step 1: Start the stack
 
 From the repository root:
@@ -57,7 +62,7 @@ The `just` command prints these URLs after its health summary:
 
 ```text
 Service URLs:
-  - Browser UI (Vite proxy includes development identity): http://localhost:3000/
+  - Browser UI (Vite proxy includes development identity): http://aib.localhost:3000/
   - End-user broker (protected API requires upstream auth): http://localhost:8000/
   - Admin API: http://localhost:14000/api/agents
   - Admin health: http://localhost:14000/health
@@ -67,7 +72,7 @@ Service URLs:
 
 | Service | URL | Role |
 |---|---|---|
-| Consent UI | http://localhost:3000/ | Browser interface and development identity proxy |
+| Consent UI | http://aib.localhost:3000/ | Browser interface and development identity proxy |
 | Broker — end-user API | http://localhost:8000/ | Consent, provider sessions, and OAuth2 endpoints |
 | Broker — admin API | http://localhost:14000/ | Agent and service configuration |
 | Sample agent | http://localhost:9002/ | OAuth2 client and broker-token display |
@@ -96,7 +101,7 @@ If startup fails, inspect `docker compose --env-file .env.compose -f docker-comp
 Open `http://localhost:9002/` in your browser. Select **Login as Local Client**.
 This flow returns a broker-issued token. **Proxy Client** instead returns a token from the mock upstream authorization server.
 
-The sample client redirects you to the broker's consent interface at `http://localhost:3000`.
+The sample client redirects you to the broker's consent interface at `http://aib.localhost:3000`.
 The interface shows **Local Research Agent** and its requested permission sets.
 
 ## Step 4: Review and grant consent
@@ -117,7 +122,7 @@ then read the grant from the authenticated end-user API through the development 
 ```bash
 AGENT_ID=$(curl --fail --silent http://localhost:14000/api/agents \
   | jq -er '.[] | select(.display_name == "Local Research Agent") | .id')
-curl --fail-with-body "http://localhost:3000/api/consent/agents/$AGENT_ID/grants"
+curl --fail-with-body "http://aib.localhost:3000/api/consent/agents/$AGENT_ID/grants"
 ```
 
 The response's `data` array contains grant objects. Each grant contains its ID,
@@ -138,7 +143,7 @@ Compare those provider claims with the **Access Token Claims** table on the same
 
 | Claim | Broker token sent by the agent | Provider token received by the MCP server |
 |---|---|---|
-| `iss` | `http://localhost:3000` | `http://third-party-oauth2:9000` |
+| `iss` | `http://aib.localhost:3000` | `http://third-party-oauth2:9000` |
 | `aud` | `token-exchange-broker` | `mcp-server` |
 | `azp` | The Local Research Agent UUID | `mock-oauth2-client-dev` |
 

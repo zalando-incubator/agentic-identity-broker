@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -203,10 +204,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 				continue
 			}
 			if !allowedSet[scope] {
-				errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "invalid_scope", "requested scope is not permitted")
-				if buildURLErr != nil && s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-				}
+				errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "invalid_scope", "requested scope is not permitted")
 				return &ports.AuthorizationDecision{
 					Action:      "error",
 					ErrorCode:   "invalid_scope",
@@ -221,10 +219,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	grant, err := s.grantRepo.FindByPrincipalAndAgent(ctx, principal, agent.ID)
 	if err != nil && !errors.Is(err, ports.ErrNotFound) {
 		// redirect_uri is validated above so a redirect-with-error is safe here.
-		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-		if buildURLErr != nil && s.logger != nil {
-			s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-		}
+		errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 		return &ports.AuthorizationDecision{
 			Action:      "error",
 			ErrorCode:   "server_error",
@@ -249,12 +244,9 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 		if buildErr != nil {
 			if s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
+				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
 			}
-			errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-			if buildURLErr != nil && s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-			}
+			errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 			return &ports.AuthorizationDecision{
 				Action:      "error",
 				ErrorCode:   "server_error",
@@ -269,10 +261,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	// A missing or unusable session sends the user to consent to reconnect or deselect it.
 	unusableServiceID, unusableReason, err := s.anyDelegatedSessionUnusable(ctx, principal, grant.GrantedPermissionSets)
 	if err != nil {
-		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-		if buildURLErr != nil && s.logger != nil {
-			s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-		}
+		errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 		return &ports.AuthorizationDecision{
 			Action:      "error",
 			ErrorCode:   "server_error",
@@ -283,7 +272,8 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 	if unusableReason != "" {
 		if s.logger != nil {
 			s.logger.WarnContext(ctx,
-				"DelegatedSessionUnusable",
+				"delegated session unusable",
+				"event", "oauth2.delegated_session.unusable",
 				"agent_id", agent.ID,
 				"principal", principal,
 				"service_id", unusableServiceID,
@@ -293,12 +283,9 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 		if buildErr != nil {
 			if s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
+				s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
 			}
-			errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-			if buildURLErr != nil && s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-			}
+			errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 			return &ports.AuthorizationDecision{
 				Action:      "error",
 				ErrorCode:   "server_error",
@@ -317,15 +304,13 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			if errors.As(err, &storageErr) {
 				if s.logger != nil {
 					s.logger.ErrorContext(ctx,
-						"MandatoryRequirementStorageFailure",
+						"mandatory requirement check failed",
+						"event", "oauth2.mandatory_requirement.check_failed",
 						"agent_id", agent.ID,
 						"error", err.Error(),
 					)
 				}
-				errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-				if buildURLErr != nil && s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-				}
+				errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 				return &ports.AuthorizationDecision{
 					Action:      "error",
 					ErrorCode:   "server_error",
@@ -335,7 +320,8 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			}
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"error", err.Error(),
 				)
@@ -343,12 +329,9 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
 			if buildErr != nil {
 				if s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
+					s.logger.ErrorContext(ctx, "failed to build consent url", "error", buildErr)
 				}
-				errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-				if buildURLErr != nil && s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-				}
+				errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 				return &ports.AuthorizationDecision{
 					Action:      "error",
 					ErrorCode:   "server_error",
@@ -369,10 +352,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		var urlErr error
 		upstreamURL, urlErr = s.buildUpstreamAuthorizeURL(ctx, req, agent)
 		if urlErr != nil {
-			errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-			if buildURLErr != nil && s.logger != nil {
-				s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-			}
+			errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "server error")
 			return &ports.AuthorizationDecision{
 				Action:      "error",
 				ErrorCode:   "server_error",
@@ -382,10 +362,7 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	}
 	if upstreamURL == "" && s.config.UpstreamAuthorizeEndpoint != "" && agent.ClientType() == storage.ProxyClient {
-		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "agent missing upstream client_id")
-		if buildURLErr != nil && s.logger != nil {
-			s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-		}
+		errRedirect := s.errorRedirectURL(ctx, req, agent.ID, "server_error", "agent missing upstream client_id")
 		return &ports.AuthorizationDecision{
 			Action:      "error",
 			ErrorCode:   "server_error",
@@ -402,6 +379,21 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 // Feature 021: uses agent.ClientID (upstream OAuth2 client ID) instead of req.ClientID
 // (which is now the broker's internal agent UUID). When MultiAgentClient.Enabled,
 // appends the agent's internal UUID as the configured AgentIDParamName query parameter.
+// errorRedirectURL builds the client error redirect for a validated redirect_uri. It returns
+// "" when the URI cannot carry the error. The log names the registered agent, not the URI.
+func (s *AuthorizationService) errorRedirectURL(ctx context.Context, req *ports.AuthorizationRequest, agentID id.AgentID, errorCode, errorDescription string) string {
+	redirect, err := BuildErrorRedirectURL(req.RedirectURI, req.State, errorCode, errorDescription)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.ErrorContext(ctx, "failed to build error redirect url",
+				"agent_id", agentID,
+				"reason", "invalid_redirect_uri")
+		}
+		return ""
+	}
+	return redirect
+}
+
 func (s *AuthorizationService) buildUpstreamAuthorizeURL(ctx context.Context, req *ports.AuthorizationRequest, agent *storage.Agent) (string, error) {
 	u, err := url.Parse(s.config.UpstreamAuthorizeEndpoint)
 	if err != nil {
@@ -436,10 +428,11 @@ func (s *AuthorizationService) buildUpstreamAuthorizeURL(ctx context.Context, re
 	if s.config.MultiAgentClient.Enabled {
 		q.Set(s.config.MultiAgentClient.AgentIDParamName, agent.ID.String())
 		if s.logger != nil {
-			s.logger.InfoContext(ctx, "AgentIDParamInjected",
+			s.logger.InfoContext(ctx, "agent id parameter injected",
+				"event", "oauth2.agent_id_param.injected",
 				"agent_id", agent.ID.String(),
 				"param_name", s.config.MultiAgentClient.AgentIDParamName,
-				"upstream_url", s.config.UpstreamAuthorizeEndpoint,
+				"upstream_url", security.RedactURL(s.config.UpstreamAuthorizeEndpoint),
 			)
 		}
 	}
@@ -600,7 +593,8 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 		if session == nil {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
 					"reason", "session_not_found",
@@ -612,7 +606,8 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 		if session.RequiresReauthentication() {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
 					"reason", "reauthentication_required",
@@ -625,7 +620,8 @@ func (s *AuthorizationService) validateMandatoryRequirements(
 		if !s.hasRequiredScopes(session.Scope, req.RequiredScopes) {
 			if s.logger != nil {
 				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
+					"mandatory requirement not met",
+					"event", "oauth2.mandatory_requirement.not_met",
 					"agent_id", agent.ID,
 					"service_id", req.ServiceID,
 					"reason", "scope_mismatch",

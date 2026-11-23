@@ -116,8 +116,9 @@ func assertCIMDKeyDisclosureFree(t *testing.T, value string) {
 	}
 }
 
-func assertCIMDKeyLifecycleAudit(t *testing.T, audit string, operator, keyID, operation, outcome string) {
+func assertCIMDKeyLifecycleAudit(t *testing.T, audit string, operator, keyID, operation, outcome, event string) {
 	t.Helper()
+	assert.Contains(t, audit, `"event":"`+event+`"`)
 	assert.Contains(t, audit, `"operator_principal":"`+operator+`"`)
 	assert.Contains(t, audit, `"key_id":"`+keyID+`"`)
 	assert.Contains(t, audit, `"operation":"`+operation+`"`)
@@ -154,7 +155,7 @@ func TestCIMDClientKeysHandler_Create(t *testing.T) {
 		returnedCreation, err := time.Parse(time.RFC3339, response.CreatedAt)
 		require.NoError(t, err)
 		assert.False(t, returnedActivation.After(returnedCreation), "the first CIMD key must be usable immediately")
-		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", firstKey.KID.String(), "generate", "success")
+		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", firstKey.KID.String(), "generate", "success", "cimd.admin_client_key.generated")
 		keys.AssertExpectations(t)
 	})
 
@@ -189,6 +190,7 @@ func TestCIMDClientKeysHandler_Create(t *testing.T) {
 		assert.Equal(t, "unsupported algorithm", response.Error)
 		assertCIMDKeyDisclosureFree(t, w.Body.String())
 		assert.Contains(t, audit.String(), `"operator_principal":"operator@example.com"`)
+		assert.Contains(t, audit.String(), `"event":"cimd.admin_client_key.generate_rejected"`)
 		assert.Contains(t, audit.String(), `"operation":"generate"`)
 		assert.Contains(t, audit.String(), `"outcome":"rejected"`)
 		assertCIMDKeyDisclosureFree(t, audit.String())
@@ -266,7 +268,7 @@ func TestCIMDClientKeysHandler_Promote(t *testing.T) {
 		assert.Equal(t, key.KID.String(), response.KID)
 		assert.True(t, response.IsCurrent)
 		assert.Equal(t, key.ActivatesAt.Format(time.RFC3339), response.ActivatesAt)
-		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", key.KID.String(), "promote", "success")
+		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", key.KID.String(), "promote", "success", "cimd.admin_client_key.promoted")
 		keys.AssertExpectations(t)
 	})
 
@@ -286,7 +288,7 @@ func TestCIMDClientKeysHandler_Promote(t *testing.T) {
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 		assert.Equal(t, "CIMD client key not found", response.Error)
 		assertCIMDKeyDisclosureFree(t, w.Body.String())
-		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", missingKey.String(), "promote", "rejected")
+		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", missingKey.String(), "promote", "rejected", "cimd.admin_client_key.promote_rejected")
 		keys.AssertExpectations(t)
 	})
 }
@@ -304,7 +306,7 @@ func TestCIMDClientKeysHandler_Remove(t *testing.T) {
 
 		require.Equal(t, http.StatusNoContent, w.Code)
 		assert.Empty(t, w.Body.String())
-		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", kid.String(), "remove", "success")
+		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", kid.String(), "remove", "success", "cimd.admin_client_key.removed")
 		keys.AssertExpectations(t)
 	})
 
@@ -344,7 +346,7 @@ func TestCIMDClientKeysHandler_Remove(t *testing.T) {
 			require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 			assert.Equal(t, tc.wantError, response.Error)
 			assertCIMDKeyDisclosureFree(t, w.Body.String())
-			assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", kid.String(), "remove", "rejected")
+			assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", kid.String(), "remove", "rejected", "cimd.admin_client_key.remove_rejected")
 			keys.AssertExpectations(t)
 		})
 	}
@@ -365,7 +367,7 @@ func TestCIMDClientKeysHandler_Remove(t *testing.T) {
 		require.NoError(t, json.NewDecoder(w.Body).Decode(&response))
 		assert.Equal(t, "CIMD client key not found", response.Error)
 		assertCIMDKeyDisclosureFree(t, w.Body.String())
-		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", missingKey.String(), "remove", "rejected")
+		assertCIMDKeyLifecycleAudit(t, audit.String(), "operator@example.com", missingKey.String(), "remove", "rejected", "cimd.admin_client_key.remove_rejected")
 		keys.AssertExpectations(t)
 	})
 }

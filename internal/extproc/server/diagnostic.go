@@ -57,6 +57,8 @@ const (
 	DetailResponseWriteFailed     FailureDetail = "response_write_failed"
 	DetailInternalUnclassified    FailureDetail = "internal_unclassified"
 	DetailCallerCanceled          FailureDetail = "caller_canceled"
+	DetailGrantContextDenied      FailureDetail = "grant_context_denied"
+	DetailGrantContextUnavailable FailureDetail = "grant_context_unavailable"
 
 	RecoveryNone             RecoveryAction = "none"
 	RecoveryReconsent        RecoveryAction = "reconsent"
@@ -105,7 +107,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.outcome, d.action = OutcomeAuthenticationFailed, RecoveryNone
 	case DetailAuthorizationDenied, DetailPolicyDenied:
 		d.outcome, d.action = OutcomeAuthorizationDenied, RecoveryNone
-	case DetailConsentRequired:
+	case DetailConsentRequired, DetailGrantContextDenied:
 		d.outcome, d.action, d.target = OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent
 	case DetailReauthRequired:
 		d.outcome, d.action = OutcomeReauthRequired, RecoveryNone
@@ -115,7 +117,7 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.outcome, d.action = OutcomeConfigurationError, RecoveryFixConfiguration
 	case DetailCallerCanceled:
 		d.outcome, d.action = OutcomeCanceled, RecoveryNone
-	case DetailBrokerUnavailable, DetailBrokerResponseInvalid, DetailProviderUnavailable, DetailProviderResponseInvalid, DetailCircuitOpen, DetailPolicyEvaluationFailed, DetailResponseWriteFailed, DetailInternalUnclassified:
+	case DetailBrokerUnavailable, DetailBrokerResponseInvalid, DetailProviderUnavailable, DetailProviderResponseInvalid, DetailCircuitOpen, DetailPolicyEvaluationFailed, DetailResponseWriteFailed, DetailInternalUnclassified, DetailGrantContextUnavailable:
 	default:
 		d.detail = DetailInternalUnclassified
 	}
@@ -167,7 +169,7 @@ func logDiagnostic(ctx context.Context, logger *slog.Logger, level slog.Level, m
 	if d.Outcome() == OutcomeSuccess {
 		n = 4
 	}
-	logger.LogAttrs(ctx, level, message, attrs[:n]...)
+	logger.LogAttrs(ctx, level, message, attrs[:n]...) //nolint:sloglint // Each caller passes a constant message.
 }
 
 func diagnosticForMetadata(metadata ErrorMetadata, cause error) Diagnostic {

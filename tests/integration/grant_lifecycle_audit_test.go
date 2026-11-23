@@ -157,29 +157,29 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, records, 2)
 			require.Len(t, barrier.committed, 2)
-			expectedByAction := make(map[string]*storage.UserGrant, 2)
+			expectedByEvent := make(map[string]*storage.UserGrant, 2)
 			for candidate, snapshot := range barrier.committed {
-				action := "grant_updated"
+				event := "consent.grant.updated"
 				if candidate == snapshot.ID {
-					action = "grant_created"
+					event = "consent.grant.created"
 				}
-				expectedByAction[action] = snapshot
+				expectedByEvent[event] = snapshot
 			}
-			require.Len(t, expectedByAction, 2)
-			actions := map[string]int{}
+			require.Len(t, expectedByEvent, 2)
+			events := map[string]int{}
 			for _, record := range records {
-				action, ok := record["action"].(string)
+				event, ok := record["event"].(string)
 				require.True(t, ok)
-				actions[action]++
+				events[event]++
 				assert.Equal(t, principal.String(), record["principal"])
 				assert.Equal(t, agentID.String(), record["agent_id"])
 				assert.Equal(t, stored.ID.String(), record["grant_id"])
 				assert.Equal(t, stored.CreatedAt.UTC().Format(time.RFC3339Nano), record["created_at"])
-				snapshot, exists := expectedByAction[action]
-				require.True(t, exists, "each action must identify its own actual committed write")
+				snapshot, exists := expectedByEvent[event]
+				require.True(t, exists, "each event must identify its own actual committed write")
 				assert.Equal(t, snapshot.UpdatedAt.UTC().Format(time.RFC3339Nano), record["updated_at"])
 				assert.Equal(t, snapshot.ValidUntil.UTC().Format(time.RFC3339Nano), record["valid_until"])
-				delete(expectedByAction, action)
+				delete(expectedByEvent, event)
 				assert.Equal(t, []any{map[string]any{"permission_set_id": psID.String(), "included_service_ids": []any{serviceID.String()}}}, record["granted_permission_sets"])
 				for key := range record {
 					assert.False(t, strings.HasPrefix(key, "previous_observed_"), "neither raced initial write observed a before-snapshot")
@@ -187,8 +187,8 @@ func TestGrantLifecycleAudit_ConcurrentInitialConsent(t *testing.T) {
 				assert.NotContains(t, record, "actor")
 				assert.NotContains(t, record, "trace_id")
 			}
-			assert.Empty(t, expectedByAction, "each successful write must be observed exactly once")
-			assert.Equal(t, map[string]int{"grant_created": 1, "grant_updated": 1}, actions)
+			assert.Empty(t, expectedByEvent, "each successful write must be observed exactly once")
+			assert.Equal(t, map[string]int{"consent.grant.created": 1, "consent.grant.updated": 1}, events)
 			assert.NotContains(t, logs.Raw(), "PRIVATE_AGENT_PROFILE_SENTINEL")
 			assert.NotContains(t, logs.Raw(), "PRIVATE_PS_DESCRIPTION_SENTINEL")
 

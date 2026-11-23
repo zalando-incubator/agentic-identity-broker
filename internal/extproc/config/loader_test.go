@@ -125,6 +125,23 @@ func TestStandaloneExtProcExamplesLoadWithExtProcLoader(t *testing.T) {
 				assert.Equal(t, "deny", cfg.Authorization.DefaultDecision)
 			},
 		},
+		{
+			name:         "extproc-grant-context.yaml",
+			relativePath: "examples/config/extproc-grant-context.yaml",
+			envVars: map[string]string{
+				"EXTPROC_OAUTH2_CLIENT_ID":          "delegation-extproc-client",
+				"EXTPROC_OAUTH2_CLIENT_SECRET":      "delegation-extproc-secret",
+				"EXTPROC_AUTHORIZATION_POLICY_PATH": policyPath,
+			},
+			assertConfig: func(t *testing.T, cfg *config.Config) {
+				t.Helper()
+				assert.True(t, cfg.Authorization.Enabled)
+				assert.True(t, cfg.GrantContext.Enabled)
+				assert.Equal(t, "https://identity-broker.example.com", cfg.GrantContext.PolicyDecisionPoint)
+				assert.Equal(t, 5*time.Second, cfg.GrantContext.RequestTimeout)
+				assert.Equal(t, 60*time.Second, cfg.GrantContext.MaxStaleness)
+			},
+		},
 	}
 
 	for _, tt := range tests {

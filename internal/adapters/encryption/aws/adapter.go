@@ -248,7 +248,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	span.SetAttributes(attribute.String("encryption.key_type", "aws_kms"))
 
 	if a == nil || a.encryptionClient == nil {
-		slog.ErrorContext(ctx, "encryption_failed",
+		slog.ErrorContext(ctx, "token encryption failed",
+			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"error_kind", encryption.ErrorKindKEKUnavailable,
 			"reason", "adapter_not_initialized",
@@ -274,7 +275,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	// would never fire for them.  The post-call guard below handles contexts that
 	// expire DURING a KMS network call.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		slog.ErrorContext(ctx, "encryption_failed",
+		slog.ErrorContext(ctx, "token encryption failed",
+			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindKEKUnavailable,
@@ -309,7 +311,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		// instead of the correct "transient, retry after backoff" semantics.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-				slog.ErrorContext(ctx, "encryption_failed",
+				slog.ErrorContext(ctx, "token encryption failed",
+					"event", "encryption.token.encrypt_failed",
 					"operation", "encrypt",
 					"service_id", serviceID,
 					"error_kind", encryption.ErrorKindKEKUnavailable,
@@ -322,7 +325,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 					err,
 				)
 			}
-			slog.ErrorContext(ctx, "encryption_failed",
+			slog.ErrorContext(ctx, "token encryption failed",
+				"event", "encryption.token.encrypt_failed",
 				"operation", "encrypt",
 				"service_id", serviceID,
 				"error_kind", encryption.ErrorKindKEKUnavailable,
@@ -343,7 +347,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		// Context mismatch errors contain "context" in the error message
 		// This occurs when encryption context AAD verification fails
 		if strings.Contains(errMsg, "context") || strings.Contains(errMsg, "Context") {
-			slog.ErrorContext(ctx, "encryption_failed",
+			slog.ErrorContext(ctx, "token encryption failed",
+				"event", "encryption.token.encrypt_failed",
 				"operation", "encrypt",
 				"service_id", serviceID,
 				"error_kind", encryption.ErrorKindContextMismatch,
@@ -357,7 +362,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		// Integrity/authentication errors indicate AEAD tag verification failure
 		if strings.Contains(errMsg, "integrity") || strings.Contains(errMsg, "authentication") ||
 			strings.Contains(errMsg, "Integrity") || strings.Contains(errMsg, "Authentication") {
-			slog.ErrorContext(ctx, "encryption_failed",
+			slog.ErrorContext(ctx, "token encryption failed",
+				"event", "encryption.token.encrypt_failed",
 				"operation", "encrypt",
 				"service_id", serviceID,
 				"error_kind", encryption.ErrorKindIntegrityViolation,
@@ -369,7 +375,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		}
 
 		// Generic encryption failure
-		slog.ErrorContext(ctx, "encryption_failed",
+		slog.ErrorContext(ctx, "token encryption failed",
+			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindEncryptionFailed,
@@ -381,7 +388,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	}
 
 	if result == nil {
-		slog.ErrorContext(ctx, "encryption_failed",
+		slog.ErrorContext(ctx, "token encryption failed",
+			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindEncryptionFailed,
@@ -392,7 +400,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 
 	// Ensure ciphertext is not empty
 	if len(result.Ciphertext) == 0 {
-		slog.ErrorContext(ctx, "encryption_failed",
+		slog.ErrorContext(ctx, "token encryption failed",
+			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindEncryptionFailed,
@@ -402,7 +411,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	}
 
 	// Success audit logging
-	slog.DebugContext(ctx, "token_encrypted",
+	slog.DebugContext(ctx, "token encrypted",
+		"event", "encryption.token.encrypted",
 		"service_id", serviceID,
 		"operation", "encrypt",
 		"size_bytes", len(result.Ciphertext),
@@ -422,7 +432,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	span.SetAttributes(attribute.String("encryption.key_type", "aws_kms"))
 
 	if a == nil || a.encryptionClient == nil {
-		slog.ErrorContext(ctx, "decryption_failed",
+		slog.ErrorContext(ctx, "token decryption failed",
+			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"error_kind", encryption.ErrorKindKEKUnavailable,
 			"reason", "adapter_not_initialized",
@@ -435,7 +446,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 
 	// Validate ciphertext is not empty
 	if len(ciphertext) == 0 {
-		slog.ErrorContext(ctx, "decryption_failed",
+		slog.ErrorContext(ctx, "token decryption failed",
+			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindDecryptionFailed,
@@ -459,7 +471,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	// would never fire for them.  The post-call guard below handles contexts that
 	// expire DURING a KMS network call.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		slog.ErrorContext(ctx, "decryption_failed",
+		slog.ErrorContext(ctx, "token decryption failed",
+			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindKEKUnavailable,
@@ -493,7 +506,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		// instead of the correct "transient, retry after backoff" semantics.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-				slog.ErrorContext(ctx, "decryption_failed",
+				slog.ErrorContext(ctx, "token decryption failed",
+					"event", "encryption.token.decrypt_failed",
 					"operation", "decrypt",
 					"service_id", serviceID,
 					"error_kind", encryption.ErrorKindKEKUnavailable,
@@ -506,7 +520,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 					err,
 				)
 			}
-			slog.ErrorContext(ctx, "decryption_failed",
+			slog.ErrorContext(ctx, "token decryption failed",
+				"event", "encryption.token.decrypt_failed",
 				"operation", "decrypt",
 				"service_id", serviceID,
 				"error_kind", encryption.ErrorKindKEKUnavailable,
@@ -527,7 +542,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		// Context mismatch errors contain "context" in the error message
 		// This occurs when encryption context AAD verification fails during decryption
 		if strings.Contains(errMsg, "context") || strings.Contains(errMsg, "Context") {
-			slog.ErrorContext(ctx, "decryption_failed",
+			slog.ErrorContext(ctx, "token decryption failed",
+				"event", "encryption.token.decrypt_failed",
 				"operation", "decrypt",
 				"service_id", serviceID,
 				"error_kind", encryption.ErrorKindContextMismatch,
@@ -542,7 +558,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		// This could indicate tampering or corrupted ciphertext
 		if strings.Contains(errMsg, "integrity") || strings.Contains(errMsg, "authentication") ||
 			strings.Contains(errMsg, "Integrity") || strings.Contains(errMsg, "Authentication") {
-			slog.ErrorContext(ctx, "decryption_failed",
+			slog.ErrorContext(ctx, "token decryption failed",
+				"event", "encryption.token.decrypt_failed",
 				"operation", "decrypt",
 				"service_id", serviceID,
 				"error_kind", encryption.ErrorKindIntegrityViolation,
@@ -553,7 +570,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 			)
 		}
 
-		slog.ErrorContext(ctx, "decryption_failed",
+		slog.ErrorContext(ctx, "token decryption failed",
+			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindDecryptionFailed,
@@ -565,7 +583,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	}
 
 	if result == nil {
-		slog.ErrorContext(ctx, "decryption_failed",
+		slog.ErrorContext(ctx, "token decryption failed",
+			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindDecryptionFailed,
@@ -576,7 +595,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 
 	// Ensure plaintext is not empty
 	if len(result.Plaintext) == 0 {
-		slog.ErrorContext(ctx, "decryption_failed",
+		slog.ErrorContext(ctx, "token decryption failed",
+			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
 			"error_kind", encryption.ErrorKindDecryptionFailed,
@@ -586,7 +606,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	}
 
 	// Success audit logging
-	slog.DebugContext(ctx, "token_decrypted",
+	slog.DebugContext(ctx, "token decrypted",
+		"event", "encryption.token.decrypted",
 		"service_id", serviceID,
 		"operation", "decrypt",
 		"size_bytes", len(result.Plaintext),

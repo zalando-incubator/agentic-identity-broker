@@ -40,7 +40,7 @@ export default defineConfig(({ command }) => ({
 
     proxy: {
       // Proxy backend namespaces to the Go server; Vite serves all SPA view routes.
-      '^/(api|oauth2|\\.well-known|health)(/|$)': {
+      '^/(api|access|oauth2|\\.well-known|health)(/|$)': {
         target: process.env.VITE_API_URL || 'http://localhost:8000',
         changeOrigin: true,
         configure: (proxy) => {

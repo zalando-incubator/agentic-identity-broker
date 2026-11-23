@@ -174,7 +174,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	for psStr, svcStrs := range req.GrantedPermissionSets {
 		psID, err := id.ParsePermissionSetID(psStr)
 		if err != nil {
-			h.logger.WarnContext(r.Context(), "invalid permission set ID format",
+			h.logger.WarnContext(r.Context(), "invalid permission set id format",
 				"permission_set_id", psStr,
 				"principal", principalValue,
 				"agent_id", agentID)
@@ -185,7 +185,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		for i, svcStr := range svcStrs {
 			svcID, err := id.ParseServiceID(svcStr)
 			if err != nil {
-				h.logger.WarnContext(r.Context(), "invalid service ID format",
+				h.logger.WarnContext(r.Context(), "invalid service id format",
 					"service_id", svcStr,
 					"principal", principalValue,
 					"agent_id", agentID)
@@ -258,7 +258,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, consent.ErrUnconnectedServices) {
-			h.logger.WarnContext(r.Context(), "grant submission includes services without active sessions (FR-020)",
+			h.logger.WarnContext(r.Context(), "grant submission includes services without active sessions",
 				"agent_id", agentID,
 				"principal", principalValue,
 				"error", err)
@@ -333,7 +333,7 @@ func (h *GrantsHandler) extractPrincipalAndAgent(w http.ResponseWriter, r *http.
 	rawAgentID := chi.URLParam(r, "agent-id")
 	agentID, err := id.ParseAgentID(rawAgentID)
 	if err != nil {
-		h.logger.WarnContext(r.Context(), "invalid agent ID format", "agent_id", rawAgentID)
+		h.logger.WarnContext(r.Context(), "invalid agent id format", "agent_id", rawAgentID)
 		h.writeError(w, http.StatusBadRequest, "bad request", "agent ID must be a valid UUID")
 		return "", id.AgentID{}, false
 	}

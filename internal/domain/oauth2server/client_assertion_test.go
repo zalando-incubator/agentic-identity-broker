@@ -441,7 +441,7 @@ func TestClientAssertionVerifierAuditDoesNotLogCredentials(t *testing.T) {
 	_, err := verifier.Verify(context.Background(), document, assertionType, assertion)
 	require.NoError(t, err)
 	logs := logBuffer.String()
-	assert.Contains(t, logs, "client_authenticated")
+	assert.Contains(t, logs, "oauth2_server.client.authenticated")
 	assert.NotContains(t, logs, assertion)
 	assert.NotContains(t, logs, "sensitive-full-jti")
 
@@ -449,7 +449,7 @@ func TestClientAssertionVerifierAuditDoesNotLogCredentials(t *testing.T) {
 	_, err = verifier.Verify(context.Background(), document, badType, badAssertion)
 	require.Error(t, err)
 	logs = logBuffer.String()
-	assert.Contains(t, logs, "client_authentication_rejected")
+	assert.Contains(t, logs, "oauth2_server.client.authentication_rejected")
 	assert.NotContains(t, logs, badAssertion)
 	assert.NotContains(t, logs, "another-sensitive-jti")
 	assert.NotContains(t, logs, strings.TrimPrefix(assertion, "Bearer "))

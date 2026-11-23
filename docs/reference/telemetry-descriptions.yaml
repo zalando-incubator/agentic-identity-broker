@@ -1,0 +1,131 @@
+# Descriptions of the spans and attribute keys in docs/reference/telemetry.md.
+# tools/telemetrydoc adds them to the page. It fails when a span or a key has
+# no description here, or when this file describes one that the code does not
+# have. Metric descriptions come from metric.WithDescription in the code.
+#
+# A description says what the operation does or what the value means. It does
+# not restate the name. See coding-standards/OPENTELEMETRY.md section 10.
+spans:
+  approval.approve: Transitions a pending approval to approved.
+  approval.consume: Marks an approved approval with persistence `once` as consumed.
+  approval.created: Creates a pending approval, or returns the existing one.
+  approval.deny: Transitions a pending approval to denied.
+  approval.list_pending: Lists the pending approvals of a principal.
+  approval.list_permanent: Lists the permanent approvals and denials of a principal.
+  approval.review: Retrieves an approval by ID for the approval view.
+  approval.revoke: Revokes a permanent approval or a permanent denial. It becomes denied, with no persistence.
+  approval.sync: Returns the sync version and the active approvals, grouped by principal and agent.
+  encryption.decrypt: Decrypts data with the AWS Encryption SDK, through the AWS KMS hierarchical keyring or, with a base64 key, a raw AES keyring.
+  encryption.encrypt: Encrypts data with the AWS Encryption SDK, through the AWS KMS hierarchical keyring or, with a base64 key, a raw AES keyring.
+  extproc.approval.gate: Decides whether a tool call proceeds, needs the user's approval first, or is denied. It does not wait for the approval.
+  extproc.client_assertion.refresh: Obtains a new client assertion through the client credentials grant.
+  extproc.grant_context.evaluate: Calls the broker's AuthZEN access evaluation endpoint for the subject token and the requested resource. The resolver calls it on a cache miss, once for all concurrent requests for the same token and resource.
+  extproc.grant_context.resolve: Returns the delegation permit for the subject token and the requested resource, from ExtProc's permit cache or from the broker. With `grant_context.enabled`, ExtProc resolves it once per request, in the headers phase, and uses it for every OPA decision of the request, including each message of an MCP batch. A permit that expires before a decision fails the request; ExtProc does not resolve it again.
+  extproc.opa.evaluate: Evaluates the OPA policy for a request.
+  extproc.token_exchange: Handles the request headers of one gateway request in ExtProc. It validates the request metadata and gets an exchanged token from ExtProc's cache or from the broker. For a request with a body, the OPA decision on the body comes after the span ends.
+  http.request: Outbound HTTP call through `telemetryhttp`. The span does not record URLs, headers, bodies or error messages.
+  jwks.fetch: Returns the JSON Web Key Set that the URL or file adapter holds, and fails when the set is stale. The URL adapter fetches the set on the first call.
+  oauth2.token_proxy: Forwards a token request to the upstream authorization server and returns its response.
+  oauth2session.background_refresh: Third-party session refresh in the background. It is a new root span, with a link to the span of the request that triggered the refresh.
+  storage.approve.tool_approval: Transitions a pending tool approval to approved in PostgreSQL.
+  storage.consume.client_assertion_replay: Records the `jti` of a client assertion, or reports a conflict when it is already recorded.
+  storage.consume.tool_approval: Marks an approved tool approval with persistence `once` as consumed in PostgreSQL.
+  storage.count_pending.tool_approval: Counts the pending approvals of a principal and agent pair that are not expired.
+  storage.create.authorization_code: Inserts an authorization code.
+  storage.create.client_credential: Inserts the client credential of an agent.
+  storage.create.pkce_session: Inserts a PKCE session.
+  storage.create.refresh_token_session: Inserts a refresh token session.
+  storage.create.tool_approval: Inserts a tool approval, or returns the existing pending duplicate.
+  storage.create.user_grant: Creates a user grant, or updates the grant of the same principal and agent.
+  storage.delete.client_credential: Deletes the client credential of an agent.
+  storage.delete.pkce_session: Deletes a PKCE session by its signature.
+  storage.delete_expired.authorization_code: Deletes the expired authorization codes.
+  storage.delete_expired.client_assertion_replay: Deletes the expired client assertion replay records.
+  storage.delete_expired.pkce_session: Deletes the expired PKCE sessions.
+  storage.delete_expired.refresh_token_session: Deletes the expired refresh token sessions.
+  storage.deny.tool_approval: Transitions a pending tool approval to denied in PostgreSQL.
+  storage.find.authorization_code: Retrieves an authorization code that is not expired by its code hash.
+  storage.find.pkce_session: Retrieves a PKCE session by its signature.
+  storage.find.refresh_token_session: Retrieves a refresh token session by its signature.
+  storage.get.agent: Retrieves an agent by ID from PostgreSQL.
+  storage.get.client_credential: Retrieves the client credential of an agent.
+  storage.get.tool_approval: Retrieves a tool approval by ID from PostgreSQL.
+  storage.get_version.approval_sync: Retrieves the current approval sync version.
+  storage.increment_version.approval_sync: Increments the approval sync version and issues `NOTIFY`. With the PostgreSQL approval repository, a trigger increments the version and this span is absent.
+  storage.list.user_grants_by_principal: Retrieves the active grants of a principal across all agents.
+  storage.list_active.tool_approval: Lists the approvals and denials that are not consumed. A pending approval must not be expired, and a session-scoped one must belong to an active agent session.
+  storage.list_permanent.tool_approval: Lists the permanent approvals and denials of a principal.
+  storage.mark_used.authorization_code: Marks an unused authorization code as used.
+  storage.mark_used.refresh_token_session: Marks an unused refresh token session as used.
+  storage.revoke_by_agent.refresh_token_session: Revokes the unused refresh token sessions of an agent.
+  storage.revoke_by_principal_and_agent.refresh_token_session: Revokes the unused refresh token sessions of a principal and agent pair.
+  storage.revoke_by_request.refresh_token_session: Revokes the unused refresh token sessions of a token request.
+  storage.revoke_permanent.tool_approval: Revokes a permanent approval or a permanent denial in PostgreSQL. It becomes denied, with no persistence.
+  storage.rotate.client_credential: Replaces the client credential of an agent in one transaction.
+  tokenexchange.access_evaluation: Answers an AuthZEN access evaluation request, such as one from ExtProc's grant context. It checks whether the user's grant lets the agent access the requested resource, and does not issue a token.
+  tokenexchange.exchange: RFC 8693 token exchange request in the broker.
+  tokenexchange.get_valid_access_token: Returns the access token of the session. Refreshes it during the request when it has expired, and starts a background refresh when it expires within the refresh lookahead.
+  tokenexchange.impersonation: RFC 8693 impersonation request in the broker.
+  tokenexchange.verify_agent_access: Checks that the principal has an active grant for the agent.
+attributes:
+  access_evaluation.decision: Decision that the broker returned. `deny` is a consent problem, such as a missing or expired grant. `error` is a failed request, with the status in `http.response.status_code`.
+  access_evaluation.max_age: Number of seconds for which the caller can reuse the permit, as in the `Cache-Control` response header. Set only on a permit. The broker caps it at 60 seconds and at the grant expiry.
+  agent_id: ID of the agent that requested the approvals.
+  approval.agent_id: ID of the agent that asked to call the tool.
+  approval.count: Number of approvals in the list that the call returns.
+  approval.id: ID of the tool approval.
+  approval.is_new: Whether the call created the approval. It is `false` when the call returned an existing approval for the same request.
+  approval.outcome: "Decision of the approval gate: the call proceeds, needs the user's approval first (`elicit`), or is denied. `deny` also covers a failure of the gate or the broker."
+  approval.pair_count: Number of principal and agent pairs in the sync state.
+  approval.persistence: Persistence scope of the approval decision.
+  approval.principal: Principal that the approval belongs to.
+  approval.status: Lifecycle state of the tool approval.
+  approval.sync_version: Version of the approval sync state. A change to an approval increments it.
+  approval.tool_name: Name of the tool that the agent asked to call.
+  approval.tool_pattern: Tool pattern that the approval covers.
+  authorization.action: Action of the policy decision, such as `allow`, `deny` or `approval_required`. When `authorization.result_code` is `unsupported_action`, it is the action that the policy returned, and ExtProc denies the request.
+  authorization.duration_ms: Duration of the policy evaluation in milliseconds.
+  authorization.method: MCP method of the request, such as `tools/call`. A method that is not on the allowlist is `unknown`.
+  authorization.protocol: 'Protocol of the request: `mcp`, or `unknown`.'
+  authorization.result_code: 'How the policy evaluation ended: `ok` when the policy returned a supported action, otherwise the reason why it did not.'
+  authorization.target_server_name: Name of the MCP server that the request targets.
+  authorization.tool_name: Name of the MCP tool that the request calls.
+  db.operation: Name of the storage operation, such as `GetAgent`.
+  db.system: Database that the storage call uses.
+  dry_run: Whether the sweep is a dry run.
+  encryption.key_type: Always `aws_kms`, also with a raw AES key.
+  error.type: Class of the error. Set when the operation fails.
+  expiry: Access-token expiry class of the stored session.
+  failure_detail: Detail code of the failed refresh, such as `refresh_rejected`. The `session.oauth2.refresh_failed` log has the same code.
+  grant_context.cache: Whether the permit came from ExtProc's permit cache (`hit`) or from a broker evaluation (`miss`). A request that waits for the evaluation of another request is a `miss`.
+  http.request.method: 'HTTP method: an allowlisted method, `_OTHER` otherwise.'
+  http.response.status_code: HTTP status code of the response. On `extproc.client_assertion.refresh`, it is set only from an error response of the token endpoint, and is `0` otherwise. On `tokenexchange.access_evaluation`, it is set only on an `error` decision.
+  impersonation.target_agent_id: ID of the agent that the impersonation request names as its audience.
+  oauth2.refresh.outcome: "Result of the background refresh: `refreshed` when it stored new tokens, `not_due` when no refresh was needed or the session no longer exists, `failed` otherwise."
+  oauth2.refresh.triggered_by: Always `background`, because a token exchange started the refresh.
+  outcome: Result of the operation that the metric records. Each metric has its own values.
+  refreshable: Whether the stored session can be refreshed.
+  service_id: Canonical ID of the service when one is set, otherwise its UUID.
+  storage.outcome: "Result of a storage call that failed in a way the caller handles: `not_found`, `conflict`, `validation` or `canceled`. Absent on success. The span status stays unset."
+  token_exchange.agent.id: ID of the agent that the exchange or the access evaluation is for. Set on third-party exchanges and on access evaluations, after the broker resolves a registered agent.
+  token_exchange.broker_status_code: HTTP status code of the broker's response. Set when the broker answered with a status other than 200.
+  token_exchange.dependency: 'Dependency that the operation used: ExtProc itself (`local`), the broker, or the OAuth provider.'
+  token_exchange.exchange_kind: "Kind of exchange: a third-party service token or user impersonation. ExtProc always sets `unknown`."
+  token_exchange.failure_detail: Detail code of the failure. An unclassified failure has `internal_unclassified`. A successful metric observation and a successful `extproc.grant_context.*` span have `none`.
+  token_exchange.failure_stage: Step of the exchange that failed. A successful metric observation has `none`.
+  token_exchange.grant.id: ID of the user grant for the agent. Set on third-party exchanges and on access evaluations when the broker found the grant, also when it is expired.
+  token_exchange.grant.updated_at: Time of the last change to the grant, in UTC as RFC 3339. Set on third-party exchanges and on access evaluations.
+  token_exchange.grant.valid_until: Expiry time of the grant, in UTC as RFC 3339. Set on third-party exchanges, and absent when the grant does not expire.
+  token_exchange.oauth_error_code: OAuth error code of the response that rejected the operation, such as `invalid_grant`. A missing code, or one that is not on the allowlist, is `unknown`. `extproc.client_assertion.refresh` also sets it on success, as `unknown`.
+  token_exchange.operation: ExtProc operation that failed. `extproc.client_assertion.refresh` also sets it on success, as `assertion_refresh`. The `extproc.grant_context.*` spans always set `grant_resolution`, and `tokenexchange.access_evaluation` always sets `access_evaluation`.
+  token_exchange.outcome: Result class of the exchange, the access evaluation or the grant context resolution, such as `success`, `authorization_denied` or `reauth_required`.
+  token_exchange.recovery_action: Recommended way to repair the failure. It is a diagnostic hint, and no component acts on it.
+  token_exchange.recovery_target: What the recovery action applies to, such as the consent or the provider session.
+  token_exchange.service.id: UUID of the registered service. Unlike the metric attribute `service_id`, it is never the canonical ID.
+  token_exchange.session.dependency: Dependency of the failed session operation, such as the provider or the session repository.
+  token_exchange.session.detail: Detail code of the failed session operation.
+  token_exchange.session.kind: Class of the session failure, such as a provider or an infrastructure failure.
+  token_exchange.session.oauth_code: OAuth error code that the provider returned. A code that is not on the allowlist is `unknown`, and the key is absent when the provider returned no code.
+  token_exchange.session.operation: Session operation that failed.
+  token_exchange.session.status_code: HTTP status code that the provider returned. Absent when the failure has none.
+  triggered_by: "Source of the refresh: `background` when a token exchange found the access token close to expiry, `sweep` when the admin session sweep refreshed the session."

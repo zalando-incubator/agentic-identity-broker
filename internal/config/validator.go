@@ -86,6 +86,14 @@ func Validate(cfg *ports.Config) error {
 		}
 		return err
 	}
+	// Configured token exchange publishes the AuthZEN endpoints, whose identifier and
+	// evaluation URL are derived from the end-user public URL (ADR 048 §1).
+	tokenExchange := &cfg.TokenExchange
+	if issuerURI != "" && tokenExchange.ClaimExtraction.PrincipalExpression != "" && tokenExchange.Authorization.CEL.Expression != "" {
+		if err := validateAuthZENPublicBase(cfg.Server.EndUser.PublicURL); err != nil {
+			return err
+		}
+	}
 	if err := validateTokenRefreshConfig(&cfg.TokenRefresh); err != nil {
 		return err
 	}
@@ -199,12 +207,14 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 		return formatValidationError(prefix+".public_url", "", expected, nil)
 	}
 
+	// A rejected public URL can carry a credential in its userinfo, path or query, so
+	// public URL errors report RedactedValue instead of the value.
 	if prefix == "server.admin" {
 		u, err := url.Parse(sic.PublicURL)
 		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || strings.HasSuffix(u.Host, ":") {
 			return formatValidationError(
 				prefix+".public_url",
-				sic.PublicURL,
+				RedactedValue,
 				"valid HTTP/HTTPS URL with hostname, no userinfo, and no empty explicit port",
 				nil,
 			)
@@ -212,7 +222,7 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 	} else if !isValidURL(sic.PublicURL) {
 		return formatValidationError(
 			prefix+".public_url",
-			sic.PublicURL,
+			RedactedValue,
 			"valid HTTP/HTTPS URL",
 			nil,
 		)
@@ -228,6 +238,22 @@ func validateServerInstance(sic *ports.ServerInstanceConfig, prefix string, secu
 		return err
 	}
 
+	return nil
+}
+
+// validateAuthZENPublicBase rejects userinfo, a query or a fragment, because the public URL
+// is published unauthenticated as the AuthZEN identifier and the evaluation endpoint is
+// advertised by appending its path.
+func validateAuthZENPublicBase(publicURL string) error {
+	u, err := url.Parse(publicURL)
+	if err != nil || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(publicURL, "#") {
+		return formatValidationError(
+			"server.enduser.public_url",
+			RedactedValue,
+			"HTTP/HTTPS URL without userinfo, query or fragment when token exchange is configured (AuthZEN policy decision point)",
+			nil,
+		)
+	}
 	return nil
 }
 

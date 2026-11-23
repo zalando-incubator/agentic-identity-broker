@@ -589,7 +589,7 @@ func TestOPAAuthorizer_CIBARequiredIsDeniedAndWarned(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, authorization.ActionDeny, decision.Action)
 	assert.Equal(t, []string{"ciba_required is not yet supported"}, decision.Reasons)
-	assert.Contains(t, logBuf.String(), "unsupported OPA action")
+	assert.Contains(t, logBuf.String(), "unsupported opa action")
 	assert.Contains(t, logBuf.String(), authorization.ActionCIBARequired)
 }
 
@@ -604,7 +604,7 @@ func TestOPAAuthorizer_UndefinedActionWarnsAndDenies(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, authorization.ActionDeny, decision.Action)
 	assert.Equal(t, []string{"unknown action: future_action"}, decision.Reasons)
-	assert.Contains(t, logBuf.String(), "undefined OPA action")
+	assert.Contains(t, logBuf.String(), "undefined opa action")
 	assert.Contains(t, logBuf.String(), "future_action")
 }
 

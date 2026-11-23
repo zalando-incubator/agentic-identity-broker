@@ -43,7 +43,7 @@ func (s *OAuth2SessionService) selectCredentials(
 			err = sessionOperationError(ctx, errorOperation, DetailCredentialSourceUnavailable, err)
 			s.auditCredentialSourceFailure(ctx, candidate.ID, operation, err)
 		} else if err == nil && candidate.CredentialSource == model.CredentialSourceFilesystem {
-			s.logger.InfoContext(ctx, "OAuth2 credential files selected",
+			s.logger.InfoContext(ctx, "oauth2 credential files selected",
 				"event", "session.oauth2.credential_files_used",
 				"service_id", candidate.ID,
 				"operation", operation,
@@ -100,7 +100,7 @@ func (s *OAuth2SessionService) auditCredentialSourceFailure(ctx context.Context,
 	if errors.As(err, &sourceError) {
 		reason = sourceError.Reason
 	}
-	s.logger.ErrorContext(ctx, "OAuth2 credential source unavailable",
+	s.logger.ErrorContext(ctx, "oauth2 credential source unavailable",
 		"event", "session.oauth2.credential_source_failed",
 		"service_id", serviceID,
 		"operation", operation,
@@ -110,7 +110,7 @@ func (s *OAuth2SessionService) auditCredentialSourceFailure(ctx context.Context,
 }
 
 func (s *OAuth2SessionService) auditCredentialProviderRejection(ctx context.Context, serviceID id.ServiceID, operation string) {
-	s.logger.WarnContext(ctx, "OAuth2 provider rejected selected credentials",
+	s.logger.WarnContext(ctx, "oauth2 provider rejected selected credentials",
 		"event", "session.oauth2.credential_provider_rejected",
 		"service_id", serviceID,
 		"operation", operation,

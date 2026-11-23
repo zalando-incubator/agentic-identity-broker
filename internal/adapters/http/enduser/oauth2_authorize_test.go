@@ -897,5 +897,5 @@ func TestOAuth2AuthorizeHandler_LogsAuthorizationRequestFailed(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, buf.String(), "authorization_request_failed")
+	assert.Contains(t, buf.String(), "event=oauth2.authorization_request.failed")
 }

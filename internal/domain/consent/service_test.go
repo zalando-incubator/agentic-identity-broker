@@ -2322,11 +2322,11 @@ func TestService_RevokeConsentUsesDeletedGrantWithoutLookup(t *testing.T) {
 			for decoder.More() {
 				record = nil
 				require.NoError(t, decoder.Decode(&record))
-				if record["action"] == "grant_revoked" {
+				if record["event"] == "consent.grant.revoked" {
 					break
 				}
 			}
-			assert.Equal(t, "grant_revoked", record["action"])
+			assert.Equal(t, "consent.grant.revoked", record["event"])
 			assert.Equal(t, string(principal), record["principal"])
 			assert.Equal(t, agentID.String(), record["agent_id"])
 			assert.Equal(t, deletedGrantID.String(), record["grant_id"])
@@ -2375,7 +2375,7 @@ func TestService_RevokeConsentFailureEmitsNoSuccess(t *testing.T) {
 			}
 			assert.Zero(t, repo.findCalls)
 			assert.Equal(t, 1, repo.deleteCalls)
-			assert.NotContains(t, logs.String(), `"action":"grant_revoked"`)
+			assert.NotContains(t, logs.String(), `"event":"consent.grant.revoked"`)
 		})
 	}
 }
@@ -2395,7 +2395,7 @@ func TestService_RevokeConsentAuditsDeletionWhenRefreshCleanupFails(t *testing.T
 	records := capture.JSONRecords(t)
 	require.Len(t, records, 1)
 	assert.Same(t, ctx, capture.contexts[0])
-	assert.Equal(t, "grant_deleted", records[0]["action"])
+	assert.Equal(t, "consent.grant.deleted", records[0]["event"])
 	assert.Equal(t, principal.String(), records[0]["principal"])
 	assert.Equal(t, agentID.String(), records[0]["agent_id"])
 	assert.Equal(t, grantID.String(), records[0]["grant_id"])
@@ -2589,9 +2589,9 @@ func grantAuditEntriesJSON(t *testing.T, entries []storage.GrantedPermissionSetE
 	return value
 }
 
-func assertGrantMutationAudit(t *testing.T, record map[string]any, action string, grant *storage.UserGrant) {
+func assertGrantMutationAudit(t *testing.T, record map[string]any, event string, grant *storage.UserGrant) {
 	t.Helper()
-	assert.Equal(t, action, record["action"])
+	assert.Equal(t, event, record["event"])
 	assert.Equal(t, string(grant.Principal), record["principal"])
 	assert.Equal(t, grant.AgentID.String(), record["agent_id"])
 	assert.Equal(t, grant.ID.String(), record["grant_id"])
@@ -2605,7 +2605,7 @@ func assertGrantMutationAudit(t *testing.T, record map[string]any, action string
 	}
 	assert.Equal(t, grantAuditEntriesJSON(t, grant.GrantedPermissionSets), record["granted_permission_sets"])
 	allowed := map[string]bool{
-		"time": true, "level": true, "msg": true, "action": true, "principal": true,
+		"time": true, "level": true, "msg": true, "event": true, "principal": true,
 		"agent_id": true, "grant_id": true, "valid_until": true, "created_at": true,
 		"updated_at": true, "granted_permission_sets": true,
 		"previous_observed_valid_until": true, "previous_observed_updated_at": true,
@@ -2688,11 +2688,11 @@ func TestService_GrantConsentLifecycleAudit(t *testing.T) {
 			}
 			request.GrantedPermissionSets[0].IncludedServiceIDs[0] = id.NewServiceID()
 			records := capture.JSONRecords(t)
-			assertGrantMutationAudit(t, records[0], "grant_created", creationSnapshot)
+			assertGrantMutationAudit(t, records[0], "consent.grant.created", creationSnapshot)
 			assert.NotContains(t, records[0], "previous_observed_valid_until")
 			assert.NotContains(t, records[0], "previous_observed_updated_at")
 			assert.NotContains(t, records[0], "previous_observed_granted_permission_sets")
-			assertGrantMutationAudit(t, records[1], "grant_updated", updateSnapshot)
+			assertGrantMutationAudit(t, records[1], "consent.grant.updated", updateSnapshot)
 			if before.ValidUntil == nil {
 				assert.Contains(t, records[1], "previous_observed_valid_until")
 				assert.Nil(t, records[1]["previous_observed_valid_until"])
@@ -2762,7 +2762,7 @@ func TestService_RevokeConsentAuditRetainsOnlyDefensiveOperationalSnapshot(t *te
 	repo.deleted.ValidUntil = ptr.To(time.Now().Add(time.Hour))
 	var record map[string]any
 	for i, candidate := range capture.JSONRecords(t) {
-		if candidate["action"] == "grant_revoked" {
+		if candidate["event"] == "consent.grant.revoked" {
 			require.Nil(t, record, "grant revocation is audited once")
 			assert.Same(t, ctx, capture.contexts[i])
 			record = candidate
@@ -2770,7 +2770,7 @@ func TestService_RevokeConsentAuditRetainsOnlyDefensiveOperationalSnapshot(t *te
 	}
 	require.NotNil(t, record)
 	assert.Equal(t, "grant revoked", record["msg"])
-	assert.Equal(t, "grant_revoked", record["action"])
+	assert.Equal(t, "consent.grant.revoked", record["event"])
 	assert.Equal(t, before.Principal.String(), record["principal"])
 	assert.Equal(t, before.AgentID.String(), record["agent_id"])
 	assert.Equal(t, before.ID.String(), record["grant_id"])

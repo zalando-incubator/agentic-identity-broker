@@ -8,6 +8,7 @@ import (
 
 	"github.com/lestrrat-go/jwx/v4/jwk"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -93,7 +94,7 @@ func (s *JWKSPublisherService) PublishJWKS(ctx context.Context) (jwk.Set, error)
 		var err error
 		local, err = s.tokenSigningKeys.BuildJWKS(ctx)
 		if err != nil {
-			s.logger.ErrorContext(ctx, "failed to build local JWKS", "error", err)
+			s.logger.ErrorContext(ctx, "failed to build local jwks", "error", err)
 			return nil, fmt.Errorf("failed to build local JWKS: %w", err)
 		}
 	}
@@ -174,7 +175,7 @@ func (s *JWKSPublisherService) fetchUpstream(ctx context.Context) (jwk.Set, erro
 
 	failures := s.consecutiveUpstreamFailure.Swap(0)
 	if failures > 0 {
-		s.logger.InfoContext(ctx, "upstream JWKS fetch recovered", "consecutive_failures", failures)
+		s.logger.InfoContext(ctx, "upstream jwks fetch recovered", "consecutive_failures", failures)
 	}
 
 	return set, nil
@@ -183,8 +184,8 @@ func (s *JWKSPublisherService) fetchUpstream(ctx context.Context) (jwk.Set, erro
 func (s *JWKSPublisherService) recordUpstreamFailure(ctx context.Context, err error) error {
 	failures := s.consecutiveUpstreamFailure.Add(1)
 	if failures == 1 || failures%upstreamFailureRelogEvery == 0 {
-		s.logger.ErrorContext(ctx, "upstream JWKS fetch failed",
-			"error", err,
+		s.logger.ErrorContext(ctx, "upstream jwks fetch failed",
+			"error_kind", security.ClassifyOutboundError(err),
 			"consecutive_failures", failures,
 		)
 	}

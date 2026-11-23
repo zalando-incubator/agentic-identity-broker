@@ -75,13 +75,13 @@ func (s *FositeStorage) mapStorageError(ctx context.Context, err error) error {
 		if se.Kind == storage.ErrorKindNotFound {
 			return fosite.ErrNotFound
 		}
-		s.logger.ErrorContext(ctx, "storage failure in OAuth2 flow",
+		s.logger.ErrorContext(ctx, "storage failure in oauth2 flow",
 			"storage_op", se.Operation,
 			"storage_kind", string(se.Kind),
 		)
 		return err
 	}
-	s.logger.ErrorContext(ctx, "unexpected error type in OAuth2 flow", "error", err.Error())
+	s.logger.ErrorContext(ctx, "unexpected error type in oauth2 flow", "error", err.Error())
 	return err
 }
 

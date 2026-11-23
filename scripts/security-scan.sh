@@ -56,6 +56,7 @@ modules=(
     mocks/sample-agent
     mocks/third-party-service
     mocks/upstream-oauth2-server
+    tools/telemetrylint
 )
 
 # govulncheck has no ignore file. Each entry names a module, a called advisory it may
@@ -125,6 +126,7 @@ lockfiles=(
     mocks/sample-agent/go.mod
     mocks/third-party-service/go.mod
     mocks/upstream-oauth2-server/go.mod
+    tools/telemetrylint/go.mod
     web/package-lock.json
     assets/docusaurus/package-lock.json
     tools/wireloom/package-lock.json

@@ -82,7 +82,20 @@ func (h *CIMDMetadataHandler) serviceID(r *http.Request) (id.ServiceID, bool) {
 }
 
 func (h *CIMDMetadataHandler) audit(ctx context.Context, serviceID id.ServiceID, operation, outcome string) {
-	h.logger.InfoContext(ctx, "CIMD metadata access", "service_id", serviceID, "operation", operation, "outcome", outcome)
+	h.logger.InfoContext(ctx, "cimd metadata access", "event", cimdMetadataAuditEvent(operation, outcome), "service_id", serviceID, "operation", operation, "outcome", outcome)
+}
+
+func cimdMetadataAuditEvent(operation, outcome string) string {
+	switch {
+	case operation == "metadata" && outcome == "success":
+		return "cimd.client_metadata.served"
+	case operation == "metadata":
+		return "cimd.client_metadata.serve_rejected"
+	case outcome == "success":
+		return "cimd.client_jwks.served"
+	default:
+		return "cimd.client_jwks.serve_rejected"
+	}
 }
 
 func (h *CIMDMetadataHandler) writeUnavailable(w http.ResponseWriter) {
@@ -96,6 +109,6 @@ func (h *CIMDMetadataHandler) writeJSON(w http.ResponseWriter, status int, value
 	}
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		h.logger.Warn("failed to encode CIMD metadata response")
+		h.logger.Warn("failed to encode cimd metadata response")
 	}
 }

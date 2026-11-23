@@ -237,7 +237,7 @@ just web-test             # Run frontend tests
 just web-test-coverage    # Run frontend tests with coverage
 ```
 
-Vite defaults to port 3000. It proxies `/api`, `/oauth2`, `/.well-known`, and `/health` to Go.
+Vite defaults to port 3000. It proxies `/api`, `/access`, `/oauth2`, `/.well-known`, and `/health` to Go.
 `VITE_API_URL` overrides the default backend target, `http://localhost:8000`.
 Set `VITE_USE_POLLING=true` for Docker.
 
