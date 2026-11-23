@@ -1,0 +1,9 @@
+# golangci-lint with the repository's module plugins. `just lint` builds it into ./bin
+# (scripts/golangci-lint-custom.sh) and rebuilds it when this file or a plugin changes.
+version: v2.15.0
+name: golangci-lint-custom
+destination: ./bin
+plugins:
+  - module: github.com/agentic-identity-broker/agentic-identity-broker/tools/telemetrylint
+    import: github.com/agentic-identity-broker/agentic-identity-broker/tools/telemetrylint
+    path: ./tools/telemetrylint

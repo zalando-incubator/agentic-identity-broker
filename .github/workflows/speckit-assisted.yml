@@ -9,13 +9,18 @@ on:
     types: [created, edited] # An edit only matters when a maintainer ticks boxes in the pipeline's own remediation proposal.
   pull_request_review: # Runs from the PR merge ref; routing still executes default-branch code and managed PRs cannot change .github.
     types: [submitted]
-  # Failed container tests on a code phase's commit start a bounded repair. The tests run the PR code in the branch's
-  # own unprivileged context; this workflow only reads their outcome and reports as data, and repairs in the sandbox.
+  # Failed container tests on a code phase's commit start a bounded repair; passing ones after the architecture review
+  # mark the PR ready for review. The tests run the PR code in the branch's own unprivileged context; this workflow only
+  # reads their outcome and reports as data, and repairs in the sandbox.
   workflow_run: # zizmor: ignore[dangerous-triggers] -- Never checks out or executes code from the test run.
     workflows: [Container tests]
     types: [completed]
 
 permissions: {}
+
+# The automation trusts comments and PRs only from this App's bot.
+env:
+  AGENTIC_WORKFLOWS_APP_SLUG: ${{ vars.AGENTIC_WORKFLOWS_APP_SLUG }}
 
 concurrency:
   group: speckit-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
@@ -31,11 +36,12 @@ jobs:
       (github.event_name == 'issue_comment' && github.event.action == 'created' && github.event.comment.user.type == 'User' &&
         (startsWith(github.event.comment.body, '/speckit-') || startsWith(github.event.comment.body, '/architecture-review'))) ||
       (github.event_name == 'issue_comment' && github.event.action == 'edited' && github.event.sender.type == 'User' &&
-        github.event.comment.user.login == 'github-actions[bot]' && contains(github.event.comment.body, '<!-- speckit-proposal:')) ||
+        (github.event.comment.user.login == format('{0}[bot]', vars.AGENTIC_WORKFLOWS_APP_SLUG) || github.event.comment.user.login == 'github-actions[bot]') &&
+        contains(github.event.comment.body, '<!-- speckit-proposal:')) ||
       (github.event_name == 'pull_request_review' && github.event.review.user.type == 'User' &&
         startsWith(github.event.review.body, '/speckit-')) ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch' &&
-        github.event.workflow_run.conclusion == 'failure' &&
+        (github.event.workflow_run.conclusion == 'failure' || github.event.workflow_run.conclusion == 'success') &&
         startsWith(github.event.workflow_run.head_branch, 'speckit/issue-'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -53,6 +59,8 @@ jobs:
       proposal: ${{ steps.route.outputs.proposal }}
       validation: ${{ steps.route.outputs.validation }}
       round: ${{ steps.route.outputs.round }}
+      tests: ${{ steps.route.outputs.tests }}
+      head: ${{ steps.route.outputs.head }}
       error: ${{ steps.route.outputs.error }}
     steps:
       - name: Checkout trusted automation only
@@ -86,15 +94,24 @@ jobs:
       (needs.route.result == 'failure' || (needs.route.result == 'success' && needs.route.outputs.action != 'noop'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      issues: write
-      pull-requests: write
+    permissions: {}
     steps:
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-issues: write
+          permission-pull-requests: write
       - name: React to the maintainer command
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           ROUTE_RESULT: ${{ needs.route.result }}
         with:
+          github-token: ${{ steps.app.outputs.token }}
           script: |
             await github.rest.reactions.createForIssueComment({
               ...context.repo,
@@ -103,17 +120,17 @@ jobs:
             });
 
   # Replaces the PR's status comment with "running" so a queued or late command sees that work is in progress.
-  # A new specification announces once specify has created its PR.
+  # A new specification announces once specify has created its PR. It also renames a PR still titled with the earlier
+  # prefix, so the phases that push wait for it; a status it cannot publish only warns.
   announce:
     needs: [route, specify]
     if: >-
-      always() && needs.route.result == 'success' && needs.route.outputs.action != 'noop' &&
+      always() && needs.route.result == 'success' && !contains(fromJSON('["noop", "ready"]'), needs.route.outputs.action) &&
       (needs.route.outputs.pr != '0' || needs.specify.outputs.created_pr_number != '')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout trusted automation only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,14 +138,30 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: .github/scripts
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
       - name: Publish the running status
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           NEEDS: ${{ toJSON(needs) }}
         with:
+          github-token: ${{ steps.app.outputs.token }}
           script: |
             const { announce } = require('./.github/scripts/speckit-automation.cjs');
-            await announce({ github, context, needs: JSON.parse(process.env.NEEDS) });
+            try {
+              await announce({ github, context, needs: JSON.parse(process.env.NEEDS) });
+            } catch (error) {
+              core.warning(`The running status could not be published: ${error.message}`);
+            }
 
   specify:
     needs: route
@@ -145,14 +178,14 @@ jobs:
       comment: ${{ fromJSON(needs.route.outputs.comment || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
-      GH_AW_CI_TRIGGER_TOKEN: ${{ secrets.GH_AW_CI_TRIGGER_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   clarify:
-    needs: [route, specify]
+    needs: [route, specify, announce]
     if: >-
       always() && needs.route.result == 'success' &&
       (needs.route.outputs.action == 'clarify' ||
@@ -178,6 +211,7 @@ jobs:
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   # A completed clarification continues into planning only once a plan exists; the first spec is reviewed by hand.
+  # Answers the worker chose itself go to the clarification comment and wait for a maintainer's 👍 instead.
   clarified:
     needs: clarify
     if: always() && needs.clarify.result == 'success'
@@ -189,7 +223,7 @@ jobs:
       pull-requests: read
     outputs:
       plan: ${{ steps.status.outputs.plan }}
-      error: ${{ steps.status.outputs.error }}
+      error: ${{ steps.status.outputs.error || steps.publish.outputs.error }}
     steps:
       - name: Checkout trusted automation only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -212,9 +246,35 @@ jobs:
               core.setOutput('error', error.message);
               throw error;
             }
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+      - name: Publish the clarification comment
+        id: publish
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RESULT_COMMENT: ${{ needs.clarify.outputs.comment_id }}
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: |
+            const { publishClarifications } = require('./.github/scripts/speckit-automation.cjs');
+            try {
+              await publishClarifications({ github, context, comment: process.env.RESULT_COMMENT });
+            } catch (error) {
+              core.setOutput('error', error.message);
+              throw error;
+            }
 
   plan:
-    needs: [route, specify, clarified]
+    needs: [route, specify, clarified, announce]
     if: >-
       always() && needs.route.result == 'success' &&
       (needs.route.outputs.action == 'plan' || needs.clarified.outputs.plan == 'true')
@@ -259,6 +319,39 @@ jobs:
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
+  # Once tasks exist, the plan gets its architectural review beside the analysis, and remediation applies both.
+  # Before implementation, a maintainer's /architecture-review runs this plan review alone; its findings only advise.
+  planreview:
+    needs: [route, specify, tasks]
+    if: >-
+      always() && needs.route.result == 'success' &&
+      (needs.route.outputs.action == 'planreview' || needs.tasks.result == 'success')
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      issues: write
+      pull-requests: write
+    uses: ./.github/workflows/architecture-review.lock.yml
+    with:
+      pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
+      comment: ${{ fromJSON(needs.route.outputs.action == 'planreview' && needs.route.outputs.comment || '0') }}
+      # Before any code exists, the structural dimensions carry the review; the others judge an implementation.
+      dimensions: ubiquitous-language hexagonal-compliance adr-compliance data-authority coupling-cohesion
+      focus: >-
+        The plan and its tasks are complete and this pull request holds no implementation yet. Review the planning artifacts as the
+        design the implementation must follow: the Spec Kit feature directory (spec.md, plan.md, tasks.md, research.md,
+        data-model.md, contracts/, quickstart.md) and any ADR or API contract drafts. Judge each dimension by what the
+        plan commits to build, and report gaps and contradictions in the design, not missing code. Phrase every
+        recommended change as an edit to the planning artifacts.
+    secrets:
+      COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+      GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
+      GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
+      GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
+      GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
+
   analyze:
     needs: [route, specify, tasks]
     if: always() && needs.tasks.result == 'success'
@@ -274,13 +367,15 @@ jobs:
       pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
+  # A failed plan review leaves remediation to the analysis findings.
   remediate:
-    needs: [route, specify, analyze]
+    needs: [route, specify, analyze, planreview]
     if: always() && needs.analyze.result == 'success'
     permissions:
       actions: read
@@ -315,14 +410,16 @@ jobs:
       pr: ${{ fromJSON(needs.specify.outputs.created_pr_number || needs.route.outputs.pr) }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   implement:
-    needs: route
-    if: needs.route.outputs.action == 'implement'
+    needs: [route, announce]
+    if: >-
+      !cancelled() && needs.route.result == 'success' && needs.route.outputs.action == 'implement'
     permissions:
       actions: read
       checks: read
@@ -385,8 +482,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
     outputs:
       error: ${{ steps.publish.outputs.error }}
     steps:
@@ -396,12 +491,24 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: .github/scripts
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
       - name: Publish the approval comment
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RESULT_COMMENT: ${{ needs.reanalyze.outputs.comment_id }}
         with:
+          github-token: ${{ steps.app.outputs.token }}
           script: |
             const { publishApprovals } = require('./.github/scripts/speckit-automation.cjs');
             try {
@@ -431,6 +538,7 @@ jobs:
       comment: ${{ fromJSON(needs.route.outputs.action == 'review' && needs.route.outputs.comment || '0') }}
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
@@ -477,7 +585,7 @@ jobs:
 
   # Automatic fixes stay out of contracts, ADRs, schema, and the approved design; the worker's push scope enforces it.
   fix:
-    needs: [route, reviewed]
+    needs: [route, reviewed, announce]
     if: >-
       always() && needs.reviewed.result == 'success' &&
       needs.reviewed.outputs.auto == 'true' && needs.reviewed.outputs.remediable == 'true'
@@ -501,8 +609,9 @@ jobs:
 
   # Ticked proposal items are the maintainer's sign-off for exactly those changes.
   apply:
-    needs: route
-    if: needs.route.outputs.action == 'apply'
+    needs: [route, announce]
+    if: >-
+      !cancelled() && needs.route.result == 'success' && needs.route.outputs.action == 'apply'
     permissions:
       actions: read
       checks: read
@@ -574,23 +683,23 @@ jobs:
         and check those commits for new concerns. Keep the review of unchanged code brief.
     secrets:
       COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+      AGENTIC_WORKFLOWS_APP_PRIVATE_KEY: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
       GH_AW_DEFAULT_OTLP_ENDPOINT: ${{ secrets.GH_AW_DEFAULT_OTLP_ENDPOINT }}
       GH_AW_DEFAULT_OTLP_HEADERS: ${{ secrets.GH_AW_DEFAULT_OTLP_HEADERS }}
       GH_AW_GITHUB_MCP_SERVER_TOKEN: ${{ secrets.GH_AW_GITHUB_MCP_SERVER_TOKEN }}
       GH_AW_GITHUB_TOKEN: ${{ secrets.GH_AW_GITHUB_TOKEN }}
 
   # The proposal comment: a maintainer ticks items and Apply, and the pipeline applies them in a new run.
+  # A plan review publishes none; it only withdraws a stale proposal and reports its recommendation.
   proposals:
-    needs: [route, review, reviewed, fix, rereview]
+    needs: [route, planreview, review, reviewed, fix, rereview]
     if: >-
-      always() && (needs.rereview.result == 'success' ||
+      always() && (needs.rereview.result == 'success' || needs.planreview.result == 'success' ||
         (needs.reviewed.result == 'success' && needs.fix.result == 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
     outputs:
       comment_id: ${{ steps.publish.outputs.comment_id }}
       recommendation: ${{ steps.publish.outputs.recommendation }}
@@ -604,13 +713,27 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: .github/scripts
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
       - name: Publish the remediation proposal
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          REVIEW_COMMENT: ${{ needs.rereview.result == 'success' && needs.rereview.outputs.comment_id || needs.review.outputs.comment_id }}
+          REVIEW_COMMENT: >-
+            ${{ needs.rereview.result == 'success' && needs.rereview.outputs.comment_id ||
+            needs.planreview.result == 'success' && needs.planreview.outputs.comment_id || needs.review.outputs.comment_id }}
           REVIEW_REMEDIABLE: ${{ needs.rereview.result == 'success' || needs.reviewed.outputs.remediable == 'true' }}
         with:
+          github-token: ${{ steps.app.outputs.token }}
           script: |
             const { publishProposals } = require('./.github/scripts/speckit-automation.cjs');
             try {
@@ -624,9 +747,9 @@ jobs:
             }
 
   # After a code phase pushes, the container tests run on its commit in the PR branch's own context; their failure
-  # starts a repair through workflow_run. Only this job holds the App key, and it never checks out PR code.
+  # starts a repair through workflow_run. This job never checks out PR code.
   tests:
-    needs: [route, implement, verify, review, reviewed, fix, verified, apply]
+    needs: [route, implement, verify, review, reviewed, fix, verified, apply, rereview]
     if: >-
       always() && needs.route.result == 'success' &&
       needs.verify.result != 'failure' && needs.verified.result != 'failure' &&
@@ -669,8 +792,8 @@ jobs:
         with:
           client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
           private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-          owner: zalando-incubator
-          repositories: agentic-identity-broker
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
           permission-actions: write
       - name: Dispatch the container tests on the PR branch
         id: dispatch
@@ -691,15 +814,12 @@ jobs:
 
   report:
     needs: [route, announce, specify, clarify, clarified, plan, tasks, analyze, remediate, reanalyze, implement, verify, approvals,
-      review, reviewed, fix, verified, apply, rereview, proposals, tests]
+      planreview, review, reviewed, fix, verified, apply, rereview, proposals, tests]
     if: always() && needs.route.result != 'skipped'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      actions: read
       contents: read
-      issues: write
-      pull-requests: write
     steps:
       - name: Checkout trusted automation only
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -707,11 +827,24 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: .github/scripts
+      - name: Create the App token the pipeline comments with
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.repository }}
+          permission-actions: read
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
       - name: Publish the status comment and fold agent reports
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           NEEDS: ${{ toJSON(needs) }}
         with:
+          github-token: ${{ steps.app.outputs.token }}
           script: |
             const { report } = require('./.github/scripts/speckit-automation.cjs');
             await report({ github, context, needs: JSON.parse(process.env.NEEDS) });

@@ -16,6 +16,17 @@ type Config struct {
 	ToolApprovals  ToolApprovalsConfig  `mapstructure:"tool_approvals"`
 	Sessions       SessionsConfig       `mapstructure:"sessions"`
 	Telemetry      TelemetryConfig      `mapstructure:"telemetry"`
+	// GrantContext opts into fresh broker grant context before every policy decision (ADR 048).
+	GrantContext GrantContextConfig `mapstructure:"grant_context"`
+}
+
+// GrantContextConfig configures the AuthZEN delegation resolver.
+// PolicyDecisionPoint defaults to the origin of oauth2.token_endpoint after validation.
+type GrantContextConfig struct {
+	Enabled             bool          `mapstructure:"enabled"`
+	PolicyDecisionPoint string        `mapstructure:"policy_decision_point"`
+	RequestTimeout      time.Duration `mapstructure:"request_timeout"`
+	MaxStaleness        time.Duration `mapstructure:"max_staleness"`
 }
 
 // GRPCConfig holds gRPC server settings.

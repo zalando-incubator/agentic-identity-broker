@@ -222,7 +222,7 @@ func TestPublishJWKS_Local_BuildJWKSFailure_LogsError(t *testing.T) {
 
 	_, err := svc.PublishJWKS(context.Background())
 	require.Error(t, err)
-	assert.Contains(t, logs.String(), "failed to build local JWKS")
+	assert.Contains(t, logs.String(), "failed to build local jwks")
 	assert.Contains(t, logs.String(), buildErr.Error())
 }
 
@@ -513,7 +513,7 @@ func TestPublishJWKS_Proxy_UpstreamError_LogsError(t *testing.T) {
 	_, err := svc.PublishJWKS(context.Background())
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ports.ErrUpstreamUnavailable))
-	assert.Contains(t, logs.String(), "upstream JWKS fetch failed")
+	assert.Contains(t, logs.String(), "upstream jwks fetch failed")
 }
 
 func TestPublishJWKS_Proxy_UpstreamError_RelogsEveryTenFailures(t *testing.T) {
@@ -532,7 +532,7 @@ func TestPublishJWKS_Proxy_UpstreamError_RelogsEveryTenFailures(t *testing.T) {
 		require.Error(t, err)
 	}
 
-	assert.Equal(t, 2, bytes.Count(logs.Bytes(), []byte("upstream JWKS fetch failed")))
+	assert.Equal(t, 2, bytes.Count(logs.Bytes(), []byte("upstream jwks fetch failed")))
 }
 
 func TestPublishJWKS_Proxy_Recovery_LogsInfo(t *testing.T) {
@@ -557,8 +557,8 @@ func TestPublishJWKS_Proxy_Recovery_LogsInfo(t *testing.T) {
 	set, err := svc.PublishJWKS(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, set)
-	assert.Contains(t, logs.String(), "upstream JWKS fetch failed")
-	assert.Contains(t, logs.String(), "upstream JWKS fetch recovered")
+	assert.Contains(t, logs.String(), "upstream jwks fetch failed")
+	assert.Contains(t, logs.String(), "upstream jwks fetch recovered")
 }
 
 // --- HealthState tests ---

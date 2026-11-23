@@ -85,6 +85,9 @@ workflows and `justfile` aligned with the library version in `go.mod`.
 `just install-tools` rebuilds golangci-lint with the repository-selected Go toolchain,
 replacing cached binaries even when they have the correct release version.
 Put the Go tool installation directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) first on `PATH`.
+`just lint` builds `bin/golangci-lint-custom` from `.custom-gcl.yml`, which adds the `telemetrylint`
+plugin (`tools/telemetrylint`). It rebuilds the binary only when the plugin or the Go version changes.
+Plain `golangci-lint run` cannot load `.golangci.yml`, because the configuration enables that plugin.
 Security scanner versions are pinned in `scripts/security-scan.sh`.
 
 The frontend and documentation-site manifests use npm overrides for transitive security fixes.
@@ -116,9 +119,9 @@ Root contains only files that a tool requires there or that GitHub/Zalando OSS r
 For new features, use the [Spec Kit templates](.specify/templates/) and the [constitution](.specify/memory/constitution.md).
 These paths are naming patterns, not literal directories to copy:
 
-1. Create `specs/NNN-feature-name/spec.md` with requirements.
-2. Create `specs/NNN-feature-name/plan.md` with the design.
-3. Create `specs/NNN-feature-name/tasks.md` with ordered tasks.
+1. Create `specs/YYYYMMDD-HHMMSS-feature-name/spec.md` with requirements.
+2. Create `specs/YYYYMMDD-HHMMSS-feature-name/plan.md` with the design.
+3. Create `specs/YYYYMMDD-HHMMSS-feature-name/tasks.md` with ordered tasks.
 4. Obtain the required API and architecture approvals before implementation.
 5. Implement the plan with red-green-refactor tests and acceptance-scenario traceability.
 6. Update [ARCHITECTURE.md](ARCHITECTURE.md) when the design changes.
@@ -132,10 +135,10 @@ Maintainers can request an automated architectural review of any open pull reque
 this repository by commenting `/architecture-review`, optionally followed by a focus such
 as `/architecture-review session lifecycle`. The workflow in
 `.github/workflows/architecture-review-assisted.yml` checks the commenter's permission,
-then runs `.github/workflows/architecture-review.md`: one lead agent briefs eight
+then runs `.github/workflows/architecture-review.md`: one lead agent briefs nine
 sub-agents, one per analysis dimension (ubiquitous language, hexagonal compliance, ADR
-compliance, data authority, coupling and cohesion, OTel parity, E2E test quality, and
-maintainability), and consolidates their findings into a single review comment with a
+compliance, data authority, coupling and cohesion, OTel parity, E2E test quality,
+maintainability, and behavioral probing), and consolidates their findings into a single review comment with a
 recommendation of **APPROVE**, **DISCUSS**, or **REQUEST CHANGES**. The review never
 edits or pushes code. A new review folds the previous one.
 
@@ -155,6 +158,59 @@ On a Spec Kit draft PR, `/architecture-review` and the automatic review after
 The status comment links the latest review and proposal and names the next step. A new
 review replaces the proposal, so items left unticked stay open until the next review.
 
+Planning includes an architecture review of the planning artifacts: the feature's `spec.md`,
+`plan.md`, `tasks.md`, design documents, and ADR or API contract drafts. It covers five of the
+nine dimensions: ubiquitous language, hexagonal compliance, ADR compliance, data authority, and
+coupling and cohesion. OTel parity, E2E test quality, maintainability, and the behavioral probe
+judge an implementation and wait for the review after `/speckit-implement`. The plan review runs
+once tasks exist, beside the analysis, and publishes no remediation proposal. Remediation applies
+its findings together with the analysis findings. Where a finding has a real alternative,
+remediation chooses the recommended option and, when the choice is consequential, records it as
+Proposed, so it appears on the approval comment. The reanalysis then checks the result. Before
+implementation, `/architecture-review [focus]` runs the plan review alone; its findings then only
+advise, and `/speckit-plan <guidance>` applies them. A failed plan review does not block planning;
+remediation then resolves the analysis findings alone, and the status comment notes the failure.
+
+The automatic clarification answers its own questions so the specification stays complete, and
+marks each answer Proposed. A **Spec Kit clarification** comment tables each question, the
+recommended answer, and links to its alternatives in `spec.md`. React with 👍 to accept all
+answers, then comment `/speckit-plan`, which refuses to start without that 👍 and records the
+acceptance in the specification. To choose another answer, comment `/speckit-clarify <answer>`.
+
+Spec Kit pull requests carry the `[spec-driven]` title prefix and describe the feature they
+deliver. The pipeline rewrites its own block of the description on every run: a **Feature
+stage** line (Specified › Planned › Implemented › Reviewed) and the **Maintainer commands**
+of the current pipeline. It also removes the command list that older pull requests carry
+from the specify agent. The phases push only to pull requests with that prefix, so the pipeline
+renames a pull request that still carries the earlier `[Spec Kit]` prefix when its next phase
+starts.
+
+After `/speckit-implement`, the container tests run on the last commit that the pipeline
+pushes. A failure starts a repair run, up to three per command. When the tests pass on that
+commit after the implementation's architecture review and its automatic fixes, the pipeline
+marks the pull request ready for review. It acts only on draft pull requests, so it then
+ignores commands and test results there. Convert the pull request back to a draft to use the
+pipeline again, for example to apply items of a remediation proposal.
+
+The agentic workflows (Spec Kit, architecture review, conflict resolution, Repo Assist, Repo Ask, and the
+grumpy reviewer) open their pull requests, push, comment, review, and react as the Agentic Workflows App, never as `github-actions[bot]` or a personal token. They need the App
+described under [Opt-in conflict resolution](#opt-in-conflict-resolution) with Actions read/write
+in addition to its other permissions, and they fail instead of falling back to `GITHUB_TOKEN`.
+
+The workflows name no repository or App. They scope each App token to the repository they run in.
+They trust the bot of the App that the Actions variable `AGENTIC_WORKFLOWS_APP_SLUG` names, and
+`github-actions[bot]`, which authored the pipeline's PRs and comments before the App did.
+A fork can run them with its own App: install that App on the fork only, then set
+`AGENTIC_WORKFLOWS_APP_CLIENT_ID`, `AGENTIC_WORKFLOWS_APP_SLUG`, and `AGENTIC_WORKFLOWS_APP_PRIVATE_KEY`
+there. Issue, comment, label, schedule, and workflow-run events run workflows from the default branch,
+so a fork that iterates on them can make a separate branch its default and keep `main` an unchanged
+mirror of upstream. A `/speckit-` command in a pull request review is the exception: it runs the
+workflow file from the pull request's merge ref.
+
+Each agent run stops at the AI credit budget that the Actions variable `GH_AW_DEFAULT_MAX_AI_CREDITS`
+sets, 1000 when it is unset. A plan review or an implementation can exceed that, so a fork sets
+the variable as well.
+
 ### Backend
 
 Use the boundaries defined by [Constitution VI](.specify/memory/constitution.md#vi-hexagonal-architecture--clean-boundaries):
@@ -172,7 +228,7 @@ Follow the coding standards in [`coding-standards/`](coding-standards/), includi
 Use the [design system](web/src/design-system/docs/INDEX.md), as required by [Constitution XI](.specify/memory/constitution.md#xi-design-system-compliance--consistency).
 Read its component guidance before choosing an import or variant.
 The [Vite aliases](web/vite.config.ts) and [existing pages](web/src/pages/) show current import paths.
-The constitution requires semantic tokens, self-hosted brand assets, and accessibility evidence in light and dark themes.
+The constitution requires semantic tokens, self-hosted brand assets, and accessibility checks in the single light theme. A dark theme is not required.
 
 ### Tests
 
@@ -252,7 +308,10 @@ Remove the label to stop later runs. A blocked resolution leaves the remote bran
 Before enabling the label, make sure the App with the private key in the existing Actions secret
 `AGENTIC_WORKFLOWS_APP_PRIVATE_KEY` is installed on this repository only.
 Grant it Checks read plus Contents, Workflows, Pull requests, and Issues read/write permissions.
-The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App.
+The existing Actions variable `AGENTIC_WORKFLOWS_APP_CLIENT_ID` must identify that same App,
+and the Actions variable `AGENTIC_WORKFLOWS_APP_SLUG` must hold its slug, such as `zalando-incubator-agent-workflows`.
+Without a valid slug, the Spec Kit and architecture review automation fails instead of trusting any bot.
+Ticking items on a remediation proposal is the exception: without the slug, the edit starts no run and reports no error.
 The App push starts ordinary PR CI, including for stacked PRs. Without these credentials, the router fails instead of pushing with `GITHUB_TOKEN`.
 
 ## Commit Guidelines

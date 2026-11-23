@@ -807,7 +807,7 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
                     result.innerHTML = html;
                 } else if (d.approval_url) {
                     result.classList.add('error');
-                    result.innerHTML = '<strong>Approval Required</strong><pre>' + esc(d.error_description) + '</pre><a class="btn-mcp" href="' + esc(d.approval_url) + '">Review and approve tool call</a>';
+                    result.innerHTML = '<strong>Approval Required</strong><pre>' + esc(d.error_description) + '</pre><button type="button" class="btn-mcp" data-approval-url="' + esc(d.approval_url) + '" onclick="openApproval(this)">Review and approve tool call</button>';
                 } else {
                     result.classList.add('error');
                     result.innerHTML = '<strong>MCP Call Failed</strong><pre>' + esc(d.error_description || d.error) + '\nGateway: ' + esc(d.gateway_url) + '</pre>';
@@ -815,6 +815,14 @@ func renderUserPage(userInfo *UserInfo, expiresAt int64, clientType, rawToken, k
             })
             .catch(function(e) { result.style.display='block'; result.classList.add('error'); result.innerHTML='<strong>Request Failed</strong><pre>'+esc(String(e))+'</pre>'; })
             .finally(function() { btn.disabled=false; btn.textContent=labels[tool]; });
+    }
+    function openApproval(button) {
+        window.open(button.dataset.approvalUrl, '_blank', 'noopener,noreferrer');
+        button.textContent = 'Retry after approval';
+        button.onclick = function() {
+            button.disabled = true;
+            callMCPTool('create_issue');
+        };
     }
     function formatJSON(obj) { return esc(JSON.stringify(obj, null, 2)); }
     function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }

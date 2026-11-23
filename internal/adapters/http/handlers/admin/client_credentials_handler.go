@@ -109,14 +109,14 @@ func (h *ClientCredentialsHandler) Generate(w http.ResponseWriter, r *http.Reque
 	}
 
 	if isRotation {
-		h.logger.InfoContext(r.Context(), "CredentialRotated",
-			"event", "CredentialRotated",
+		h.logger.InfoContext(r.Context(), "client credential rotated",
+			"event", "agents.client_credential.rotated",
 			"agent_id", agentID,
 			"client_id", credential.AgentID,
 		)
 	} else {
-		h.logger.InfoContext(r.Context(), "CredentialGenerated",
-			"event", "CredentialGenerated",
+		h.logger.InfoContext(r.Context(), "client credential generated",
+			"event", "agents.client_credential.generated",
 			"agent_id", agentID,
 			"client_id", credential.AgentID,
 		)
@@ -155,8 +155,8 @@ func (h *ClientCredentialsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logger.DebugContext(r.Context(), "CredentialRetrieved",
-		"event", "CredentialRetrieved",
+	h.logger.DebugContext(r.Context(), "client credential retrieved",
+		"event", "agents.client_credential.retrieved",
 		"agent_id", agentID,
 	)
 
@@ -198,8 +198,8 @@ func (h *ClientCredentialsHandler) Revoke(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	h.logger.InfoContext(r.Context(), "CredentialRevoked",
-		"event", "CredentialRevoked",
+	h.logger.InfoContext(r.Context(), "client credential revoked",
+		"event", "agents.client_credential.revoked",
 		"agent_id", agentID,
 	)
 	w.WriteHeader(http.StatusNoContent)

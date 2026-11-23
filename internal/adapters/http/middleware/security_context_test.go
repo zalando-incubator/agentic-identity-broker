@@ -394,7 +394,7 @@ func TestNewHandler_TraceResponseSuppressionKeepsTraceInContextAndLogs(t *testin
 	require.True(t, observed.ok, "disabling the response header must not disable capture")
 	assert.Empty(t, res.Header().Get("traceresponse"), "trace.response_enabled=false must suppress only the header")
 
-	accessLog, ok := findMiddlewareLogRecord(*base.records, "HTTP request")
+	accessLog, ok := findMiddlewareLogRecord(*base.records, "http request")
 	require.True(t, ok, "request completion must still be logged")
 	assert.Equal(t, observed.sc.TraceID, accessLog.attrs["trace_id"], "trace.response_enabled=false must not disable log enrichment")
 }
@@ -491,4 +491,30 @@ func BenchmarkSecurityContextMiddleware(b *testing.B) {
 		writer.Reset()
 		handler.ServeHTTP(writer, req)
 	}
+}
+
+func TestNewHandler_AccessEvaluationDefersSecurityContextFinalization(t *testing.T) {
+	t.Parallel()
+
+	var beforeFinalize, afterFinalize observedSecurityContext
+	handler := adapterhttp.NewHandler(newTestServerConfig(), func(r chi.Router) {
+		r.Post("/access/v1/evaluation", func(w http.ResponseWriter, r *http.Request) {
+			beforeFinalize.sc, beforeFinalize.ok = security.FromContext(r.Context())
+			_, _ = security.FinalizeCaptureHolder(r.Context(), "alice@example.com", "gateway-client")
+			afterFinalize.sc, afterFinalize.ok = security.FromContext(r.Context())
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}, slog.New(slog.DiscardHandler))
+
+	req := httptest.NewRequest(http.MethodPost, "/access/v1/evaluation", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	require.Equal(t, http.StatusNoContent, res.Code)
+	assert.False(t, beforeFinalize.ok, "evaluation must receive a deferred capture holder, not a finalized context")
+	require.True(t, afterFinalize.ok)
+	assert.Equal(t, id.Principal("alice@example.com"), afterFinalize.sc.Actor)
+	assert.Equal(t, "gateway-client", afterFinalize.sc.CallingPeer)
+	assert.Equal(t, "/access/v1/evaluation", afterFinalize.sc.RequestTarget)
+	assert.Equal(t, traceIDFromTraceResponse(t, res.Header().Get("traceresponse")), afterFinalize.sc.TraceID)
 }

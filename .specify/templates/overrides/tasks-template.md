@@ -177,9 +177,10 @@ XIV (Specification by Example & Reviewable Journeys)
 - [ ] T010e Add comment references to spec scenarios in E2E test files
 - [ ] T010f Verify E2E tests FAIL semantically (red phase): detailed expectations present and failing,
       NOT placeholder always-fail assertions (e.g., `Expect(true).To(BeFalse())` is NOT acceptable);
-      no `XIt`/`PIt`/`Skip()` pending markers; no "red phase" comments in test files; record red evidence
-      per suite: container-backed suites (`just test-integration-infra`, `just test-e2e-docker`) MAY
-      take it from CI on the pushed commit, and tasks for suites that run locally MUST NOT wait for it
+      no `XIt`/`PIt`/`Skip()` pending markers; no "red phase" comments in test files; red-run evidence
+      is not required: when no container runtime is available locally, container-backed suites
+      (`just test-integration-infra`, `just test-e2e-docker`) skip the local red run and first run in
+      CI on the pushed commit, which may already include the implementation
 - [ ] T010g [IF FRONTEND] Add/amend Playwright E2E tests in `tests/e2e/frontend/` for all UI scenarios
 - [ ] T010h [IF FRONTEND] Use existing page objects in `tests/e2e/pages/` and Playwright harness
 - [ ] T010i [IF FRONTEND] Verify frontend Playwright tests capture screenshots to `tests/e2e/screenshots/`
@@ -190,8 +191,9 @@ XIV (Specification by Example & Reviewable Journeys)
       OpenAPI contracts (Principle XIV)
 
 **Checkpoint**: Concrete spec journeys reviewed against scenarios and applicable configuration,
-HTTP, Wireloom UI, and JWT examples; E2E tests written and verified to fail semantically before
-implementation; frontend Playwright tests added/amended and screenshots configured (if applicable)
+HTTP, Wireloom UI, and JWT examples; E2E tests written before implementation and, where they run
+locally, seen failing semantically (container-backed suites without a local runtime first run in CI);
+frontend Playwright tests added/amended and screenshots configured (if applicable)
 
 ### Phase 2g: Observability Design [MANDATORY IF TELEMETRY]
 
@@ -405,9 +407,9 @@ yet — ready for incremental user story implementation
       flow, with applicable configuration, HTTP exchanges, Wireloom source and rendered SVGs,
       and visible decoded JWT claims matching requirements and contracts (Principle XIV)
 - [ ] TXXX Verify E2E acceptance tests written in `tests/e2e/` for all spec scenarios (Principle XIII)
-- [ ] TXXX Verify E2E tests verified to FAIL before implementation (red phase): detailed expectations
-      written and failing; no placeholder always-fail assertions; no `XIt`/`PIt`/`Skip()` markers;
-      no "red phase" comments in test files (Principle XIII)
+- [ ] TXXX Verify E2E tests were written before implementation with detailed realistic expectations;
+      no placeholder always-fail assertions; no `XIt`/`PIt`/`Skip()` markers; no "red phase" comments
+      in test files. Red-run evidence is not required (Principle XIII)
 - [ ] TXXX [IF FRONTEND] Verify Playwright E2E tests added/amended in `tests/e2e/frontend/` (Principle XIII)
 - [ ] TXXX [IF FRONTEND] Verify screenshots captured to `tests/e2e/screenshots/` (Principle XIII)
 - [ ] TXXX [IF TELEMETRY] Verify new log events, spans, and metric instruments are identified, and
@@ -458,7 +460,7 @@ yet — ready for incremental user story implementation
 - [ ] TXXX Verify domain logic uses ports (interfaces) and adapters
 
 **Testing** (Principle VIII - Unit & Integration Tests):
-- [ ] TXXX Verify unit tests written FIRST and failed before implementation (red-green TDD)
+- [ ] TXXX Verify unit tests written FIRST in red-green cycles; red-run evidence is not required
 - [ ] TXXX Verify tests drive design (implementation emerges from test requirements)
 - [ ] TXXX Verify tests changed minimally during implementation
 - [ ] TXXX Verify automated tests included (unit, integration, or both)
@@ -467,7 +469,8 @@ yet — ready for incremental user story implementation
 **E2E Acceptance Testing** (Principle XIII):
 - [ ] TXXX Verify E2E tests exist in `tests/e2e/` for all acceptance scenarios from spec.md
 - [ ] TXXX Verify each `It()` block in E2E tests maps to exactly ONE acceptance scenario from spec.md
-- [ ] TXXX Verify E2E tests written BEFORE implementation and failed initially (red phase)
+- [ ] TXXX Verify E2E tests written BEFORE implementation in red-green cycles; red-run evidence is not
+      required, and container-backed suites without a local runtime may first run in CI
 - [ ] TXXX Verify E2E tests changed minimally during implementation (fixture adjustments only)
 - [ ] TXXX Verify E2E tests turned GREEN as implementation satisfied acceptance criteria
 - [ ] TXXX Verify E2E tests use Ginkgo/Gomega framework following `tests/e2e/README.md` patterns
@@ -498,8 +501,8 @@ yet — ready for incremental user story implementation
   - **CRITICAL**: Configuration requirements must be designed with YAML examples
   - **CRITICAL**: APIs must be designed and confirmed by user/stakeholder BEFORE implementation
   - **CRITICAL**: Database schema must be designed and migrations planned (or confirmed no DB changes)
-  - **CRITICAL**: E2E acceptance tests must be written with detailed expectations and verified to FAIL
-    semantically (red phase); frontend Playwright tests added/amended if UI changes involved
+  - **CRITICAL**: E2E acceptance tests must be written with detailed expectations before
+    implementation and, where they run locally, seen failing semantically (red phase); frontend Playwright tests added/amended if UI changes involved
   - **CRITICAL**: Helm deployment contract must be updated when configuration changes affect a chart-managed workload; otherwise the accepted standalone deployment boundary must be documented
   - Phase 2a, 2b, 2c, 2d, 2e, 2f, 2g can proceed in parallel, but all must complete before Phase 2.7 begins
 - **Entity Boilerplate (Phase 2.7)**: OPTIONAL (only if new entities) — depends on completion of all Phase 2 design tasks (2a–2g);
@@ -561,7 +564,7 @@ Task: "Create [Entity2] model in src/models/[entity2].py"
    - 2c: API design + user/stakeholder confirmation
    - 2d: Database schema design
    - 2e: Frontend/design system review (if applicable)
-   - 2f: E2E acceptance test design (tests written and verified to FAIL)
+   - 2f: E2E acceptance test design (tests written first; seen failing where they run locally)
    - 2g: Observability design against the binding coding standards (if telemetry changes)
 4. **(If new entities) Complete Phase 2.7**: Entity boilerplate — separate PR, project compiles
 5. Complete Phase 2.5: Foundational Infrastructure (CRITICAL - blocks all stories)

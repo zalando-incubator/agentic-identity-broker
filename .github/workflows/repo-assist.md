@@ -24,7 +24,18 @@ on:
         default: ""
   slash_command:
     name: repo-assist
-  reaction: "eyes"
+  # The App holds no Discussions permission, so the reaction and status comment skip discussions.
+  reaction:
+    type: eyes
+    discussions: false
+  status-comment:
+    discussions: false
+  # The reaction and run status comments come from the same App as the safe outputs.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
 
 concurrency:
   job-discriminator: ${{ github.event_name == 'schedule' && 'scheduled' || github.run_id }}
@@ -160,6 +171,12 @@ tools:
         console.log("repo-assist notes.json conforms to schema");
 
 safe-outputs:
+  # PRs, pushes, comments, and labels come from this App, so its pushes start CI without a CI trigger token.
+  github-app:
+    client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
+    private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
   threat-detection:
     # Keep detection on its small default model; without this it inherits the pinned agent model.
     model: ${{ vars.GH_AW_MODEL_DETECTION_COPILOT || vars.GH_AW_DEFAULT_MODEL_COPILOT || 'detection' }}
@@ -173,6 +190,7 @@ safe-outputs:
     target: "*"
     hide-older-comments: true
   create-pull-request:
+    github-token-for-extra-empty-commit: none
     draft: true
     title-prefix: "[repo-assist] "
     labels: [automation, repo-assist]
@@ -183,6 +201,11 @@ safe-outputs:
         - README.md
     max: 4
   push-to-pull-request-branch:
+    # A merge from the base branch as a format-patch carries every base change since the fork and exceeds the patch size limit.
+    patch-format: bundle
+    github-token-for-extra-empty-commit: none
+    # Reading branch protection needs Administration, which the App does not hold; GitHub still enforces protection on the push.
+    check-branch-protection: false
     target: "*"
     required-title-prefix: "[repo-assist] "
     max: 4
@@ -673,6 +696,7 @@ Maintain a single open issue titled `[repo-assist] Monthly Activity {YYYY}-{MM}`
 - **Read AGENTS.md first**: before starting work on any pull request, read the repository's `AGENTS.md` file (if present) to understand project-specific conventions, coding standards, and contribution requirements.
 - **Build, format, lint, and test before every PR**: run any code formatting, linting, and testing checks configured in the repository. Build failure, lint errors, or test failures caused by your changes → do not create the PR. Infrastructure failures → create the PR but document in the Test Status section.
 - **Drafts stay drafts**: never mark a PR ready for review or describe a draft as ready. Only a maintainer does that.
+- **Outputs apply after you finish**: pushes, PRs, and comments are published after your run ends, and a publication can still be rejected. In a comment written alongside a push, say the update was submitted for publication, never that the PR was updated or the conflicts were resolved. Confirm a past push against the live PR head SHA before you describe it as applied.
 - **Read all PR checks**: before reporting a PR's validation state, read both `get_check_runs` and `get_status` from `pull_request_read`. Some pipelines report only commit statuses, so check runs alone can miss passing or failing checks.
 - **Respect existing style**  -  match code formatting and naming conventions.
 - **AI transparency**: every comment, PR, and issue must include a Repo Assist disclosure with 🤖.

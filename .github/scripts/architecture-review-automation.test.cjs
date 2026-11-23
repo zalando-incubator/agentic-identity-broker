@@ -16,6 +16,7 @@ const {
   dimensions,
 } = require("./architecture-review-automation.cjs");
 
+process.env.AGENTIC_WORKFLOWS_APP_SLUG = "example-agent-workflows";
 const repo = { owner: "example", repo: "broker" };
 const head = "a".repeat(40);
 const base = "b".repeat(40);
@@ -139,7 +140,7 @@ function draft(overrides = {}) {
     "### Hexagonal Compliance", "✅ No violations", "", "### Pattern Consistency", "none", "",
     "### Coupling & Cohesion", "none", "", "### OTel Parity", "✅ OTel parity maintained", "",
     "### E2E Test Assessment", "| Flow | True E2E? | Assessment |", "|---|---|---|", "",
-    "### Maintainability Forecast", "Low cost.", "", "### Recommendation", "**DISCUSS** — one overlap.", "",
+    "### Maintainability Forecast", "Low cost.", "", "### Behavioral Probe", "✅ No behavioral gaps found", "", "### Recommendation", "**DISCUSS** — one overlap.", "",
   ].join("\n");
   return {
     recommendation: "DISCUSS", summary: "One naming overlap to discuss",
@@ -209,16 +210,21 @@ test("Spec Kit's managed draft PRs are left to the Spec Kit pipeline", async () 
   assert.deepEqual(await route(ready), { action: "review", pr: 42, comment: 20 });
 });
 
-test("a calling workflow may pass the review focus, but a command comment wins", async (t) => {
+test("a calling workflow may pass the review focus, and a command comment adds the maintainer's focus to it", async (t) => {
   t.mock.method(fs, "mkdirSync", () => undefined);
   const written = {};
   t.mock.method(fs, "writeFileSync", (name, content) => { written[path.basename(String(name))] = JSON.parse(content); });
   const f = fixture("issue_comment", {}, { comments: [command("/architecture-review sessions")] });
   assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "0", focus: "  Verify the remediation " } })).focus,
     "Verify the remediation");
-  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "20", focus: "ignored" } })).focus, "sessions");
+  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "20", focus: " Review the plan " } })).focus,
+    "Review the plan\n\nThe maintainer's focus for this run: sessions");
+  assert.equal((await prepare({ ...f, inputs: { pr: "42", comment: "20" } })).focus, "sessions");
+  const bare = fixture("issue_comment", {}, { comments: [command("/architecture-review")] });
+  assert.equal((await prepare({ ...bare, inputs: { pr: "42", comment: "20", focus: "Review the plan" } })).focus, "Review the plan");
   await assert.rejects(prepare({ ...f, inputs: { pr: "42", comment: "0", focus: "x".repeat(2001) } }), /Invalid review focus/);
-  assert.equal(written["context.json"].focus, "sessions");
+  await assert.rejects(prepare({ ...f, inputs: { pr: "42", comment: "20", focus: "x".repeat(2001) } }), /Invalid review focus/);
+  assert.equal(written["context.json"].focus, "Review the plan");
 });
 
 test("prepare writes the compact context and PR details with changed files and ADR provenance", async (t) => {
@@ -242,7 +248,8 @@ test("prepare writes the compact context and PR details with changed files and A
   assert.equal(root.length > 0, true);
   assert.deepEqual(data, {
     run: "100/2", repository: "example/broker", pr: 42, head, branch: "feature/approvals", base: "main", base_sha: base,
-    feature: "specs/054-approvals", focus: "sessions", command: { id: 20, author: "maintainer", argument: "sessions" },
+    feature: "specs/054-approvals", focus: "sessions", dimensions,
+    command: { id: 20, author: "maintainer", argument: "sessions" },
   });
   assert.deepEqual(written["context.json"], data);
   const details = written["pr-details.json"];
@@ -257,6 +264,29 @@ test("prepare writes the compact context and PR details with changed files and A
     existing: ["adrs/002-config.md", "adrs/README.md"], added: ["adrs/045-approvals.md"], modified: ["adrs/002-config.md"],
   });
   assert.deepEqual(f.calls.map((call) => call.username), ["maintainer", "maintainer"]);
+});
+
+test("prepare finds the Spec Kit feature from the specification link when the marker was stripped", async (t) => {
+  t.mock.method(fs, "mkdirSync", () => undefined);
+  t.mock.method(fs, "writeFileSync", () => undefined);
+  const link = (target, branch = "feature/approvals", slug = "example/broker") =>
+    `Specification: https://github.com/${slug}/blob/${branch}/${target}`;
+  const featureOf = async (body) =>
+    (await prepare({ ...fixture("issue_comment", {}, { pr: { body } }), inputs: { pr: "42" } })).feature;
+  assert.equal(await featureOf(`## Feature\n\nSummary\n\n${link("specs/20261116-181338-approval-denial-reason/spec.md")}\n`),
+    "specs/20261116-181338-approval-denial-reason");
+  assert.equal(await featureOf(`<!-- speckit-feature: specs/054-approvals -->\n${link("specs/055-other/spec.md")}`),
+    "specs/054-approvals");
+  for (const body of [
+    link("specs/055-other/spec.md", "main"),
+    link("specs/055-other/spec.md", "feature/approvals", "outsider/broker"),
+    link("specs/055-other/plan.md"),
+    link("specs/../adrs/spec.md"),
+    `${link("specs/055-other/spec.md")}\n${link("specs/056-another/spec.md")}`,
+    "Summary",
+  ]) {
+    assert.equal(await featureOf(body), null, body);
+  }
 });
 
 test("prepare fails closed for non-maintainers, ineligible PRs, and forged command comments", async (t) => {
@@ -283,6 +313,37 @@ test("prepare fails closed for non-maintainers, ineligible PRs, and forged comma
   assert.equal(data.focus, "");
 });
 
+test("a calling workflow may limit the review to some dimensions", async (t) => {
+  t.mock.method(fs, "mkdirSync", () => undefined);
+  t.mock.method(fs, "writeFileSync", () => undefined);
+  const f = fixture("issue_comment", {});
+  const scoped = (value) => prepare({ ...f, inputs: { pr: "42", dimensions: value } });
+  assert.deepEqual((await scoped("coupling-cohesion, ubiquitous-language\nadr-compliance")).dimensions,
+    ["ubiquitous-language", "adr-compliance", "coupling-cohesion"]);
+  assert.deepEqual((await scoped("")).dimensions, dimensions);
+  assert.deepEqual((await prepare({ ...f, inputs: { pr: "42" } })).dimensions, dimensions);
+  for (const value of ["telemetry", "adr-compliance adr-compliance", ",", 42]) {
+    await assert.rejects(scoped(value), /Invalid review dimensions/);
+  }
+});
+
+test("a scoped review covers only its dimensions and reports the others as skipped", () => {
+  const scope = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority", "coupling-cohesion"];
+  const scoped = { ...context, dimensions: scope };
+  const statuses = Object.fromEntries(dimensions.map((name) => [name, scope.includes(name) ? "assessed" : "skipped"]));
+  const body = `${draft().body.split("\n### OTel Parity")[0]}\n### Recommendation\n**DISCUSS** — one overlap.\n`;
+  assert.deepEqual(validateResult(draft({ dimensions: statuses, body }), scoped).failed, []);
+  assert.equal(validateResult(draft({
+    findings: [], recommendation: "APPROVE", dimensions: statuses, body: body.replace("**DISCUSS**", "**APPROVE**"),
+  }), scoped).recommendation, "APPROVE");
+  const reject = (overrides, pattern) => assert.throws(() => validateResult(draft({ dimensions: statuses, body, ...overrides }), scoped), pattern);
+  reject({ dimensions: { ...statuses, "adr-compliance": "skipped" } }, /Every analysis dimension/);
+  reject({ dimensions: { ...statuses, "otel-parity": "assessed" } }, /Every analysis dimension/);
+  reject({ findings: [finding({ dimension: "otel-parity" })] }, /F1 names a dimension outside this review/);
+  reject({ body: body.replace("\n### Concept Map", "\n### Concepts") }, /missing the "### Concept Map"/);
+  assert.throws(() => validateResult(draft({ dimensions: statuses, body }), context), /Every analysis dimension/);
+});
+
 test("results need every dimension, consistent severities, remediation buckets, and head-pinned links", () => {
   assert.deepEqual(validateResult(draft(), context), {
     run: "100/1", pr: 42, head, recommendation: "DISCUSS", summary: "One naming overlap to discuss",
@@ -296,6 +357,10 @@ test("results need every dimension, consistent severities, remediation buckets, 
   reject({ findings: [finding(), finding()] }, /Invalid review item id/);
   reject({ findings: [finding({ severity: "ORANGE" })] }, /Invalid review item F1/);
   reject({ findings: [finding({ dimension: "unknown" })] }, /Invalid review item F1/);
+  assert.equal(validateResult(draft({ findings: [finding({ dimension: "behavioral-probe" })] }), context).items[0].dimension,
+    "behavioral-probe");
+  const { "behavioral-probe": _, ...withoutProbe } = draft().dimensions;
+  reject({ dimensions: withoutProbe }, /Every analysis dimension/);
   reject({ findings: [finding({ bucket: "maybe" })] }, /Invalid review item F1/);
   reject({ findings: [finding({ bucket: "note" })] }, /needs a remediation bucket/);
   reject({ findings: [finding({ bucket: "auto", change: undefined })] }, /needs a one-line recommended change/);
@@ -312,6 +377,7 @@ test("results need every dimension, consistent severities, remediation buckets, 
     body: draft().body.replace("**DISCUSS**", "**APPROVE**") }, /cannot approve/);
   reject({ body: "Hello" }, /must start with the review heading/);
   reject({ body: draft().body.replace("\n### OTel Parity", "\n### Telemetry") }, /missing the "### OTel Parity"/);
+  reject({ body: draft().body.replace("\n### Behavioral Probe", "\n### Probes") }, /missing the "### Behavioral Probe"/);
   reject({ body: draft().body.replace("**DISCUSS**", "DISCUSS") }, /must state the recommendation/);
   reject({ body: `${draft().body}\n<!-- architecture-review: {} -->` }, /reserved markers/);
   reject({ body: `${draft().body}\n<!-- gh-aw-workflow-call-id: x -->` }, /reserved markers/);
@@ -429,4 +495,13 @@ test("architecture review entry points retry transient reads once per shared cli
     await remediable({ ...f, pr: 42 }).catch(() => {});
     assert.deepEqual(f.hooks.map(({ name: hook }) => hook), ["request"], name);
   }
+});
+
+test("status comments from the Agentic Workflows App's bot are replaced, but not those of any other App", async () => {
+  const status = (id, login) => ({ id, body: "## 🏗️ Architecture review · ⛔\n\n<!-- architecture-review-status -->\n",
+    user: { login, type: "Bot" } });
+  const comments = [status(60, "example-agent-workflows[bot]"), status(61, "github-actions[bot]"), status(62, "coderabbitai[bot]")];
+  const f = fixture("issue_comment", commandEvent(command("/architecture-review")), { comments });
+  await report({ ...f, needs: { route: { result: "failure", outputs: { error: "Stopped" } } } });
+  assert.deepEqual(f.deleted, [60, 61]);
 });

@@ -66,14 +66,14 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 					result, err := authenticator.Authenticate(r.Context(), jwtHeaderValue)
 					if err != nil {
 						if errors.Is(err, domjwtauth.ErrJWKSUnavailable) {
-							logger.ErrorContext(r.Context(), "JWKS endpoint unavailable (503 SERVICE UNAVAILABLE)",
+							logger.ErrorContext(r.Context(), "jwks endpoint unavailable",
 								"error", err.Error(),
 								"jwt_header", jwtHeaderName,
 								"remote_addr", r.RemoteAddr,
 								"path", r.URL.Path)
 							writeErrorJSON(w, http.StatusServiceUnavailable, mapJWTError(err))
 						} else {
-							logger.WarnContext(r.Context(), "JWT authentication failed (401 REJECT)",
+							logger.WarnContext(r.Context(), "jwt authentication failed",
 								"error", err.Error(),
 								"jwt_header", jwtHeaderName,
 								"remote_addr", r.RemoteAddr,
@@ -86,7 +86,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 					// Validate principal length
 					if len(result.Principal) > maxPrincipalLength {
 						err := principal.PrincipalTooLongError(len(result.Principal), maxPrincipalLength)
-						logger.WarnContext(r.Context(), "JWT principal exceeds maximum length",
+						logger.WarnContext(r.Context(), "jwt principal exceeds maximum length",
 							"length", len(result.Principal),
 							"max_length", maxPrincipalLength,
 							"remote_addr", r.RemoteAddr,
@@ -112,7 +112,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 					ctx = principal.WithProfile(ctx, profile)
 					r = r.WithContext(ctx)
 
-					logger.DebugContext(r.Context(), "JWT principal extracted",
+					logger.DebugContext(r.Context(), "jwt principal extracted",
 						"jwt_header", jwtHeaderName,
 						"principal", result.Principal,
 						"has_display_name", result.DisplayName != nil,
@@ -126,7 +126,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 				}
 				// JWT configured but header absent — fail closed, no fallback to plain header
 				missingErr := principal.NewMissingPrincipalError(jwtHeaderName)
-				logger.WarnContext(r.Context(), "JWT authentication configured but JWT header absent (401 REJECT)",
+				logger.WarnContext(r.Context(), "jwt header absent",
 					"header", jwtHeaderName,
 					"remote_addr", r.RemoteAddr,
 					"path", r.URL.Path)
@@ -139,7 +139,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 
 			if principalValue == "" {
 				err := principal.NewMissingPrincipalError(headerName)
-				logger.WarnContext(r.Context(), "Missing or empty principal (401 REJECT)",
+				logger.WarnContext(r.Context(), "principal missing",
 					"header", headerName,
 					"remote_addr", r.RemoteAddr,
 					"path", r.URL.Path)
@@ -149,7 +149,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 
 			if len(principalValue) > maxPrincipalLength {
 				err := principal.PrincipalTooLongError(len(principalValue), maxPrincipalLength)
-				logger.WarnContext(r.Context(), "Principal exceeds maximum length",
+				logger.WarnContext(r.Context(), "principal exceeds maximum length",
 					"header", headerName,
 					"length", len(principalValue),
 					"max_length", maxPrincipalLength,
@@ -165,7 +165,7 @@ func RequirePrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth d
 			ctx = principal.WithProfile(ctx, profile)
 			r = r.WithContext(ctx)
 
-			logger.DebugContext(r.Context(), "Principal extracted",
+			logger.DebugContext(r.Context(), "principal extracted",
 				"header", headerName,
 				"principal", principalValue,
 				"remote_addr", r.RemoteAddr,
@@ -213,7 +213,7 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 				if jwtHeaderValue != "" {
 					result, err := authenticator.Authenticate(r.Context(), jwtHeaderValue)
 					if err != nil {
-						logger.DebugContext(r.Context(), "Optional JWT authentication failed, continuing without principal",
+						logger.DebugContext(r.Context(), "optional jwt authentication failed, continuing without principal",
 							"error", err.Error(),
 							"jwt_header", jwtHeaderName,
 							"remote_addr", r.RemoteAddr,
@@ -239,7 +239,7 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 						ctx = principal.WithProfile(ctx, profile)
 						r = r.WithContext(ctx)
 
-						logger.DebugContext(r.Context(), "Optional JWT principal extracted",
+						logger.DebugContext(r.Context(), "optional jwt principal extracted",
 							"jwt_header", jwtHeaderName,
 							"principal", result.Principal,
 							"remote_addr", r.RemoteAddr,
@@ -263,13 +263,13 @@ func OptionalPrincipalMiddleware(authConfig ports.AuthenticationConfig, jwtAuth 
 				ctx = principal.WithProfile(ctx, profile)
 				r = r.WithContext(ctx)
 
-				logger.DebugContext(r.Context(), "Optional principal extracted",
+				logger.DebugContext(r.Context(), "optional principal extracted",
 					"header", headerName,
 					"principal", principalValue,
 					"remote_addr", r.RemoteAddr,
 					"path", r.URL.Path)
 			} else if principalValue != "" && len(principalValue) > maxPrincipalLength {
-				logger.DebugContext(r.Context(), "Optional principal ignored (exceeds max length)",
+				logger.DebugContext(r.Context(), "optional principal exceeds maximum length, ignoring",
 					"header", headerName,
 					"length", len(principalValue),
 					"max_length", maxPrincipalLength,

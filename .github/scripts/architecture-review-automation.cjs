@@ -1,5 +1,5 @@
 const fs = require("node:fs");
-const { managedPR, validateReviewState, parseReview, reviewDimensions, retryReads } = require("./speckit-automation.cjs");
+const { managedPR, validateReviewState, parseReview, reviewDimensions, retryReads, pipelineBot } = require("./speckit-automation.cjs");
 
 const directory = "/tmp/gh-aw/architecture-review";
 const heading = "## 🏗️ Architectural Review";
@@ -8,9 +8,13 @@ const marker = "## Architecture review result";
 const statusMarker = "<!-- architecture-review-status -->";
 const severities = ["RED", "YELLOW", "GREEN"];
 const recommendations = ["APPROVE", "DISCUSS", "REQUEST CHANGES"];
-const sections = ["### Executive Summary", "### Top Findings", "### Concept Map", "### Hexagonal Compliance",
-  "### Pattern Consistency", "### Coupling & Cohesion", "### OTel Parity", "### E2E Test Assessment",
-  "### Maintainability Forecast", "### Recommendation"];
+// Each dimension's required section of the review body; data authority's section is optional.
+const dimensionSections = {
+  "ubiquitous-language": "### Concept Map", "hexagonal-compliance": "### Hexagonal Compliance",
+  "adr-compliance": "### Pattern Consistency", "data-authority": null, "coupling-cohesion": "### Coupling & Cohesion",
+  "otel-parity": "### OTel Parity", "e2e-test-quality": "### E2E Test Assessment",
+  "maintainability": "### Maintainability Forecast", "behavioral-probe": "### Behavioral Probe",
+};
 const pipeline = ["route", "review", "verify"];
 const maxFindings = 7;
 const maxBody = 60000;
@@ -19,10 +23,6 @@ const maxFocus = 2000;
 function parseCommand(body) {
   const match = typeof body === "string" && body.match(/^\/architecture-review(?=\s|$)([\s\S]*)$/);
   return match ? { argument: match[1].trim() } : null;
-}
-
-function actionsBot(user) {
-  return user?.login === "github-actions[bot]" && user?.type === "Bot";
 }
 
 async function maintainer(github, repo, login) {
@@ -36,8 +36,15 @@ function eligible(pr, repo) {
   return pr.state === "open" && !pr.merged_at && pr.head.repo?.full_name === slug && pr.base.repo?.full_name === slug;
 }
 
-function feature(pr) {
-  return pr.body?.match(/<!-- speckit-feature: (specs\/[a-zA-Z0-9][a-zA-Z0-9-]*) -->/)?.[1] ?? null;
+// Safe outputs strip HTML comments from agent-written PR bodies, so the specification link names the feature too.
+function feature(pr, repo) {
+  const body = pr.body || "";
+  const marked = body.match(/<!-- speckit-feature: (specs\/[a-zA-Z0-9][a-zA-Z0-9-]*) -->/)?.[1];
+  if (marked) return marked;
+  const prefix = `Specification: https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.ref}/`;
+  const links = body.split(/\r?\n/).filter((line) => line.startsWith(prefix));
+  const target = links.length === 1 ? links[0].slice(prefix.length).trim() : "";
+  return target.match(/^(specs\/[a-zA-Z0-9][a-zA-Z0-9-]*)\/spec\.md$/)?.[1] ?? null;
 }
 
 function quoted(text) {
@@ -95,15 +102,18 @@ async function prepare({ github, context, inputs }) {
   const data = {
     run: `${context.runId}/${process.env.GITHUB_RUN_ATTEMPT}`, repository: `${repo.owner}/${repo.repo}`,
     pr: pr.number, head: pr.head.sha, branch: pr.head.ref, base: pr.base.ref, base_sha: pr.base.sha,
-    feature: feature(pr), focus: "",
+    feature: feature(pr, repo), focus: "", dimensions: reviewScope(inputs.dimensions),
   };
-  if (Number(inputs.comment)) {
-    data.command = await maintainerCommand(github, repo, Number(inputs.comment), pr.number);
-    data.focus = data.command.argument;
-  } else if (inputs.focus) {
-    // A caller's focus is trusted workflow input, such as the Spec Kit pipeline's re-review after remediation.
+  if (inputs.focus) {
+    // A caller's focus is trusted workflow input, such as the Spec Kit pipeline's plan review or re-review.
     if (typeof inputs.focus !== "string" || inputs.focus.length > maxFocus) throw new Error("Invalid review focus");
     data.focus = inputs.focus.trim();
+  }
+  if (Number(inputs.comment)) {
+    data.command = await maintainerCommand(github, repo, Number(inputs.comment), pr.number);
+    const argument = data.command.argument;
+    data.focus = data.focus && argument ? `${data.focus}\n\nThe maintainer's focus for this run: ${argument}` :
+      data.focus || argument;
   }
   const files = await github.paginate(github.rest.pulls.listFiles, { ...repo, pull_number: pr.number, per_page: 100 });
   const changed = files.map((file) => ({
@@ -127,6 +137,16 @@ async function prepare({ github, context, inputs }) {
   return data;
 }
 
+// A calling workflow may limit the review to some dimensions, such as the Spec Kit pipeline's plan review.
+function reviewScope(value) {
+  if (value === undefined || value === "") return reviewDimensions;
+  const names = typeof value === "string" ? value.split(/[\s,]+/).filter(Boolean) : [];
+  if (!names.length || new Set(names).size !== names.length || names.some((name) => !reviewDimensions.includes(name))) {
+    throw new Error(`Invalid review dimensions; choose from ${reviewDimensions.join(", ")}`);
+  }
+  return reviewDimensions.filter((name) => names.includes(name));
+}
+
 function validateResult(draft, context) {
   if (!recommendations.includes(draft.recommendation)) throw new Error("Invalid recommendation");
   if (typeof draft.summary !== "string" || !draft.summary.trim() || draft.summary.length > 200 ||
@@ -136,11 +156,12 @@ function validateResult(draft, context) {
   if (!Array.isArray(draft.findings) || draft.findings.length > maxFindings) {
     throw new Error(`Findings must list at most ${maxFindings} items`);
   }
+  const scope = context.dimensions || reviewDimensions;
   const status = draft.dimensions;
   if (!status || typeof status !== "object" || Array.isArray(status) ||
       Object.keys(status).length !== reviewDimensions.length ||
-      reviewDimensions.some((name) => !["assessed", "failed"].includes(status[name]))) {
-    throw new Error("Every analysis dimension must be reported as assessed or failed");
+      reviewDimensions.some((name) => !(scope.includes(name) ? ["assessed", "failed"] : ["skipped"]).includes(status[name]))) {
+    throw new Error("Every analysis dimension must be reported as assessed or failed, and one outside this review as skipped");
   }
   const failed = reviewDimensions.filter((name) => status[name] === "failed");
   const items = draft.findings.map((finding) => {
@@ -151,6 +172,8 @@ function validateResult(draft, context) {
   });
   const counts = Object.fromEntries(severities.map((severity) =>
     [severity, items.filter((item) => item.severity === severity).length]));
+  const outside = items.find((item) => reviewDimensions.includes(item.dimension) && !scope.includes(item.dimension));
+  if (outside) throw new Error(`Finding ${outside.id} names a dimension outside this review: ${outside.dimension}`);
   const state = validateReviewState({
     run: context.run, pr: context.pr, head: context.head, recommendation: draft.recommendation,
     summary: draft.summary.trim(), findings: counts, failed, items,
@@ -170,6 +193,8 @@ function validateResult(draft, context) {
   const body = draft.body;
   if (typeof body !== "string" || !body.startsWith(`${heading}\n`)) throw new Error("The review body must start with the review heading");
   if (body.length > maxBody) throw new Error(`The review body exceeds ${maxBody} characters`);
+  const sections = ["### Executive Summary", "### Top Findings",
+    ...scope.map((name) => dimensionSections[name]).filter(Boolean), "### Recommendation"];
   for (const section of sections) {
     if (!body.includes(`\n${section}`)) throw new Error(`The review body is missing the "${section}" section`);
   }
@@ -216,7 +241,7 @@ async function verify({ github, context, comment }) {
 
 async function statusComments(github, repo, number) {
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
-  return comments.filter((entry) => actionsBot(entry.user) && (entry.body || "").includes(statusMarker) &&
+  return comments.filter((entry) => pipelineBot(entry.user) && (entry.body || "").includes(statusMarker) &&
     !(entry.body || "").includes("<!-- gh-aw-agentic-workflow:"));
 }
 

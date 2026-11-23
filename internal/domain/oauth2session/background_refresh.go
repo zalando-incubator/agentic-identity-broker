@@ -147,7 +147,7 @@ func (p *backgroundRefresher) refresh(key string, principal id.Principal, servic
 	if flight.client.known {
 		attrs = append(attrs, slog.Bool("public_client", flight.client.public))
 	}
-	p.service.logger.LogAttrs(refreshCtx, level, "oauth2_refresh_failed", attrs...)
+	p.service.logger.LogAttrs(refreshCtx, level, "oauth2 session refresh failed", attrs...)
 }
 
 func (p *backgroundRefresher) continueSharedRefresh(ctx context.Context, principal id.Principal, serviceID id.ServiceID, lookahead time.Duration, flight refreshFlightResult) (refreshFlightResult, error) {

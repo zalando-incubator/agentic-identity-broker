@@ -13,6 +13,8 @@ const marker = "## Spec Kit result";
 const directory = "/tmp/gh-aw/speckit";
 const approvalKinds = { api: "API", adr: "ADR", decision: "Decision" };
 const approvalMarker = /^<!-- speckit-approval: (\{.*\}) -->$/m;
+const clarificationMarker = /^<!-- speckit-clarification: (\{.*\}) -->$/m;
+const maxClarifications = 5;
 // Safe outputs strip HTML comments from agent comments, so the review state travels in a visible JSON block.
 const reviewMarker = "## Architecture review result";
 const proposalMarker = /^<!-- speckit-proposal: (\{.*\}) -->$/m;
@@ -20,25 +22,32 @@ const applyBox = "**Apply the selected items**";
 const statusMarker = "<!-- speckit-status -->";
 const commitNotice = /^Commit pushed: \[`([0-9a-f]{7,40})`\]\((https:\/\/github\.com\/\S+?\/commit\/[0-9a-f]{40})\)/;
 const blocking = ["CRITICAL", "HIGH"];
-const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "analyze", "remediate", "reanalyze",
+const pipeline = ["route", "specify", "clarify", "clarified", "plan", "tasks", "planreview", "analyze", "remediate", "reanalyze",
   "implement", "verify", "approvals", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals", "tests"];
-const reviewJobs = ["review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
+const reviewJobs = ["planreview", "review", "reviewed", "fix", "verified", "apply", "rereview", "proposals"];
+// The pipeline owns this block of the PR description. The markers keep their first name for existing PRs.
+const sectionMarkers = ["<!-- speckit-stage -->", "<!-- /speckit-stage -->"];
+const planning = ["plan", "tasks", "analyze", "remediate", "reanalyze"];
 const labels = {
   clarify: "Clarify", plan: "Plan", tasks: "Tasks", analyze: "Analyze", remediate: "Remediate",
   reanalyze: "Reanalyze", implement: "Implement", "remediate-review": "Fix", "apply-review": "Apply",
 };
 const running = {
   clarify: "Clarifying the specification", plan: "Planning", implement: "Implementing",
-  review: "Reviewing the architecture", apply: "Applying the approved remediation",
+  review: "Reviewing the architecture", planreview: "Reviewing the plan's architecture",
+  apply: "Applying the approved remediation",
 };
 const reviewDimensions = ["ubiquitous-language", "hexagonal-compliance", "adr-compliance", "data-authority",
-  "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability"];
+  "coupling-cohesion", "otel-parity", "e2e-test-quality", "maintainability", "behavioral-probe"];
 const reviewSeverities = { RED: "🔴", YELLOW: "🟡", GREEN: "🟢" };
 const reviewRecommendations = { APPROVE: "✅", DISCUSS: "🟡", "REQUEST CHANGES": "🔴" };
 const reviewBuckets = ["auto", "proposed", "question", "note"];
 const maxReviewItems = 7;
 const maxRepairs = 3;
 const testsWorkflow = ".github/workflows/container-tests.yml";
+// The phase workflows push only to pull requests whose title starts with titlePrefix.
+const titlePrefix = "[spec-driven] ";
+const legacyTitlePrefix = "[Spec Kit] ";
 const readRetryDelays = [1000, 4000, 9000];
 const retryingReads = Symbol.for("agentic-identity-broker.retryReads");
 
@@ -119,6 +128,21 @@ function validateResult(result) {
       approvalLocation(item.location);
     }
   }
+  if (result.clarifications !== undefined) {
+    if (result.phase !== "clarify" || !Array.isArray(result.clarifications) ||
+        result.clarifications.length > maxClarifications ||
+        (!["complete", "blocked"].includes(result.status) && result.clarifications.length)) {
+      throw new Error("Invalid clarifications");
+    }
+    for (const item of result.clarifications) {
+      if (!reviewText(item?.question, 300) || !reviewText(item.answer, 300) || !Array.isArray(item.alternatives) ||
+          !item.alternatives.length || item.alternatives.length > 4 ||
+          item.alternatives.some((alternative) => !reviewText(alternative?.option, 200))) {
+        throw new Error("Invalid clarification");
+      }
+      for (const entry of [item, ...item.alternatives]) approvalLocation(entry.location);
+    }
+  }
   if (result.repair !== undefined && (result.phase !== "implement" || !Number.isSafeInteger(result.repair) ||
       result.repair < 1 || result.repair > maxRepairs)) {
     throw new Error("Invalid repair round");
@@ -135,9 +159,11 @@ function validateResult(result) {
 }
 
 // A maintainer reviews the first specification before any planning. Once a plan exists, a completed
-// clarification refreshes the plan, tasks, and analysis without another command.
+// clarification refreshes the plan, tasks, and analysis without another command, unless it answered
+// questions itself: those answers wait for the maintainer's 👍.
 function continuesToPlan(result) {
-  return result.phase === "clarify" && result.status === "complete" && Boolean(result.files[`${result.feature}/plan.md`]);
+  return result.phase === "clarify" && result.status === "complete" && Boolean(result.files[`${result.feature}/plan.md`]) &&
+    !result.clarifications?.length;
 }
 
 function approvalLocation(location) {
@@ -151,17 +177,20 @@ function approvalLocation(location) {
   return { path: match[1], start, end };
 }
 
-function actionsBot(user) {
-  return user?.login === "github-actions[bot]" && user?.type === "Bot";
+// The pipeline opens its PRs and posts its comments as the Agentic Workflows App's bot. Only an App's own bot has
+// a [bot] login, so any other App stays untrusted. The login identifies it because the single-comment endpoint
+// omits performed_via_github_app. github-actions[bot] authored PRs and comments created before the switch.
+// The repository names its own App, so a fork trusts the fork's App and not this repository's.
+function pipelineApp() {
+  const slug = process.env.AGENTIC_WORKFLOWS_APP_SLUG;
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug || "")) {
+    throw new Error("Set the AGENTIC_WORKFLOWS_APP_SLUG Actions variable to the Agentic Workflows App's slug");
+  }
+  return `${slug}[bot]`;
 }
 
-// Workers that push publish through the Agentic Workflows App so the push starts CI, which makes that App's
-// bot the author of their comments. Only an App's own bot has a [bot] login, so any other App stays untrusted.
-// The login identifies it because the single-comment endpoint omits performed_via_github_app.
-const workerApp = "zalando-incubator-agent-workflows[bot]";
-
-function workerBot(comment) {
-  return actionsBot(comment.user) || comment.user?.login === workerApp && comment.user?.type === "Bot";
+function pipelineBot(user) {
+  return [pipelineApp(), "github-actions[bot]"].includes(user?.login) && user?.type === "Bot";
 }
 
 function parseCommand(body) {
@@ -177,7 +206,7 @@ function parseResult(comment) {
   const body = comment.body || "";
   const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/\d+$/);
   const sections = body.split(marker);
-  if (!workerBot(comment) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
+  if (!pipelineBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2 ||
       sections.length > 2) return null;
   const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/(speckit-(?:phase|plan|analyze|implement|remediate-review|apply-review)) -->$/m);
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
@@ -274,10 +303,20 @@ function managedPR(pr, repo, state = "open") {
   const related = (pr.body || "").split(/\r?\n/).find((line) => line.startsWith(relatedPrefix));
   const issue = pr.body?.match(/<!-- speckit-issue: (\d+) -->/) ||
     related?.slice(relatedPrefix.length).match(/^(\d+)$/);
-  return pr.state === state && pr.draft && issue && actionsBot(pr.user) &&
+  return pr.state === state && pr.draft && issue && pipelineBot(pr.user) &&
     pr.head.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.base.repo?.full_name === `${repo.owner}/${repo.repo}` &&
     pr.head.ref === `speckit/issue-${issue[1]}` ? Number(issue[1]) : 0;
+}
+
+async function tracked(github, repo, ref, name) {
+  try {
+    await github.rest.repos.getContent({ ...repo, ref, path: name });
+    return true;
+  } catch (error) {
+    if (error.status === 404) return false;
+    throw error;
+  }
 }
 
 async function readBlob(github, repo, ref, name, optional = false) {
@@ -359,12 +398,34 @@ async function failedJobs(github, repo, id) {
 
 // The container tests run the pushed code in the PR branch's own context, without privileges or secrets;
 // this pipeline only reads their outcome and test reports as data.
-async function testFailure(github, repo, pr, id) {
+async function testRun(github, repo, pr, id) {
   const { data: run } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: id });
-  if (run.path?.split("@")[0] !== testsWorkflow || run.event !== "workflow_dispatch" || run.conclusion !== "failure" ||
+  if (run.path?.split("@")[0] !== testsWorkflow || run.event !== "workflow_dispatch" ||
       run.head_branch !== pr.head.ref || run.head_sha !== pr.head.sha ||
       run.head_repository?.full_name !== `${repo.owner}/${repo.repo}`) return null;
+  return run;
+}
+
+async function testFailure(github, repo, pr, id) {
+  const run = await testRun(github, repo, pr, id);
+  if (run?.conclusion !== "failure") return null;
   return { run: run.id, url: run.html_url, head: run.head_sha, jobs: await failedJobs(github, repo, run.id) };
+}
+
+// Green tests end the sequence only once an architecture review has followed the latest reviewed code change:
+// the implementation, a review fix, or an applied proposal. Repairs of test failures start no review.
+function reviewedImplementation(entries, comments) {
+  const [changed] = entries.filter(({ result }) => codePhases.includes(result.phase) && !result.repair)
+    .sort((a, b) => b.comment.id - a.comment.id);
+  return Boolean(changed) && comments.some((comment) => comment.id > changed.comment.id && parseReview(comment));
+}
+
+// The REST API cannot change a pull request's draft state.
+async function markReady(github, pr) {
+  await github.graphql(
+    "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }",
+    { id: pr.node_id },
+  );
 }
 
 // A repair answers the container tests only on the commit that the latest code phase (implementation, review fix, or
@@ -426,11 +487,17 @@ async function routeRepair(github, repo, payload) {
   if (!number) return { action: "noop" };
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: number });
   const issue = managedPR(pr, repo);
-  if (!issue || !await testFailure(github, repo, pr, run.id)) return { action: "noop" };
+  const tests = issue ? await testRun(github, repo, pr, run.id) : null;
+  if (!["failure", "success"].includes(tests?.conclusion)) return { action: "noop" };
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
   const entries = comments.map((comment) => ({ comment, result: parseResult(comment) })).filter((entry) => entry.result);
   const repair = await repairs(github, repo, pr, entries, comments);
   if (!repair) return { action: "noop" };
+  // Passing tests on the commit of the last code phase hand the reviewed implementation to human review.
+  if (tests.conclusion === "success") {
+    return reviewedImplementation(entries, comments) ?
+      { action: "ready", issue, pr: number, comment: 0, tests: run.id, head: pr.head.sha } : { action: "noop" };
+  }
   const routed = { issue, pr: number, comment: 0, validation: run.id, round: repair.round };
   if (repair.round > maxRepairs) return { action: "exhausted", ...routed };
   try {
@@ -481,7 +548,7 @@ async function route({ github, context }) {
     eventName === "issue_comment" && payload.action === "created" ? payload.comment : null;
   const command = source?.user?.type === "User" && source.user.login === context.actor && parseCommand(source.body);
   // A maintainer ticking boxes in the remediation proposal edits the bot's comment; the sender is the maintainer.
-  const isEdit = eventName === "issue_comment" && payload.action === "edited" && actionsBot(payload.comment?.user) &&
+  const isEdit = eventName === "issue_comment" && payload.action === "edited" && pipelineBot(payload.comment?.user) &&
     payload.sender?.type === "User" && payload.sender.login === context.actor &&
     proposalMarker.test(payload.comment.body || "");
   if ((!isIssue && !isLabel && !command && !isEdit) ||
@@ -508,7 +575,8 @@ async function route({ github, context }) {
   const entries = await reports(github, repo, number);
   const comment = command && !isReview ? payload.comment.id : 0;
   const routed = (action) => ({ action, issue, pr: number, comment, ...(isReview ? { review: payload.review.id } : {}) });
-  if (command?.phase === "architecture-review") return routed("review");
+  // Before implementation there is only the plan to review, so the review takes the planning focus.
+  if (command?.phase === "architecture-review") return routed(current(entries).implement ? "review" : "planreview");
   if (command?.phase === "clarify") {
     const pending = latest(entries, ["clarify"]);
     if (!isReview && pending?.result.status === "waiting") {
@@ -522,6 +590,7 @@ async function route({ github, context }) {
     await implementationGate(github, repo, pr, entries);
   } else {
     requireSpecification(entries, (await artifacts(github, repo, pr)).hashes);
+    await clarification(github, repo, pr, entries);
   }
   return routed(action);
 }
@@ -548,6 +617,14 @@ async function prepare({ github, context, inputs }) {
     if (!phases.includes(inputs.phase)) throw new Error("Unsupported Spec Kit phase");
     const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(inputs.pr) });
     if (!managedPR(pr, context.repo)) throw new Error("Only managed, same-repository draft PRs are eligible");
+    if (!pr.title?.startsWith(titlePrefix)) {
+      throw new Error(`Rename the pull request title to start with \`${titlePrefix.trim()}\`, then repeat the command`);
+    }
+    // The agent checks out the head, and git replaces ignored files there with tracked ones.
+    if (await tracked(github, context.repo, pr.head.sha, ".pi")) {
+      throw new Error("The pull request tracks files under `.pi/`, which would replace the installed skills and " +
+        "sub-agents. Remove them from the branch, then repeat the command");
+    }
     const current = await artifacts(github, context.repo, pr);
     const entries = await reports(github, context.repo, pr.number);
     const previous = {
@@ -557,6 +634,8 @@ async function prepare({ github, context, inputs }) {
     }[inputs.phase];
     if (inputs.phase === "plan") {
       data.previous = requireSpecification(entries, current.hashes);
+      const accepted = await clarification(github, context.repo, pr, entries);
+      if (accepted) data.clarification = accepted;
     } else if (previous) {
       const upstream = latest(entries, previous);
       data.previous = upstream?.result;
@@ -577,6 +656,10 @@ async function prepare({ github, context, inputs }) {
       }
       if (reviewPhases.includes(inputs.phase)) {
         data.review = await reviewContext(github, context, pr, inputs);
+      }
+      if (inputs.phase === "remediate") {
+        const review = await planReviewContext(github, context, pr);
+        if (review) data.review = review;
       }
       if (repairing) {
         const comments = await github.paginate(github.rest.issues.listComments,
@@ -654,7 +737,7 @@ function quoted(text) {
 // trusted jobs below post without it, so an agent can never author an approval or status comment.
 async function botComments(github, repo, number, matches) {
   const comments = await github.paginate(github.rest.issues.listComments, { ...repo, issue_number: number, per_page: 100 });
-  return comments.filter((entry) => actionsBot(entry.user) && matches(entry.body || "") &&
+  return comments.filter((entry) => pipelineBot(entry.user) && matches(entry.body || "") &&
     !(entry.body || "").includes("<!-- gh-aw-agentic-workflow:"));
 }
 
@@ -731,22 +814,122 @@ async function approval(github, repo, pr, feature, reanalysis, entries) {
   }
   const record = { url: published.html_url, items: state.items, approvers: [] };
   if (!state.items) return record;
-  const since = Date.parse(published.updated_at);
-  const reactions = await github.paginate(github.rest.reactions.listForIssueComment,
-    { ...repo, comment_id: published.id, per_page: 100 });
-  for (const reaction of reactions) {
-    if (!["+1", "-1"].includes(reaction.content) || reaction.user?.type !== "User" ||
-        !(Date.parse(reaction.created_at) >= since) || !await maintainer(github, repo, reaction.user.login)) continue;
-    if (reaction.content === "-1") {
-      throw new Error(`Maintainer \`${reaction.user.login}\` reacted 👎 to ${published.html_url}. ` +
-        "Comment `/speckit-plan` with the requested change");
-    }
-    record.approvers.push({ login: reaction.user.login, at: reaction.created_at });
-  }
+  record.approvers = await signoffs(github, repo, published, "Comment `/speckit-plan` with the requested change");
   if (!record.approvers.length) {
     throw new Error(`Approval pending: a maintainer must react with 👍 to ${published.html_url}`);
   }
   return record;
+}
+
+// A maintainer's 👍 after the comment's last edit signs it off; any maintainer's 👎 vetoes it.
+async function signoffs(github, repo, published, change) {
+  const since = Date.parse(published.updated_at);
+  const reactions = await github.paginate(github.rest.reactions.listForIssueComment,
+    { ...repo, comment_id: published.id, per_page: 100 });
+  const approvers = [];
+  for (const reaction of reactions) {
+    if (!["+1", "-1"].includes(reaction.content) || reaction.user?.type !== "User" ||
+        !(Date.parse(reaction.created_at) >= since) || !await maintainer(github, repo, reaction.user.login)) continue;
+    if (reaction.content === "-1") {
+      throw new Error(`Maintainer \`${reaction.user.login}\` reacted 👎 to ${published.html_url}. ${change}`);
+    }
+    approvers.push({ login: reaction.user.login, at: reaction.created_at });
+  }
+  return approvers;
+}
+
+// The clarify worker answers its own questions so the specification stays complete. The clarification comment
+// lists those answers, and a maintainer's 👍 on it accepts them before planning builds on them.
+async function publishClarifications({ github, context, comment }) {
+  retryReads(github);
+  const { repo } = context;
+  const { posted, result, pr, current } = await publishedResult(github, context, comment, "clarify");
+  const items = result.status === "complete" ? result.clarifications || [] : [];
+  const lengths = {};
+  const link = async (text, location) => {
+    const { path: name, start, end } = approvalLocation(location);
+    if (!name.startsWith(`${current.feature}/`)) {
+      throw new Error(`Clarification locations must point into ${current.feature}/: ${name}`);
+    }
+    lengths[name] ??= (await readBlob(github, repo, pr.head.sha, name)).text.split("\n").length;
+    if (end > lengths[name]) throw new Error(`Clarification location is past the end of ${name}`);
+    const anchor = end === start ? `L${start}` : `L${start}-L${end}`;
+    const label = linkLabel(text);
+    return `[${label}](https://github.com/${repo.owner}/${repo.repo}/blob/${pr.head.sha}/${name}#${anchor})`;
+  };
+  const rows = [];
+  for (const [index, item] of items.entries()) {
+    const alternatives = [];
+    for (const entry of item.alternatives) alternatives.push(await link(entry.option, entry.location));
+    rows.push(`| Q${index + 1} ${cell(item.question)} | ${await link(item.answer, item.location)} | ${alternatives.join(" · ")} |`);
+  }
+  const stale = await botComments(github, repo, pr.number, (body) => clarificationMarker.test(body));
+  const removeStale = async () => {
+    for (const entry of stale) await github.rest.issues.deleteComment({ ...repo, comment_id: entry.id });
+  };
+  // Without a replacement, the old comment stays while the specification still holds answers awaiting a 👍.
+  if (!items.length) {
+    if (!(await proposedAnswers(github, repo, pr.head.sha, current.feature)).length) await removeStale();
+    return null;
+  }
+  const state = { clarify: posted.id, head: pr.head.sha, items: items.length };
+  const answers = items.length === 1 ? "the 1 recommended answer" : `the ${items.length} recommended answers`;
+  const body = [
+    "## Spec Kit clarification", "",
+    `React with 👍 to accept ${answers} below for commit \`${pr.head.sha.slice(0, 7)}\`. Then comment \`/speckit-plan\`.`, "",
+    "| Question | Recommended answer | Alternatives |",
+    "| --- | --- | --- |",
+    ...rows, "",
+    "To choose another answer, comment `/speckit-clarify` with your answer. " +
+      "The pipeline updates the specification and replaces this comment.",
+    "", `<!-- speckit-clarification: ${JSON.stringify(state)} -->`, "",
+  ];
+  const { data } = await github.rest.issues.createComment({ ...repo, issue_number: pr.number, body: body.join("\n") });
+  await removeStale();
+  return data;
+}
+
+// Lines of the specification's Clarifications section that still mark an answer "(Proposed)", awaiting a 👍.
+async function proposedAnswers(github, repo, ref, feature) {
+  const lines = (await readBlob(github, repo, ref, `${feature}/spec.md`)).text.split("\n");
+  const start = lines.findIndex((line) => /^##\s+Clarifications\b/.test(line));
+  const proposed = [];
+  for (let index = start + 1; start >= 0 && index < lines.length && !/^##\s/.test(lines[index]); index++) {
+    if (lines[index].includes("(Proposed)")) proposed.push(index + 1);
+  }
+  return proposed;
+}
+
+async function clarification(github, repo, pr, entries) {
+  const clarify = latest(entries, ["clarify"]);
+  if (!clarify) return null;
+  const answers = clarify.result.clarifications || [];
+  // A later clarification may list fewer answers while the specification still proposes earlier ones.
+  const proposed = await proposedAnswers(github, repo, pr.head.sha, clarify.result.feature);
+  if (proposed.length > answers.length) {
+    const spec = `${clarify.result.feature}/spec.md`;
+    throw new Error(`${spec} still marks ${proposed.length} answer(s) Proposed at line(s) ${proposed.join(", ")}, ` +
+      `but the latest clarification lists ${answers.length}. Comment \`/speckit-clarify\` to publish them again`);
+  }
+  if (!answers.length) return null;
+  const [published] = (await botComments(github, repo, pr.number, (body) => clarificationMarker.test(body)))
+    .sort((a, b) => b.id - a.id);
+  if (!published) throw new Error("No clarification comment exists yet. Comment `/speckit-clarify` to publish one");
+  let state;
+  try {
+    state = JSON.parse(published.body.match(clarificationMarker)[1]);
+  } catch {
+    throw new Error(`The clarification comment ${published.html_url} is malformed. Comment \`/speckit-clarify\` to replace it`);
+  }
+  if (state.clarify !== clarify.comment.id) {
+    throw new Error(`The clarification comment ${published.html_url} belongs to an earlier clarification. ` +
+      "Comment `/speckit-clarify` to replace it");
+  }
+  const approvers = await signoffs(github, repo, published, "Comment `/speckit-clarify` with your answer");
+  if (!approvers.length) {
+    throw new Error(`Clarification pending: a maintainer must react with 👍 to ${published.html_url}`);
+  }
+  return { url: published.html_url, items: answers.length, answers, approvers };
 }
 
 function runURL(repo, id) {
@@ -802,7 +985,7 @@ function validateReviewState(state) {
 function parseReview(comment) {
   const body = comment.body || "";
   const issue = comment.issue_url?.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/issues\/(\d+)$/);
-  if (!actionsBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2) return null;
+  if (!pipelineBot(comment.user) || !issue || body.split("<!-- gh-aw-workflow-call-id:").length !== 2) return null;
   const footer = body.match(/^<!-- gh-aw-workflow-call-id: ([^/\s]+)\/([^/\s]+)\/architecture-review -->$/m);
   if (!footer || footer[1] !== issue[1] || footer[2] !== issue[2]) return null;
   const sections = body.split(reviewMarker);
@@ -824,7 +1007,7 @@ function latestReview(comments, head) {
 
 function parseProposal(comment) {
   const body = comment.body || "";
-  if (!actionsBot(comment.user) || body.includes("<!-- gh-aw-agentic-workflow:") ||
+  if (!pipelineBot(comment.user) || body.includes("<!-- gh-aw-agentic-workflow:") ||
       body.match(new RegExp(proposalMarker.source, "gm"))?.length !== 1) return null;
   let state;
   try {
@@ -898,6 +1081,15 @@ async function reviewContext(github, context, pr, inputs) {
   return { url: entry.comment.html_url, items };
 }
 
+// Planning reviews the plan beside the analysis, so remediation applies both. A review from another run or
+// commit, or a failed review, leaves remediation to the analysis findings.
+async function planReviewContext(github, context, pr) {
+  const comments = await github.paginate(github.rest.issues.listComments, { ...context.repo, issue_number: pr.number, per_page: 100 });
+  const entry = latestReview(comments, pr.head.sha);
+  if (!entry || entry.review.run.split("/")[0] !== String(context.runId)) return undefined;
+  return { url: entry.comment.html_url, recommendation: entry.review.recommendation, items: entry.review.items };
+}
+
 // Remediation changes code, so it needs a completed implementation, remediation, or apply phase on the PR.
 async function remediable({ github, context, pr }) {
   retryReads(github);
@@ -964,6 +1156,11 @@ function cell(text) {
   return quoted(text).replace(/[\\|]/g, "\\$&");
 }
 
+// A link label inside a table cell escapes the cell's characters and the link's brackets.
+function linkLabel(text) {
+  return quoted(text).replace(/[\\|[\]]/g, "\\$&");
+}
+
 function outcome(result) {
   if (result.status === "blocked") return "⛔";
   if (result.status === "waiting") return "⏸";
@@ -1012,25 +1209,42 @@ function progress(stages, { active, approve, review }) {
 function agentComments(comments, repo, run) {
   const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const footer = new RegExp(`^> Generated by \\[[^\\]\\n]+\\]\\(${escape(runURL(repo, run))}\\)`, "m");
-  return comments.filter((entry) => workerBot(entry) && footer.test(entry.body || "") &&
+  return comments.filter((entry) => pipelineBot(entry.user) && footer.test(entry.body || "") &&
     !(entry.body || "").includes(statusMarker) && !approvalMarker.test(entry.body || "") &&
     !(entry.body || "").includes(reviewMarker));
 }
 
 // The architecture review and its remediation run in the same pipeline; their comments are the workers' own.
+// Planning includes its own review, whose findings remediation applies to the plan rather than the code.
 function reviewLines(needs, repo, number) {
-  const final = ["rereview", "review"].map((name) => needs[name]).find((job) => job && job.result !== "skipped");
+  const [name, final] = ["rereview", "review", "planreview"].map((job) => [job, needs[job]])
+    .find(([, job]) => job && job.result !== "skipped") || [];
   if (!final) return [];
+  const subject = name === "planreview" ? "Architecture review of the plan" : "Architecture review";
   const url = (id) => `https://github.com/${repo.owner}/${repo.repo}/pull/${number}#issuecomment-${id}`;
   const id = Number(final.outputs?.comment_id);
   if (final.result !== "success" || !id) {
-    return ["", "Architecture review did not complete. Comment `/architecture-review` to run it again."];
+    const planning = name === "planreview" && needs.remediate?.result === "success";
+    return ["", `${subject} did not complete${planning ? ", so remediation applied only the analysis findings" : ""}. ` +
+      "Comment `/architecture-review` to run it again."];
   }
   const proposals = needs.proposals?.result === "success" ? needs.proposals.outputs || {} : {};
   const recommendation = Object.hasOwn(reviewRecommendations, proposals.recommendation) ? proposals.recommendation : null;
-  const lines = ["", `Architecture review${recommendation ? `: **${recommendation}**` : ""}. [Read the review](${url(id)}).`];
+  const lines = ["", `${subject}${recommendation ? `: **${recommendation}**` : ""}. [Read the review](${url(id)}).`];
   const proposal = Number(proposals.comment_id);
-  if (proposals.remediable === "false") {
+  // In a planning run, remediation already applied the plan review's findings; a standalone review only advises.
+  const applied = name === "planreview" && needs.remediate?.result === "success";
+  if (applied) {
+    lines.push("", recommendation === "APPROVE" ? "Nothing is left to remediate." :
+      "Remediation applied its findings to the plan; any consequential choice among them is on the approval comment.");
+    return lines;
+  }
+  if (name === "planreview") {
+    if (recommendation !== "APPROVE") {
+      lines.push("", "Apply its findings with `/speckit-plan [guidance]` before you approve; " +
+        "replanning reviews the plan again and remediates the findings.");
+    }
+  } else if (proposals.remediable === "false") {
     lines.push("", "Its findings are remediated after `/speckit-implement`, when the review runs again.");
   } else if (proposal) {
     lines.push("", `Decide the remaining items in the [remediation proposal](${url(proposal)}): tick each item to apply, ` +
@@ -1098,9 +1312,82 @@ async function publishStatus(github, repo, number, title, sections) {
 }
 
 // The latest review of the current commit gives the Review step its icon; an older review no longer counts.
+// Before implementation the current commit holds only the plan, so its review is not the Review step.
 function reviewIcon(state) {
-  const entry = state && latestReview(state.comments, state.pr.head.sha);
+  const entry = state?.stages.implement && latestReview(state.comments, state.pr.head.sha);
   return entry ? reviewRecommendations[entry.review.recommendation] : "○";
+}
+
+// The PR description tells a reader where the feature stands; a running phase marks its stage and resets later ones.
+function featureStage(state, active) {
+  const { stages } = state;
+  const blocked = (names) => names.some((phase) => stages[phase]?.result.status === "blocked");
+  const steps = [
+    ["Specified", stages.clarify ? outcome(stages.clarify.result) : "⏳"],
+    ["Planned", stages.reanalyze ? outcome(stages.reanalyze.result) : blocked(planning) ? "⛔" : "○"],
+    ["Implemented", stages.implement ? outcome(stages.implement.result) : "○"],
+    ["Reviewed", reviewIcon(state)],
+  ];
+  const at = { clarify: 0, plan: 1, planreview: 1, implement: 2, ...(stages.implement ? { review: 3, apply: 3 } : {}) }[active];
+  if (at !== undefined) steps.forEach((step, index) => {
+    if (index >= at) step[1] = index === at ? "⏳" : "○";
+  });
+  const focus = at ?? steps.findLastIndex(([, icon]) => icon !== "○");
+  return steps.map(([name, icon], index) => (index === focus ? `**${name} ${icon}**` : `${name} ${icon}`)).join(" › ");
+}
+
+function maintainerCommands() {
+  return [
+    "## Maintainer commands", "",
+    "Each command must start a new PR comment.", "",
+    "- After the automatic clarification, review the specification and the clarification comment's recommended answers. " +
+      "React with 👍 to accept them, or comment `/speckit-clarify <answer>` to choose another one. " +
+      "Then comment `/speckit-plan [guidance]`. The pipeline plans, writes tasks, reviews the plan's architecture, " +
+      "analyzes, and remediates the review and analysis findings on its own, then posts one approval comment " +
+      "listing the API changes, ADRs, and consequential decisions with links to them.",
+    "- React with 👍 to the approval comment to approve it, then comment `/speckit-implement [guidance]`. " +
+      "If the container tests then fail on the implementation's commit, a repair run starts automatically, " +
+      `up to ${maxRepairs} times per command. Once they pass after the architecture review and its fixes, ` +
+      "the pipeline marks the pull request ready for review and stops acting on it until it is a draft again.",
+    "- `/speckit-plan <change>` revises the specification and design and replaces the approval comment.",
+    "- `/speckit-clarify [focus]` revisits the specification. Once a plan exists, it also refreshes the plan " +
+      "and the approval comment.",
+    "- `/architecture-review [focus]` reviews the plan again before implementation, and the current commit after it. " +
+      "A review after implementation posts a remediation proposal: tick the items to apply, then tick " +
+      "**Apply the selected items**.",
+    "- Submit a review whose summary starts with `/speckit-clarify` or `/speckit-plan` to apply its inline comments " +
+      "in that phase.",
+  ];
+}
+
+// PRs opened before the pipeline owned the commands carry the specify agent's copy, which goes stale.
+function withoutAgentCommands(text) {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "## Maintainer commands");
+  if (start < 0) return text;
+  let end = start + 1;
+  while (end < lines.length && !/^(## |> Generated by |<!--)/.test(lines[end])) end++;
+  return [...lines.slice(0, start), ...lines.slice(end)].join("\n");
+}
+
+// Only this block of the description is the pipeline's; the agent-written summary and links stay as they are.
+async function publishSection(github, repo, pr, line) {
+  const [open, close] = sectionMarkers;
+  const section = [open, "## Feature stage", "", line, "", ...maintainerCommands(), close].join("\n");
+  const body = pr.body || "";
+  const start = body.indexOf(open);
+  const end = start >= 0 ? body.indexOf(close, start) : -1;
+  let next;
+  if (end >= 0) {
+    next = withoutAgentCommands(body.slice(0, start)) + section + withoutAgentCommands(body.slice(end + close.length));
+  } else {
+    const rest = withoutAgentCommands(body);
+    const lines = rest.split("\n");
+    const links = lines.findIndex((entry) => entry.startsWith("Related issue: "));
+    next = links >= 0 ? [...lines.slice(0, links), section, "", ...lines.slice(links)].join("\n") :
+      rest.trim() ? `${rest.trimEnd()}\n\n${section}\n` : `${section}\n`;
+  }
+  if (next !== body) await github.rest.pulls.update({ ...repo, pull_number: pr.number, body: next });
 }
 
 // The status comment replaces itself on every run, so the PR always ends with one summary of the phase and the next step.
@@ -1112,8 +1399,12 @@ async function announce({ github, context, needs }) {
   const action = created ? "clarify" : needs.route?.outputs?.action;
   if (!running[action] || !number || !await authorized(github, context, needs.route)) return null;
   const state = await pullRequestState(github, repo, number);
+  if (state) {
+    await migrateTitle(github, repo, state.pr);
+    await publishSection(github, repo, state.pr, featureStage(state, action));
+  }
   const approve = action === "implement" || state?.stages.implement ? "✅" : "○";
-  const active = action === "apply" ? "apply-review" : action === "review" ? undefined : action;
+  const active = action === "apply" ? "apply-review" : ["review", "planreview"].includes(action) ? undefined : action;
   const repair = Number(needs.route?.outputs?.validation);
   if (repair) {
     return publishStatus(github, repo, number,
@@ -1130,6 +1421,12 @@ async function announce({ github, context, needs }) {
     `Started by \`${context.actor}\`. Follow the [workflow run](${runURL(repo, context.runId)}).` +
       (queued ? " Commands posted now wait until this run finishes." : ""),
   ]]);
+}
+
+// Pull requests opened under the earlier prefix would otherwise lose their phases' pushes.
+async function migrateTitle(github, repo, pr) {
+  if (!pr.title?.startsWith(legacyTitlePrefix)) return;
+  await github.rest.pulls.update({ ...repo, pull_number: pr.number, title: titlePrefix + pr.title.slice(legacyTitlePrefix.length) });
 }
 
 async function readiness(github, repo, state, stage) {
@@ -1165,16 +1462,25 @@ async function report({ github, context, needs }) {
   const [last] = entries.filter((entry) => runOf(entry.result) === run).sort((a, b) => b.comment.id - a.comment.id);
   const jobs = Object.entries(needs).filter(([name]) => pipeline.includes(name))
     .sort(([a], [b]) => pipeline.indexOf(a) - pipeline.indexOf(b));
-  const error = jobs.find(([, job]) => job.result === "failure" && job.outputs?.error);
-  const failed = jobs.find(([, job]) => job.result === "failure");
+  // A failed plan review leaves the plan itself intact, so it is reported under the next step instead.
+  const stopping = jobs.filter(([name]) => name !== "planreview");
+  const error = stopping.find(([, job]) => job.result === "failure" && job.outputs?.error);
+  const failed = stopping.find(([, job]) => job.result === "failure");
+  // A phase that ran without publishing, such as one that exhausted its model budget or was cancelled.
+  const published = new Set(entries.filter((entry) => runOf(entry.result) === run).map((entry) => entry.result.phase));
+  const jobPhase = (name) => ({ fix: "remediate-review", apply: "apply-review" })[name] ?? name;
+  const silent = !failed && jobs.find(([name, job]) => phases.includes(jobPhase(name)) &&
+    ["success", "cancelled"].includes(job.result) && !published.has(jobPhase(name)));
   const stages = state?.stages || {};
   const tip = stages[phases.filter((phase) => stages[phase]).at(-1)];
   // A failed job without its own result must not be explained by a blocker from an earlier run.
-  const stopped = [last, failed ? null : tip].find((entry) => entry?.result.status === "blocked");
+  const stopped = [last, failed || silent ? null : tip].find((entry) => entry?.result.status === "blocked");
   const reanalysis = stages.reanalyze && !stages.implement ? stages.reanalyze : null;
   const findings = reanalysis ? reanalysis.result.findings.filter((finding) => blocking.includes(finding.severity)) : [];
   const details = (entry) => `Details: [${entry.result.phase} report](${entry.comment.html_url})`;
-  let title, lines, approve;
+  let title, lines;
+  // Implementation starts only after the approval gate passes.
+  let approve = route.outputs?.action === "implement" || stages.implement ? "✅" : undefined;
   if (error) {
     title = `⛔ Stopped in \`${error[0]}\``;
     lines = [quoted(error[1].outputs.error)];
@@ -1200,6 +1506,31 @@ async function report({ github, context, needs }) {
     lines = [reviewJobs.includes(failed[0]) ?
       "The architecture review step failed before publishing. Check the workflow run, then comment `/architecture-review` to run it again." :
       "The job failed before publishing a result. Check the workflow run, then repeat the command."];
+  } else if (silent) {
+    title = `⛔ \`${silent[0]}\` published no result`;
+    lines = ["The phase ended without publishing its report. It may still have pushed a commit: " +
+      "check the pull request's commits and the workflow run, then repeat the command."];
+  } else if (route.outputs?.action === "ready" && state.pr.head.sha !== route.outputs.head) {
+    title = "⏸ New commit since the tested one";
+    lines = [
+      `The [container tests](${runURL(repo, Number(route.outputs.tests))}) passed on ` +
+        `\`${String(route.outputs.head).slice(0, 7)}\`, but the pull request now ends at \`${state.pr.head.sha.slice(0, 7)}\`. ` +
+        "It stays a draft until the container tests pass on the new commit.",
+    ];
+  } else if (route.outputs?.action === "ready") {
+    const tests = runURL(repo, Number(route.outputs.tests));
+    try {
+      await markReady(github, state.pr);
+      title = "✅ Ready for review";
+      lines = [
+        `The [container tests](${tests}) passed on \`${state.pr.head.sha.slice(0, 7)}\`, the last commit of the pipeline's ` +
+          "implementation and review fixes, so the pull request is now ready for review.",
+        "", "The pipeline acts only on draft pull requests. Convert this one back to a draft to use its commands again.",
+      ];
+    } catch (error) {
+      title = "⛔ Could not mark the pull request ready for review";
+      lines = [quoted(error.message), "", `The [container tests](${tests}) passed. Mark the pull request ready for review yourself.`];
+    }
   } else if (findings.length) {
     title = `⚠️ ${findings.length} blocking finding${findings.length === 1 ? "" : "s"}`;
     lines = [
@@ -1215,7 +1546,8 @@ async function report({ github, context, needs }) {
     lines = [
       "Container tests run on the pushed commit. If they fail, a repair run starts automatically, " +
         `up to ${maxRepairs} times after each \`/speckit-implement\`.`,
-      "When CI is green, review the changes, then mark the pull request ready for review.", "", details(stages.implement),
+      "When they pass after the architecture review, the pipeline marks the pull request ready for review.", "",
+      details(stages.implement),
     ];
   } else if (reanalysis) {
     ({ title, lines, icon: approve } = await readiness(github, repo, state, reanalysis));
@@ -1224,9 +1556,18 @@ async function report({ github, context, needs }) {
     lines = ["Answer the questions with `/speckit-clarify <answers>`.", "", details(stages.clarify)];
   } else if (stages.clarify && !stages.plan) {
     title = "👀 Specification ready for review";
+    const answers = stages.clarify.result.clarifications?.length || 0;
+    const [card] = state.comments.filter((entry) => pipelineBot(entry.user) && clarificationMarker.test(entry.body || "") &&
+      !(entry.body || "").includes("<!-- gh-aw-agentic-workflow:")).sort((a, b) => b.id - a.id);
     lines = [
-      `Review \`${stages.clarify.result.feature}/spec.md\`, then comment \`/speckit-plan [guidance]\` to plan, ` +
-        "or `/speckit-clarify <change>` to revise the specification.", "", details(stages.clarify),
+      answers && card ?
+        `Review \`${stages.clarify.result.feature}/spec.md\` and the ` +
+          `${answers === 1 ? "1 recommended answer" : `${answers} recommended answers`} in the ` +
+          `[clarification comment](${card.html_url}): react with 👍 to accept ${answers === 1 ? "it" : "them"}, ` +
+          "then comment `/speckit-plan [guidance]`. To choose another answer, comment `/speckit-clarify <answer>`." :
+        `Review \`${stages.clarify.result.feature}/spec.md\`, then comment \`/speckit-plan [guidance]\` to plan, ` +
+          "or `/speckit-clarify <change>` to revise the specification.",
+      "", details(stages.clarify),
     ];
   } else {
     title = "Waiting for a command";
@@ -1240,6 +1581,7 @@ async function report({ github, context, needs }) {
     earlierRuns(entries, repo, run),
     [`[Workflow run](${runURL(repo, run)})`],
   ]);
+  if (state) await publishSection(github, repo, state.pr, featureStage(state));
   // The status comment now summarizes this run, so its agent comments are folded but stay readable and parseable.
   const unfolded = [];
   for (const entry of agentComments(state?.comments || [], repo, run)) {
@@ -1300,6 +1642,23 @@ function writeResult() {
   if (analysis && !Array.isArray(draft.approvals)) {
     throw new Error("An analysis must list its approval items, even when there are none");
   }
+  if (context.phase === "clarify" && !Array.isArray(draft.clarifications)) {
+    throw new Error("A clarification must list the questions it answered, even when there are none");
+  }
+  const clarifications = context.phase === "clarify" ? draft.clarifications.map((item) => ({
+    question: item?.question, answer: item?.answer, location: item?.location,
+    alternatives: Array.isArray(item?.alternatives) ?
+      item.alternatives.map((entry) => ({ option: entry?.option, location: entry?.location })) : item?.alternatives,
+  })) : [];
+  for (const item of clarifications) {
+    for (const entry of [item, ...(Array.isArray(item.alternatives) ? item.alternatives : [])]) {
+      const { path: name, end } = approvalLocation(entry.location);
+      if (!name.startsWith(`${feature}/`)) throw new Error(`Clarification locations must be inside ${feature}/: ${entry.location}`);
+      if (!fs.existsSync(name) || localFile(name).split("\n").length < end) {
+        throw new Error(`Clarification location does not exist: ${entry.location}`);
+      }
+    }
+  }
   const approvals = analysis ? draft.approvals.map((item) => ({
     kind: item?.kind, title: item?.title, location: item?.location,
   })) : [];
@@ -1317,6 +1676,7 @@ function writeResult() {
     summary: draft.summary.trim(),
     ...(context.validation ? { repair: context.validation.round } : {}),
     ...(analysis ? { approvals } : {}),
+    ...(context.phase === "clarify" ? { clarifications } : {}),
     ...(draft.status === "blocked" ? { next_step: draft.next_step } : {}),
   });
   if (typeof draft.report !== "string" || !draft.report.trim()) throw new Error("A phase report is required");
@@ -1356,9 +1716,10 @@ function selectFeature() {
 }
 
 module.exports = {
-  artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, announce, report,
+  artifactHashes, parseCommand, parseResult, route, requireResult, prepare, verify, publishApprovals, publishClarifications,
+  announce, report,
   continuesToPlan, managedPR, validateReviewState, parseReview, latestReview, parseProposal, publishProposals,
-  remediable, reviewDimensions, testTarget, dispatchTests, retryReads,
+  remediable, reviewDimensions, testTarget, dispatchTests, retryReads, pipelineBot,
 };
 
 if (require.main === module) {

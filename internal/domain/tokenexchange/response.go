@@ -16,6 +16,7 @@ type ServiceRef struct {
 
 // AuthorizationRef holds resolved, credential-free agent and grant observation context.
 type AuthorizationRef struct {
+	Principal          id.Principal
 	AgentID            id.AgentID
 	GrantID            id.GrantID
 	GrantUpdatedAt     time.Time

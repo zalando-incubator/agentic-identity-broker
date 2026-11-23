@@ -129,7 +129,7 @@ func newSDKAuthorizer(cfg *config.AuthorizationConfig, logger *slog.Logger) (*OP
 	go func() {
 		select {
 		case <-readyCh:
-			logger.Info("opa authorizer: OPA SDK ready (bundle loaded)")
+			logger.Info("opa authorizer: opa sdk ready, bundle loaded")
 		case <-stopCh:
 			// Authorizer stopped before bundle loaded — exit silently.
 		}
@@ -198,7 +198,7 @@ func (a *OPAAuthorizer) evaluateQuery(ctx, evalCtx context.Context, input OPAInp
 	if len(rs) == 0 || len(rs[0].Expressions) == 0 || rs[0].Expressions[0].Value == nil {
 		traceDecision(ctx, input, ActionDeny, "undefined", durationMS)
 		a.logAudit(ctx, ActionDeny, nil, durationMS, input, "undefined")
-		a.logger.WarnContext(ctx, "OPA policy result is undefined — treating as deny", "duration_ms", durationMS)
+		a.logger.WarnContext(ctx, "opa policy result is undefined — treating as deny", "duration_ms", durationMS)
 		return &OPADecision{Action: ActionDeny, Reasons: []string{"policy result is undefined"}}, nil
 	}
 
@@ -222,7 +222,7 @@ func (a *OPAAuthorizer) evaluateSDK(ctx, evalCtx context.Context, input OPAInput
 		if opasdk.IsUndefinedErr(err) {
 			traceDecision(ctx, input, ActionDeny, "undefined", durationMS)
 			a.logAudit(ctx, ActionDeny, nil, durationMS, input, "undefined")
-			a.logger.WarnContext(ctx, "OPA policy result is undefined — treating as deny", "duration_ms", durationMS)
+			a.logger.WarnContext(ctx, "opa policy result is undefined — treating as deny", "duration_ms", durationMS)
 			return &OPADecision{Action: ActionDeny, Reasons: []string{"policy result is undefined"}}, nil
 		}
 		traceDecision(ctx, input, ActionDeny, "error", durationMS)
@@ -247,10 +247,10 @@ func (a *OPAAuthorizer) finalizeDecision(ctx context.Context, resultMap map[stri
 	case ActionCIBARequired:
 		auditAction = rawAction
 		resultCode = "unsupported_action"
-		a.logger.WarnContext(ctx, "unsupported OPA action — treating as deny", "action", rawAction, "duration_ms", durationMS)
+		a.logger.WarnContext(ctx, "unsupported opa action — treating as deny", "action", rawAction, "duration_ms", durationMS)
 	default:
 		resultCode = "undefined_action"
-		a.logger.WarnContext(ctx, "undefined OPA action — treating as deny", "action", rawAction, "duration_ms", durationMS)
+		a.logger.WarnContext(ctx, "undefined opa action — treating as deny", "action", rawAction, "duration_ms", durationMS)
 	}
 	traceDecision(ctx, input, auditAction, resultCode, durationMS)
 	a.logAudit(ctx, auditAction, decision.Reasons, durationMS, input, resultCode)

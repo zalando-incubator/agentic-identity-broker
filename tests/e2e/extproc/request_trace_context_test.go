@@ -148,7 +148,7 @@ func sendOPATraceRequest(client extprocv3.ExternalProcessorClient, traceparent s
 
 var _ = Describe("Request Trace Context", func() {
 	const directSuccessMessage = "token exchanged successfully"
-	const opaSuccessMessage = "OPA: token exchanged in headers phase, buffering body for OPA evaluation"
+	const opaSuccessMessage = "opa: token exchanged in headers phase, buffering body for opa evaluation"
 
 	BeforeEach(func() {
 		installTraceTestTelemetry()

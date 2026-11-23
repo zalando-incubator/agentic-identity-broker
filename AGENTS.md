@@ -27,6 +27,7 @@ Read the source that governs the change. The summaries here do not replace the c
 
 `coding-standards/LOGGING.md` | Structured logging: plumbing, record shape, levels, principals, permitted data. Read before you add or change a log call.
 `coding-standards/OPENTELEMETRY.md` | Traces and metrics: plumbing, span names and status, attribute keys, instruments, permitted data. Read before you add or change a span or metric.
+`.golangci.yml`, `tools/telemetrylint/` | Lint enforcement of both standards. Each standard's Lint Enforcement section lists which checklist items lint covers.
 
 ### Section-Specific Agent Context
 
@@ -55,13 +56,14 @@ Read the source that governs the change. The summaries here do not replace the c
 
 ### Specs (Feature Requirements)
 
-`specs/NNN-<name>/spec.md` | Feature requirements + acceptance scenarios
-`specs/NNN-<name>/plan.md` | Implementation approach
-`specs/NNN-<name>/tasks.md` | Trackable task list
+`specs/<prefix>-<name>/spec.md` | Feature requirements + acceptance scenarios
+`specs/<prefix>-<name>/plan.md` | Implementation approach
+`specs/<prefix>-<name>/tasks.md` | Trackable task list
 `.specify/templates/overrides/spec-template.md` | Spec template: required sections, including concrete example journeys (Principle XIV)
 `.specify/examples/specification-by-example.md` | Worked example journey and Wireloom render command (Principle XIV)
 `.specify/templates/overrides/tasks-template.md` | Tasks template: mandatory Phase 2 design and Phase N compliance tasks
 
+New feature directories use a `YYYYMMDD-HHMMSS` timestamp prefix; older ones use a three-digit `NNN` prefix.
 For feature work, read its `spec.md`, `plan.md`, and `tasks.md` before implementation.
 Spec Kit selects `SPECIFY_FEATURE_DIRECTORY` first, then `.specify/feature.json`.
 Check that this selection matches the task. Do not infer the feature from the branch name alone.
@@ -85,6 +87,8 @@ Check that this selection matches the task. Do not infer the feature from the br
 `docs/STORAGE_EXTENSION_GUIDE.md` | Adding new storage entities
 `docs/STORAGE_TROUBLESHOOTING.md` | Storage debugging
 `docs/configuration.md` | Configuration reference
+`docs/reference/telemetry.md` | Generated span, metric and attribute reference (`just telemetry-doc`)
+`docs/reference/telemetry-descriptions.yaml` | Span and attribute descriptions for the telemetry reference
 `docs/deployment/` | Deployment guides (Kubernetes, IRSA)
 `docs/operations/` | Operations runbooks
 `examples/config/` | Example configuration files
@@ -114,10 +118,10 @@ Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
    - **Domain logic leakage**: Put conditional logic beyond input parsing in domain services, not handlers.
    - **Domain packaging**: Make each new `domain/X/` a genuinely independent bounded context.
 7. **Configuration-Driven** — Use `internal/ports/config.go` for broker configuration. ExtProc has its own schema under accepted ADR 011. Update configuration documentation and examples with each parameter change. Update Helm values and templates only for workloads that the chart deploys.
-8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation.
+8. **TDD** — Use red-green-refactor. Write tests first. Make each test fail before implementation. Red-run evidence is not required.
 9. **Persistence Consistency** — Define ISP repos in `internal/ports/storage.go`. Use sqlx for PostgreSQL. Provide both in-memory and postgres adapters.
 10. **API-First** — Design APIs before implementation. Get stakeholder agreement before changes.
-11. **Design System Compliance** — Use shared semantic tokens and WCAG 2.1 AA. Check light and dark themes. Keep brand assets in the repository. Read the current visual direction in `web/src/design-system/docs/DESIGN_PRINCIPLES.md`. A change to that direction requires an ADR.
+11. **Design System Compliance** — Use shared semantic tokens and WCAG 2.1 AA in the single light theme; a dark theme is not required. Keep brand assets in the repository. Read the current visual direction in `web/src/design-system/docs/DESIGN_PRINCIPLES.md`. A change to that direction requires an ADR.
 12. **DI via Builder** — Put broker dependency wiring in `internal/app/builder.go`. Do not instantiate services in routing.
 13. **E2E Acceptance Tests** — Use a 1:1 specification-to-test mapping in `tests/e2e/`. Test a complete user journey. Do not test one endpoint segment.
 14. **Specification by Example** — In each spec, add concrete user journeys and link them to the Given/When/Then scenarios. Where applicable, show configuration, RFC-style HTTP exchanges, Wireloom wireframes, and decoded JWT claims.
@@ -142,7 +146,8 @@ Read `internal/adapters/AGENTS.md` for existing factory and shared-helper compos
 
 Read relevant ADRs before implementation. Only accepted decisions are binding.
 Check each file's status and superseding decisions. A proposal does not become binding because its code exists.
-ADR numbers are not unique in this repository. Use the full filename.
+Name new ADRs `YYYYMMDD-HHMMSS-<slug>.md` (UTC creation time). Existing `NNN-<slug>.md` ADRs keep their names.
+In new or changed text, refer to an ADR by its full file stem: prefix and slug, never the prefix or number alone. ADR numbers are not unique.
 You can mark an ADR introduced on this branch as Accepted in the same PR.
 Before the branch merges into `main`, you can revise that ADR in the same PR, even after acceptance.
 The final ADR and code MUST agree before merge.
@@ -203,6 +208,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
+| 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc grant-context resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
 
 ## Domain Glossary
 
@@ -231,6 +237,11 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Key Set Source** | Origin of one trust anchor's public keys: `remote` (`jwks_uri`, discovery, or ADR 029 reuse), `inline` (`jwks`), or `file` (`jwks_file`). One per trust anchor. Not the JWKS publisher's `KeySource`. |
 | **Local Key Set** | Validated JWK Set from an inline or file Key Set Source: public asymmetric keys only, unique `kid`, at most 1 MiB. Never published. |
 | **Trust Directory** | Directory `security.trust_material_dir`, the only place the broker reads key-set files, opened through `os.Root`. |
+| **Grant Decision** | AuthZEN evaluation outcome: permit with a Grant Context and ≤60 s freshness, consent denial with a grant detail and consent URL, or a request failure that is never a decision. |
+| **Grant Context** | Credential-free projection of an authorized delegation: principal, agent, resource and effective scopes, grant version and expiry, granted permission sets. Unset canonical IDs are omitted. |
+| **ExchangeResultBinding** | Permit principal, agent UUID, sorted, de-duplicated resource scope set and grant update instant that atomically first claimed an exchange-result handle. Exchange response identities must match the permit before claim; mismatch fails closed. Shared results cannot be rebound; new identities may carry identical provider bytes. This guarantees compatible reuse, not provider downscoping or exchange provenance, and is not IETF Token Binding proof of possession (ADR 048 §10). |
+| **PermitResolver** | ExtProc port and permit-cache implementation (`server.PermitResolver`, `grantcontext.PermitResolver`), distinct from the broker's invariant-enforcing `tokenexchange.GrantResolver`. The permit's wire `subject.id` becomes the principal for OPA. Enabled mode checks it against the exchange-response approval identity under ADR 036; it does not replace that identity. |
+| **PDP identifier** | AuthZEN `policy_decision_point`: the end-user public URL without a trailing slash, compared exactly by consumers before sending credentials. |
 | **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
 
 ## Development Workflow
@@ -241,6 +252,7 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 |---|---|
 | `just check` | Non-mutating format, vet, and lint checks |
 | `just fmt` | Apply Go formatting changes |
+| `just telemetry-doc` | Regenerate `docs/reference/telemetry.md` from the code |
 | `just build` | Build Go binary → `./bin/agentic-identity-broker` |
 | `just test` | Fast Go/package tests (no E2E or integration suites) |
 | `just verify` | Full gate: static checks, security scans, tests, integration, then E2E |
@@ -253,6 +265,8 @@ Use `just` as the command runner. Run `just --list` for the full listing.
 | `just render-wireframes <spec.md>` | Render Wireloom wireframes in a spec to SVG (after `just install-tools`) |
 
 After Go, test, or infrastructure changes, run `just check`. Then run the smallest matching test command.
+After a Go change under `internal/` or `cmd/`, run `just telemetry-doc` and commit `docs/reference/telemetry.md` if it changed.
+The page also lists the files that start spans and create metrics, and the doc comments of value constants, so it can change without a telemetry change.
 Do not rely only on editor diagnostics. Before a pull request, run the full gate from `CONTRIBUTING.md`.
 
 ## Code Style

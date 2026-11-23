@@ -90,7 +90,7 @@ func (e *Engine) GenerateAndStore(ctx context.Context, policy Policy, algorithm 
 	}
 	ciphertext, err := e.encryption.Encrypt(ctx, privatePEM, subject.EncryptionContext())
 	if err != nil {
-		e.warnOrphanedBranchKey(ctx, "orphaned branch key after encryption failure; manual cleanup required", kid, branchKeyID)
+		e.warnOrphanedBranchKey(ctx, "encryption_failed", kid, branchKeyID)
 		return nil, fmt.Errorf("encrypt private key: %w", err)
 	}
 	if activatesAt.IsZero() {
@@ -116,7 +116,7 @@ func (e *Engine) GenerateAndStore(ctx context.Context, policy Policy, algorithm 
 		err = e.repository.Create(ctx, key)
 	}
 	if err != nil {
-		e.warnOrphanedBranchKey(ctx, "orphaned branch key after storage failure; manual cleanup required", kid, branchKeyID)
+		e.warnOrphanedBranchKey(ctx, "storage_failed", kid, branchKeyID)
 		return nil, fmt.Errorf("store signing key: %w", err)
 	}
 	return key, nil
@@ -219,12 +219,12 @@ func (e *Engine) Delete(ctx context.Context, policy Policy, kid id.KeyID, now ti
 	return e.repository.DeleteInDomain(ctx, policy.Domain, kid)
 }
 
-func (e *Engine) warnOrphanedBranchKey(ctx context.Context, message string, kid id.KeyID, branchKeyID string) {
+func (e *Engine) warnOrphanedBranchKey(ctx context.Context, reason string, kid id.KeyID, branchKeyID string) {
 	if branchKeyID == "" {
-		e.logger.DebugContext(ctx, "skipping orphan warning: branch key ID is empty (noop backend or unexpected empty return)", "kid", kid)
+		e.logger.DebugContext(ctx, "branch key id is empty, skipping orphan warning", "kid", kid)
 		return
 	}
-	e.logger.WarnContext(ctx, message, "kid", kid, "branch_key_id", branchKeyID)
+	e.logger.WarnContext(ctx, "orphaned branch key requires manual cleanup", "event", "keylifecycle.branch_key.orphaned", "reason", reason, "kid", kid, "branch_key_id", branchKeyID)
 }
 
 // EffectiveCurrent returns the eligible key with the current marker preferred.

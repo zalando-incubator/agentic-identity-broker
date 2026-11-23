@@ -38,6 +38,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 )
 
 const (
@@ -51,6 +52,7 @@ const (
 
 // ExchangeResult holds the result of a successful token exchange.
 type ExchangeResult struct {
+	handle                *tokenResultHandle
 	Token                 string
 	GrantedPermissionSets map[string][]string
 	Principal             string
@@ -64,6 +66,8 @@ type Exchanger interface {
 	// ctx carries trace context and deadlines and must be passed to outbound HTTP requests.
 	// Returns an ExchangeResult containing the token and any granted permission sets, or an error.
 	Exchange(ctx context.Context, subjectToken, resourceURI string) (ExchangeResult, error)
+	// ExchangeBound validates an observed result or exchanges after policy allow.
+	ExchangeBound(ctx context.Context, subjectToken, resourceURI string, observed *ExchangeResult, binding ExchangeResultBinding) (ExchangeResult, error)
 	// Shutdown releases any resources held by the exchanger (e.g., background goroutines).
 	Shutdown()
 }
@@ -80,13 +84,16 @@ type ApprovalGate interface {
 // headers phase and evaluate OPA in the body phase; header-only requests do the reverse.
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
-	cfg             *extprocconfig.Config
-	exchanger       Exchanger
-	authorizer      authorization.Authorizer
-	approvalGate    ApprovalGate
-	logger          *slog.Logger
-	requestCounter  metric.Int64Counter
-	requestDuration metric.Float64Histogram
+	cfg          *extprocconfig.Config
+	exchanger    Exchanger
+	authorizer   authorization.Authorizer
+	approvalGate ApprovalGate
+	// grantContextResolver is nil unless grant_context is enabled.
+	grantContextResolver PermitResolver
+	now                  func() time.Time
+	logger               *slog.Logger
+	requestCounter       metric.Int64Counter
+	requestDuration      metric.Float64Histogram
 }
 
 // requestState holds per-stream state accumulated from the RequestHeaders phase
@@ -101,8 +108,19 @@ type requestState struct {
 	principal             string
 	agentID               string
 	agentSessionID        string
-	requestContext        context.Context
-	finishObservation     func(Diagnostic)
+	// delegation is the enabled-mode permit; policy may use it only before its Deadline.
+	grantContext      *grantcontext.Result
+	requestContext    context.Context
+	finishObservation func(Diagnostic)
+}
+
+// policyContext is the OPA context for body and batch decisions: permit-derived in enabled
+// mode, the exchange snapshot otherwise.
+func (st *requestState) policyContext() authorization.ContextInput {
+	if st.grantContext != nil {
+		return contextInputFromGrantContext(st.grantContext, st.agentSessionID)
+	}
+	return authorization.ContextInput{GrantedPermissionSetsAvailable: st.grantedPermissionSets != nil, GrantedPermissionSets: st.grantedPermissionSets, AgentSessionID: st.agentSessionID}
 }
 
 type tokenExchangeInput struct {
@@ -152,6 +170,7 @@ func NewServer(cfg *extprocconfig.Config, exchanger Exchanger, logger *slog.Logg
 		logger:          logger,
 		requestCounter:  requestCounter,
 		requestDuration: requestDuration,
+		now:             defaultNow,
 	}
 }
 
@@ -474,7 +493,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	input, rejection := extractTokenExchangeInput(req)
 	if rejection != nil {
 		diagnostic = rejection.Diagnostic()
-		logDiagnostic(ctx, logger, slog.LevelWarn, "extproc OPA: token-exchange metadata rejected", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "extproc opa: token-exchange metadata rejected", diagnostic)
 		return inputRejectionResponse(rejection), nil
 	}
 	resourceURI := input.resourceURI
@@ -482,7 +501,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	protocol, ok := extractProtocolFromMetadata(req)
 	if !ok {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyConfiguration)
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: protocol metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: protocol metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"protocol metadata is required when authorization is enabled"}`), nil
 	}
@@ -501,7 +520,7 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 	targetServerName, mcpServerOK := extractMCPServerFromMetadata(req)
 	if protocol == "mcp" && !mcpServerOK {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyConfiguration)
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: mcp_server metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: mcp_server metadata absent — rejecting with 403 (misconfiguration)", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"mcp_server metadata is required when authorization is enabled for MCP requests"}`), nil
 	}
@@ -522,16 +541,40 @@ func (s *Server) processRequestHeadersOPA(ctx context.Context, endOfStream bool,
 		return passThrough(), state
 	}
 
-	exchangeResult, exchErr := s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
+	var exchangeResult ExchangeResult
+	var exchErr error
+	if s.grantContextEnabled() {
+		var grantContextErr error
+		exchangeResult, state.grantContext, grantContextErr, exchErr = s.exchangeAndResolve(ctx, logger, input.subjectToken, resourceURI)
+		if grantContextErr != nil {
+			response, failure := grantContextFailureResponse(grantContextErr)
+			diagnostic = failure
+			return response, nil
+		}
+	} else {
+		exchangeResult, exchErr = s.exchanger.Exchange(ctx, input.subjectToken, resourceURI)
+	}
 	if exchErr != nil {
 		response, failure := s.exchangeErrorResponse(ctx, exchErr)
 		diagnostic = failure
 		return response, nil
 	}
+	if state.grantContext != nil {
+		exchangeResult, exchErr = s.exchangeWithGrantContext(ctx, state, &exchangeResult)
+		if exchErr != nil {
+			response, failure := s.exchangeErrorResponse(ctx, exchErr)
+			diagnostic = failure
+			return response, nil
+		}
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
+			return response, nil
+		}
+	}
 	state.grantedPermissionSets = exchangeResult.GrantedPermissionSets
 	state.principal = exchangeResult.Principal
 	state.agentID = exchangeResult.AgentID
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA: token exchanged in headers phase, buffering body for OPA evaluation", diagnostic)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa: token exchanged in headers phase, buffering body for opa evaluation", diagnostic)
 	return requestBodyBufferingResponseWithAuth("Bearer " + exchangeResult.Token), state
 }
 
@@ -555,7 +598,7 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 
 	maxSize := s.cfg.Authorization.MaxBodySize
 	if maxSize > 0 && len(bodyBytes) > maxSize {
-		logDiagnostic(ctx, logger.With("body_size", len(bodyBytes), "max_body_size", maxSize), slog.LevelWarn, "OPA: request body exceeds max_body_size — rejecting", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger.With("body_size", len(bodyBytes), "max_body_size", maxSize), slog.LevelWarn, "opa: request body exceeds max_body_size — rejecting", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"request_too_large","error_description":"request body exceeds maximum allowed size"}`)
 	}
@@ -566,38 +609,51 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		}
 	}
 
-	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	builder, buildErr := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, state.policyContext())
 	if buildErr != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build request input — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to build request input — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 	opaInput, buildErr := builder.Build(bodyBytes, decodeJSONBody(bodyBytes, state.protocol == "mcp"))
 	if buildErr != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to parse request body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to parse request body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
 
+	if state.grantContext != nil {
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+			return response
+		}
+	}
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
-		logDiagnostic(ctx, logger, slog.LevelError, "OPA evaluation error — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
+		logDiagnostic(ctx, logger, slog.LevelError, "opa evaluation error — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"authorization evaluation failed"}`)
 	}
 
 	if decision.Action == authorization.ActionApprovalRequired && s.approvalGate != nil {
 		if state.protocol != "mcp" {
-			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required action is not an MCP tool call", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
+			logDiagnostic(ctx, logger, slog.LevelWarn, "opa approval-required action is not an mcp tool call", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
 		}
 		invocation, rawID, invocationErr := approvalInvocation(opaInput["parsed_body"].(map[string]any), state, decision)
 		if invocationErr != nil {
-			logDiagnostic(ctx, logger, slog.LevelWarn, "OPA approval-required request is not a standalone tool call", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+			logDiagnostic(ctx, logger, slog.LevelWarn, "opa approval-required request is not a standalone tool call", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			return accessDeniedResponse([]string{"approval required requests must be standalone MCP tool calls"})
+		}
+		if state.grantContext != nil {
+			if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+				return response
+			}
 		}
 		outcome := s.approvalGate.Evaluate(ctx, invocation)
 		if outcome.Proceed {
+			// The permit deadline was checked immediately before the gate. A granted
+			// approval may already be consumed, so expiry during the gate's broker call
+			// does not discard it (ADR 048 §10).
 			return echoRequestBody(body)
 		}
 		if outcome.URL != "" {
@@ -609,11 +665,11 @@ func (s *Server) processRequestBody(ctx context.Context, state *requestState, bo
 		return accessDeniedResponse([]string{"approval_required is not yet supported"})
 	}
 	if decision.Action != authorization.ActionAllow {
-		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
+		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(decision.Reasons)
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
-	return echoRequestBody(body)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed request, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	return s.forwardRequestBody(ctx, logger, state, body)
 }
 
 // processHeadersOnlyOPA handles header-only requests in OPA mode (end_of_stream=true in
@@ -629,39 +685,64 @@ func (s *Server) processHeadersOnlyOPA(ctx context.Context, state *requestState)
 		}()
 	}
 
-	opaInput, buildErr := authorization.BuildOPAInputHeadersOnly(state.protocol, state.headers, state.targetServerName)
+	contextInput := authorization.ContextInput{GrantedPermissionSetsAvailable: false, AgentSessionID: state.agentSessionID}
+	if s.grantContextEnabled() {
+		result, grantContextErr := s.resolveGrantContext(ctx, logger, state.subjectToken, state.resourceURI)
+		if grantContextErr != nil {
+			var response *extprocv3.ProcessingResponse
+			response, diagnostic = grantContextFailureResponse(grantContextErr)
+			return response
+		}
+		state.grantContext = result
+		contextInput = contextInputFromGrantContext(result, state.agentSessionID)
+	}
+	opaInput, buildErr := authorization.BuildOPAInputHeadersOnlyWithContext(state.protocol, state.headers, state.targetServerName, contextInput)
 	if buildErr != nil {
 		diagnostic = NewDiagnostic(StageRequestValidation, DetailRequestMalformed)
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for header-only request — denying", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to build input for header-only request — denying", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse request protocol"}`)
 	}
-	if contextInput, ok := opaInput["context"].(authorization.ContextInput); ok {
-		contextInput.AgentSessionID = state.agentSessionID
-		opaInput["context"] = contextInput
-	}
 
+	if state.grantContext != nil {
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
+			return response
+		}
+	}
 	decision, err := s.authorizer.Evaluate(ctx, opaInput)
 	if err != nil {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed)
-		logDiagnostic(ctx, logger, slog.LevelError, "OPA evaluation error — denying", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelError, "opa evaluation error — denying", diagnostic)
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"authorization evaluation failed"}`)
 	}
 
 	if decision.Action != "allow" {
 		diagnostic = NewDiagnostic(StageClientAuthorization, DetailPolicyDenied)
-		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied header-only request", diagnostic)
+		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied header-only request", diagnostic)
 		return accessDeniedResponse(decision.Reasons)
 	}
 
-	exchangeResult, exchErr := s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
+	var exchangeResult ExchangeResult
+	var exchErr error
+	if state.grantContext != nil {
+		exchangeResult, exchErr = s.exchangeWithGrantContext(ctx, state, nil)
+	} else {
+		exchangeResult, exchErr = s.exchanger.Exchange(ctx, state.subjectToken, state.resourceURI)
+	}
 	if exchErr != nil {
 		response, failure := s.exchangeErrorResponse(ctx, exchErr)
 		diagnostic = failure
 		return response
 	}
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed header-only request, token exchanged successfully", diagnostic)
+	if state.grantContext != nil {
+		if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+			diagnostic = NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
+			return response
+		}
+	}
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed header-only request, token exchanged successfully", diagnostic)
 	return replaceAuthorizationHeader("Bearer " + exchangeResult.Token)
 }
 
@@ -671,18 +752,18 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	ctx, logger := s.withRequestLogger(ctx)
 	messages, err := decodeJSONBatch(bodyBytes)
 	if err != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to parse batch body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to parse batch body — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
 	if len(messages) == 0 {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: empty batch body — rejecting as malformed", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: empty batch body — rejecting as malformed", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"empty batch is not valid JSON-RPC 2.0"}`)
 	}
-	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, authorization.ContextInput{GrantedPermissionSetsAvailable: state.grantedPermissionSets != nil, GrantedPermissionSets: state.grantedPermissionSets, AgentSessionID: state.agentSessionID})
+	builder, err := authorization.NewInputBuilder(state.protocol, state.headers, state.targetServerName, state.policyContext())
 	if err != nil {
-		logDiagnostic(ctx, logger, slog.LevelWarn, "OPA: failed to build input for batch — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+		logDiagnostic(ctx, logger, slog.LevelWarn, "opa: failed to build input for batch — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 		return immediateResponse(httpv3.StatusCode_Forbidden,
 			`{"error":"access_denied","error_description":"failed to parse batch request"}`)
 	}
@@ -693,21 +774,26 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	)
 	for i, message := range messages {
 		if _, err := authorization.ParseMCPMessage(message.parsed); err != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: invalid batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "opa: invalid batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			denied = true
 			denyReasons = append(denyReasons, "batch element could not be evaluated")
 			continue
 		}
 		opaInput, buildErr := builder.Build(message.raw, message.parsed)
 		if buildErr != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "OPA: failed to build input for batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelWarn, "opa: failed to build input for batch element — denying", NewDiagnostic(StageRequestValidation, DetailRequestMalformed))
 			denied = true
 			denyReasons = append(denyReasons, "failed to parse batch element")
 			continue
 		}
+		if state.grantContext != nil {
+			if response, expired := s.grantContextExpired(ctx, logger, state.grantContext); expired {
+				return response
+			}
+		}
 		decision, evalErr := s.authorizer.Evaluate(ctx, opaInput)
 		if evalErr != nil {
-			logDiagnostic(ctx, logger.With("index", i), slog.LevelError, "OPA evaluation error for batch element — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
+			logDiagnostic(ctx, logger.With("index", i), slog.LevelError, "opa evaluation error for batch element — denying", NewDiagnostic(StageClientAuthorization, DetailPolicyEvaluationFailed))
 			denied = true
 			denyReasons = append(denyReasons, "authorization evaluation failed")
 			continue
@@ -727,12 +813,12 @@ func (s *Server) processRequestBodyBatch(ctx context.Context, state *requestStat
 	}
 
 	if denied {
-		logDiagnostic(ctx, logger, slog.LevelInfo, "OPA denied batch request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
+		logDiagnostic(ctx, logger, slog.LevelInfo, "opa denied batch request", NewDiagnostic(StageClientAuthorization, DetailPolicyDenied))
 		return accessDeniedResponse(denyReasons)
 	}
 
-	logDiagnostic(ctx, logger, slog.LevelDebug, "OPA allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
-	return echoRequestBody(body)
+	logDiagnostic(ctx, logger, slog.LevelDebug, "opa allowed batch, echoing body", SuccessDiagnostic(ExchangeUnknown))
+	return s.forwardRequestBody(ctx, logger, state, body)
 }
 
 func decodeJSONBody(body []byte, isMCP bool) any {
@@ -885,6 +971,18 @@ func accessDeniedResponse(reasons []string) *extprocv3.ProcessingResponse {
 }
 
 func (s *Server) exchangeErrorResponse(ctx context.Context, err error) (*extprocv3.ProcessingResponse, Diagnostic) {
+	if errors.Is(err, ErrExchangeResultBindingConflict) {
+		diagnostic := NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
+		logger := loggerFromContext(ctx, s.logger)
+		logDiagnostic(ctx, logger.With("event", "extproc.grant_context.unavailable", "error_kind", KindUnavailable), slog.LevelWarn, "exchange result binding conflicted", diagnostic)
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, grantContextBindingUnavailableBody), diagnostic
+	}
+	if errors.Is(err, errInvalidGrantTimestamp) {
+		diagnostic := NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindInvalidResponse)
+		logger := loggerFromContext(ctx, s.logger)
+		logDiagnostic(ctx, logger.With("event", "extproc.grant_context.unavailable", "error_kind", KindInvalidResponse), slog.LevelWarn, "grant timestamp invalid", diagnostic)
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, grantContextUnavailableBody), diagnostic
+	}
 	metadata := metadataFromError(ctx, err)
 	diagnostic := diagnosticFromError(ctx, err)
 	var brokerErr *BrokerExchangeError

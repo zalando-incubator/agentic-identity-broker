@@ -31,8 +31,8 @@ safe-outputs:
   github-app:
     client-id: ${{ vars.AGENTIC_WORKFLOWS_APP_CLIENT_ID }}
     private-key: ${{ secrets.AGENTIC_WORKFLOWS_APP_PRIVATE_KEY }}
-    owner: zalando-incubator
-    repositories: [agentic-identity-broker]
+    owner: ${{ github.repository_owner }}
+    repositories: ["${{ github.repository }}"]
   report-failure-as-issue:
     - "!report_incomplete"
   threat-detection:
@@ -42,7 +42,7 @@ safe-outputs:
     # Reading branch protection needs Administration, which the App does not hold; Spec Kit branches are unprotected.
     check-branch-protection: false
     target: ${{ inputs.pr }}
-    required-title-prefix: "[Spec Kit] "
+    required-title-prefix: "[spec-driven] "
     base-branch: ${{ github.event.repository.default_branch }}
     allowed-files:
       - "specs/**"

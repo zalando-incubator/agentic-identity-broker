@@ -197,7 +197,8 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 			return branchKeyID, nil
 		}
 		if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-			slog.ErrorContext(ctx, "branch_key_creation_failed",
+			slog.ErrorContext(ctx, "branch key creation failed",
+				"event", "encryption.branch_key.creation_failed",
 				"operation", "get_active_branch_key",
 				"branch_key_id", branchKeyID,
 				"service_id", serviceID,
@@ -230,7 +231,8 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 	})
 	if err != nil {
 		if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-			slog.ErrorContext(ctx, "branch_key_creation_failed",
+			slog.ErrorContext(ctx, "branch key creation failed",
+				"event", "encryption.branch_key.creation_failed",
 				"operation", "create_branch_key",
 				"branch_key_id", branchKeyID,
 				"service_id", serviceID,
@@ -246,7 +248,8 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 				err,
 			)
 		}
-		slog.ErrorContext(ctx, "branch_key_creation_failed",
+		slog.ErrorContext(ctx, "branch key creation failed",
+			"event", "encryption.branch_key.creation_failed",
 			"operation", "create_branch_key",
 			"branch_key_id", branchKeyID,
 			"service_id", serviceID,

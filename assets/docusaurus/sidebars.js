@@ -70,6 +70,7 @@ const sidebars = {
           href: '/api/admin',
         },
         'reference/token-exchange',
+        'reference/telemetry',
         'configuration',
       ],
     },

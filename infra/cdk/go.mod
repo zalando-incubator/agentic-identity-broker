@@ -1,6 +1,6 @@
 module github.com/agentic-identity-broker/agentic-identity-broker/infra/cdk
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/aws/aws-cdk-go/awscdk/v2 v2.274.0

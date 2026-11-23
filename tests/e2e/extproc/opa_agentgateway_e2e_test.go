@@ -726,7 +726,7 @@ func opaAgentgwStartMCPServer(toolCalls *opaAgentgwToolObserver) (net.Listener, 
 	httpServer := &http.Server{Handler: httpSrv}
 	go func() {
 		if serveErr := httpServer.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			opaAgentgwLogger.Error("OPA MCP server error", "err", serveErr)
+			opaAgentgwLogger.Error("OPA MCP server error", "error", serveErr)
 		}
 	}()
 
@@ -794,7 +794,7 @@ func opaAgentgwStartExtProc(
 
 	go func() {
 		if serveErr := grpcSrv.Serve(listener); serveErr != nil {
-			opaAgentgwLogger.Error("ExtProc OPA gRPC server error", "err", serveErr)
+			opaAgentgwLogger.Error("ExtProc OPA gRPC server error", "error", serveErr)
 		}
 	}()
 

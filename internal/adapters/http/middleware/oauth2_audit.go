@@ -16,6 +16,19 @@ import (
 
 // OAuth2AuditMiddleware creates audit logging middleware for OAuth2 endpoints
 func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return oauth2Audit(logger, false, "")
+}
+
+// FinalizedIdentityAuditMiddleware is OAuth2AuditMiddleware for a deferred-finalization
+// route whose handler finalizes the request security context (ADR 048 §6). The record names
+// the finalized Actor, so it agrees with the handler's own audit record; the handler's
+// request-principal or anonymous finalization covers early failures. The record carries
+// event, the route's stable event identifier.
+func FinalizedIdentityAuditMiddleware(logger *slog.Logger, event string) func(http.Handler) http.Handler {
+	return oauth2Audit(logger, true, event)
+}
+
+func oauth2Audit(logger *slog.Logger, useFinalizedActor bool, event string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := r.Header.Get("X-Request-ID")
@@ -42,10 +55,17 @@ func OAuth2AuditMiddleware(logger *slog.Logger) func(http.Handler) http.Handler 
 			// Call next handler with updated context
 			next.ServeHTTP(wrapped, r.WithContext(ctx))
 
+			if useFinalizedActor {
+				if sc, ok := security.FromContext(ctx); ok {
+					principalValue = sc.Actor
+				}
+			}
+
 			// Log audit information
 			duration := time.Since(startTime).Milliseconds()
 			method, target := LoggedRequestLine(r.WithContext(ctx))
 			logAuditEvent(ctx, logger, &auditEvent{
+				Event:      event,
 				RequestID:  requestID,
 				Principal:  principalValue,
 				Method:     SanitizeLogValue(method),
@@ -76,6 +96,7 @@ func (w *responseWriterWrapper) Write(b []byte) (int, error) {
 
 // auditEvent contains audit information about a request
 type auditEvent struct {
+	Event      string
 	RequestID  string
 	Principal  id.Principal
 	Method     string
@@ -102,10 +123,11 @@ func logAuditEvent(ctx context.Context, logger *slog.Logger, event *auditEvent) 
 		host = event.RemoteAddr
 	}
 
-	logger.Log(
-		ctx,
-		level,
-		"OAuth2 Authorization Request",
+	attrs := make([]slog.Attr, 0, 9)
+	if event.Event != "" {
+		attrs = append(attrs, slog.String("event", event.Event))
+	}
+	attrs = append(attrs,
 		slog.String("request_id", event.RequestID),
 		slog.Any("principal", event.Principal),
 		slog.String("method", event.Method),
@@ -115,6 +137,7 @@ func logAuditEvent(ctx context.Context, logger *slog.Logger, event *auditEvent) 
 		slog.String("remote_host", host),
 		slog.String("user_agent", event.UserAgent),
 	)
+	logger.LogAttrs(ctx, level, "oauth2 authorization request", attrs...)
 }
 
 func auditRemoteAddr(ctx context.Context, fallback string) string {

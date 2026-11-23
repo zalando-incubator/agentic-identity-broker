@@ -9,6 +9,8 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func validTokenRefreshConfig() ports.TokenRefreshConfig {
@@ -219,6 +221,106 @@ func TestValidate(t *testing.T) {
 				if _, ok := err.(*config.ConfigError); !ok {
 					t.Errorf("Validate() error type = %T, want *config.ConfigError", err)
 				}
+			}
+		})
+	}
+}
+
+func TestValidateEndUserPublicURLAsAuthZENBase(t *testing.T) {
+	tests := []struct {
+		name                  string
+		publicURL             string
+		tokenExchangeDisabled bool
+		wantValid             bool
+	}{
+		{name: "query", publicURL: "https://broker.example.com?region=eu"},
+		{name: "empty query", publicURL: "https://broker.example.com/?"},
+		{name: "fragment", publicURL: "https://broker.example.com#pdp"},
+		{name: "empty fragment", publicURL: "https://broker.example.com/broker#"},
+		{name: "userinfo", publicURL: "https://operator:s3cret-marker@broker.example.com/broker"},
+		{name: "username only", publicURL: "https://operator@broker.example.com"},
+		{name: "origin", publicURL: "https://broker.example.com", wantValid: true},
+		{name: "origin with trailing slash", publicURL: "https://broker.example.com/", wantValid: true},
+		{name: "path prefix", publicURL: "https://example.com/broker", wantValid: true},
+		{name: "query without token exchange", publicURL: "https://broker.example.com?region=eu", tokenExchangeDisabled: true, wantValid: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			cfg.Server.EndUser.PublicURL = tt.publicURL
+			if !tt.tokenExchangeDisabled {
+				cfg.TokenExchange.ClaimExtraction.PrincipalExpression = "subject_token.sub"
+				cfg.TokenExchange.Authorization.CEL.Expression = "true"
+			}
+			err := Validate(cfg)
+			if tt.wantValid {
+				require.NoError(t, err)
+				return
+			}
+
+			var configErr *config.ConfigError
+			require.ErrorAs(t, err, &configErr)
+			assert.Equal(t, "server.enduser.public_url", configErr.Field)
+			assert.NotContains(t, err.Error(), "s3cret-marker", "the error must not echo the rejected URL")
+			assert.NotContains(t, err.Error(), "operator@", "the error must not echo the rejected URL")
+		})
+	}
+}
+
+func TestValidatePublicURLErrorNeverEchoesURL(t *testing.T) {
+	tests := []struct {
+		name          string
+		server        string
+		publicURL     string
+		tokenExchange bool
+	}{
+		{name: "end-user unparseable", server: "enduser", publicURL: "https://operator:s3cret-marker@broker.example.com/%zz"},
+		{name: "end-user unparseable with token exchange", server: "enduser", publicURL: "https://operator:s3cret-marker@broker.example.com/%zz", tokenExchange: true},
+		{name: "end-user unsupported scheme", server: "enduser", publicURL: "ftp://operator:s3cret-marker@broker.example.com"},
+		{name: "end-user opaque", server: "enduser", publicURL: "https:operator:s3cret-marker@broker.example.com"},
+		{name: "end-user opaque with token exchange", server: "enduser", publicURL: "https:operator:s3cret-marker@broker.example.com", tokenExchange: true},
+		{name: "admin opaque", server: "admin", publicURL: "https:operator:s3cret-marker@admin.example.com"},
+		{name: "end-user single-slash authority", server: "enduser", publicURL: "https:/operator:s3cret-marker@broker.example.com"},
+		{name: "end-user single-slash authority with token exchange", server: "enduser", publicURL: "https:/operator:s3cret-marker@broker.example.com", tokenExchange: true},
+		{name: "end-user triple-slash authority", server: "enduser", publicURL: "https:///operator:s3cret-marker@broker.example.com"},
+		{name: "admin single-slash authority", server: "admin", publicURL: "https:/operator:s3cret-marker@admin.example.com"},
+		{name: "admin triple-slash authority", server: "admin", publicURL: "https:///operator:s3cret-marker@admin.example.com"},
+		{name: "end-user encoded delimiter", server: "enduser", publicURL: "https:/operator:s3cret-marker%40broker.example.com"},
+		{name: "end-user query secret with token exchange", server: "enduser", publicURL: "https://broker.example.com?access_token=s3cret-marker", tokenExchange: true},
+		{name: "end-user fragment secret with token exchange", server: "enduser", publicURL: "https://broker.example.com#access_token=s3cret-marker", tokenExchange: true},
+		{name: "admin encoded delimiter", server: "admin", publicURL: "https:/operator:s3cret-marker%40admin.example.com"},
+		{name: "admin unparseable", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com/%zz"},
+		{name: "admin userinfo", server: "admin", publicURL: "https://operator:s3cret-marker@admin.example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validTestConfig()
+			if tt.server == "admin" {
+				cfg.Server.Admin.PublicURL = tt.publicURL
+			} else {
+				cfg.Server.EndUser.PublicURL = tt.publicURL
+			}
+			if tt.tokenExchange {
+				cfg.TokenExchange.ClaimExtraction.PrincipalExpression = "subject_token.sub"
+				cfg.TokenExchange.Authorization.CEL.Expression = "true"
+			}
+
+			err := Validate(cfg)
+
+			var configErr *config.ConfigError
+			if !errors.As(err, &configErr) {
+				t.Fatalf("Validate() error = %v, want *config.ConfigError", err)
+			}
+			if want := "server." + tt.server + ".public_url"; configErr.Field != want {
+				t.Errorf("Validate() error field = %q, want %s", configErr.Field, want)
+			}
+			if configErr.Value != RedactedValue {
+				t.Errorf("Validate() error value = %q, want %q", configErr.Value, RedactedValue)
+			}
+			if strings.Contains(err.Error(), "s3cret-marker") || strings.Contains(err.Error(), "operator") {
+				t.Errorf("Validate() error echoes the rejected URL: %v", err)
 			}
 		})
 	}

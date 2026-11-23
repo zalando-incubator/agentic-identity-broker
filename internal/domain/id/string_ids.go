@@ -2,7 +2,7 @@ package id
 
 import "log/slog"
 
-// ClientID is an OAuth2 client identifier (VARCHAR(255), not a UUID).
+// ClientID is an OAuth2 client identifier (not a UUID).
 type ClientID string
 
 func NewClientID(s string) ClientID { return ClientID(s) }

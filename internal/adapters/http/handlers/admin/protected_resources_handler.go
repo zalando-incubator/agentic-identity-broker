@@ -80,7 +80,9 @@ func (h *ProtectedResourcesHandler) add(w http.ResponseWriter, r *http.Request, 
 	}
 	h.etag(w, result.Version)
 	h.json(w, status, protectedResourceMutationResponse{result.Resource, result.ProtectedResources})
-	h.audit(r, "add", serviceID.String(), "success", status, normalized, "", "")
+	if result.Changed {
+		h.audit(r, "add", serviceID.String(), "success", status, normalized, "", "")
+	}
 }
 func (h *ProtectedResourcesHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	resource, err := h.memberResource(r)
@@ -140,7 +142,9 @@ func (h *ProtectedResourcesHandler) Rename(w http.ResponseWriter, r *http.Reques
 	}
 	h.etag(w, result.Version)
 	h.json(w, http.StatusOK, protectedResourceMutationResponse{result.Resource, result.ProtectedResources})
-	h.audit(r, "rename", serviceID.String(), "success", http.StatusOK, "", source, target)
+	if result.Changed {
+		h.audit(r, "rename", serviceID.String(), "success", http.StatusOK, "", source, target)
+	}
 }
 func (h *ProtectedResourcesHandler) List(w http.ResponseWriter, r *http.Request) {
 	serviceID, ok := h.serviceID(w, r)
@@ -210,7 +214,23 @@ func (h *ProtectedResourcesHandler) error(w http.ResponseWriter, status int, cod
 }
 func (h *ProtectedResourcesHandler) audit(r *http.Request, action, serviceID, outcome string, status int, resource, source, target string) {
 	principalValue, _ := principal.FromContext(r.Context())
-	h.logger.InfoContext(r.Context(), "protected_resource_audit", "principal", principalValue, "action", action, "service_id", serviceID, "outcome", outcome, "status", status, "request_id", r.Header.Get("X-Request-ID"), "resource_uri", nullable(resource), "source_resource_uri", nullable(source), "target_resource_uri", nullable(target))
+	h.logger.InfoContext(r.Context(), "protected resource change audited", "event", protectedResourceAuditEvent(action, outcome), "principal", principalValue, "operation", action, "service_id", serviceID, "outcome", outcome, "status", status, "request_id", r.Header.Get("X-Request-ID"), "resource_uri", nullable(resource), "source_resource_uri", nullable(source), "target_resource_uri", nullable(target))
+}
+func protectedResourceAuditEvent(operation, outcome string) string {
+	switch {
+	case operation == "add" && outcome == "success":
+		return "service.protected_resource.added"
+	case operation == "add":
+		return "service.protected_resource.add_rejected"
+	case operation == "remove" && outcome == "success":
+		return "service.protected_resource.removed"
+	case operation == "remove":
+		return "service.protected_resource.remove_rejected"
+	case operation == "rename" && outcome == "success":
+		return "service.protected_resource.renamed"
+	default:
+		return "service.protected_resource.rename_rejected"
+	}
 }
 func nullable(value string) any {
 	if value == "" {

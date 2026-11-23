@@ -223,6 +223,9 @@ func Validate(cfg *Config) error {
 			errs = append(errs, "tool_approvals.max_staleness must be at least tool_approvals.long_poll_timeout_seconds plus tool_approvals.request_timeout")
 		}
 	}
+	if cfg.GrantContext.Enabled {
+		errs = append(errs, validateGrantContext(cfg)...)
+	}
 	if !isHTTPFieldName(cfg.Sessions.Extraction.HTTPHeader) {
 		errs = append(errs, "sessions.extraction.http_header must be a non-empty valid HTTP field name")
 	}
@@ -411,4 +414,34 @@ func validateTelemetryEndpoint(endpoint, protocol string) error {
 	}
 
 	return nil
+}
+
+// validateGrantContext applies the enabled-only grant_context rules and resolves
+// the default PDP identifier to the origin of oauth2.token_endpoint.
+func validateGrantContext(cfg *Config) []string {
+	var errs []string
+	dc := &cfg.GrantContext
+	if !cfg.Authorization.Enabled {
+		errs = append(errs, "grant_context.enabled requires authorization.enabled")
+	}
+	if dc.PolicyDecisionPoint == "" {
+		if endpoint, err := url.Parse(cfg.OAuth2.TokenEndpoint); err == nil && endpoint.Scheme != "" && endpoint.Host != "" {
+			// Serialize through url.URL: Host is decoded, so an escaped IPv6 zone must be re-escaped.
+			dc.PolicyDecisionPoint = (&url.URL{Scheme: endpoint.Scheme, Host: endpoint.Host}).String()
+		}
+	}
+	pdp, err := url.Parse(dc.PolicyDecisionPoint)
+	if err != nil || !pdp.IsAbs() || pdp.Hostname() == "" || (pdp.Scheme != "http" && pdp.Scheme != "https") ||
+		pdp.User != nil || pdp.RawQuery != "" || pdp.ForceQuery || pdp.Fragment != "" || strings.Contains(dc.PolicyDecisionPoint, "#") {
+		errs = append(errs, "grant_context.policy_decision_point must be an absolute URL with a host and no userinfo, query, or fragment")
+	} else if pdp.Scheme == "http" && !cfg.OAuth2.TLS.AllowHTTP {
+		errs = append(errs, "grant_context.policy_decision_point must use https:// scheme (set oauth2.tls.allow_http: true to disable — DEV ONLY)")
+	}
+	if dc.RequestTimeout <= 0 {
+		errs = append(errs, "grant_context.request_timeout must be positive")
+	}
+	if dc.MaxStaleness <= 0 {
+		errs = append(errs, "grant_context.max_staleness must be positive")
+	}
+	return errs
 }

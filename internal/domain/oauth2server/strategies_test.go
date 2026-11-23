@@ -561,7 +561,7 @@ func TestJWXAccessTokenStrategy_GenerateAccessToken_CELAudienceListFails(t *test
 	require.Error(t, err)
 	assert.ErrorContains(t, err, `failed to set claim "aud"`)
 	assert.ErrorContains(t, err, `invalid type: []ref.Val`)
-	assert.Contains(t, buf.String(), "failed to build JWT")
+	assert.Contains(t, buf.String(), "failed to build jwt")
 	assert.Contains(t, buf.String(), "failed to set claim")
 	assert.Contains(t, buf.String(), "aud")
 	assert.Contains(t, buf.String(), `invalid type: []ref.Val`)

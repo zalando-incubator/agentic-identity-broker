@@ -103,7 +103,7 @@ func TestService_Resolve_PrivateUseRedirectURINotAllowlisted(t *testing.T) {
 		require.ErrorContains(t, err, "redirect_uris[0]")
 	}
 	assert.Equal(t, 2, fetcher.calls, "a disallowed document must not be cached")
-	assert.Contains(t, logs.String(), "cimd_document_invalid")
+	assert.Contains(t, logs.String(), "event=cimd.document.rejected")
 }
 
 func TestService_Resolve_CacheHitRechecksAgentAllowlist(t *testing.T) {
@@ -174,7 +174,7 @@ func TestService_Resolve_BareQueryDelimiterLogsWarning(t *testing.T) {
 
 	_, err := svc.Resolve(context.Background(), "https://agent.example.com/client?", agent)
 	require.NoError(t, err)
-	assert.Contains(t, logBuf.String(), "client_id URL contains query string")
+	assert.Contains(t, logBuf.String(), "cimd client_id url contains query string")
 }
 
 func TestService_Resolve_NameBlocklist_Rejected(t *testing.T) {

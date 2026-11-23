@@ -61,6 +61,6 @@ func (e *TestEnvironment) StartWithAuthorizer(auth authorization.Authorizer) {
 	} else {
 		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, auth, e.logger)
 	}
-	e.startGRPCServer(svc)
+	Expect(e.startGRPCServer(svc)).To(Succeed())
 	e.startApprovalSync()
 }
