@@ -57,3 +57,13 @@ func TestNewAWSEncryptionRequiresLogger(t *testing.T) {
 	assert.Nil(t, adapter)
 	assert.Nil(t, manager)
 }
+
+func TestUninitializedAdapterReturnsKEKUnavailableWithoutLogger(t *testing.T) {
+	adapter := new(AWSAdapter)
+
+	_, encryptErr := adapter.Encrypt(t.Context(), []byte("plaintext"), map[string]string{"service_id": "svc-1"})
+	_, decryptErr := adapter.Decrypt(t.Context(), []byte("ciphertext"), map[string]string{"service_id": "svc-1"})
+
+	assert.True(t, isKEKUnavailableError(encryptErr), "encrypt: %v", encryptErr)
+	assert.True(t, isKEKUnavailableError(decryptErr), "decrypt: %v", decryptErr)
+}

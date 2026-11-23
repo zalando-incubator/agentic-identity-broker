@@ -258,12 +258,14 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
 	if a.encryptionClient == nil {
-		a.logger.ErrorContext(ctx, "token encryption failed",
-			"event", "encryption.token.encrypt_failed",
-			"operation", "encrypt",
-			"error_kind", encryption.ErrorKindKEKUnavailable,
-			"reason", "adapter_not_initialized",
-		)
+		if a.logger != nil {
+			a.logger.ErrorContext(ctx, "token encryption failed",
+				"event", "encryption.token.encrypt_failed",
+				"operation", "encrypt",
+				"error_kind", encryption.ErrorKindKEKUnavailable,
+				"reason", "adapter_not_initialized",
+			)
+		}
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
 
@@ -445,12 +447,14 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
 	if a.encryptionClient == nil {
-		a.logger.ErrorContext(ctx, "token decryption failed",
-			"event", "encryption.token.decrypt_failed",
-			"operation", "decrypt",
-			"error_kind", encryption.ErrorKindKEKUnavailable,
-			"reason", "adapter_not_initialized",
-		)
+		if a.logger != nil {
+			a.logger.ErrorContext(ctx, "token decryption failed",
+				"event", "encryption.token.decrypt_failed",
+				"operation", "decrypt",
+				"error_kind", encryption.ErrorKindKEKUnavailable,
+				"reason", "adapter_not_initialized",
+			)
+		}
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
 
