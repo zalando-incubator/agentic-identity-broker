@@ -190,7 +190,7 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	}
 
 	// Use CEL evaluator to extract principal and profile attributes
-	result, err := a.celEvaluator.ExtractClaims(claimsMap)
+	result, err := a.celEvaluator.ExtractClaims(ctx, claimsMap)
 	if err != nil {
 		a.logger.WarnContext(ctx, "jwt authentication failed: cel claim extraction error",
 			"error", err.Error(),

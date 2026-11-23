@@ -143,7 +143,7 @@ func TestImplementation_StateTokenValidation_Success(t *testing.T) {
 	require.NotNil(t, result)
 
 	// Validate state token
-	claims, err := service.ValidateStateToken(result.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), result.StateToken, principal, serviceID)
 	require.NoError(t, err, "ValidateStateToken should succeed")
 	require.NotNil(t, claims, "claims should not be nil")
 
@@ -176,7 +176,7 @@ func TestImplementation_StateTokenValidation_PrincipalMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to validate as principal2 (CSRF attack)
-	_, err = service.ValidateStateToken(result.StateToken, principal2, serviceID)
+	_, err = service.ValidateStateToken(t.Context(), result.StateToken, principal2, serviceID)
 	assert.ErrorIs(t, err, oauth2session.ErrPrincipalMismatch, "should return ErrPrincipalMismatch")
 }
 
@@ -203,7 +203,7 @@ func TestImplementation_StateTokenValidation_ServiceIDMismatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try to validate with service2 (wrong service)
-	_, err = service.ValidateStateToken(result.StateToken, principal, serviceID2)
+	_, err = service.ValidateStateToken(t.Context(), result.StateToken, principal, serviceID2)
 	assert.Error(t, err, "should return error on service ID mismatch")
 	assert.Contains(t, err.Error(), "service_id mismatch", "error should indicate service ID mismatch")
 }
@@ -215,7 +215,7 @@ func TestImplementation_StateTokenValidation_InvalidToken(t *testing.T) {
 	serviceID := id.NewServiceID()
 
 	// Try to validate invalid token
-	_, err := service.ValidateStateToken("invalid-token-xyz", principal, serviceID)
+	_, err := service.ValidateStateToken(t.Context(), "invalid-token-xyz", principal, serviceID)
 	assert.Error(t, err, "should return error for invalid token")
 	assert.ErrorIs(t, err, oauth2session.ErrInvalidStateToken, "should return ErrInvalidStateToken")
 }
@@ -255,7 +255,7 @@ func TestImplementation_StateToken_RoundTrip(t *testing.T) {
 	assert.NotEmpty(t, token, "token should not be empty")
 
 	// Decrypt and validate
-	decryptedClaims, err := service.ValidateStateToken(token, originalClaims.Principal, originalClaims.ServiceID)
+	decryptedClaims, err := service.ValidateStateToken(t.Context(), token, originalClaims.Principal, originalClaims.ServiceID)
 	require.NoError(t, err, "ValidateStateToken should succeed")
 	require.NotNil(t, decryptedClaims, "decrypted claims should not be nil")
 

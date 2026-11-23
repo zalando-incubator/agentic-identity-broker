@@ -427,6 +427,7 @@ func (s *OAuth2SessionService) CreateStateToken(claims *OAuth2StateTokenClaims) 
 // and A256GCM content encryption. Any tampering with the token will cause decryption
 // to fail due to GCM authentication tag verification.
 func (s *OAuth2SessionService) ValidateStateToken(
+	ctx context.Context,
 	tokenString string,
 	currentPrincipal id.Principal,
 	expectedServiceID id.ServiceID,
@@ -452,7 +453,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 	// Check expiration
 	if claims.IsExpired() {
 		// Audit log: state token expired
-		s.logger.Warn("oauth2 state token expired",
+		s.logger.WarnContext(ctx, "oauth2 state token expired",
 			"event", "session.oauth2.state_expired",
 			"principal", claims.Principal,
 			"service_id", claims.ServiceID,
@@ -464,7 +465,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 	// Check principal match (CSRF protection)
 	if claims.Principal != currentPrincipal {
 		// Audit log: principal mismatch (CSRF attack detection)
-		s.logger.Error("oauth2 state validation failed",
+		s.logger.ErrorContext(ctx, "oauth2 state validation failed",
 			"event", "session.oauth2.state_validation_failed",
 			"reason", "principal_mismatch",
 			"expected_principal", currentPrincipal,
@@ -476,7 +477,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 
 	// Check service ID match
 	if claims.ServiceID != expectedServiceID {
-		s.logger.Error("oauth2 state validation failed",
+		s.logger.ErrorContext(ctx, "oauth2 state validation failed",
 			"event", "session.oauth2.state_validation_failed",
 			"reason", "service_id_mismatch",
 			"expected_service_id", expectedServiceID,
@@ -952,7 +953,7 @@ func (s *OAuth2SessionService) HandleCallback(
 
 	// Validate sealed state before processing any provider response, including errors.
 
-	claims, err := s.ValidateStateToken(req.State, principal, req.ServiceID)
+	claims, err := s.ValidateStateToken(ctx, req.State, principal, req.ServiceID)
 	if err != nil {
 		if errors.Is(err, model.ErrCredentialSourceUnavailable) {
 			failure := sessionOperationError(ctx, OperationCodeExchange, DetailCredentialSourceUnavailable, err)
