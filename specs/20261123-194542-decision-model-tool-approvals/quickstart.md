@@ -10,8 +10,9 @@ the [plan](plan.md), the [data model](data-model.md), and the [contracts](contra
 - Docker or Podman for the agentgateway cases and the PostgreSQL cases.
 - No account at a model provider. All automated checks use test doubles for the decision endpoint.
 
-The three gates of the plan must be complete before behavior changes: the approved contracts, the
-verification tasks, and the Accepted ADR.
+The gates of the plan must be complete before behavior changes: the verification tasks, the
+approved contracts, and the Accepted ADR. The verification task for tool listings is the first
+task.
 
 ## Commands
 
