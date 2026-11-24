@@ -398,8 +398,13 @@ standard defines audit records as structured logs.
 
 ## D-14 — The deployment uses agentgateway `v1.7.0` for MCP and for decisions
 
-**Decision**: The pinned agentgateway release changes from `v1.5.0` to `v1.7.0` in
-`docker-compose.yml` and in `defaultAgentgatewayImage` (`tests/e2e/extproc/agentgateway_e2e_test.go`).
+**Decision**: The pinned agentgateway release changes from `v1.5.0` to `v1.7.0` at each pin site:
+
+- `docker-compose.yml:249`, with the digest of `v1.7.0` (`sha256:60216aafb03d37f94e952ff3d51d2f630a65b10ecaebdc0a864882f92610c45b` on 2026-11-24)
+- `defaultAgentgatewayImage` in `tests/e2e/extproc/agentgateway_e2e_test.go` and in `tests/e2e/agentgateway_token_exchange_e2e_test.go`
+- The expected value in `tests/e2e/extproc/agentgateway_image_test.go`
+- The `docker pull` steps in `.github/workflows/ci.yml`, `container-tests.yml`, and `scheduled-coverage.yml`.
+
 One gateway instance can serve the MCP routes with ExtProc and the `llm` models for decisions.
 The documentation states `v1.7.0` as the minimum release.
 
@@ -407,7 +412,8 @@ The documentation states `v1.7.0` as the minimum release.
 `AGENTGATEWAY_IMAGE=cr.agentgateway.dev/agentgateway:v1.7.0`, the existing suites "Agentgateway
 Integration", "Agentgateway Re-authentication Challenge", "Metadata Input via Agentgateway",
 "Agentgateway Telemetry Integration", and "OPA Authorization via Agentgateway" passed with 17 of
-17 cases. The verification cases of D-02 passed on `v1.5.0` and on `v1.7.0`. `v1.5.0` removes
+17 cases. The suite "agentgateway oauthTokenExchange with an inline client-assertion key set" in
+`tests/e2e/` passed with 1 of 1 case. The verification cases of D-02 passed on `v1.5.0` and on `v1.7.0`. `v1.5.0` removes
 `nextCursor` from a paged `tools/list` result (D-02). Thus, clients of `v1.5.0` see only the
 first page.
 
@@ -446,6 +452,13 @@ the call of the agent and does not let it proceed. The MCP client of the agent c
 timeout. With the defaults, the worst case of an assessed call that waits for a person is about
 10.7 s, and 10.2 s of that is the broker path of today.
 
+The local smoke test measured 762 to 1,247 ms for a warm `winnow:e4b` model and 6.1 s for the
+first request ([decision-model-research.md](decision-model-research.md), "Smoke test with a local
+model"). With the default `request_timeout` of 500 ms, each call to that model has the status
+`timeout`. The calls then wait for a person. This is safe, but the assessment then has no effect.
+An operator must measure the latency of the model and set `request_timeout` to a value of up to
+2 s. The documentation must state this.
+
 **Alternatives considered**: A total deadline for the assessment duplicates the deadlines of its
 steps.
 
@@ -462,13 +475,16 @@ The verification ran on 2026-11-24 on macOS (arm64) with Docker Engine 29.5.2 an
 | `AGENTGATEWAY_IMAGE=cr.agentgateway.dev/agentgateway:v1.7.0 ginkgo -v --focus "Agentgateway\|OPA Authorization via Agentgateway" ./tests/e2e/extproc/` | 17 of 17 passed |
 | `ginkgo -v --focus "D-07 verification" ./tests/e2e/` | 1 of 1 passed |
 | `go test -tags integration ./internal/adapters/storage/postgres/ -run 'TestToolApprovalRepository_(CRUD\|DedupReturnsPersistedApprovalWithoutSyncBump)'` | passed |
+| `AGENTGATEWAY_IMAGE=cr.agentgateway.dev/agentgateway:v1.7.0 ginkgo --label-filter=docker --focus "agentgateway oauthTokenExchange" ./tests/e2e/` | 1 of 1 passed |
+| A temporary Ginkgo case sent the Journey 1, 2, and 4 requests through agentgateway `v1.7.0` to a local `winnow:e4b` System One model. The case was deleted after the run. | 9 of 9 requests returned HTTP 200 with five answers |
 
 The verification cases record their observations with `AddReportEntry`. Run them with `-v` to
 see the values.
 
 These subjects were not tested:
 
-- A real decision model. No model credential and no local System One model were available. The answers, the latency, and the `model` value of a real provider are not known.
+- A hosted decision model. The smoke test used one local model only. The answers, the latency, and the `model` value of the OpenAI and TypeSafe services are not known.
+- The `model` value as a version check. The local server returned the requested name `winnow:e4b`, not a versioned identifier. A provider that does the same hides a change of weights from the model condition of FR-041. The operator documentation must state this.
 - MCP servers other than `mcp-go`, listings larger than 70 KB, and event streams with more than one event.
 - The Playwright suite with the assessment. The plan changes the browser cases (see [plan.md](plan.md)).
 - The measured results of the example policy on the starter case set. The spec requires them before publication, and they need a real model.

@@ -279,7 +279,33 @@ These are example OpenAI answer objects. The policy states and thresholds are ex
 - **Constrained answers.** StackOne and TypeSafe report that untrusted text can change probabilities. Typed answers prevent the model from adding free-form instructions or a rationale. StackOne asks whether tool results address the agent. This feature adapts that idea to tool descriptions. The sources do not establish the cost or effectiveness of that question for this feature.
 - **Latency and cost.** TypeSafe reports about 100 ms for most calls. OpenAI reports that Decisions returns typed answers about 10 times faster than the Responses API. These are vendor claims, not broker benchmarks. OpenAI lists a base rate of $0.10 per million uncached input tokens and no output charge for Decisions. Cache rates, regional premiums, and long-context multipliers can change the input charge. OpenAI requires an identical shared input prefix of at least 1,024 tokens for cache reuse. Questions are outside that prefix.
 - **Data handling.** OpenAI documents Zero Data Retention for eligible Decisions customers. It lists data residency in all supported API regions and regional processing in the United States and Europe (EEA and Switzerland). Brennenstuhl illustrates local inference. Local inference can keep call arguments inside the organization if the deployment does not send them elsewhere. The operator must decide which data the deployment sends to a provider.
-- **No real model was called.** On 2026-11-24, no model credential and no local System One model were available. The requests of Journey 1, Journey 2, and the look-alike domain case of Journey 4 did not go to a real model. The answers and the latency of a real model for this context and these questions are not known. All Docker tests used test doubles.
+
+## Smoke test with a local model
+
+On 2026-11-24, ExtProc was not part of this test. A test client sent the request of Journey 1,
+step 6, to agentgateway `v1.7.0`. The gateway translated it to System One and sent it to a local
+`winnow:e4b` model. That model is a Gemma 4 E4B fine-tune with 7.5B parameters in Q8_0 on
+llama.cpp, with a TypeSafe-compatible API. The questions had the full catalog criteria of the
+spec. The test sent three calls three times each. Only the call arguments differed.
+
+| Call | `leaves_organization` | `changes_access` | `persistent_effect` levels 0/1/2 | `addresses_assessor` | `definition_addresses_assessor` |
+|---|---|---|---|---|---|
+| Journey 1: `thirdparty.example.com`, editor | 0.939 | 0.944 | 0.138 / 0.065 / 0.798 | 0.044 | 0.249 |
+| Journey 2: `example.com`, reader | 0.041 | 0.913 | 0.195 / 0.070 / 0.735 | 0.047 | 0.275 |
+| Journey 4: `example.com.attacker.test`, reader | 0.920 | 0.921 | 0.171 / 0.074 / 0.755 | 0.053 | 0.228 |
+
+Observations:
+
+- The three runs of each call gave the same values. The requests had about 2,520 input tokens.
+- `leaves_organization` separated the internal domain from the external domain and from the look-alike domain. This is the purpose of the `internal_domains` value (R-10).
+- The model put most probability on "Cannot be undone or cannot be determined" for each share. The tool description says that the grantee receives a notification email. An email cannot be recalled, so the answer agrees with the third level. The spec examples assume "Owner can undo". The level boundary needs a decision of the operator, and the starter question set must state it (R-05).
+- `definition_addresses_assessor` was between 0.23 and 0.28 for a description that does not address a reviewer. With the thresholds of the example policy, this value is `unclear`.
+- Thus, the example policy of the spec sends all three calls to a person with this model. Journey 2 would not proceed automatically. That is the safe direction. It shows that the thresholds of the journeys are examples, as R-16 states.
+- The latency was 6.1 s for the first request and 762 to 1,247 ms after that, on one Apple silicon workstation. Each value is above the default `request_timeout` of 500 ms. With the default, each call gets the status `timeout` and waits for a person.
+- The response `model` was `winnow:e4b`, the name in the request, not a versioned identifier. If a deployment changes the weights behind the same name, the model condition of FR-041 does not see the change.
+
+This test is a smoke test of the request shape and the context. It is not an evaluation. It used
+one local model and three calls. No hosted OpenAI or TypeSafe model was called.
 
 ## Sources
 

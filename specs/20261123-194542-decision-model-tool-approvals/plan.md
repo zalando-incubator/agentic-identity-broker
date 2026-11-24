@@ -32,7 +32,7 @@ The contracts are in [contracts/](contracts/).
 
 **Target Platform**: The standalone ExtProc service behind agentgateway `v1.7.0` or later (D-14), the broker, and the existing SPA. The Helm chart does not deploy ExtProc and does not change.
 
-**Performance Goals**: A call that the policy allows or denies gets no delay and no model request. An assessed call gets a maximum added delay of `request_timeout` (500 ms by default) and one more policy evaluation (100 ms by default). agentgateway has no ExtProc message timeout, thus the deadlines of ExtProc limit the delay (D-15). The copy of a `tools/list` response does not delay the response.
+**Performance Goals**: A call that the policy allows or denies gets no delay and no model request. An assessed call gets a maximum added delay of `request_timeout` (500 ms by default) and one more policy evaluation (100 ms by default). agentgateway has no ExtProc message timeout, thus the deadlines of ExtProc limit the delay (D-15). The copy of a `tools/list` response does not delay the response. A warm local `winnow:e4b` model needed 762 to 1,247 ms, thus the documentation tells operators to measure the model latency before they set `request_timeout` (D-15).
 
 **Constraints**: A context of a maximum of 16 KiB. A listing of a maximum of 1 MiB. A maximum of 10,000 tool definitions for each instance. A maximum of 64 model requests in progress for each instance. No argument value in a log, span, or metric. Each failure keeps the call for a person or denies it.
 
@@ -113,7 +113,7 @@ web/src/components/approvals/ApprovalReviewPage.tsx
 web/src/types/approval.ts
 
 tests/e2e/extproc/, tests/e2e/frontend/, tests/e2e/pages/, tests/integration/
-docker-compose.yml, tests/e2e/extproc/agentgateway_e2e_test.go   # agentgateway v1.7.0 (D-14)
+docker-compose.yml, tests/e2e/**/agentgateway*_test.go, .github/workflows/   # agentgateway v1.7.0 at each pin site (D-14)
 mocks/agentgateway/config.yaml       # decision endpoint example in the llm section
 examples/config/, configs/, docs/configuration.md, docs/resources/assurance-case.md
 examples/config/assessment-catalog.yaml     # starter question set (FR-027)
@@ -162,9 +162,10 @@ disabled until US5 and US4 complete.
 The starter case set contains the calls of issue #206, dangerous counterexamples, and adversarial
 argument variants, each with a label. One ExtProc case runs `assessment evaluate` on the starter
 files with the decision endpoint double. It proves SC-003 for the double. The measured results
-of the example policy with a real model need a model credential. The spec requires them before
-publication. This plan cannot produce them without that credential (see the open items in
-[research.md](research.md)).
+of the example policy need an evaluation run with a real model. The spec requires them before
+publication. The local `winnow:e4b` model of the smoke test can do this run. The starter case set
+and the example thresholds must then agree with the measured answers (see the smoke test in
+[decision-model-research.md](decision-model-research.md)).
 
 ## Testing Strategy
 
