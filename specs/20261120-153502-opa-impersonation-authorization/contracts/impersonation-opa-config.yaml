@@ -50,8 +50,9 @@ engine:                      # oauth2_authorization_server.impersonation.opa
         Local mode (R15). Absolute path of a bundle directory (OPA bundle layout: .rego modules,
         data.json or data.yaml files, optional .manifest), read once at startup through an os.Root
         over that directory and admitted like a managed revision. There is no polling:
-        changing the directory takes effect only after a restart. Intended for development,
-        tests, and deployments that ship policy with the release.
+        changing the directory takes effect only after a restart. Permitted in every deployment
+        (spec clarification 2026-11-24); startup logs local_mode once, and the documentation states
+        that live governance updates need managed mode.
       validation:
         - exactly one of policy.config_file and policy.path is set
         - file_containment rules, with the bundle directory as the root
