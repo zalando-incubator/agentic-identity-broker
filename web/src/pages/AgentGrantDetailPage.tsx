@@ -126,6 +126,9 @@ export function AgentGrantDetailPage() {
   const [perPsIncludedServiceIds, setPerPsIncludedServiceIds] = useState<
     Record<string, string[]>
   >({});
+  // True once PermissionSetsList has reported the live selection, even when it is empty, so an
+  // emptied selection never falls back to the saved grant.
+  const [selectionReported, setSelectionReported] = useState(false);
 
   // Validation errors
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -177,7 +180,7 @@ export function AgentGrantDetailPage() {
   const buildGrantedPermissionSets = (): Record<string, string[]> => {
     // perPsIncludedServiceIds is populated by PermissionSetsList on mount (including initial
     // grant hydration), so it is the single authoritative source for submission.
-    if (Object.keys(perPsIncludedServiceIds).length > 0) {
+    if (selectionReported) {
       return { ...perPsIncludedServiceIds };
     }
 
@@ -319,7 +322,7 @@ export function AgentGrantDetailPage() {
 
     // Use perPsIncludedServiceIds as the authoritative source when available (FR-009, FR-010)
     // This reflects per-service toggle state from PermissionSetsList.
-    if (Object.keys(perPsIncludedServiceIds).length > 0) {
+    if (selectionReported) {
       const serviceIds = new Set<string>();
       Object.values(perPsIncludedServiceIds).forEach((ids) =>
         ids.forEach((id) => serviceIds.add(id)),
@@ -343,7 +346,7 @@ export function AgentGrantDetailPage() {
         });
       });
     return serviceIds;
-  }, [agent, perPsIncludedServiceIds]);
+  }, [agent, perPsIncludedServiceIds, selectionReported]);
 
   // Filter services: show only those without active sessions
   // When dynamicServiceIds is null (no PSes), show ALL services without active sessions
@@ -352,7 +355,10 @@ export function AgentGrantDetailPage() {
     return services.filter(
       (service) =>
         (dynamicServiceIds === null ||
-          dynamicServiceIds.has(service.serviceId)) &&
+          dynamicServiceIds.has(service.serviceId) ||
+          agent?.requested_service_coverage?.some(
+            (requested) => requested.service_id === service.serviceId,
+          )) &&
         !agent?.active_session_service_ids?.includes(service.serviceId),
     );
   }, [services, dynamicServiceIds, agent]);
@@ -368,7 +374,7 @@ export function AgentGrantDetailPage() {
     // Use perPsIncludedServiceIds as authoritative source; fall back to mandatory PS IDs
     // before PermissionSetsList has mounted and emitted.
     const activePsIds =
-      Object.keys(perPsIncludedServiceIds).length > 0
+      selectionReported
         ? Object.keys(perPsIncludedServiceIds)
         : (agent?.permission_sets
             ?.filter((p) => p.requirement_type === 'mandatory')
@@ -385,7 +391,7 @@ export function AgentGrantDetailPage() {
       }
     }
     return result;
-  }, [services, agent, perPsIncludedServiceIds]);
+  }, [services, agent, perPsIncludedServiceIds, selectionReported]);
 
   // FR-020: Approve button disabled until all displayed dynamic services have active sessions
   const isApproveDisabled = useMemo(() => {
@@ -425,12 +431,12 @@ export function AgentGrantDetailPage() {
     () =>
       evaluateRequestedServices(
         requestedCoverage,
-        Object.keys(perPsIncludedServiceIds).length > 0
+        selectionReported
           ? perPsIncludedServiceIds
           : (grants?.granted_permission_sets ?? {}),
         serviceNames,
       ),
-    [requestedCoverage, perPsIncludedServiceIds, grants, serviceNames],
+    [requestedCoverage, perPsIncludedServiceIds, selectionReported, grants, serviceNames],
   );
   const requestedServices = useMemo(
     () =>
@@ -756,10 +762,10 @@ export function AgentGrantDetailPage() {
               }
               agentName={agent.displayName}
               requestedServices={requestedServices}
-              onRequestedServiceLogin={handleServiceLogin}
               onRequestedServiceRetry={() => void refetch()}
               onSelectionChange={(_optionalIds, perPsIncluded) => {
                 setPerPsIncludedServiceIds(perPsIncluded);
+                setSelectionReported(true);
               }}
             />
           )}

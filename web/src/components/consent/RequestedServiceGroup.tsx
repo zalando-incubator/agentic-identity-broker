@@ -2,9 +2,10 @@
  * RequestedServiceGroup
  *
  * Groups the permission sets that cover one service the client requested (Virtual Service
- * Scopes) under a header that states the request, its login and selection status, and the
- * single login action for that service. The nested rows hang off a rail whose colour repeats
- * the status: warning while a condition is unmet, success once both are met.
+ * Scopes) under a header that states the request and its live login and selection status. Login
+ * stays in Connect Your Accounts, where every service is connected. The nested rows hang off a
+ * rail whose colour repeats the status: warning while a condition is unmet, success once both
+ * are met.
  */
 
 import React, { useId } from 'react';
@@ -32,7 +33,6 @@ export interface RequestedServiceGroupProps {
   hasCoveringSets: boolean;
   /** Covering sets already shown under an earlier requested service */
   alsoAllowedBy: string[];
-  onLogin: (serviceId: string) => void;
   onRetry: () => void;
   /** Covering permission set rows nested under the header */
   children?: React.ReactNode;
@@ -70,7 +70,6 @@ export const RequestedServiceGroup: React.FC<RequestedServiceGroupProps> = ({
   result,
   hasCoveringSets,
   alsoAllowedBy,
-  onLogin,
   onRetry,
   children,
 }) => {
@@ -125,17 +124,17 @@ export const RequestedServiceGroup: React.FC<RequestedServiceGroupProps> = ({
                   testId="requested-service-selection"
                 />
               </ul>
-              {(result.login === 'missing' || result.login === 'unusable') && (
-                <Button variant="primary" size="sm" onClick={() => onLogin(result.serviceId)}>
-                  Log in to {name}
-                </Button>
-              )}
               {result.login === 'unavailable' && (
                 <Button variant="primary" size="sm" onClick={onRetry}>
                   Retry
                 </Button>
               )}
             </div>
+            {(result.login === 'missing' || result.login === 'unusable') && (
+              <p className="text-sm text-neutral-700" data-testid="requested-service-login-hint">
+                Log in to {name} under Connect Your Accounts below.
+              </p>
+            )}
           </>
         ) : (
           <p className="text-sm text-neutral-700">

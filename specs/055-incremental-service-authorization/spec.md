@@ -15,7 +15,7 @@
 The maintainer decided these items directly in a working session, because the pipeline could not apply the [proposal for `c55a4582`](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7070667026) (AI quota exhausted). They supersede the open-question notes in the clarifications below.
 
 - **F1 transient precedence / FR-003, SR-003**: "Not selected" takes precedence over transient usability. Only selected requested services can make authorization or local refresh fail with `temporarily_unavailable`/`server_error`; an unselected requested service whose session is unverifiable follows the not-selected path (focused consent on authorization, `400 invalid_scope` with reason `not_selected` on local refresh).
-- **Consent layout / FR-009–FR-011**: The standalone requested-service banner is replaced by one request group per requested service inside Agent Permissions (States C and D). The group header names the agent and service, says "Turn on at least one of these permission sets to allow it.", shows text status for login and selection, and holds the only login or retry control for that service. Covering permission sets are nested under it with a visual connector, so cards carry no "covers requested" badge. Connect Your Accounts marks a requested service "Asked for" with "Connect above" instead of a second login. The Save hint is one sentence naming exactly the unmet conditions.
+- **Consent layout / FR-009–FR-011**: The standalone requested-service banner is replaced by one request group per requested service inside Agent Permissions (States C and D). The group header names the agent and service, says "Turn on at least one of these permission sets to allow it.", shows live text status for login and selection, and offers Retry only while usability cannot be checked. Covering permission sets are nested under it with a visual connector, so cards carry no "covers requested" badge. Login stays in Connect Your Accounts (maintainer follow-up, 2026-11-24): that section always lists a requested service, marked "Asked for", with its usual Login, and the header points to it. The Save hint is one sentence naming exactly the unmet conditions.
 - **Proposal P1 / SR-005**: The parsed continuation parameter type is registered as a `telemetrylint` credential type (`LOGGING.md` §6.4).
 - **Proposal P2 / SR-005**: Consent agent-detail and grant submission also record expired and principal/Agent-mismatched authorization sessions as `consent.authorization_session.rejected`, with closed reasons `invalid_authorization_session`, `expired_authorization_session`, `agent_mismatch` and `principal_mismatch`, and unchanged HTTP status codes and bodies.
 - **Proposal P3 / Glossary**: The parsed absent/present/invalid `session_token` input is `model.ContinuationParameter`; "Authorization Continuation" names only the post-Save continuation.
@@ -384,38 +384,38 @@ window "Consent Management":
     checkbox "Specific end date" label-right
     text "Until revoked" muted
   section "Agent Permissions":
-    slot "Identity Access":
-      chip "Required"
-      chip "Corporate Identity"
     slot "Data Analysis Assistant is asking for GitHub Production" accent=warning:
       text "Turn on at least one of these permission sets to allow it." size=small
       row:
         text "Not connected" size=small
-        button "Log in to GitHub Production" primary
         spacer
         icon name="check"
         text "Permission set on" size=small
+      text "Log in to GitHub Production under Connect Your Accounts below." size=small
       slot "→ GitHub Read Access" accent=warning id="rail":
         toggle "GitHub Read Access" on
         text "repo, user:email" muted
       slot "→ GitHub Issue Triage" accent=warning:
         toggle "GitHub Issue Triage" off
         text "repo; does not cover user:email" muted
+    slot "Identity Access":
+      chip "Required"
+      chip "Corporate Identity"
   section "Connect Your Accounts":
     slot "GitHub Production":
       chip "Asked for" accent=warning
-      text "Connect above" muted
+      button "Login" primary
   row:
     button "Revoke All Access"
     spacer
-    text "To save: log in to GitHub Production." size=small
+    text "To save: log in to GitHub Production under Connect Your Accounts." size=small
     button "Save" disabled
 annotation "Covering sets are grouped under the request;\nthe group stays amber until both checks pass" target="rail" position=left
 ```
 
 </details>
 
-Action: Alice keeps GitHub Read Access on and clicks **Log in to GitHub Production** in the request group, the only login control for a requested service. Her selections and original authorization context survive the provider round trip using the existing consent return behavior; no new state transport is prescribed here. If no covering set is on, Save stays disabled with “To save: turn on a permission set that allows GitHub Production.”; direct submission is also rejected. If no offered set covers the service, the group says “None of this agent's permission sets include GitHub Production, so you can't allow it here. An administrator can add one.”
+Action: Alice keeps GitHub Read Access on and clicks **Login** for GitHub Production under Connect Your Accounts, where every service is connected; the request group adds no login control of its own. Her selections and original authorization context survive the provider round trip using the existing consent return behavior; no new state transport is prescribed here. Both status checks update live: the selection check follows every toggle, including turning the last covering set off, and the login check reads Connected after a successful provider login. If no covering set is on, Save stays disabled with “To save: turn on a permission set that allows GitHub Production.”; direct submission is also rejected. If no offered set covers the service, the group says “None of this agent's permission sets include GitHub Production, so you can't allow it here. An administrator can add one.”
 
 **Step 6 — 09:30:15–09:30:44: provider login and return (State D)**
 
@@ -435,9 +435,6 @@ window "Consent Management":
     checkbox "Specific end date" label-right
     text "Until revoked" muted
   section "Agent Permissions":
-    slot "Identity Access":
-      chip "Required"
-      chip "Corporate Identity"
     slot "Data Analysis Assistant is asking for GitHub Production" accent=success:
       text "Turn on at least one of these permission sets to allow it." size=small
       row:
@@ -450,6 +447,9 @@ window "Consent Management":
         toggle "GitHub Read Access" on
       slot "→ GitHub Issue Triage" accent=success:
         toggle "GitHub Issue Triage" off
+    slot "Identity Access":
+      chip "Required"
+      chip "Corporate Identity"
   row:
     button "Revoke All Access"
     spacer
@@ -738,7 +738,7 @@ The corporate identity provider receives no request, so `SYNTHETIC_UPSTREAM_REFR
 - **FR-006**: Recoverable service-session action links MUST return the signed-in user to that service's session page after provider login rather than the generic list. Grant-denial recovery MUST still take the user to consent rather than falsely imply login grants permission.
 - **FR-007**: Interactive authorization MUST enforce all requested services in addition to permanent required services, preserving the original request and authenticated scope-to-UUID bindings through consent submission and subsequent browser authorize re-entry, and not permanently changing the agent configuration. Re-entry MUST validate the sealed context independently before code issuance or proxy redirect.
 - **FR-008**: Verify usability with the same outcome as a real service call: use a currently valid token or attempt eligible expired-token refresh; require effective provider scopes (FR-003) and existing client-identity checks. Valid access with sufficient effective scopes and matching identity remains usable without a refresh token only when no rejection is recorded; absent refresh disqualifies a session once access expires. The broker MUST NOT predict refresh-token expiry. An observed terminal HTTP 4xx `invalid_grant` (excluding 429) MUST record `RefreshRejectedAt` under the existing lock and persist unusability for all session consumers immediately, even before access expiry (ADR 046). Transient failures MUST NOT persist false revocation or allow silent authorization. Interactive authorization reports them as `temporarily_unavailable`, and local refresh reports them as `server_error` without rotating the token.
-- **FR-009**: Consent MUST expose server-derived requested service IDs and, for each one, the configured required scopes, verified baseline usability and each candidate set's supplied required scopes and effective-contribution usability against the same verified session snapshot; it MUST show one request group per requested service inside Agent Permissions: a header naming the agent and service with the instruction to turn on at least one covering set, text status for login and selection, the only login control for that service, and every covering permission set nested under the header with a visual connector, so no per-card "covers requested" badge is needed. A set covering several requested services appears under the first group and is named in the others. Connect Your Accounts labels a requested service "Asked for" without a second login control, and the Save hint names exactly the unmet conditions in one sentence. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
+- **FR-009**: Consent MUST expose server-derived requested service IDs and, for each one, the configured required scopes, verified baseline usability and each candidate set's supplied required scopes and effective-contribution usability against the same verified session snapshot; it MUST show one request group per requested service inside Agent Permissions: a header naming the agent and service with the instruction to turn on at least one covering set and live text status for login and selection, and every covering permission set nested under the header with a visual connector, so no per-card "covers requested" badge is needed. A set covering several requested services appears under the first group and is named in the others. Login stays in Connect Your Accounts, which always lists a requested service and labels it "Asked for"; the header adds no login control. The selection check MUST follow the live, unsaved selection, including an empty one, and the Save hint names exactly the unmet conditions in one sentence. Existing optional toggles MUST remain editable and no optional set may be auto-selected or locked by step-up.
 - **FR-010**: Save/Approve MUST remain disabled with an accessible reason until each requested service is selected within at least one covering permission set, configured required scope coverage is satisfied, and its session is usable for the live selection's effective scope union. The UI combines baseline usability and every selected candidate's contribution usability; unselected unusable candidates do not block Save. The broker MUST freshly enforce the same rule on submitted grants before changing the grant or continuing authorization.
 - **FR-011**: Provider login MUST retain the user's consent selections and original authorization context, then resume the same consent request. Successful Save MUST return a server-built original authorize URL carrying that same JWE as `session_token`; re-entry uses the sealed original request/bindings. Empty or repeated `session_token` values MUST be rejected by authorize, consent agent-detail and grant submission; only absence denotes standalone consent management. The consent APIs return `400 invalid_token` before mutation. After redirect validation, empty/repeated values or forged/malformed/expired or request/principal/agent-mismatched context returns `302` to that callback with `access_denied` and `authorization session is invalid or expired`; valid context with mismatched scope-to-UUID binding returns `302 invalid_scope` with `requested service scope is not permitted`. Echo the request's original `state` (omit if absent), issue no code, make no upstream authorize request, and never forward the continuation token upstream or to the client callback. Step-up MUST NOT silently alter the existing grant's expiry or unrelated optional selections.
 - **FR-012**: Local refresh MUST NOT widen its original scope set; adding a virtual scope requires interactive authorization and returns `invalid_scope` without consuming an otherwise valid refresh token. Successful narrowing MUST return and persist the narrowed scope set; later scope-less refresh MUST NOT restore removed scopes. Local refresh MUST retain all original service bindings as assurance-only obligations and recheck all those services even after narrowing, including when `scope` is omitted, and return a scope error if they are no longer covered or usable. A removed scope cannot be requested again without interactive authorization. Existing revoked-grant errors retain their existing handling.

@@ -1605,11 +1605,25 @@ func (cp *ConsentPage) RequestedServiceSelection(_ context.Context, serviceName 
 	return strings.TrimSpace(text), nil
 }
 
-// LoginRequestedService starts provider sign-in from the requested-service group header.
+// LoginRequestedService starts provider sign-in from the requested service's usual Login under
+// Connect Your Accounts; the requested-service group header offers no login of its own.
 func (cp *ConsentPage) LoginRequestedService(_ context.Context, serviceName string) error {
-	return cp.requestedServiceGroup(serviceName).GetByRole("button", playwright.LocatorGetByRoleOptions{
-		Name: "Log in to " + serviceName,
-	}).Click()
+	return cp.serviceLoginButton(serviceName).Click()
+}
+
+func (cp *ConsentPage) serviceLoginButton(serviceDisplayName string) playwright.Locator {
+	return cp.page().Locator(fmt.Sprintf(`article[aria-label="Service: %s"]`, serviceDisplayName)).
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Login", Exact: playwright.Bool(true)})
+}
+
+// RequestedServiceHasHeaderLogin reports whether the requested-service group header offers a login button.
+func (cp *ConsentPage) RequestedServiceHasHeaderLogin(_ context.Context, serviceName string) (bool, error) {
+	count, err := cp.requestedServiceGroup(serviceName).Locator("[data-testid='requested-service-header']").
+		GetByRole("button", playwright.LocatorGetByRoleOptions{Name: "Log in"}).Count()
+	if err != nil {
+		return false, fmt.Errorf("failed to read requested service header actions for %q: %w", serviceName, err)
+	}
+	return count > 0, nil
 }
 
 // IsRequestedCandidate reports whether a permission set is nested under a requested-service group.

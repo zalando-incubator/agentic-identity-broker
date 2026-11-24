@@ -162,7 +162,6 @@ describe('PermissionSetsList — requested-service groups (Feature 055)', () => 
   });
 
   it('nests covering sets under their request without selecting or locking them', () => {
-    const onLogin = vi.fn();
     render(
       <PermissionSetsList
         permissionSets={[mandatoryPS, optionalPS('ps-triage', 'Issue Triage', [SERVICE_C])]}
@@ -170,7 +169,6 @@ describe('PermissionSetsList — requested-service groups (Feature 055)', () => 
         serviceRequirements={serviceRequirements}
         agentName="Helper"
         requestedServices={[{ result: result(SERVICE_C, 'Service C'), coveringPermissionSetIds: ['ps-triage'] }]}
-        onRequestedServiceLogin={onLogin}
         onRequestedServiceRetry={vi.fn()}
         onSelectionChange={vi.fn()}
       />,
@@ -183,8 +181,7 @@ describe('PermissionSetsList — requested-service groups (Feature 055)', () => 
     const toggle = within(group).getByRole('switch', { name: 'Toggle Issue Triage' });
     expect(toggle).toHaveAttribute('aria-checked', 'false');
     expect(toggle).not.toBeDisabled();
-    fireEvent.click(within(group).getByRole('button', { name: 'Log in to Service C' }));
-    expect(onLogin).toHaveBeenCalledWith(SERVICE_C);
+    expect(within(group).queryByRole('button', { name: /Log in/ })).not.toBeInTheDocument();
   });
 
   it('shows a set covering two requests under the first only and names it in the second', () => {
@@ -198,7 +195,6 @@ describe('PermissionSetsList — requested-service groups (Feature 055)', () => 
           { result: result(SERVICE_C, 'Service C'), coveringPermissionSetIds: ['ps-both'] },
           { result: result(SERVICE_D, 'Service D'), coveringPermissionSetIds: ['ps-both', 'ps-d'] },
         ]}
-        onRequestedServiceLogin={vi.fn()}
         onRequestedServiceRetry={vi.fn()}
       />,
     );
@@ -219,7 +215,6 @@ describe('PermissionSetsList — requested-service groups (Feature 055)', () => 
         serviceRequirements={serviceRequirements}
         agentName="Helper"
         requestedServices={[{ result: result(SERVICE_C, 'Service C'), coveringPermissionSetIds: [] }]}
-        onRequestedServiceLogin={vi.fn()}
         onRequestedServiceRetry={vi.fn()}
       />,
     );

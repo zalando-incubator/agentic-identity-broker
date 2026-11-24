@@ -72,7 +72,7 @@ function unmetSentence(
   }
   const steps: string[] = [];
   if (login === 'missing' || login === 'unusable') {
-    steps.push(`log in to ${name}`);
+    steps.push(`log in to ${name} under Connect Your Accounts`);
   } else if (login === 'unavailable') {
     steps.push(`retry the ${name} check`);
   }

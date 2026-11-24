@@ -69,7 +69,6 @@ export interface PermissionSetsListProps {
    * a set covering several requests appears under the first. Grouping never selects a set.
    */
   requestedServices?: RequestedServiceEntry[];
-  onRequestedServiceLogin?: (serviceId: string) => void;
   onRequestedServiceRetry?: () => void;
 }
 
@@ -86,7 +85,6 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
   initialGrantedPermissionSets = {},
   agentName = 'This agent',
   requestedServices = [],
-  onRequestedServiceLogin = () => {},
   onRequestedServiceRetry = () => {},
 }) => {
   const [selectedOptionalIds, setSelectedOptionalIds] = useState<Set<string>>(() => {
@@ -341,7 +339,6 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
               result={group.entry.result}
               hasCoveringSets={group.offered.length > 0}
               alsoAllowedBy={group.alsoAllowedBy}
-              onLogin={onRequestedServiceLogin}
               onRetry={onRequestedServiceRetry}
             >
               {group.rows.map((ps) => renderRow(ps, false, false))}

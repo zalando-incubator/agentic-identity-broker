@@ -31,7 +31,7 @@ describe('evaluateRequestedServices', () => {
     const [result] = evaluateRequestedServices([coverage({ usability: 'missing' })], {}, names);
     expect(result.login).toBe('missing');
     expect(result.reason).toBe(
-      'To save: log in to GitHub Production and turn on a permission set that allows it.',
+      'To save: log in to GitHub Production under Connect Your Accounts and turn on a permission set that allows it.',
     );
   });
 
@@ -74,7 +74,7 @@ describe('evaluateRequestedServices', () => {
   it('requires the baseline and every selected candidate contribution to be usable', () => {
     const [missing] = evaluateRequestedServices([coverage({ usability: 'missing' })], { read: [github] }, names);
     expect(missing.login).toBe('missing');
-    expect(missing.reason).toBe('To save: log in to GitHub Production.');
+    expect(missing.reason).toBe('To save: log in to GitHub Production under Connect Your Accounts.');
     const [unavailable] = evaluateRequestedServices([coverage({ usability: 'unavailable' })], { read: [github] }, names);
     expect(unavailable.login).toBe('unavailable');
     expect(unavailable.reason).toBe('To save: retry the GitHub Production check.');
@@ -89,7 +89,7 @@ describe('evaluateRequestedServices', () => {
     const [unusable] = evaluateRequestedServices([allScopes], { read: [github] }, names);
     expect(unusable.satisfied).toBe(false);
     expect(unusable.login).toBe('unusable');
-    expect(unusable.reason).toBe('To save: log in to GitHub Production.');
+    expect(unusable.reason).toBe('To save: log in to GitHub Production under Connect Your Accounts.');
     expect(evaluateRequestedServices([allScopes], { triage: [github] }, names)[0].satisfied).toBe(true);
     expect(evaluateRequestedServices([allScopes], { triage: [github], read: [github] }, names)[0].satisfied).toBe(false);
   });

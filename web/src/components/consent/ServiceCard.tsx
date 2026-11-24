@@ -132,11 +132,7 @@ export function ServiceCard({
 
       {/* Action button */}
       <div className="flex-shrink-0" data-testid={`service-actions-${service.serviceId}`}>
-        {!isConnected && isRequested ? (
-          <span className="text-sm text-neutral-700" data-testid="service-connect-above">
-            Connect above
-          </span>
-        ) : !isConnected ? (
+        {!isConnected ? (
           <Button
             variant="primary"
             size="sm"

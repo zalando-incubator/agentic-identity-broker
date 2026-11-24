@@ -21,7 +21,6 @@ const renderGroup = (overrides: Partial<React.ComponentProps<typeof RequestedSer
     result: result(),
     hasCoveringSets: true,
     alsoAllowedBy: [],
-    onLogin: vi.fn(),
     onRetry: vi.fn(),
     children: [<div key="a">GitHub Read Access row</div>, <div key="b">GitHub Issue Triage row</div>],
     ...overrides,
@@ -42,12 +41,14 @@ describe('RequestedServiceGroup', () => {
     expect(group).not.toHaveTextContent('Session:');
   });
 
-  it('states both unmet conditions and offers the single login action', async () => {
-    const { onLogin } = renderGroup();
+  it('states both unmet conditions and points to the usual login without adding a button', () => {
+    renderGroup();
     expect(screen.getByTestId('requested-service-status')).toHaveTextContent('Not connected');
     expect(screen.getByTestId('requested-service-selection')).toHaveTextContent('No permission set on');
-    await userEvent.click(screen.getByRole('button', { name: 'Log in to GitHub Production' }));
-    expect(onLogin).toHaveBeenCalledWith('gh');
+    expect(screen.getByTestId('requested-service-login-hint')).toHaveTextContent(
+      'Log in to GitHub Production under Connect Your Accounts below.',
+    );
+    expect(screen.queryByRole('button', { name: /Log in/ })).not.toBeInTheDocument();
   });
 
   it.each([
@@ -58,12 +59,13 @@ describe('RequestedServiceGroup', () => {
   ] as const)('maps %s usability to %s', (login, label) => {
     renderGroup({ result: result({ login }) });
     expect(screen.getByTestId('requested-service-status')).toHaveTextContent(label);
-    const loginButton = screen.queryByRole('button', { name: 'Log in to GitHub Production' });
+    const hint = screen.queryByTestId('requested-service-login-hint');
     if (login === 'missing' || login === 'unusable') {
-      expect(loginButton).toBeInTheDocument();
+      expect(hint).toBeInTheDocument();
     } else {
-      expect(loginButton).not.toBeInTheDocument();
+      expect(hint).not.toBeInTheDocument();
     }
+    expect(screen.queryByRole('button', { name: /Log in/ })).not.toBeInTheDocument();
   });
 
   it('offers Retry while usability cannot be checked', async () => {

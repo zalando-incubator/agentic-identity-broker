@@ -109,10 +109,14 @@ func (p *Page) SetColorScheme(ctx context.Context, dark bool) error {
 }
 
 func (p *Page) keyboardActivate(ctx context.Context, name string) error {
+	return p.keyboardActivateButton(ctx, name,
+		p.page.GetByRole("button", playwright.PageGetByRoleOptions{Name: name, Exact: playwright.Bool(true)}).First())
+}
+
+func (p *Page) keyboardActivateButton(ctx context.Context, name string, button playwright.Locator) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	button := p.page.GetByRole("button", playwright.PageGetByRoleOptions{Name: name, Exact: playwright.Bool(true)}).First()
 	if err := button.Focus(); err != nil {
 		return err
 	}
@@ -134,8 +138,9 @@ func (p *Page) keyboardActivate(ctx context.Context, name string) error {
 	return button.Press("Enter")
 }
 
+// KeyboardLoginRequestedService activates the requested service's usual Login under Connect Your Accounts.
 func (cp *ConsentPage) KeyboardLoginRequestedService(ctx context.Context, name string) error {
-	return cp.keyboardActivate(ctx, "Log in to "+name)
+	return cp.keyboardActivateButton(ctx, "Login for "+name, cp.serviceLoginButton(name))
 }
 
 func (sp *SessionsPage) KeyboardRefreshService(ctx context.Context) error {
@@ -188,11 +193,11 @@ func (p *Page) verifyKeyboardOrder(ctx context.Context, controls ...playwright.L
 
 func (cp *ConsentPage) VerifyRequestedServiceKeyboardOrder(ctx context.Context, ready bool) error {
 	controls := []playwright.Locator{}
-	if !ready {
-		controls = append(controls, cp.page().GetByRole("button", playwright.PageGetByRoleOptions{Name: "Log in to GitHub Production", Exact: playwright.Bool(true)}))
-	}
 	for _, name := range []string{"GitHub Read Access", "GitHub Issue Triage"} {
 		controls = append(controls, cp.permissionSetCard(name).GetByRole("switch", playwright.LocatorGetByRoleOptions{Name: "Toggle " + name, Exact: playwright.Bool(true)}))
+	}
+	if !ready {
+		controls = append(controls, cp.serviceLoginButton("GitHub Production"))
 	}
 	if ready {
 		controls = append(controls, cp.getConsentActionButton("Save"))

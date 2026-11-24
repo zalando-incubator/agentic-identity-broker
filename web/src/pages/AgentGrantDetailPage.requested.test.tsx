@@ -66,9 +66,22 @@ const coverage = (usability: RequestedServiceCoverage['usability'], readUsabilit
   ],
 });
 
-const renderWith = (requested: RequestedServiceCoverage) => {
+const renderWith = (
+  requested: RequestedServiceCoverage,
+  options: { withoutMandatorySet?: boolean; granted?: UserGrant['granted_permission_sets'] } = {},
+) => {
+  const detail = agent(requested);
+  if (options.withoutMandatorySet) {
+    detail.permission_sets = detail.permission_sets?.filter((entry) => entry.requirement_type !== 'mandatory');
+  }
   vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
-    agent: agent(requested), services, cimdMeta: null, grants: grant, loading: false, error: null, refetch: vi.fn(),
+    agent: detail,
+    services,
+    cimdMeta: null,
+    grants: options.granted ? { ...grant, granted_permission_sets: options.granted } : grant,
+    loading: false,
+    error: null,
+    refetch: vi.fn(),
   } as never);
   render(
     <ToastProvider>
@@ -107,7 +120,12 @@ describe('AgentGrantDetailPage — requested services', () => {
     expect(within(group()).getByTestId('requested-service-status')).toHaveTextContent('Not connected');
     expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('No permission set on');
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(saveReason()).toBe('To save: log in to GitHub Production and turn on a permission set that allows it.');
+    expect(saveReason()).toBe(
+      'To save: log in to GitHub Production under Connect Your Accounts and turn on a permission set that allows it.',
+    );
+    expect(within(group()).queryByRole('button', { name: /Log in/ })).not.toBeInTheDocument();
+    const connectCard = screen.getByRole('article', { name: 'Service: GitHub Production' });
+    expect(within(connectCard).getByRole('button', { name: 'Login' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
 
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' }));
@@ -116,17 +134,26 @@ describe('AgentGrantDetailPage — requested services', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
     await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
-    expect(saveReason()).toBe('To save: log in to GitHub Production.');
+    expect(saveReason()).toBe('To save: log in to GitHub Production under Connect Your Accounts.');
     expect(screen.getByRole('button', { name: 'Save' })).toHaveAccessibleDescription(saveReason());
     expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('Permission set on');
     expect(group()).toHaveAttribute('data-state', 'pending');
-    expect(screen.getAllByRole('button', { name: /Log in to GitHub Production|^Login$/ })).toHaveLength(1);
-    expect(within(group()).getByRole('button', { name: 'Log in to GitHub Production' })).toBeInTheDocument();
-
-    const connectCard = screen.getByRole('article', { name: 'Service: GitHub Production' });
+    expect(screen.getAllByRole('button', { name: /Log in|^Login$/ })).toHaveLength(1);
     expect(within(connectCard).getByText('Asked for')).toBeInTheDocument();
-    expect(within(connectCard).getByText('Connect above')).toBeInTheDocument();
     expect(within(connectCard).queryByText('Optional')).not.toBeInTheDocument();
+  });
+
+  it('updates the selection check when the last covering set is turned off', async () => {
+    const user = userEvent.setup();
+    renderWith(coverage('usable'), { withoutMandatorySet: true, granted: { read: [github] } });
+    expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('Permission set on');
+    expect(group()).toHaveAttribute('data-state', 'ready');
+
+    await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
+    expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('No permission set on');
+    expect(group()).toHaveAttribute('data-state', 'pending');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(saveReason()).toBe('To save: turn on a permission set that allows GitHub Production.');
   });
 
   it('enables Save only while every selected candidate contribution is usable', async () => {
@@ -158,7 +185,7 @@ describe('AgentGrantDetailPage — requested services', () => {
       </ToastProvider>,
     );
     expect(saveReason()).toBe(
-      'Connect all required services before saving. To save: log in to GitHub Production and turn on a permission set that allows it.',
+      'Connect all required services before saving. To save: log in to GitHub Production under Connect Your Accounts and turn on a permission set that allows it.',
     );
   });
 

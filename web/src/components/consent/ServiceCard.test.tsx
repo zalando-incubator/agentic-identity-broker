@@ -172,7 +172,7 @@ describe('ServiceCard', () => {
     expect(container).toBeInTheDocument();
   });
 
-  it('points a requested service to its request header instead of offering a second login', () => {
+  it('marks a requested service as asked for and keeps its usual Login', () => {
     render(
       <ServiceCard
         service={{ ...mockService, requirementType: 'optional' }}
@@ -183,8 +183,7 @@ describe('ServiceCard', () => {
 
     expect(screen.getByText('Asked for')).toBeInTheDocument();
     expect(screen.queryByText('Optional')).not.toBeInTheDocument();
-    expect(screen.getByText('Connect above')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Login' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument();
   });
 
   it('keeps the requirement badge and Login for a service that was not requested', () => {
@@ -192,6 +191,6 @@ describe('ServiceCard', () => {
 
     expect(screen.getByText('Optional')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument();
-    expect(screen.queryByText('Connect above')).not.toBeInTheDocument();
+    expect(screen.queryByText('Asked for')).not.toBeInTheDocument();
   });
 });
