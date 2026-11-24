@@ -547,3 +547,121 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		}
 	})
 }
+
+func TestHelmDomainEventsConfiguration(t *testing.T) {
+	cases := []struct {
+		name         string
+		enabled      bool
+		writeTimeout string
+		period       string
+		interval     string
+		batchSize    int
+	}{
+		{"defaults", false, "1s", "2160h", "1h", 1000},
+		{"inclusive lower bounds", true, "100ms", "24h", "1s", 1},
+		{"inclusive upper bounds", true, "10s", "8760h", "24h", 10000},
+		{"fractional durations", true, "0.75s", "24.5h", "1.5s", 42},
+		{"compound durations while disabled", false, "1s250ms", "24h30m", "1h30m", 250},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var args []string
+			if tc.name != "defaults" {
+				values := map[string]any{"broker": map[string]any{"domainEvents": map[string]any{
+					"enabled": tc.enabled, "writeTimeout": tc.writeTimeout,
+					"retention": map[string]any{"period": tc.period, "interval": tc.interval, "batchSize": tc.batchSize},
+				}}}
+				args = []string{"-f", credentialHelmValuesFile(t, values)}
+			}
+			configuration, _, _ := credentialHelmConfiguration(t, renderHelmTemplate(t, args...))
+			require.Equal(t, map[string]any{
+				"enabled": tc.enabled, "write_timeout": tc.writeTimeout,
+				"retention": map[string]any{"period": tc.period, "interval": tc.interval, "batch_size": tc.batchSize},
+			}, configuration["domain_events"])
+		})
+	}
+}
+
+func TestHelmDomainEventsAbsentFromLegacyValues(t *testing.T) {
+	// A pre-ledger release reused on upgrade has no domainEvents defaults.
+	output := renderHelmTemplate(t, "--set", "broker.domainEvents=null")
+	configuration, _, _ := credentialHelmConfiguration(t, output)
+	require.NotContains(t, configuration, "domain_events")
+}
+
+func TestHelmDomainEventsRejectInvalidValues(t *testing.T) {
+	cases := []struct {
+		name      string
+		field     string
+		value     any
+		retention bool
+	}{
+		{"enabled string", "enabled", "true", false},
+		{"write timeout number", "writeTimeout", 1, false},
+		{"write timeout boolean", "writeTimeout", true, false},
+		{"enabled null", "enabled", nil, false},
+		{"write timeout null", "writeTimeout", nil, false},
+		{"period number", "period", 2160, true},
+		{"period null", "period", nil, true},
+		{"interval boolean", "interval", false, true},
+		{"interval null", "interval", nil, true},
+		{"batch size string", "batchSize", "1000", true},
+		{"batch size fraction", "batchSize", 1.5, true},
+		{"batch size null", "batchSize", nil, true},
+		{"batch size below minimum", "batchSize", 0, true},
+		{"batch size above maximum", "batchSize", 10001, true},
+	}
+	for _, tc := range cases {
+		for _, enabled := range []bool{false, true} {
+			name := "disabled/" + tc.name
+			if enabled {
+				name = "enabled/" + tc.name
+			}
+			t.Run(name, func(t *testing.T) {
+				domainEvents := map[string]any{"enabled": enabled}
+				if tc.retention {
+					domainEvents["retention"] = map[string]any{tc.field: tc.value}
+				} else {
+					domainEvents[tc.field] = tc.value
+				}
+				values := map[string]any{"broker": map[string]any{"domainEvents": domainEvents}}
+				output, err := runHelmTemplate(t, "-f", credentialHelmValuesFile(t, values))
+				require.Error(t, err, output)
+				require.Contains(t, output, tc.field)
+			})
+		}
+	}
+}
+
+func TestHelmDomainEventsRetainsExistingResources(t *testing.T) {
+	resources := make([]map[string]bool, 0, 2)
+	for _, enabled := range []string{"false", "true"} {
+		output := renderHelmTemplate(t, "--set", "broker.domainEvents.enabled="+enabled)
+		credentialHelmConfiguration(t, output)
+		decoder := yaml.NewDecoder(strings.NewReader(output))
+		names := map[string]bool{}
+		for {
+			var object credentialHelmObject
+			err := decoder.Decode(&object)
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			require.NoError(t, err)
+			names[object.Kind+"/"+object.Metadata.Name] = true
+		}
+		resources = append(resources, names)
+	}
+	require.Equal(t, resources[0], resources[1], "ledger retention must run in the existing broker Deployment without new resources")
+}
+
+func TestHelmDomainEventsRevokeRuntimeUpdate(t *testing.T) {
+	output := renderHelmTemplate(t, "--show-only", "templates/configmap-grants.yaml",
+		"--set", "storage.type=postgres", "--set", "migration.enabled=true", "--set", "migration.grants.enabled=true")
+	var configMap credentialHelmObject
+	require.NoError(t, yaml.Unmarshal([]byte(output), &configMap))
+	grants := configMap.Data["grants.sql"]
+	grant := strings.Index(grants, "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %I")
+	require.GreaterOrEqual(t, grant, 0)
+	revoke := strings.Index(grants, "REVOKE UPDATE ON TABLE public.domain_events FROM %I', :'broker_user'")
+	require.Greater(t, revoke, grant, "revoke ledger UPDATE after the runtime role receives table grants")
+}

@@ -2316,17 +2316,18 @@ func TestService_RevokeConsentUsesDeletedGrantWithoutLookup(t *testing.T) {
 			assert.Equal(t, 2, repo.deleteCalls)
 			assert.NotContains(t, repo.grants, deletedGrantID)
 			assert.Contains(t, repo.grants, unrelatedID)
-			assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte(`"msg":"grant revoked"`)))
+			assert.Equal(t, 1, bytes.Count(logs.Bytes(), []byte(`"event":"consent.grant.revoked"`)))
 			var record map[string]any
 			decoder := json.NewDecoder(&logs)
 			for decoder.More() {
 				record = nil
 				require.NoError(t, decoder.Decode(&record))
-				if record["action"] == "grant_revoked" {
+				if record["event"] == "consent.grant.revoked" {
 					break
 				}
 			}
-			assert.Equal(t, "grant_revoked", record["action"])
+			assert.Equal(t, "consent.grant.revoked", record["event"])
+			assert.NotContains(t, record, "action")
 			assert.Equal(t, string(principal), record["principal"])
 			assert.Equal(t, agentID.String(), record["agent_id"])
 			assert.Equal(t, deletedGrantID.String(), record["grant_id"])
@@ -2375,7 +2376,7 @@ func TestService_RevokeConsentFailureEmitsNoSuccess(t *testing.T) {
 			}
 			assert.Zero(t, repo.findCalls)
 			assert.Equal(t, 1, repo.deleteCalls)
-			assert.NotContains(t, logs.String(), `"action":"grant_revoked"`)
+			assert.NotContains(t, logs.String(), `"event":"consent.grant.revoked"`)
 		})
 	}
 }
@@ -2395,7 +2396,8 @@ func TestService_RevokeConsentAuditsDeletionWhenRefreshCleanupFails(t *testing.T
 	records := capture.JSONRecords(t)
 	require.Len(t, records, 1)
 	assert.Same(t, ctx, capture.contexts[0])
-	assert.Equal(t, "grant_deleted", records[0]["action"])
+	assert.Equal(t, "consent.grant.revoked", records[0]["event"])
+	assert.NotContains(t, records[0], "action")
 	assert.Equal(t, principal.String(), records[0]["principal"])
 	assert.Equal(t, agentID.String(), records[0]["agent_id"])
 	assert.Equal(t, grantID.String(), records[0]["grant_id"])
@@ -2762,15 +2764,15 @@ func TestService_RevokeConsentAuditRetainsOnlyDefensiveOperationalSnapshot(t *te
 	repo.deleted.ValidUntil = ptr.To(time.Now().Add(time.Hour))
 	var record map[string]any
 	for i, candidate := range capture.JSONRecords(t) {
-		if candidate["action"] == "grant_revoked" {
+		if candidate["event"] == "consent.grant.revoked" {
 			require.Nil(t, record, "grant revocation is audited once")
 			assert.Same(t, ctx, capture.contexts[i])
 			record = candidate
 		}
 	}
 	require.NotNil(t, record)
-	assert.Equal(t, "grant revoked", record["msg"])
-	assert.Equal(t, "grant_revoked", record["action"])
+	assert.Equal(t, "consent.grant.revoked", record["event"])
+	assert.NotContains(t, record, "action")
 	assert.Equal(t, before.Principal.String(), record["principal"])
 	assert.Equal(t, before.AgentID.String(), record["agent_id"])
 	assert.Equal(t, before.ID.String(), record["grant_id"])

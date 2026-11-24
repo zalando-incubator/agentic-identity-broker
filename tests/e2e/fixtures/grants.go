@@ -138,6 +138,7 @@ func SeedDefaultConsentData(ctx context.Context, store *storageadapter.Adapter, 
 		ServiceID:            PlaceholderServiceID,
 		EncryptedAccessToken: []byte("opaque-test-token"),
 		TokenType:            "Bearer",
+		Scope:                []string{},
 		EncryptionContext:    storagedomain.EncryptionContext{ServiceID: PlaceholderServiceID},
 	})
 }

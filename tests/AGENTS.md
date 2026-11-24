@@ -20,6 +20,7 @@ Before you change behavior, read the governing feature's `spec.md`, `plan.md`, a
 For HTTP assertions, read the relevant operation in `api/enduser/openapi.yaml` or `api/admin/openapi.yaml`.
 
 ExtProc agentgateway E2E tests and the backend agentgateway scenario use Docker.
+The backend ledger scenarios use PostgreSQL and require Docker or Podman.
 Infra-backed integration tests use PostgreSQL and an AWS emulator. They require Docker or Podman.
 
 ## Choose the Suite
@@ -27,7 +28,7 @@ Infra-backed integration tests use PostgreSQL and an AWS emulator. They require 
 | Suite | Framework | Scope | Infrastructure | Command |
 |---|---|---|---|---|
 | `tests/e2e/` | Ginkgo v2 / Gomega | Broker HTTP acceptance scenarios | Production bootstrap, normally in-memory storage | `just test-e2e-backend` |
-| Docker-tagged `tests/e2e/` scenarios | Ginkgo v2 / Gomega | Agentgateway policy acceptance | Production broker and agentgateway container | `just test-e2e-docker` |
+| Docker-tagged `tests/e2e/` scenarios | Ginkgo v2 / Gomega | Agentgateway policy and domain event ledger acceptance | Production broker and Agentgateway or PostgreSQL | `just test-e2e-docker` |
 | `tests/e2e/extproc/` | Ginkgo v2 / Gomega | ExtProc acceptance scenarios | Some agentgateway scenarios require Docker | `just test-e2e-extproc` |
 | `tests/e2e/frontend/` | Ginkgo v2 / Playwright Go | Browser acceptance scenarios | Built frontend and Chromium | `just test-e2e-frontend` |
 | `tests/integration/` | Standard `go test` / testify assertions | Component behavior and configuration | Self-contained by default | `just test-integration` |

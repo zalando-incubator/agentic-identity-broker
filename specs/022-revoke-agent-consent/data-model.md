@@ -29,17 +29,19 @@ type UserGrant struct {
 
 ### GrantRevoked (audit log event)
 
-Not a persistent event — emitted as a structured log entry from `ConsentService.RevokeConsentForPrincipal`:
+`ConsentService.RevokeConsentForPrincipal` emits a structured log after the grant deletion commits.
+If the ledger is enabled, the broker also attempts to store the event:
 
 ```json
 {
   "level": "INFO",
   "time": "2026-03-20T10:00:00Z",
   "msg": "grant revoked",
-  "action": "grant_revoked",
+  "event": "consent.grant.revoked",
   "principal": "user@example.com",
   "agent_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-  "grant_id": "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
+  "grant_id": "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy",
+  "revoked_at": "2026-03-20T10:00:00Z"
 }
 ```
 

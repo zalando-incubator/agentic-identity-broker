@@ -302,6 +302,21 @@ This section lists all configuration options. See [Available Settings](#availabl
 
 Each successful confidential-provider secret decryption emits `service_secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
 
+#### Domain Event Configuration
+
+| Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
+|--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
+| `domain_events.enabled` | bool | `false` | `true`, `false` | No | `IDENTITY_BROKER_DOMAIN_EVENTS_ENABLED` | `--domain_events.enabled` | Enable ledger writes and retention. Disabling leaves existing rows in place. |
+| `domain_events.write_timeout` | Go duration string | `1s` | `100ms`–`10s` inclusive | No | `IDENTITY_BROKER_DOMAIN_EVENTS_WRITE_TIMEOUT` | `--domain_events.write_timeout` | Deadline for a ledger write, not for the request. A timed-out write can still commit. |
+| `domain_events.retention.period` | Go duration string | `2160h` (90 days) | `24h`–`8760h` inclusive | No | `IDENTITY_BROKER_DOMAIN_EVENTS_RETENTION_PERIOD` | `--domain_events.retention.period` | Storage age after which a row is eligible for deletion. Maximum is 365 days. |
+| `domain_events.retention.interval` | Go duration string | `1h` | `1s`–`24h` inclusive | No | `IDENTITY_BROKER_DOMAIN_EVENTS_RETENTION_INTERVAL` | `--domain_events.retention.interval` | Time between retention runs in each replica. The first run is immediate. |
+| `domain_events.retention.batch_size` | integer | `1000` | 1–10000 inclusive | No | `IDENTITY_BROKER_DOMAIN_EVENTS_RETENTION_BATCH_SIZE` | `--domain_events.retention.batch_size` | Maximum rows per delete statement. |
+
+For PostgreSQL, apply migrations through `049_create_domain_events` before you enable the ledger.
+Use a separate broker runtime role that does not own `domain_events`.
+Grant that role `SELECT`, `INSERT`, and `DELETE` on the table, but not `UPDATE`, directly or through role membership.
+See [Operating the ledger](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/20261118-125900-domain-event-ledger/contracts/configuration.md#operating-the-ledger) for deployment and retention guidance.
+
 #### Token Refresh Configuration
 
 | Option | Type | Default Value | Valid Values | Required? | Environment Variable | CLI Flag | Description |
@@ -1589,7 +1604,7 @@ Grant deletion, expiration, or replacement ends refresh authority. Renewal of ex
 Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
 Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
 
-If deletion commits but refresh cleanup fails, the audit event uses `action=grant_deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
+If refresh cleanup fails after grant deletion, the request returns the cleanup error. Retrying DELETE returns 404 because the grant is already absent.
 
 Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
 

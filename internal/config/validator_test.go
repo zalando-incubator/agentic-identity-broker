@@ -83,6 +83,7 @@ func validTestConfig() *ports.Config {
 		},
 		Security:     ports.SecurityConfig{},
 		TokenRefresh: validTokenRefreshConfig(),
+		DomainEvents: validDomainEventsConfig(),
 	}
 }
 

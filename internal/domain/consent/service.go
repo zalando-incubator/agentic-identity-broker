@@ -644,16 +644,20 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 	}
 	if err := s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked"); err != nil {
 		s.logger.InfoContext(ctx, "grant deleted but refresh cleanup failed",
-			"action", "grant_deleted",
+			"event", GrantRevoked,
 			"principal", grant.Principal,
 			"agent_id", grant.AgentID,
 			"grant_id", grant.ID,
+			"valid_until", grantAuditValidUntil(grant.ValidUntil),
+			"updated_at", grant.UpdatedAt.UTC().Format(time.RFC3339Nano),
+			"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
+			"revoked_at", time.Now().UTC().Format(time.RFC3339Nano),
 			"refresh_cleanup", "failed")
 		return err
 	}
 
 	s.logger.InfoContext(ctx, "grant revoked",
-		"action", "grant_revoked",
+		"event", GrantRevoked,
 		"principal", grant.Principal,
 		"agent_id", grant.AgentID,
 		"grant_id", grant.ID,

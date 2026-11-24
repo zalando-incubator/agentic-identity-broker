@@ -70,6 +70,119 @@ After a user revokes consent, any attempt by the revoked agent to perform a toke
 - What if an agent has no active grant when the user arrives at the detail page? The "Revoke All Access" button must not be shown.
 - What if multiple browser tabs are open and the user revokes from one tab while viewing the same agent in another? The second tab must reflect the revoked state upon any subsequent page interaction.
 
+## Concrete Example Journeys *(mandatory)*
+
+These journeys describe the existing UI and the unchanged
+[`DELETE /api/consent/agents/{agent-id}/grants` contract](../../api/enduser/openapi.yaml).
+All IDs and identities are synthetic. All times are 2026-11-19 UTC.
+The trusted SSO proxy supplies Alice's authenticated identity with this configuration excerpt:
+
+```yaml
+server:
+  enduser:
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+```
+
+### Journey 1 — Alice revokes from the detail page
+
+**Scenarios**: [User Story 1, Scenarios 1–5](#user-story-1---revoke-all-agent-permissions-from-detail-page-priority-p1).
+
+**Initial state**: Alice (`alice@example.com`) has grant `990e8400-e29b-41d4-a716-446655440020`
+for *Data Analysis Assistant* (`550e8400-e29b-41d4-a716-446655440000`).
+The grant includes mandatory *GitHub Read Access* (`770e8400-e29b-41d4-a716-446655440001`).
+Alice also has a connected GitHub OAuth2 session.
+
+**Step 1 — 09:00:00: Alice opens the detail page**
+
+At `/agents/550e8400-e29b-41d4-a716-446655440000`, Alice sees **Revoke All Access** alongside **Approve & Delegate**.
+
+**Step 2 — 09:00:02: Alice reviews and cancels the dialog**
+
+Alice clicks **Revoke All Access**. The dialog names *Data Analysis Assistant* and warns that revocation removes all permissions.
+It states that connected services remain active. Alice clicks **Cancel**.
+The dialog closes without a DELETE request. The detail page and grant remain unchanged.
+
+**Step 3 — 09:00:05: Alice reopens the dialog and confirms**
+
+Alice clicks **Revoke All Access**, then the dialog's **Revoke All Access** button:
+
+```http
+DELETE /api/consent/agents/550e8400-e29b-41d4-a716-446655440000/grants HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 204 No Content
+```
+
+The response has no body. Before the response, the service deletes the grant, completes refresh cleanup, and emits this SR-002 audit excerpt:
+
+```json
+{
+  "principal": "alice@example.com",
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "grant_id": "990e8400-e29b-41d4-a716-446655440020",
+  "event": "consent.grant.revoked",
+  "revoked_at": "2026-11-19T09:00:05.123456789Z"
+}
+```
+
+**Step 4 — 09:00:06: Alice returns to the overview**
+
+The SPA navigates to `/` and shows “All access for this agent has been revoked.”
+The overview no longer shows an active delegation for *Data Analysis Assistant*.
+Alice's connected GitHub OAuth2 session remains active. The audit timestamp uses UTC RFC3339Nano.
+
+### Journey 2 — Alice revokes from the overview
+
+**Scenarios**: [User Story 2, Scenarios 1–4](#user-story-2---revoke-agent-permissions-from-consent-overview-priority-p2).
+
+**Initial state**: Alice has grant `990e8400-e29b-41d4-a716-446655440021`
+for *Calendar Assistant* (`550e8400-e29b-41d4-a716-446655440001`).
+She also has grant `990e8400-e29b-41d4-a716-446655440022`
+for *Mail Assistant* (`550e8400-e29b-41d4-a716-446655440002`).
+Her connected Google OAuth2 session is active.
+
+**Step 1 — 09:10:00: Alice opens `/`**
+
+The overview shows both agent cards, each with a **Revoke** action.
+
+**Step 2 — 09:10:02: Alice reviews and cancels the dialog**
+
+Alice clicks **Revoke** on *Calendar Assistant*. The shared dialog names that agent and states that connected services remain active.
+Alice clicks **Cancel**. No DELETE request occurs, and both cards remain unchanged.
+
+**Step 3 — 09:10:05: Alice reopens the dialog and confirms**
+
+Alice clicks **Revoke** on *Calendar Assistant*, then **Revoke All Access** in the dialog:
+
+```http
+DELETE /api/consent/agents/550e8400-e29b-41d4-a716-446655440001/grants HTTP/1.1
+Host: broker.example.com
+X-Remote-User: alice@example.com
+
+HTTP/1.1 204 No Content
+```
+
+The response has no body. The committed deletion produces this SR-002 audit excerpt before the response:
+
+```json
+{
+  "principal": "alice@example.com",
+  "agent_id": "550e8400-e29b-41d4-a716-446655440001",
+  "grant_id": "990e8400-e29b-41d4-a716-446655440021",
+  "event": "consent.grant.revoked",
+  "revoked_at": "2026-11-19T09:10:05.987654321Z"
+}
+```
+
+**Step 4 — 09:10:06: the overview refreshes**
+
+The dialog closes, and the SPA shows “All access has been revoked.” It fetches the delegation list again without leaving `/`.
+The *Calendar Assistant* card disappears. The *Mail Assistant* card and grant remain unchanged, and Alice's Google OAuth2 session remains active.
+The audit timestamp uses UTC RFC3339Nano.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
@@ -101,7 +214,7 @@ After a user revokes consent, any attempt by the revoked agent to perform a toke
 
 - **API-001**: All end-user APIs MUST be documented in `/api/enduser/openapi.yaml` (OpenAPI 3.0+ format)
 - **API-002**: APIs MUST follow Zalando RESTful API and Event Guidelines
-- **API-003**: A dedicated `DELETE /api/consent/agent/{agent-id}/grants` endpoint MUST be added as the canonical, RESTful revocation path.
+- **API-003**: A dedicated `DELETE /api/consent/agents/{agent-id}/grants` endpoint MUST be added as the canonical, RESTful revocation path.
 - **API-004**: The `DELETE` endpoint MUST return `204 No Content` on success and `404 Not Found` if no active grant exists for the authenticated user and given agent.
 - **API-005**: The `DELETE` endpoint MUST be authenticated — the principal is derived from the existing auth middleware and only the grant owner may delete it; cross-user deletion returns `404 Not Found` (principal-scoped query returns not-found for another user's grant, leaking no existence information — see SR-001 and `research.md §4`).
 - **API-006**: All API changes MUST be confirmed by user/stakeholder before implementation begins.
@@ -116,7 +229,7 @@ After a user revokes consent, any attempt by the revoked agent to perform a toke
 ### Security Requirements
 
 - **SR-001**: Revocation MUST be authorized — only the principal who owns the grant may delete it. Cross-user deletion returns `404 Not Found` by design: the principal-scoped `DELETE WHERE principal = $1 AND agent_id = $2` query naturally returns not-found for another user's grant, leaking no existence information. `403 Forbidden` is explicitly rejected because it would confirm a grant exists for a given agent ID. See `research.md §4` for full rationale.
-- **SR-002**: Revocation operations MUST emit structured audit log entries via the existing application logger (JSON to stdout) including: `principal`, `agent_id`, `grant_id`, `action=grant_revoked`, `timestamp`.
+- **SR-002**: Revocation operations MUST emit structured audit log entries via the existing application logger (JSON to stdout) including: `principal`, `agent_id`, `grant_id`, `event=consent.grant.revoked`, and `revoked_at` (UTC RFC3339Nano).
 - **SR-003**: System MUST fail closed — if the grant lookup during revocation fails with a transient error, the grant MUST NOT be deleted and the error MUST be surfaced to the caller.
 - **SR-004**: The `VerifyAgentAccess` domain function MUST treat a missing grant as an authorization denial (fail closed).
 

@@ -63,6 +63,8 @@ type Adapter struct {
 	authorizationCodes     ports.AuthorizationCodeRepository
 	pkceSessions           ports.PKCESessionRepository
 	clientAssertionReplays ports.ClientAssertionReplayRepository
+	domainEvents           ports.DomainEventAppender
+	domainEventRetention   ports.DomainEventRetention
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -123,6 +125,8 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           noOpStorageTransactionManager{},
 		pkceSessions:           memory.NewPKCESessionStore(),
 		clientAssertionReplays: memory.NewClientAssertionReplayStore(),
+		domainEvents:           memAdapter,
+		domainEventRetention:   memAdapter,
 	}, nil
 }
 
@@ -164,6 +168,8 @@ func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           pgAdapter,
 		pkceSessions:           postgres.NewPKCESessionRepo(pgAdapter),
 		clientAssertionReplays: postgres.NewClientAssertionReplayRepo(pgAdapter),
+		domainEvents:           pgAdapter,
+		domainEventRetention:   pgAdapter,
 	}, nil
 }
 
@@ -331,4 +337,12 @@ func (a *Adapter) PKCESessions() ports.PKCESessionRepository {
 // ClientAssertionReplays returns the client assertion replay repository.
 func (a *Adapter) ClientAssertionReplays() ports.ClientAssertionReplayRepository {
 	return a.clientAssertionReplays
+}
+
+func (a *Adapter) DomainEvents() ports.DomainEventAppender {
+	return a.domainEvents
+}
+
+func (a *Adapter) DomainEventRetention() ports.DomainEventRetention {
+	return a.domainEventRetention
 }

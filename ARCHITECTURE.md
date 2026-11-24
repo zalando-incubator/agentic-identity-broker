@@ -175,10 +175,10 @@ Tests use `bootstrap.NewInMemoryTracerProvider()` to get a `*tracetest.SpanRecor
 On normal shutdown, both HTTP servers drain. Then the CLI calls `App.Shutdown` with the configured `server.shutdown.timeout`. Startup failures after application construction also call `App.Shutdown`.
 
 ```
-HTTP servers drain → local/hybrid OAuth2 cleanup stops → admitted session refreshes drain → remaining application resources and telemetry shut down → shared upstream transport closes idle connections
+HTTP servers drain → local/hybrid OAuth2 cleanup stops → ledger retention stops → admitted session refreshes drain → remaining application resources and telemetry shut down → shared upstream transport closes idle connections
 ```
 
-The builder composes one `App.Shutdown` function. It stops the local/hybrid `SessionCleanup` worker first. Then `OAuth2SessionService.Close` rejects new submissions and waits for admitted background refreshes within the shutdown deadline. It cancels refresh contexts after the drain or when the deadline expires. Telemetry remains active during this drain, and the shared upstream transport closes idle connections last. Expiry of the deadline can still interrupt a provider call after refresh-token rotation.
+The builder composes one `App.Shutdown` function. It stops the local/hybrid `SessionCleanup` worker first. If the ledger is enabled, shutdown cancels the retention worker and waits for it to exit. Then `OAuth2SessionService.Close` rejects new submissions and waits for admitted background refreshes within the shutdown deadline. It cancels refresh contexts after the drain or when the deadline expires. Telemetry remains active during this drain, and the shared upstream transport closes idle connections last. Expiry of the deadline can still interrupt a provider call after refresh-token rotation.
 
 **Token exchange diagnostic boundary**:
 
@@ -409,7 +409,7 @@ Successor persistence uses `RefreshTokenSessionRepository.CreateSuccessor`. Memo
 
 PostgreSQL rotation locks the agent `FOR KEY SHARE` before refresh rows. Targeted revocation locks the agent `FOR UPDATE` before one update of unused rows. Grant deletion, expired renewal, and credential deletion invoke targeted revocation. Grant and credential repositories do not join this transaction, so a revocation error cannot undo deletion. Old binaries retain their consent-check and lock-order deployment limits. Existing access tokens remain valid until `token_ttl` expires.
 
-If grant deletion commits but refresh cleanup fails, the consent service emits `grant_deleted` with `refresh_cleanup=failed` from the deleted snapshot. It returns the cleanup error without reporting successful refresh revocation. Successful refresh cleanup logs retain the request context. Migration 036 resets `lock_timeout` after both schema changes so later migrations do not inherit its five-second limit.
+Both committed grant-deletion branches emit `event=consent.grant.revoked` from the deleted snapshot. If refresh cleanup fails, the event retains `refresh_cleanup=failed` and the service returns the cleanup error. The failure event does not report successful refresh revocation. Successful refresh cleanup logs retain the request context. Migration 036 resets `lock_timeout` after both schema changes so later migrations do not inherit its five-second limit.
 
 **Type Containment**: All [fosite](https://github.com/ory/fosite) OAuth2 server types are contained in `internal/domain/oauth2server/`. This package encapsulates the OAuth2 authorization server domain logic (authorization code storage, client authentication, token signing) and **never leaks fosite types** into ports, adapters/http, or app packages.
 
@@ -526,7 +526,7 @@ A last-resort net in `LoggingMiddleware` finalizes any still-open holder after t
 - **SR-004 / FR-006**: security-relevant logs carry `trace_id`, `actor`, and optional `calling_peer`.
 - **Session-service identity (NFR-001)**: The context handler adds request `actor` and optional `calling_peer` when present. On a sweep, `actor` is the operator, not the session owner. Per-session refresh logs include the owner `principal`; the aggregate audit records `operator_principal` without an owner.
 - **SR-005 / FR-012**: credentials, cookies, authorization codes, and query strings are not copied into the security context or its logs.
-- **Principal policy**: the Principal Policy Handler in `internal/adapters/telemetry` renders every principal in a log record. The broker chain is context handler → principal policy handler → stdout/OTel fan-out; ExtProc wraps its stdout/OTel fan-out the same way, so every sink receives the same output. `SecurityContext.Actor` is an `id.Principal`.
+- **Principal policy**: the Principal Policy Handler in `internal/adapters/telemetry` renders every principal in a log record. The broker chain is context handler → principal policy handler → sink fan-out; ExtProc wraps its stdout/OTel fan-out the same way, so every sink receives the same output. `SecurityContext.Actor` is an `id.Principal`.
 - **SR-006 / FR-010**: forwarding headers are ignored unless trusted proxy mode is explicitly enabled; when enabled, the broker treats the right-most configured forwarded-header entry as authoritative.
 - **Log-forging protection**: access and recovery middleware escape line-break characters and literal backslashes in logged methods, paths, client addresses, and panic messages. Escapes preserve distinct values for CR, LF, vertical tab, form feed, NEL, and Unicode line and paragraph separators. Ordinary values use an unchanged, allocation-free fast path. Requests and diagnostic stack traces remain unchanged.
 - **SC-008**: the design budget is under 1 ms median per-request overhead with no additional heap allocations beyond one context value and one response header on the hot path.
@@ -1209,6 +1209,18 @@ Type: DynamoDB table keyed by `branch-key-id` and `type` (ADR 010)
 
 Purpose: Stores branch-key records for the KMS hierarchical keyring. The broker caches active branch keys in memory and uses fresh data keys to encrypt individual values (ADR 009). This table does not store grants or user sessions.
 
+### 4.3. Domain event ledger
+
+The builder installs a ledger handler after the context and principal policy handlers when `domain_events.enabled` is true. It stores typed domain-event audit records after the mutation commits, outside the mutation transaction. Both PostgreSQL and memory adapters support append and retention deletion. The builder runs retention in each enabled broker replica. The ledger is disabled by default.
+Each retention run fixes its cutoff from the clock that assigns `recorded_at`. PostgreSQL retention uses the database clock.
+
+The consent package declares `GrantRevoked` for `consent.grant.revoked`, the first stored event. Both committed grant-deletion branches emit it, including refresh-cleanup failure. The scope is broker-only storage and retention, without a reader API, UI, or SSF delivery.
+
+A process stop between commit and logging can lose the event without a failure metric. A timed-out append has an unknown outcome and can still commit. These are accepted limits, not transactional delivery guarantees.
+
+Non-functional requirements remain in the [success criteria](specs/20261118-125900-domain-event-ledger/spec.md#success-criteria-mandatory), [configuration contract](specs/20261118-125900-domain-event-ledger/contracts/configuration.md), [storage and retention contract](specs/20261118-125900-domain-event-ledger/contracts/ports.md), and [observability contract](specs/20261118-125900-domain-event-ledger/contracts/observability.md).
+[20261118-125900-domain-events-as-typed-log-records](adrs/20261118-125900-domain-events-as-typed-log-records.md) governs principal policy, post-commit persistence, and the accepted loss window.
+
 ## 5. External Integrations / APIs
 
 **API versioning**: OpenAPI `info.version` identifies each API contract separately from broker release tags. A confirmed breaking change increments the affected API's major version on the existing route unless an approved decision creates a new endpoint. The RFC 8693 `error_uri` remains an optional broker-selected action URI. Changing its target within the documented recovery purpose keeps End-User API `1.0.0`. Admin API versioning is separate; [ADR 044](adrs/044-service-specific-session-recovery-url.md) records the recovery decision.
@@ -1348,6 +1360,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [045-agent-subject-impersonation.md](adrs/045-agent-subject-impersonation.md) | Accepted | Self-agent issuance without human delegation. Partly supersedes ADR 032 |
 | [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
+| [20261118-125900-domain-events-as-typed-log-records.md](adrs/20261118-125900-domain-events-as-typed-log-records.md) | Accepted | Typed audit log records; policy-rendered post-commit ledger projection; append and retention only |
 
 ## 11. Project Identification
 
@@ -1495,7 +1508,7 @@ The next five entries describe the implemented, unreleased model from `051-oauth
 
 **User Grant**: A record of a user (principal) delegating specific OAuth2 scopes to an agent for one or more third-party services. Grants have an optional expiration time (valid_until) and can be revoked at any time. Each user can have at most one active grant per agent (upsert semantics).
 
-**GrantRevoked** — Domain event representing a user's explicit deletion of their grant for an agent. Emitted as a structured audit log entry carrying principal, agent_id, grant_id, and revoked_at.
+**GrantRevoked**: Domain event representing a user's explicit deletion of their grant for an agent. Its audit record carries principal, agent_id, and grant_id. Grant deletion ends refresh authority even if session-row cleanup fails; `refresh_cleanup=failed` reports that cleanup failure, not continuing authorization.
 
 **Delegated Token**: Component of a grant specifying which OAuth2 service and which scopes from that service are delegated to the agent. A single grant can contain multiple delegated tokens for different services. Format: {thirdparty_oauth2_service_id, scopes[]}.
 
@@ -1610,7 +1623,17 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 
 **AuthorizationRef**: Scalar observation context for the registered agent and found user-agent grant evaluated by third-party token exchange. It holds IDs, the stored grant update time, and optional expiry by value, including on expired-grant errors. Responses exclude it from JSON; only broker logs and spans project it, never metric labels. It retains no credentials or grant pointer.
 
-**Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a successful grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation; unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields represent state read before a write, not a transactionally guaranteed predecessor. These logs are not a durable audit ledger, outbox, protocol field or metric label.
+**Grant and Definition Lifecycle Audit**: A domain-owned structured operational log emitted after a committed grant, agent, or permission-set mutation. Committed grant metadata and atomic deletion outcomes identify the actual mutation. Unchanged consent and absent deletes do not emit success. Typed purpose-limited snapshots exclude credentials and profile text. The request-security logger supplies actor/trace context, distinct from grant ownership. `previous_observed_*` fields describe state read before a write, not a transactionally guaranteed predecessor.
+
+As [LOGGING.md section 8](coding-standards/LOGGING.md#8-audit-records) requires, the record stays outside the mutation transaction. Both committed grant-deletion branches use the typed definition `consent.GrantRevoked`. Failed refresh cleanup retains `refresh_cleanup=failed` and the returned error without changing the fact that grant deletion committed.
+
+**Domain Event**: A fact of domain significance, such as GrantRevoked, ApprovalApproved, or JWTValidationFailed. The term describes what happened, not how the broker reports or stores it. An audit record can report a domain event without adding it to the ledger.
+
+**Domain Event Definition**: An immutable declaration of an event identifier and its authoritative owner-visibility permission, represented by `domainevent.Definition`. The service logs the definition under `event` to make the record eligible for the ledger. For example, the consent package declares `consent.GrantRevoked` once with identifier `consent.grant.revoked` and explicit owner visibility.
+
+**Domain Event Occurrence**: One recorded instance of a domain event. `model.DomainEvent` is its ledger representation. The handler mints an `id.DomainEventID` (UUIDv7) to identify each occurrence separately from its event type.
+
+**Domain Event Ledger**: The post-commit projection of audit records that carry a typed Domain Event Definition. It adds no event bus, recorder API, or transactional guarantee. The `DomainEventAppender` and `DomainEventRetention` ports expose append and retention deletion, not updates or reads. See the [ledger design](#43-domain-event-ledger) and [20261118-125900-domain-events-as-typed-log-records](adrs/20261118-125900-domain-events-as-typed-log-records.md).
 
 **Diagnostic**: Immutable token-exchange classification: outcome, failure stage/detail, recovery recommendation/target, and exchange kind. It contains no credentials or free-form errors.
 

@@ -13,6 +13,7 @@ var uuidTypes = []struct {
 }{
 	{"AgentID", "agent"},
 	{"ApprovalID", "approval"},
+	{"DomainEventID", "domain event"},
 	{"ServiceID", "service"},
 	{"GrantID", "grant"},
 	{"SessionID", "session"},
@@ -36,7 +37,7 @@ import (
 // {{.Type}} uniquely identifies a {{.Entity}} entity.
 type {{.Type}} uuid.UUID
 
-func New{{.Type}}() {{.Type}}                        { return {{.Type}}(uuid.New()) }
+func New{{.Type}}() {{.Type}}                        { return {{.Type}}({{if eq .Type "DomainEventID"}}uuid.Must(uuid.NewV7()){{else}}uuid.New(){{end}}) }
 func Parse{{.Type}}(s string) ({{.Type}}, error)     { id, err := uuid.Parse(s); return {{.Type}}(id), err }
 func MustParse{{.Type}}(s string) {{.Type}}          { return {{.Type}}(uuid.MustParse(s)) }
 func (id {{.Type}}) String() string                  { return uuid.UUID(id).String() }

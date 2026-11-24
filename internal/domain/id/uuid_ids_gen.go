@@ -63,6 +63,35 @@ func (id *ApprovalID) Scan(src interface{}) error   { return (*uuid.UUID)(id).Sc
 func (id ApprovalID) MarshalText() ([]byte, error)  { return uuid.UUID(id).MarshalText() }
 func (id *ApprovalID) UnmarshalText(b []byte) error { return (*uuid.UUID)(id).UnmarshalText(b) }
 
+// DomainEventID uniquely identifies a domain event entity.
+type DomainEventID uuid.UUID
+
+func NewDomainEventID() DomainEventID { return DomainEventID(uuid.Must(uuid.NewV7())) }
+func ParseDomainEventID(s string) (DomainEventID, error) {
+	id, err := uuid.Parse(s)
+	return DomainEventID(id), err
+}
+func MustParseDomainEventID(s string) DomainEventID   { return DomainEventID(uuid.MustParse(s)) }
+func (id DomainEventID) String() string               { return uuid.UUID(id).String() }
+func (id DomainEventID) IsZero() bool                 { return uuid.UUID(id) == uuid.Nil }
+func (id DomainEventID) MarshalJSON() ([]byte, error) { return json.Marshal(uuid.UUID(id).String()) }
+func (id *DomainEventID) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	parsed, err := uuid.Parse(s)
+	if err != nil {
+		return err
+	}
+	*id = DomainEventID(parsed)
+	return nil
+}
+func (id DomainEventID) Value() (driver.Value, error)  { return uuid.UUID(id).String(), nil }
+func (id *DomainEventID) Scan(src interface{}) error   { return (*uuid.UUID)(id).Scan(src) }
+func (id DomainEventID) MarshalText() ([]byte, error)  { return uuid.UUID(id).MarshalText() }
+func (id *DomainEventID) UnmarshalText(b []byte) error { return (*uuid.UUID)(id).UnmarshalText(b) }
+
 // ServiceID uniquely identifies a service entity.
 type ServiceID uuid.UUID
 

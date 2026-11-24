@@ -1,7 +1,7 @@
 package fixtures
 
-// BusinessEventLegacySlogRevision identifies the production code used for this capture.
-const BusinessEventLegacySlogRevision = "d500f36378dd914f8a516604a08525f737e8ddff"
+// DomainEventLegacySlogRevision identifies the production code used for this capture.
+const DomainEventLegacySlogRevision = "d500f36378dd914f8a516604a08525f737e8ddff"
 
 // LegacySlogRecord retains log structure, never runtime attribute values.
 type LegacySlogRecord struct {
@@ -23,9 +23,9 @@ type LegacySlogWorkflow struct {
 	Records          []LegacySlogRecord
 }
 
-// BusinessEventLegacySlog captures all 28 catalogue facts before the ledger refactor.
+// DomainEventLegacySlog captures all 28 catalogue facts before the ledger refactor.
 // Counts apply to the complete named journey, including repeated business actions.
-var BusinessEventLegacySlog = map[string][]LegacySlogWorkflow{
+var DomainEventLegacySlog = map[string][]LegacySlogWorkflow{
 	"agent-deleted": {
 		{
 			Variant:          "default",
