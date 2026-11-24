@@ -65,10 +65,34 @@ has one target server name.
 - A route that puts two or more MCP targets behind one `mcp_server` name shows prefixed tool names. The names in `tools/list` and in `tools/call` agree, because ExtProc sees the client side of the two exchanges.
 - After a start, an instance knows no definitions.
 
-**Verification task**: The Docker suite with agentgateway
-(`tests/e2e/extproc/opa_agentgateway_e2e_test.go`) must prove three facts. ExtProc receives the
-response body of `tools/list`. The content type is one of the two accepted types. The client
-receives the response without a change.
+**Evidence and its limits**: This decision is not proven. No test in this repository sends a
+`tools/list` request through agentgateway, and the planning environment had no container runtime.
+The evidence is indirect:
+
+- The agentgateway documentation for the latest release says that the gateway streams response bodies to ExtProc by default.
+- An analysis of the agentgateway source (main branch) shows that the gateway handles the response of an MCP backend as an upstream response. The ExtProc response phase applies to upstream responses. The analysis did not show each call site.
+- ExtProc has code for response body messages from agentgateway today (`echoResponseBody`). Its comment says that a different mutation type caused body loss. Thus, a person saw these messages before.
+
+Three facts are not known:
+
+- The repository pins agentgateway `v1.5.0`. The documentation describes a later release.
+- The content type and the chunk sizes of a `tools/list` response through the gateway.
+- The effect of a compressed response.
+
+**Verification task**: This task is the first task of the implementation. No other work starts
+before it completes. The Docker suite with agentgateway
+(`tests/e2e/extproc/opa_agentgateway_e2e_test.go`) must prove three facts with the pinned gateway
+version. ExtProc receives the response body of `tools/list`. The content type is one of the two
+accepted types. The client receives the response without a change.
+
+**Fallbacks**: If the task fails, these options apply in this sequence:
+
+1. Set the response body mode in the ExtProc policy of the gateway. This option needs a gateway release that has `processingOptions`.
+2. Receive `tools/list` results through an MCP guardrail processor of the gateway. This option adds a second gRPC service to the ExtProc binary.
+3. Read tool listing files at startup, in the format of the evaluation run. This option needs one exported file for each server and loses the automatic update.
+
+Each fallback changes only the source of the tool definitions. The context, the questions, the
+policy contract, and the fingerprints stay the same.
 
 **Alternatives considered**: An ExtMCP guardrail processor gets parsed MCP data. But it needs a
 second gRPC protocol and a second gateway configuration, and it also gets only the merged

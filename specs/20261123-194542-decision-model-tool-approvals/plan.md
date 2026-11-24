@@ -54,12 +54,13 @@ Assessment Summary is a value object on the existing `ToolApproval` aggregate.
 | XI, XIV | One application component with semantic tokens and WCAG 2.1 AA ([contracts/approval-assessment.md](contracts/approval-assessment.md)). The spec has the journeys and the two wireframes. Playwright cases capture screenshots of each state. |
 | XV | [contracts/observability.md](contracts/observability.md) defines the events, spans, and instruments. Add the `assessment` namespace to `coding-standards/OPENTELEMETRY.md`. Tool names obey section 6.2 of `coding-standards/LOGGING.md` (D-12). |
 
-**Gate outcome**: The design has no violation of the constitution. Three prerequisites stay open
+**Gate outcome**: The design has no violation of the constitution. Four prerequisites stay open
 before implementation starts. These are unfinished work, not exceptions:
 
-1. The stakeholder approves the four contracts of API-006.
-2. The verification tasks of D-02, D-03, and D-07 complete, and the contracts agree with the results.
-3. The ADR has the status Accepted.
+1. The verification task of D-02 completes first. The design depends on it, and it is not proven. [research.md](research.md) gives the evidence and three fallbacks.
+2. The verification tasks of D-03 and D-07 complete, and the contracts agree with the results.
+3. The stakeholder approves the four contracts of API-006.
+4. The ADR has the status Accepted.
 
 ## Project Structure
 
