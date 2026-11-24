@@ -38,7 +38,7 @@ type DomainEventRetention interface {
 
 | Adapter | Location | Notes |
 |---|---|---|
-| Memory | `internal/adapters/storage/memory/domain_event.go` | Deep copies in and out. |
+| Memory | `internal/adapters/storage/memory/domain_event.go` | Stores an owned JSON snapshot of the attributes and copies the principal and actor strings. |
 | PostgreSQL | `internal/adapters/storage/postgres/domain_event.go` | All methods use `a.db`, not `storageExecutor(ctx)` (research R4). `StorageTime` samples `statement_timestamp()` with the read timeout. `DeleteRecordedBefore` uses `DELETE ... WHERE id IN (SELECT id ... ORDER BY recorded_at, id LIMIT $2)`. Each method uses `startStorageSpan` ([observability.md](./observability.md#spans)). |
 
 No port has an update operation (FR-010). The only delete operation is the one of retention.

@@ -72,7 +72,8 @@ Invariants:
 - A stored event is immutable (ADR 20261118-125900-domain-events-as-typed-log-records, Decision 9). No port has an update operation. An event is
   removed only as a whole, by retention.
 
-`Validate()` checks the first invariant. `Copy()` returns a deep copy, as other models do.
+`Validate()` checks the first invariant. The storage adapters own the stored snapshot. They
+serialize the attribute document during `Append` and retain no references to it.
 
 ### Timestamp precision
 

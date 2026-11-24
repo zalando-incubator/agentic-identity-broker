@@ -252,7 +252,7 @@ func TestGrantLifecycleAudit_RevocationDomainEventPipeline(t *testing.T) {
 			appender := grantAuditEventAppender(func(ctx context.Context, event *model.DomainEvent) error {
 				_, err := grants.FindByPrincipalAndAgent(ctx, grant.Principal, grant.AgentID)
 				require.ErrorIs(t, err, ports.ErrNotFound, "audit emission must follow committed deletion")
-				events = append(events, event.Copy())
+				events = append(events, event)
 				return nil
 			})
 			var operational bytes.Buffer

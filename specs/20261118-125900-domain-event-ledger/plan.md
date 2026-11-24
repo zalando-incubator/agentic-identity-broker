@@ -193,9 +193,11 @@ T031 defines migration-specific schema assertions before T014 creates the SQL. B
 to Phase 2d. The existing general migration lifecycle test does not assert the new table's
 columns, constraints, or retention, principal, and agent index definitions.
 T084 writes the SC-004 performance test after T017 and before Phase 2.5. Its enabled-block
-persistence assertions must detect the missing ledger behavior. Verify semantic failure where
-Docker is available; otherwise its first run may occur in CI after implementation. T053 runs
-the final measurement with unchanged assertions, and T080 verifies this test-first ordering.
+persistence assertions must detect the missing ledger behavior. If a local container runtime is
+available, verify semantic failure before implementation. If no local container runtime is available,
+[Constitution Principle VIII](../../.specify/memory/constitution.md#viii-test-driven-development--automated-testing)
+permits the first run in CI on a commit that includes the implementation. T053 runs the final
+measurement with unchanged assertions. T080 verifies this test-first ordering.
 
 **Exit**: Design approvals and prerequisite artifacts are complete; acceptance tests compile
 and exercise concrete outcomes; schema-specific tests precede the migration. No production
@@ -209,12 +211,11 @@ and separate red commits are not delivery conditions.
 Implement the standard-library-only definition package and the occurrence model described in
 [data-model.md](./data-model.md). The registry owns identifier uniqueness and sorted enumeration;
 the declaration owns visibility. Keep the definition separate from a stored occurrence: visibility
-is resolved from the current definition, not copied into historical rows. Implement model
-validation and defensive copying without introducing a reader, cursor, or update operation.
+is resolved from the current definition, not copied into historical rows. The model validates
+the occurrence. The adapters own the stored snapshot. Do not introduce a reader, cursor, or update operation.
 
 **Exit**: Definition and model tests pass for invalid identifiers, duplicates, zero definitions,
-visibility, occurrence validation, and deep copies. The shared types and ports are stable for
-the independent adapter, handler, and retention work below.
+visibility, and occurrence validation. Adapter tests cover snapshot isolation in Phase 2.5b.
 
 ### Phase 2.5b: persistence adapters
 
