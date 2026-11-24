@@ -46,6 +46,11 @@ fixed. These are Proposed under approval items API-CFG and API-BOOT; none is an 
   `os.Root`, for development, tests, and release-shipped policy.
 - Token file (R16): the broker's `aib_bearer_token_file` credential plugin re-reads a contained
   bearer token before every bundle request, so rotation needs no restart.
+- File containment (R3): OPA files are configured by absolute path and read through an `os.Root`
+  over their own directory, not under `security.trust_material_dir`. Reason: one admin sets the
+  directory and the paths, so a shared directory is no boundary; per-file roots still stop content
+  written by others from linking elsewhere, and ADR `040-trust-anchor-local-key-sets` keeps its
+  key-set scope.
 - `package` defaults to `aib.broker.impersonation`, mirroring ExtProc's default. An ExtProc bootstrap
   is reusable only within the accepted subset.
 
@@ -83,8 +88,8 @@ approval or change the accepted Q1/Q2 scope direction.
   while all three mandatory role references remain independent (DEC-BIND).
   Reason: overridden dependencies may not execute. Main alternative: scope-aware replacement
   analysis, which is larger and harder to prove conservative.
-- Bootstrap files (F4): FR-003/SR-006 require contained `os.Root` bootstrap reading under
-  `security.trust_material_dir`, at most 1 MiB, and reject SDK-local-file references; credentials
+- Bootstrap files (F4): FR-003/SR-006 require contained `os.Root` bootstrap reading over the file's
+  own directory (revised 2026-11-24; previously under `security.trust_material_dir`), at most 1 MiB, and reject SDK-local-file references; credentials
   and signing keys use supported inline bootstrap forms (API-BOOT/API-CFG).
   Reason: native file reopening must not bypass containment. Main alternative: an approved
   unrestricted-read exception preserving file-based credential rotation.
@@ -182,8 +187,6 @@ An operator retains existing CEL rules while opting individual impersonation rul
 **Step 1 — Operator selects OPA for this rule.** Other normal broker settings are omitted. The OPA subsection is the proposed feature contract, not a claim that the currently reserved broker OPA fields already work. The canonical existing prefix is singular `oauth2_authorization_server.impersonation`, despite the issue's informal `impersonations` spelling.
 
 ```yaml
-security:
-  trust_material_dir: /etc/broker/opa
 oauth2_authorization_server:
   mode: local
   local:
@@ -233,7 +236,7 @@ services:
       plugin: aib_bearer_token_file
 plugins:
   aib_bearer_token_file:
-    path: /etc/broker/opa/bundle-token
+    path: /var/run/secrets/opa-bundle/token
 bundles:
   impersonation:
     service: governance
@@ -511,7 +514,7 @@ If a later valid revision still authorizes the subject but does not bind its ema
 
 - **FR-001**: Operators MUST be able to select OPA through `oauth2_authorization_server.impersonation.rules[].authorization.type: opa`, name the rule's decision under that rule's `authorization.opa`, and configure one engine shared by all OPA rules under `oauth2_authorization_server.impersonation.opa`. All OPA rules evaluated for one request MUST use the same admitted revision. Existing valid CEL rules MUST continue to work without OPA configuration.
 - **FR-002**: Exactly one selected authorization engine MUST decide each evaluated rule. Unknown types, conflicting populated engine blocks, and missing selected-engine configuration MUST fail startup with an indexed rule/field diagnostic.
-- **FR-003**: OPA configuration MUST accept an OPA-native bootstrap configuration file comparable to ExtProc's managed-policy configuration, including managed policy/data bundles, or a local bundle directory read once at startup. Each MUST be read through `os.Root` under `security.trust_material_dir` (bootstrap at most 1 MiB); OPA-native local-file references are unsupported, and a bundle-service bearer token MAY be a contained file re-read before every download. Invalid configuration or no admitted snapshot containing every configured bundle within a bounded startup interval MUST prevent readiness; historical activations cannot make an earlier subset usable.
+- **FR-003**: OPA configuration MUST accept an OPA-native bootstrap configuration file comparable to ExtProc's managed-policy configuration, including managed policy/data bundles, or a local bundle directory read once at startup. Each MUST be configured by absolute path and read through an `os.Root` over its own directory, so a symlink cannot lead outside it (bootstrap at most 1 MiB); OPA-native local-file references are unsupported, and a bundle-service bearer token MAY be a file, contained the same way, re-read before every download. Invalid configuration or no admitted snapshot containing every configured bundle within a bounded startup interval MUST prevent readiness; historical activations cannot make an earlier subset usable.
 - **FR-004**: A successfully activated managed policy/data update MUST affect subsequent evaluations without rebuilding or restarting the broker. Updates MUST activate consistently; the broker MUST NOT reuse a previous request's allow decision.
 - **FR-005**: For all existing local-mode impersonation credential modes (FR-013), the input MUST provide the Envoy OPA plugin-compatible `attributes.request.http` envelope for the token endpoint request and the namespaced `context` fields in Journeys 1 and 4. For each existing CEL variable `v` among `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, and `request`, `input.context.v` MUST preserve the same semantics and value types. `subject_unverified` MUST be `true` only for an explicitly unverified subject and `false` for a verified signed subject; unsigned subject claims MUST NOT be presented as verified. This does not promise identical policy syntax between CEL and Rego.
 - **FR-006**: Policy context MUST be derived from the same validated per-rule credentials and resolved target used by CEL, not raw request-supplied identity headers. The `request` extension MUST preserve `resource`, `grant_type`, `scope`, and target UUID `agent_id`; it MUST NOT confuse the routing audience with the minted token audience. `context.agent` MUST use ExtProc's Grant Context agent shape: `id` is the target UUID, and `canonical_id` and `external_id` are the resolved broker Agent's literal values, each omitted when unset (never `null` or `""`). Callers and bundles cannot override the mapping. Governance examples MUST use `external_id` without falling back to UUID. The input MUST carry `type: "impersonation"` and MUST NOT carry ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`, `granted_permission_sets`, `granted_permission_sets_available`, `agent_session_id`).

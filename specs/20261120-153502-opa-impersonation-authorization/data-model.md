@@ -26,8 +26,8 @@ empty otherwise.
 
 | Field | Type | Default | Validation |
 | --- | --- | --- | --- |
-| `policy.config_file` | path | — | Managed mode. Exactly one of `config_file` and `path`. Absolute under `security.trust_material_dir`, regular file opened through `os.Root`, at most 1 MiB; bootstrap subset (R3, R16) |
-| `policy.path` | path | — | Local mode (R15). Bundle directory under `security.trust_material_dir`, read once through `os.Root`; at most 16 MiB and 1,000 files |
+| `policy.config_file` | path | — | Managed mode. Exactly one of `config_file` and `path`. Absolute; regular file opened through an `os.Root` over its own directory, at most 1 MiB; bootstrap subset (R3, R16) |
+| `policy.path` | path | — | Local mode (R15). Absolute bundle directory, read once through an `os.Root` over itself; at most 16 MiB and 1,000 files |
 | `startup_timeout` | duration | `30s` | `1s`–`5m` |
 
 ### OPA Rule Decision (configuration, `rules[].authorization.opa`)

@@ -11,6 +11,21 @@
 # rule: it is configured in the file only. Ordinary-exchange CEL remains unchanged; explicit
 # token_exchange.authorization.type opa fails startup (Proposed: API-CFG).
 
+file_containment:            # R3 (revised 2026-11-24): applies to every file the broker reads for OPA
+  rules:
+    - every configured path is absolute; no security.trust_material_dir or other directory setting is used
+    - config_file and the token file are opened through an os.Root over the file's own parent directory;
+      a local bundle is walked through an os.Root over the bundle directory itself
+    - that directory must not resolve to /
+    - a symlink is followed only when it stays inside that directory; absolute symlinks are rejected
+      by os.Root, while relative Kubernetes Secret and ConfigMap links (..data) work
+    - regular-file checks and bounded reads use the same descriptor
+    - escaping symlinks, non-regular, oversized, or unreadable files fail without echoing content
+  purpose: >-
+    The admin who writes a path can choose any path, so containment is not a boundary against the
+    admin. It confines content written by others: a rotated token file cannot become a link to
+    another credential, and a bundle file cannot pull outside files into policy data.
+
 engine:                      # oauth2_authorization_server.impersonation.opa
   presence:
     - required when at least one rule has authorization.type opa
@@ -26,24 +41,21 @@ engine:                      # oauth2_authorization_server.impersonation.opa
         bundle contents update without restart.
       validation:
         - exactly one of policy.config_file and policy.path is set
-        - security.trust_material_dir is required, resolved to an existing absolute directory other than /
-        - config_file must be absolute and contained under that directory; open through os.Root
-        - regular-file check and bounded read (at most 1 MiB) use the same descriptor
-        - outside paths, escaping or absolute symlinks, oversized or unreadable files fail startup without content
+        - file_containment rules; regular file, at most 1 MiB
         - no unrestricted file-opening fallback
     policy.path:
       type: string
       default: none
       description: >-
         Local mode (R15). Absolute path of a bundle directory (OPA bundle layout: .rego modules,
-        data.json or data.yaml files, optional .manifest) under security.trust_material_dir, read
-        once at startup through os.Root and admitted like a managed revision. There is no polling:
+        data.json or data.yaml files, optional .manifest), read once at startup through an os.Root
+        over that directory and admitted like a managed revision. There is no polling:
         changing the directory takes effect only after a restart. Intended for development,
         tests, and deployments that ship policy with the release.
       validation:
         - exactly one of policy.config_file and policy.path is set
-        - same trust-directory, absolute-path, and containment rules as config_file
-        - regular files and directories only; symlinks are resolved through os.Root and must stay inside it
+        - file_containment rules, with the bundle directory as the root
+        - regular files and directories only; symlinks must stay inside the bundle directory
         - files other than *.rego, data.json, data.yaml, data.yml, and .manifest fail startup naming the relative path
         - at most 16 MiB in total and 1,000 files; exceeding either fails startup
         - a .manifest is optional; its revision becomes the policy_revision label, otherwise the label is "local="
@@ -106,10 +118,10 @@ bootstrap_subset:            # API-BOOT, managed mode only
       description: >-
         Broker-registered OPA credential plugin (rest.HTTPAuthPlugin). A service selects it with
         credentials.plugin: aib_bearer_token_file. Before every bundle request it reads the token
-        through the broker's os.Root over security.trust_material_dir, so a rotated Secret takes
-        effect without a restart.
+        through an os.Root over the token file's directory, so a rotated Secret takes effect
+        without a restart and the file cannot be swapped for a link outside that directory.
       properties:
-        path: {type: string, required: true, rules: absolute, contained under security.trust_material_dir, regular file, at most 64 KiB, surrounding whitespace trimmed, non-empty}
+        path: {type: string, required: true, rules: absolute, file_containment rules, regular file, at most 64 KiB, surrounding whitespace trimmed, non-empty}
         scheme: {type: string, default: Bearer}
       validation:
         - path is checked at startup; an unreadable or invalid token at startup fails startup naming plugins.aib_bearer_token_file.path
@@ -131,7 +143,7 @@ bootstrap_subset:            # API-BOOT, managed mode only
     decision_logs, status, discovery, or other plugins fail startup by design; copy only services,
     bundles, keys, and labels.
   diagnostic_reason_classes: [unreadable, invalid_document, unsupported_key, no_bundles, persist_unsupported,
-                              invalid_opa_configuration, trust_directory_invalid, outside_trust_directory,
+                              invalid_opa_configuration, path_not_absolute, root_directory, escaping_link,
                               file_too_large, local_file_unsupported, too_many_files, unsupported_file,
                               token_invalid]
 
@@ -159,8 +171,6 @@ ordinary_exchange:           # Proposed API-CFG compatibility correction; FR-009
     unchanged: valid CEL settings and defaults; reserved OPA fields remain declarations, not an implemented engine
 
 example:
-  security:
-    trust_material_dir: /etc/broker/opa
   oauth2_authorization_server:
     mode: local
     impersonation:
@@ -196,7 +206,7 @@ example_bootstrap:
         plugin: aib_bearer_token_file
   plugins:
     aib_bearer_token_file:
-      path: /etc/broker/opa/bundle-token
+      path: /var/run/secrets/opa-bundle/token
   bundles:
     impersonation:
       service: governance
@@ -212,14 +222,15 @@ example_local:               # development and tests
     impersonation:
       opa:
         policy:
-          path: /etc/broker/opa/impersonation-bundle
+          path: /opt/broker/policy/impersonation-bundle
 
 helm:                        # charts/agentic-identity-broker
   values: >-
     broker.oauth2AuthorizationServer.impersonation stays a verbatim snake_case block, now including
     its opa engine block. The bootstrap file, a local bundle directory, and a bundle token file are
-    mounted under security.trust_material_dir with existing broker extraVolumes and
-    extraVolumeMounts; no new chart value is added. A token file mounted from a Secret rotates
+    mounted wherever suits each (for example a ConfigMap, an image path, and a Secret) with
+    existing broker extraVolumes and extraVolumeMounts; they share no mount with the trust
+    directory of ADR 040-trust-anchor-local-key-sets, and no new chart value is added. A token file mounted from a Secret rotates
     without a restart; inline bootstrap credentials need a restart.
   values_schema_json: >-
     impersonation gains opa {policy: oneOf {config_file (minLength 1)} or {path (minLength 1)},

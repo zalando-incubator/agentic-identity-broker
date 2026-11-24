@@ -172,15 +172,16 @@ type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
 
 ## 4. Adapter (`internal/adapters/policy/opa/`, new)
 
-- `NewImpersonationPolicySource(cfg, decisions, admit, logger)` opens an adapter-owned `os.Root`
-  over the builder-supplied `security.trust_material_dir`.
+- `NewImpersonationPolicySource(cfg, decisions, admit, logger)` reads every file through an
+  adapter-owned `os.Root` over that file's own directory (the bundle directory in local mode); it
+  takes no directory setting (configuration contract `file_containment`).
   - **Managed mode** (`policy.config_file`): reads and validates the bootstrap subset, bounds the
     regular-file read to 1 MiB on the same descriptor, rejects every OPA-native local-file reference
     before startup, creates an in-memory store with an `OnCommit` trigger, and starts `sdk.New` with
     `Ready`, `V1Compatible`, a discard console logger, and exactly one plugin factory in
     `sdk.Options.Plugins`: `aib_bearer_token_file` (R16), registered only when the bootstrap
-    configures it. Its `Prepare` reads the token through the same `os.Root` before every bundle
-    request and never logs it.
+    configures it. Its `Prepare` reads the token through an `os.Root` over the token file's
+    directory before every bundle request and never logs it.
   - **Local mode** (`policy.path`): walks the bundle directory through `os.Root` with the file-type,
     count, and size limits of the configuration contract, loads it with OPA's bundle reader from
     those bytes, and builds one candidate. No SDK runtime and no polling are started.
@@ -202,6 +203,6 @@ type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
 ## 5. Builder and handler
 
 - `internal/app/builder.go` constructs the factory with the injected logger and passes
-  it to `impersonation.NewService`, and supplies `security.trust_material_dir` to the adapter factory.
+  it to `impersonation.NewService`. The adapter factory takes no directory setting.
 - `internal/adapters/http/enduser/oauth2_token.go` fills `Request.HTTP` from the `*http.Request` and
   logs the three new audit attributes. It does not inspect policy results.

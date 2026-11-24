@@ -51,11 +51,13 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    directory read at startup (`policy.path`). The bootstrap accepts only `services`, `bundles`,
    `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin; decision logs,
    status, discovery, other plugins, persistence, and every other key fail startup. Bootstrap,
-   local bundle, and token file are read through adapter-owned `os.Root` under
-   `security.trust_material_dir`; the token file is re-read before every bundle request, so it
-   rotates without a restart. Every OPA-native local-file reference (bearer `token_path`, TLS files,
-   `file://` bundles) is rejected before SDK startup. This adopts, rather than bypasses, the
-   containment pattern of `040-trust-anchor-local-key-sets` without changing its key-set scope.
+   local bundle, and token file are configured by absolute path. Each is read through an
+   adapter-owned `os.Root` over its own directory (the bundle directory for a local bundle), so
+   content written by others, such as a rotated token or a bundle file, cannot link outside it.
+   The token file is re-read before every bundle request, so it rotates without a restart. Every
+   OPA-native local-file reference (bearer `token_path`, TLS files, `file://` bundles) is rejected
+   before SDK startup. The trust directory of `040-trust-anchor-local-key-sets` is not used and
+   keeps its key-set scope.
 3. **Broker-owned revisions.** After each OPA activation, the broker builds an immutable candidate
    revision from the compiled modules and a copy of the data. A candidate becomes the active revision
    only if its own transaction includes every configured bundle, it compiles with the restricted
@@ -178,6 +180,9 @@ both ADR-OPA and DEC-CONST.
 - **UUID-only governance lookup**: operators would have to synchronize UUID-to-governance maps.
 - **Adapter-shaped engine-neutral input**: sound alternative; shared vectors retain the current
   domain builder without duplicate untested Envoy semantics.
+- **Files under `security.trust_material_dir` or a dedicated OPA directory setting**: the admin sets
+  both the directory and the paths, so it is no boundary against the admin; the trust directory
+  would also widen an accepted ADR and share a mount sized for small key sets.
 - **Unrestricted bootstrap/SDK credential reads**: preserves native file rotation but permits
   reading unrelated runtime files; rejected in favor of containment and a smaller bootstrap subset.
 - **One OPA runtime per rule**: isolates rules, but a request falling through rules can see two

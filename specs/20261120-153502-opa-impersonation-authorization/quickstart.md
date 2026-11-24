@@ -38,8 +38,8 @@ above is not evidence that the full recipe passed; do not change tests or CI to 
    unknown External IDs deny the example policy, never falling back to UUID.
 2. Package the modules and data as an OPA bundle tarball and serve it from a local test HTTP
    server at `http://127.0.0.1:8182/bundles/impersonation.tar.gz`, with a new ETag on each revision.
-   Write the bootstrap as `/etc/broker/opa/bootstrap.yaml` under an operator-owned trust directory
-   (or a temporary local directory under `/tmp/gh-aw/agent/`):
+   Write the bootstrap as `/etc/broker/opa/bootstrap.yaml` (or in a temporary local directory under
+   `/tmp/gh-aw/agent/`):
 
    ```yaml
    services:
@@ -54,14 +54,13 @@ above is not evidence that the full recipe passed; do not change tests or CI to 
 
 3. Configure the engine and one impersonation rule as in
    [contracts/impersonation-opa-config.yaml](contracts/impersonation-opa-config.yaml) `example`, with
-   `security.trust_material_dir` set to its containing directory and absolute
-   `impersonation.opa.policy.config_file` pointing to the bootstrap. Use a regular file at most
-   1 MiB. For a bundle-service token, use inline credentials or mount the token file in the trust
-   directory and select `credentials.plugin: aib_bearer_token_file`; OPA-native file references
+   absolute `impersonation.opa.policy.config_file` pointing to the bootstrap. Use a regular file at
+   most 1 MiB. For a bundle-service token, use inline credentials or mount the token file anywhere
+   and select `credentials.plugin: aib_bearer_token_file` with its absolute path; OPA-native file references
    such as bearer `token_path` and TLS file paths fail startup. Start the broker in local mode.
 
-   Shortcut without a bundle server: set `impersonation.opa.policy.path` to the step 1 directory
-   (inside the trust directory) instead of `config_file`. Steps 4 and 6 work after a restart;
+   Shortcut without a bundle server: set `impersonation.opa.policy.path` to the step 1 directory instead
+   of `config_file`. Steps 4 and 6 work after a restart;
    step 5 needs managed mode because a local directory is read only at startup.
 4. Send Journey 1 Step 2 from [spec.md](spec.md) Journey 1
    with test-issued credentials. Expect `200` and the decoded claims of Journey 1 Step 4.

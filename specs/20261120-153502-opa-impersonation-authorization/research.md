@@ -94,11 +94,22 @@ use, not a stable contract). The OPA `download` package with a broker-written bu
 
 **Decision (Proposed: API-BOOT)**: The bootstrap file (`impersonation.opa.policy.config_file`) is
 OPA-native YAML or JSON, read once at startup.
-It must be an absolute path within `security.trust_material_dir`, opened through an adapter-owned
-`os.Root` using the containment and same-descriptor regular-file checks of
-`040-trust-anchor-local-key-sets`. The root must be a resolved existing directory other than `/`;
-bootstrap reads are bounded to 1 MiB. Do not import the JWKS adapter; the builder supplies the trust
-directory setting. Bootstrap-referenced local file reads are not supported: reject bearer
+It must be an absolute path. The adapter opens an `os.Root` over the file's own parent directory
+(not `/`) and opens the file through it, with same-descriptor regular-file checks and a 1 MiB bound.
+The same rule covers the token file (R16); a local bundle uses an `os.Root` over the bundle directory
+(R15). No directory setting is involved: neither `security.trust_material_dir` nor a new one.
+
+*Containment revision (2026-11-24)*: an earlier draft required every OPA file to lie under
+`security.trust_material_dir`. Because one admin writes both the directory and the paths inside it,
+that adds no boundary against the admin, only typo protection. It also widened ADR
+`040-trust-anchor-local-key-sets`, which defines the trust directory as the only place for
+public key-set files and warns against putting more there, and it forced secrets and large policy
+bundles into one projected volume sized for small key sets. What containment does protect against is
+content written by someone else: a rotated token file replaced with a link to another credential,
+or a bundle file linking outside the bundle. A root over each file's own directory covers both.
+Alternatives: keep `security.trust_material_dir` (scope creep on an accepted ADR); a dedicated
+`impersonation.opa.directory` (same lack of a boundary against the admin, one more setting); plain
+`os.Open` (loses the protection against content written by others). Bootstrap-referenced local file reads are not supported: reject bearer
 `token_path`, TLS CA/certificate/private-key file paths, bundle `file://` resources, and any other
 OPA configuration field that would cause a local file read. Validate against the pinned OPA
 configuration types before `sdk.New`, failing closed on unsupported nested settings; never pass
@@ -124,8 +135,8 @@ ExtProc schema is broader because it runs in a separate trust context under ADR
 **Alternatives**: Accept the full OPA configuration as ExtProc does (exports sensitive claims,
 runtime reconfiguration). Accept a broker-specific bundle schema instead of OPA's vocabulary
 (contradicts the issue's request for an ExtProc-comparable bootstrap). Permit OPA-native file reads
-outside the trust directory under a documented exception (retains file-based rotation, but gives
-bootstrap settings authority to read unrelated runtime credentials). A contained file resolver for
+without containment under a documented exception (retains file-based rotation, but lets a replaced
+or linked file read unrelated runtime credentials). A contained file resolver for
 all SDK credential forms, including mTLS client certificates, is a larger alternative, not part of
 this release; R16 covers bearer tokens only.
 
@@ -425,8 +436,8 @@ existing impersonation E2E fixtures.
 ## R15 — Local bundle directory (revised 2026-11-24, issue 3)
 
 **Decision**: `impersonation.opa.policy.path` is an alternative to `config_file`. It names a bundle
-directory (OPA bundle layout) under `security.trust_material_dir`. The adapter walks it through
-`os.Root`, accepts only `*.rego`, `data.json`, `data.yaml`/`data.yml`, and `.manifest` files, caps it
+directory (OPA bundle layout) by absolute path. The adapter walks it through an `os.Root` over that
+directory, accepts only `*.rego`, `data.json`, `data.yaml`/`data.yml`, and `.manifest` files, caps it
 at 16 MiB and 1,000 files, reads the bytes once, and builds one candidate with OPA's bundle reader.
 That candidate goes through the same capability check, evidence, and admission as a managed
 revision. Nothing is polled; a change needs a restart. A `.manifest` revision becomes the
@@ -434,8 +445,9 @@ revision. Nothing is polled; a change needs a restart. A `.manifest` revision be
 
 **Rationale**: Managed-only mode needs a bundle server for local development, demos, and the
 E2E fixtures, which ExtProc avoids with its `policy.path`. Reading once at startup keeps Q1's
-"no policy-time networking" and adds no runtime file access. `os.Root` keeps the trust-directory
-containment of ADR `040-trust-anchor-local-key-sets`.
+"no policy-time networking" and adds no runtime file access. The `os.Root` over the bundle directory
+stops a symlink inside the bundle from pulling outside files, such as a service-account token, into
+policy data.
 
 **Alternatives**: Allow `file://` bundle resources in the bootstrap (OPA reads them itself, outside
 `os.Root`). Re-read the directory periodically (adds a second update path to secure and test).
@@ -447,7 +459,8 @@ Accept a single `.rego` file like ExtProc (no data files, so governance examples
 `sdk.Options.Plugins`. A bootstrap service selects it with `credentials.plugin`, and its settings
 live under the bootstrap's `plugins.aib_bearer_token_file` (`path`, `scheme`, default `Bearer`). It
 implements `rest.HTTPAuthPlugin`: `NewClient` builds the default client, and `Prepare` reads the
-token through the broker's `os.Root` (regular file, at most 64 KiB, trimmed, non-empty) before every
+token through an `os.Root` over the token file's own directory (regular file, at most 64 KiB,
+trimmed, non-empty) before every
 bundle request and sets `Authorization: <scheme> <token>`. At startup the path is validated and read
 once; failure stops startup. Later read failures fail that bundle request, OPA retries, the last
 admitted revision stays, and the broker logs `token_unavailable` (rate-limited, without contents).
@@ -456,7 +469,7 @@ admitted revision stays, and the broker logs `token_unavailable` (rate-limited, 
 `os.ReadFile` outside `os.Root` on every request, which R3 rejects. OPA v1.21.4 resolves
 `credentials.plugin` through the plugin manager (`rest.Config.AuthPlugin` and
 `plugins.Manager.AuthPlugin`), and `Prepare` runs before every request, so the plugin rotates a
-mounted Secret without a restart and without leaving the trust directory.
+mounted Secret without a restart, and a replaced file cannot link outside its directory.
 
 **Limitation**: One token file per bootstrap, because OPA passes only the request to `Prepare`.
 Services that need different tokens use inline credentials. mTLS client certificates stay
