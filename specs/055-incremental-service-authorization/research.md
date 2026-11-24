@@ -59,7 +59,7 @@ re-specified for every consumer.
 - At local refresh, each bound scope is resolved again. If the scope no longer resolves, or it
   resolves to a different UUID, refresh fails with `invalid_scope` and does not rotate the token.
   This happens, for example, after a rename or when a canonical ID is reused.
-- **Proposed (DEC-004)**: Migration `049_add_service_scope_bindings` adds a nullable
+- **Proposed (DEC-004)**: Migration `050_add_service_scope_bindings` adds a nullable
   `service_scope_bindings JSONB` column to `authorization_codes` and `refresh_token_sessions`.
   `NULL` means "no virtual scopes", so existing rows are unaffected and need no backfill.
 

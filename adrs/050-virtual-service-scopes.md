@@ -74,7 +74,7 @@ services.
 - The broker's issued tokens reveal which managed services a client was granted access to. The
   issuer is the same broker, and audience handling does not change.
 - `authorization_codes` and `refresh_token_sessions` gain a nullable `service_scope_bindings`
-  column (migration 049, decision DEC-004).
+  column (migration 050, decision DEC-004).
 - Agents with a non-empty `allowed_scopes` can request virtual scopes without listing them. The
   broker checks eligibility separately.
 - Proxy refresh gives weaker assurance than local refresh. This is documented.

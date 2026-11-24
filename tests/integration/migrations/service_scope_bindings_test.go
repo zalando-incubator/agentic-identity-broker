@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Migration 049 from specs/055-incremental-service-authorization/data-model.md (DEC-004).
-func TestMigration049ServiceScopeBindings(t *testing.T) {
+// Migration 050 from specs/055-incremental-service-authorization/data-model.md (DEC-004).
+func TestMigration050ServiceScopeBindings(t *testing.T) {
 	f := NewMigrationTestFramework(t)
 	defer f.Cleanup(t)
-	require.NoError(t, f.Up(t, 47))
+	require.NoError(t, f.Up(t, 49))
 	require.NoError(t, f.ExecuteSQL(t, `
 		INSERT INTO agents (id, display_name, description)
 		VALUES ('10000000-0000-0000-0000-000000000048', 'bindings agent', 'migration test');
@@ -62,7 +62,7 @@ func TestMigration049ServiceScopeBindings(t *testing.T) {
 		assert.Equal(t, refreshBefore, after)
 	}
 
-	require.NoError(t, f.Up(t, 49))
+	require.NoError(t, f.Up(t, 50))
 	requireColumns(true)
 	nullCount, err := f.QuerySQL(t, `SELECT (SELECT count(*) FROM authorization_codes WHERE service_scope_bindings IS NULL) + (SELECT count(*) FROM refresh_token_sessions WHERE service_scope_bindings IS NULL)`)
 	require.NoError(t, err)
@@ -70,11 +70,11 @@ func TestMigration049ServiceScopeBindings(t *testing.T) {
 	requireUnchanged()
 	require.NoError(t, f.ExecuteSQL(t, `UPDATE refresh_token_sessions SET service_scope_bindings = '{"https://broker.example.com/sessions/github":"880e8400-e29b-41d4-a716-446655440010"}' WHERE signature = 'legacy-refresh'`))
 
-	require.NoError(t, f.Down(t, 48))
+	require.NoError(t, f.Down(t, 49))
 	requireColumns(false)
 	requireUnchanged()
 
-	require.NoError(t, f.Up(t, 49))
+	require.NoError(t, f.Up(t, 50))
 	requireColumns(true)
 	bindings, err := f.QuerySQL(t, `SELECT count(*) FROM refresh_token_sessions WHERE service_scope_bindings IS NOT NULL`)
 	require.NoError(t, err)

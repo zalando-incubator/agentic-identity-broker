@@ -144,14 +144,14 @@ A reconnect writes a new row state under the same lock. `setSessionTokens` clear
 termination deletes the row, and a late refresh finds `current == nil` and returns
 `ErrSessionNotFound`. Neither path is changed (FR-018).
 
-## Migration `049_add_service_scope_bindings` (Proposed, DEC-004)
+## Migration `050_add_service_scope_bindings` (Proposed, DEC-004)
 
 ```sql
--- 049_add_service_scope_bindings.up.sql
+-- 050_add_service_scope_bindings.up.sql
 ALTER TABLE authorization_codes ADD COLUMN service_scope_bindings JSONB NULL;
 ALTER TABLE refresh_token_sessions ADD COLUMN service_scope_bindings JSONB NULL;
 
--- 049_add_service_scope_bindings.down.sql
+-- 050_add_service_scope_bindings.down.sql
 ALTER TABLE refresh_token_sessions DROP COLUMN service_scope_bindings;
 ALTER TABLE authorization_codes DROP COLUMN service_scope_bindings;
 ```

@@ -493,7 +493,7 @@ Expected:
 just test-integration-infra
 ```
 
-Expected: migration `049_add_service_scope_bindings` applies, rolls back, and reapplies. Bindings
+Expected: migration `050_add_service_scope_bindings` applies, rolls back, and reapplies. Bindings
 survive the round trip on `authorization_codes` and `refresh_token_sessions`, and `NULL` rows stay
 readable. Both adapters enforce exact successor binding inheritance and scope subset. Exercise code
 issuance with full scopes → successful narrowed refresh → scope-less successor refresh: successor
@@ -625,10 +625,10 @@ Trigger an exchange error.
 
 ## 6. Rollback note
 
-Rolling back requires reverting the code first, then migration 049. Rolling back the code alone is
+Rolling back requires reverting the code first, then migration 050. Rolling back the code alone is
 not enough: the pre-feature broker treats a granted virtual scope as an ordinary scope string.
 After the rollback, affected clients may need to authorize again. No user session or grant data is
-lost. The discarded service-scope bindings cannot be recovered by reapplying migration 049;
+lost. The discarded service-scope bindings cannot be recovered by reapplying migration 050;
 affected clients need fresh interactive authorization to reestablish identity pinning.
 
 ## 7. Full completion gate

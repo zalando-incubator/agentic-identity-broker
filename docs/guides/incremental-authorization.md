@@ -139,5 +139,5 @@ leaves the refresh token valid, and only interactive authorization can add it.
   fallback. [Issue #446](https://github.com/zalando-incubator/agentic-identity-broker/issues/446)
   owns the validation fix. Give the service another canonical ID or none (which emits its UUID);
   explicitly requesting the UUID form remains valid.
-- **Rollback.** Rolling back migration `049` discards stored service bindings and requires rolling
+- **Rollback.** Rolling back migration `050` discards stored service bindings and requires rolling
   back the broker version; affected clients authorize again.
