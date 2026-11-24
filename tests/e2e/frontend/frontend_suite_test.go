@@ -63,9 +63,6 @@ type TestContext struct {
 	// Storage is the in-memory storage adapter for this test
 	Storage *storageadapter.Adapter
 
-	// StorageFactory creates fresh test storage instances
-	StorageFactory *bootstrap.StorageFactory
-
 	// MockUpstream is a mock OAuth2 server for this test
 	MockUpstream *helpers.MockUpstreamOAuth2Server
 
@@ -152,7 +149,15 @@ const browserCoverageInitScript = `(() => {
 // Ginkgo calls this to register and run all tests in this package.
 func TestFrontendE2E(t *testing.T) {
 	RegisterFailHandler(Fail)
-	RunSpecs(t, "Frontend E2E Tests")
+	config, reporter := GinkgoConfiguration()
+	if os.Getenv("E2E_FRONTEND_MODE") == "dev" {
+		if config.LabelFilter == "" {
+			config.LabelFilter = "!built-frontend"
+		} else {
+			config.LabelFilter = "(" + config.LabelFilter + ") && !built-frontend"
+		}
+	}
+	RunSpecs(t, "Frontend E2E Tests", config, reporter)
 }
 
 // SynchronizedBeforeSuite builds the shared bundle once, then starts a browser on every worker.
@@ -259,12 +264,11 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 // 4. Create fresh test server
 // 5. Create fresh Playwright context and page
 var _ = BeforeEach(func() {
-	var err error
-
 	// Step 1: Create fresh test storage
 	storageFactory := bootstrap.NewStorageFactory(suiteCtx.Logger)
 	storage, err := storageFactory.NewTestStorage()
 	Expect(err).NotTo(HaveOccurred(), "Failed to create test storage")
+	DeferCleanup(func() error { return storageFactory.CloseStorage(storage) })
 
 	// Step 2: Create fresh mock upstream server
 	mockUpstream := helpers.NewMockUpstreamOAuth2Server()
@@ -326,7 +330,6 @@ var _ = BeforeEach(func() {
 	testCtx = &TestContext{
 		Suite:           suiteCtx,
 		Storage:         storage,
-		StorageFactory:  storageFactory,
 		MockUpstream:    mockUpstream,
 		Server:          server,
 		ServerFactory:   serverFactory,
@@ -389,11 +392,6 @@ var _ = AfterEach(func() {
 	}
 	if testCtx.Server != nil {
 		testCtx.Server.Close()
-	}
-	if testCtx.Storage != nil && testCtx.StorageFactory != nil {
-		if err := testCtx.StorageFactory.CloseStorage(testCtx.Storage); err != nil {
-			suiteCtx.Logger.Error("Failed to close storage", "error", err)
-		}
 	}
 	if testCtx.MockUpstream != nil {
 		testCtx.MockUpstream.Close()

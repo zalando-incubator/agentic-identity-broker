@@ -185,6 +185,7 @@ type UserSessionSummary struct {
 	ID                       id.SessionID `json:"id"`
 	ServiceID                id.ServiceID `json:"service_id"`
 	ServiceDisplayName       string       `json:"service_display_name"`
+	ServiceIconSVG           *string      `json:"service_icon_svg,omitempty"`
 	TokenType                string       `json:"token_type"`
 	Scope                    []string     `json:"scope"`
 	InitiatedAt              time.Time    `json:"initiated_at"`

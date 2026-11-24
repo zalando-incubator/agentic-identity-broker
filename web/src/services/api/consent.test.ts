@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ConsentApiService } from './consent';
 import type { CreateOrUpdateGrantRequest, UserGrant } from '../../types/consent';
+import { apiCache } from './cache';
 
 vi.mock('./client', () => ({
   apiClient: {
@@ -104,5 +105,37 @@ describe('ConsentApiService.createOrUpdateGrant', () => {
       'Redirect URL validation failed',
     );
     expect(window.location.href).toBe('');
+  });
+});
+
+describe('ConsentApiService.getAgentDetail service icon mapping', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it.each([undefined, null])('replaces previous source with fresh absence %s and preserves service filtering and cache TTL', async (iconSvg) => {
+    const service = new ConsentApiService();
+    const source = '<svg xmlns="http://www.w3.org/2000/svg"><text>Å &amp; 雲</text></svg>';
+    const entry = {
+      serviceId: 'atlas', serviceName: 'Atlas Files', requirementType: 'mandatory',
+      requiredScopes: [{ name: 'files.read' }], connectionStatus: 'connected',
+    };
+    const response = (services: unknown[]) => ({ data: { data: {
+      agent: { agentId: 'agent-1', display_name: 'Research', description: 'Research files' },
+      services,
+      service_requirements: [{ service_id: 'atlas', requirement_type: 'mandatory' }],
+    } } });
+    vi.mocked(apiClient.get)
+      .mockResolvedValueOnce(response([{ ...entry, iconSvg: source }]))
+      .mockResolvedValueOnce(response([iconSvg === undefined ? entry : { ...entry, iconSvg }]));
+    const first = await service.getAgentDetail('agent-1');
+    expect(first.services).toHaveLength(1);
+    expect(first.services[0]).toMatchObject({ kind: 'requirement', serviceId: 'atlas', iconSvg: source });
+    const next = await service.getAgentDetail('agent-1');
+    expect(next.services).toHaveLength(1);
+    const nextService = next.services[0];
+    if (nextService?.kind !== 'requirement') throw new Error('Expected a service requirement');
+    expect(nextService.iconSvg).toBe(iconSvg);
+    expect(first.services[0]).toMatchObject({ kind: 'requirement', iconSvg: source });
+    expect(apiCache.set).toHaveBeenLastCalledWith('/consent/agents/agent-1', next, 5 * 60 * 1000);
+    expect(next.agent.service_requirements).toEqual([{ service_id: 'atlas', requirement_type: 'mandatory' }]);
   });
 });

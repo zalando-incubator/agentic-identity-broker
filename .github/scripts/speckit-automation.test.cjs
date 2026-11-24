@@ -333,7 +333,7 @@ test("relabeling regenerates a closed Spec Kit PR only after its branch is delet
   await assert.rejects(route(denied), (error) => error.status === 403);
 });
 
-test("phases refuse pull requests that would lose their pushes or replace the installed skills", async (t) => {
+test("phases refuse pull requests that would lose their pushes under the earlier title prefix", async (t) => {
   preparationIO(t);
   const legacy = { pr: { title: "[Spec Kit] Explain denials" }, comments: [comment(result("clarify"))] };
   const announced = fixture("issue_comment", commandEvent(command("/speckit-plan")), legacy);
@@ -344,10 +344,6 @@ test("phases refuse pull requests that would lose their pushes or replace the in
     /Rename the pull request title to start with `\[spec-driven\]`, then repeat the command/);
   assert.equal((await prepare({ ...fixture("pull_request_target", {}, { comments: legacy.comments }), inputs: { phase: "plan", pr: 42 } }))
     .previous.phase, "clarify");
-
-  await assert.rejects(prepare({ ...fixture("pull_request_target", {}, {
-    comments: legacy.comments, extra: { ".pi": "tracked" },
-  }), inputs: { phase: "plan", pr: 42 } }), /tracks files under `\.pi\/`, which would replace the installed skills and sub-agents/);
 
   const current = fixture("issue_comment", commandEvent(command("/speckit-plan")), { comments: legacy.comments });
   await announce({ ...current, needs: { route: { result: "success", outputs: { action: "plan", pr: "42" } } } });

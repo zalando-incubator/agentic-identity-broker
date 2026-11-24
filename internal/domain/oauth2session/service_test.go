@@ -79,7 +79,7 @@ func TestDiscoveredCIMDConnectionUsesDerivedResourceAndS256PKCE(t *testing.T) {
 	authorization := parsed.Query()
 	assert.Equal(t, []string{resourceURL}, authorization["resource"])
 	assert.Equal(t, "S256", authorization.Get("code_challenge_method"))
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 	challenge := sha256.Sum256([]byte(claims.PKCEVerifier))
@@ -283,7 +283,7 @@ func TestDCRStoredClientUsesPinnedTokenAuthenticationOnConnectionAndRenewal(t *t
 			principal := id.Principal("user@example.com")
 			flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://broker.example.com/sessions")
 			require.NoError(t, err)
-			claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+			claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 			require.NoError(t, err)
 			require.NotEmpty(t, claims.PKCEVerifier)
 			assert.Equal(t, provider.IssuerURI, claims.IssuerURI)
@@ -1821,7 +1821,7 @@ func TestHandleCallback_PKCEValidationFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	// Validate state token
-	_, err = service.ValidateStateToken(flowResult.StateToken, principal, serviceID)
+	_, err = service.ValidateStateToken(t.Context(), flowResult.StateToken, principal, serviceID)
 	require.NoError(t, err)
 
 	// Mock token endpoint that returns invalid_grant when PKCE doesn't match

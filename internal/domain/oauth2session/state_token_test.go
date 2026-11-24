@@ -53,7 +53,7 @@ func TestInitiateOAuth2FlowWithConsentState_SealsReference(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	claims, err := service.ValidateStateToken(result.StateToken, principal, testServiceID)
+	claims, err := service.ValidateStateToken(t.Context(), result.StateToken, principal, testServiceID)
 	require.NoError(t, err)
 	assert.Equal(t, consentStateID, claims.ConsentStateID)
 }
@@ -376,7 +376,7 @@ func TestStateTokenClaims_DiscoveryIssuerAndAudienceArePaired(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			opened, err := service.ValidateStateToken(sealed, claims.Principal, claims.ServiceID)
+			opened, err := service.ValidateStateToken(t.Context(), sealed, claims.Principal, claims.ServiceID)
 			require.NoError(t, err)
 			assert.Equal(t, tc.issuer, opened.IssuerURI)
 			assert.Equal(t, tc.resource, opened.Resource)
@@ -392,7 +392,7 @@ func TestInitiateOAuth2Flow_ManualStateHasNeitherIssuerNorAudience(t *testing.T)
 	principal := id.Principal("user@example.com")
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	assert.Empty(t, claims.IssuerURI)
 	assert.Empty(t, claims.Resource)

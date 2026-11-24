@@ -761,7 +761,7 @@ compose-up-detached: compose-env
     @just compose-health
     @echo ""
     @echo "Service URLs:"
-    @echo "  - Browser UI (Vite proxy includes development identity): http://localhost:3000/"
+    @echo "  - Browser UI (Vite proxy includes development identity): http://aib.localhost:3000/"
     @echo "  - End-user broker (protected API requires upstream auth): http://localhost:8000/"
     @echo "  - Admin API: http://localhost:14000/api/agents"
     @echo "  - Admin health: http://localhost:14000/health"
