@@ -400,7 +400,7 @@ standard defines audit records as structured logs.
 
 **Decision**: The pinned agentgateway release changes from `v1.5.0` to `v1.7.0` at each pin site:
 
-- `docker-compose.yml:249`, with the digest of `v1.7.0` (`sha256:60216aafb03d37f94e952ff3d51d2f630a65b10ecaebdc0a864882f92610c45b` on 2026-11-24)
+- `docker-compose.yml:249`, with the index digest of `v1.7.0` (`sha256:60216aafb03d37f94e952ff3d51d2f630a65b10ecaebdc0a864882f92610c45b` from `docker buildx imagetools inspect` on 2026-11-24). The current pin `sha256:bf2f339e…` is the index digest of `v1.5.0`.
 - `defaultAgentgatewayImage` in `tests/e2e/extproc/agentgateway_e2e_test.go` and in `tests/e2e/agentgateway_token_exchange_e2e_test.go`
 - The expected value in `tests/e2e/extproc/agentgateway_image_test.go`
 - The `docker pull` steps in `.github/workflows/ci.yml`, `container-tests.yml`, and `scheduled-coverage.yml`.

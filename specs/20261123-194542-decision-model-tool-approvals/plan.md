@@ -141,7 +141,7 @@ Four seams need care:
 | Phase | Purpose |
 |---|---|
 | Phase 0 | Refactoring without a behavior change: divide `Gate.Evaluate` into "find an existing decision" and "create a pending approval". |
-| Phase 1 | Setup: read the scoped `AGENTS.md` files, confirm the migration number, and prepare the test doubles. Change the pinned agentgateway release to `v1.7.0` and update `agentgateway_image_test.go`. Run the existing agentgateway suites and the verification cases (D-14). Give the frontend test context the token exchange configuration (see "Browser cases"). |
+| Phase 1 | Setup: read the scoped `AGENTS.md` files, confirm the migration number, and prepare the test doubles. Change the pinned agentgateway release to `v1.7.0` at each pin site of D-14: the Compose image with its index digest, the two test defaults, the image test, and the three CI workflows. Run the existing agentgateway suites in `tests/e2e/` and `tests/e2e/extproc/` and the verification cases. Give the frontend test context the token exchange configuration (see "Browser cases"). |
 | Phase 2 | Design preconditions: the stakeholder approvals, the Accepted ADR, the glossary, the OpenAPI document, the configuration examples, the observability contract, and the 28 acceptance cases. |
 | Phase 2.5 | Foundations in the new package, each with tests first: catalog, fingerprints, listing parser and store, context builder, model client, answer validation. |
 | US2 | The model interface in the request path: context, disclosure, one request, no request for other calls. |
