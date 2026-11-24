@@ -113,10 +113,11 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 				}
 			}
 			if name, ok := value.(*ast.Ident); ok {
-				initializer := initializers[info.ObjectOf(name)]
+				binding := initializers[info.ObjectOf(name)]
 				value = nil
-				if initializer != nil && initializer.End() <= name.Pos() {
-					value = initializer
+				if binding.value != nil && binding.value.End() <= name.Pos() &&
+					(!binding.reassignedAt.IsValid() || name.Pos() < binding.reassignedAt) {
+					value = binding.value
 				}
 			}
 			call, ok := value.(*ast.CallExpr)
@@ -132,16 +133,27 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 	return offenders
 }
 
-func domainEventGuardBindings(info *types.Info, file *ast.File) (map[types.Object]ast.Expr, map[*ast.CallExpr][]ast.Expr) {
-	initializers := make(map[types.Object]ast.Expr)
+type domainEventGuardBinding struct {
+	value        ast.Expr
+	reassignedAt token.Pos
+}
+
+func domainEventGuardBindings(info *types.Info, file *ast.File) (map[types.Object]domainEventGuardBinding, map[*ast.CallExpr][]ast.Expr) {
+	initializers := make(map[types.Object]domainEventGuardBinding)
 	appendArgs := make(map[*ast.CallExpr][]ast.Expr)
-	bind := func(name ast.Expr, value ast.Expr) {
-		if ident, ok := name.(*ast.Ident); ok {
-			obj := info.ObjectOf(ident)
-			if _, assigned := initializers[obj]; assigned {
-				value = nil
-			}
-			initializers[obj] = value
+	bind := func(name ast.Expr, value ast.Expr, end token.Pos) {
+		ident, ok := name.(*ast.Ident)
+		if !ok {
+			return
+		}
+		obj := info.ObjectOf(ident)
+		binding, assigned := initializers[obj]
+		if !assigned {
+			initializers[obj] = domainEventGuardBinding{value: value}
+		} else if !binding.reassignedAt.IsValid() {
+			// A reassignment ends the known binding after its RHS has been evaluated.
+			binding.reassignedAt = end
+			initializers[obj] = binding
 		}
 	}
 	for node := range ast.Preorder(file) {
@@ -152,12 +164,12 @@ func domainEventGuardBindings(info *types.Info, file *ast.File) (map[types.Objec
 				if len(n.Lhs) == len(n.Rhs) {
 					value = n.Rhs[i]
 				}
-				bind(name, value)
+				bind(name, value, n.End())
 			}
 		case *ast.ValueSpec:
 			if len(n.Names) == len(n.Values) {
 				for i, value := range n.Values {
-					bind(n.Names[i], value)
+					bind(n.Names[i], value, n.End())
 				}
 			}
 		case *ast.BlockStmt:
@@ -268,6 +280,8 @@ func TestDomainEventGuardDetectsWrongKeys(t *testing.T) {
 		{"correct local attr value", `value := slog.AnyValue(definition); _ = slog.Attr{Key: "event", Value: value}`, 0},
 		{"assigned local attr value", `var value slog.Value; value = slog.AnyValue(definition); _ = slog.Attr{Key: "action", Value: value}`, 1},
 		{"attr before local assignment", `var value slog.Value; _ = slog.Attr{Key: "action", Value: value}; value = slog.AnyValue(definition)`, 0},
+		{"attr before reassignment", `value := slog.AnyValue(definition); _ = slog.Attr{Key: "action", Value: value}; value = slog.StringValue("ordinary")`, 1},
+		{"attr after reassignment", `value := slog.AnyValue(definition); value = slog.StringValue("ordinary"); _ = slog.Attr{Key: "action", Value: value}`, 0},
 		{"correct literal", `_ = slog.Attr{Key: "event", Value: slog.AnyValue(definition)}`, 0},
 		{"slice", `args := []any{"action", definition}; logger.InfoContext(nil, "record", args...)`, 1},
 		{"append", `args := []any{}; args = append(args, "action", definition); logger.InfoContext(nil, "record", args...)`, 1},
