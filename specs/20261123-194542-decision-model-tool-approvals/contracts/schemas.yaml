@@ -20,6 +20,7 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+          pattern: "^[^\\x00-\\x1F\\x7F]+$"
           description: Plain text from the assessment catalog. One line. The client shows it as text.
         state:
           type: string
@@ -50,6 +51,7 @@ components:
         model:
           type: string
           maxLength: 100
+          pattern: "^[^\\x00-\\x1F\\x7F]+$"
           description: The model that answered.
         question_set:
           type: string

@@ -80,6 +80,7 @@ constructor.
 | `extproc.assessment.tool_definitions` | Gauge | `{definition}` | none | The number of definitions in the store |
 | `extproc.assessment.tool_definition.changes` | Counter | `{change}` | none | One time for each changed definition |
 | `extproc.assessment.listings` | Counter | `{listing}` | `assessment.listing_result` | One time for each observed `tools/list` response |
+| `extproc.assessment.policy_result.removed` | Counter | `{entry}` | `assessment.removed_kind` | One time for each finding or recommendation that the system removes from a policy result |
 
 Attribute values:
 
@@ -89,6 +90,7 @@ Attribute values:
 | `assessment.outcome` | `automatic_approval`, `human_review`, `denied` |
 | `assessment.evaluated` | `true`, `false` |
 | `assessment.listing_result` | `stored`, `too_large`, `not_parsed`, `ignored` |
+| `assessment.removed_kind` | `finding`, `recommendation` |
 
 The number of attribute combinations is constant. A target server name and a tool name are not
 metric attributes.

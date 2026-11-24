@@ -58,7 +58,7 @@
 
 These decisions change the scope or the security model:
 
-- The model gets the tool definition that the MCP server lists. This is possible only if the gateway can see tool listings.
+- The model gets the tool definition that the MCP server lists. A Docker test of agentgateway `v1.5.0` and `v1.7.0` showed that ExtProc gets the `tools/list` response (research.md D-02).
 - If the deployment-wide setting permits it, the system sends argument values of all servers to the decision endpoint.
 - The system does not send the static policy risk level to the model.
 - An automatic approval creates no approval record. It is visible only in the audit log.

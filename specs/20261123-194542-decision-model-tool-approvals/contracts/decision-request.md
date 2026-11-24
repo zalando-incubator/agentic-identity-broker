@@ -1,13 +1,14 @@
 # Contract: Request to the Decision Endpoint
 
-**Feature**: [spec.md](../spec.md) | **Decisions**: [research.md](../research.md) D-03, D-04, D-06
+**Feature**: [spec.md](../spec.md) | **Decisions**: [research.md](../research.md) D-03, D-04, D-06, D-14
 
 **Approval status**: Draft. The stakeholder must approve this contract before implementation
-(API-006). The verification task of D-03 must complete before the approval.
+(API-006). The Docker cases of D-03 tested this contract against agentgateway `v1.7.0` with an
+OpenAI-format double and a System One-format double.
 
-ExtProc is the client. The server is agentgateway or a different endpoint with the same contract.
-The contract uses the OpenAI Decisions shape that the
-[agentgateway Decisions documentation](https://agentgateway.dev/docs/standalone/main/documentation/llm/api-types/decisions/)
+ExtProc is the client. The server is agentgateway `v1.7.0` or later, or a different endpoint with
+the same contract. The contract uses the OpenAI Decisions shape that the
+[agentgateway Decisions documentation](https://agentgateway.dev/docs/standalone/latest/llm/api-types/decisions/)
 describes.
 
 ## 1. Request
@@ -25,10 +26,10 @@ context headers of the existing outbound client. It sends no other header from t
 
 | Body field | Value |
 |---|---|
-| `model` | `authorization.assessment.model` |
+| `model` | `authorization.assessment.model`. Through agentgateway, this value names a model entry of the gateway. |
 | `input` | A list with one message. The role is `user`. The content has two parts. |
 | `input[0].content[0]` | `{"type": "input_text", "text": <framing>}` |
-| `input[0].content[1]` | `{"type": "input_json", "data": <Assessment Context>}` |
+| `input[0].content[1]` | `{"type": "input_text", "text": <compact JSON text of the Assessment Context>}` |
 | `questions` | One entry for each catalog question, in catalog sequence |
 
 The framing is this fixed text:
@@ -41,7 +42,19 @@ If an exception replaces the tool description, the `tool` section has `"written_
 The framing text does not change.
 
 The Assessment Context has the sections and the rules of
-[data-model.md](../data-model.md). The full example is in [spec.md](../spec.md), Journey 1, step 6.
+[data-model.md](../data-model.md). The compact JSON text has no spaces and no HTML escapes. Its
+sections and fields keep the sequence of the data model, not a sorted sequence. The full example
+is in [spec.md](../spec.md), Journey 1, step 6.
+
+The request has no `input_json` part. agentgateway `v1.7.0` rejects an `input_json` part with
+HTTP 400 if the upstream uses the System One format (D-03). For a System One upstream, the
+gateway puts the two parts into one `state` message and joins them with a line break.
+
+### Gateway requirements
+
+- The route of the decision endpoint maps `/v1/decisions` to the `decisions` route type. The simplified `llm` configuration of agentgateway does this without a route entry.
+- The ExtProc policy does not apply to the route of the decision endpoint.
+- The gateway replaces the bearer token of ExtProc with the provider key. `credential_file` authenticates ExtProc to the gateway only. If the route has no client authentication, `credential_file` is not necessary.
 
 ## 2. Questions
 
@@ -59,13 +72,16 @@ ExtProc accepts only the status 200 with a JSON body of a maximum of 256 KiB.
 
 | Body field | Use |
 |---|---|
-| `model` | The answering model. ExtProc compares it with the evaluation record. |
+| `model` | The answering model. ExtProc compares it with the evaluation record. agentgateway returns the value of the provider without a change. |
 | `answers[]` | ExtProc finds each answer by its `name`. The list sequence is not important. |
 | `answers[].type` | `predicate`, `score`, or `refusal`. A different type makes the answer invalid. |
 | `predicate.probability` | A number from 0 to 1. |
-| `score.probabilities[]` | One entry for each level, with `value` (the index) and `probability`. |
+| `score.probabilities[]` | One entry for each level, with `value` (the index), `label`, and `probability`. |
 | `score.score`, `score.confidence` | Numbers. ExtProc gives them to the policy without a change. |
 | `usage` | ExtProc uses it only for metrics. |
+
+A `refusal` answer has only `type` and `name`. A System One upstream has no refusal. The gateway
+then returns no entry for the question, and the answer is missing.
 
 ExtProc ignores unknown body fields. The status mapping is in [research.md](../research.md), D-04.
 
@@ -85,7 +101,7 @@ ExtProc ignores unknown body fields. The status mapping is in [research.md](../r
 The canonical document for `question_set` has these values:
 
 - The format version `1`
-- The framing text and the name of the input encoding (`input_json`)
+- The framing text and the name of the input encoding (`input_text`)
 - The `organization` section
 - Each question in catalog sequence, with all its fields.
 

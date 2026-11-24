@@ -14,15 +14,15 @@ change.
 | Key | Type | Default | Validation |
 |---|---|---|---|
 | `authorization.assessment.enabled` | boolean | `false` | It requires `authorization.enabled` and `tool_approvals.enabled`. |
-| `authorization.assessment.mode` | string | `recommend` | `recommend` or `auto_approve`. |
+| `authorization.assessment.mode` | string | `recommend` | `recommend` or `auto_approve`. `auto_approve` requires `log.level` `debug` or `info` (D-13). |
 | `authorization.assessment.endpoint` | URL | none | Required while enabled. HTTPS, or HTTP if `oauth2.tls.allow_http` is true. |
 | `authorization.assessment.model` | string | none | Required while enabled. |
 | `authorization.assessment.credential_file` | path | none | Optional. The file has a maximum of 4 KiB. |
 | `authorization.assessment.request_timeout` | duration | `500ms` | More than 0, maximum `2s`. |
 | `authorization.assessment.max_context_bytes` | integer | `16384` | 1,024 to 262,144. |
-| `authorization.assessment.max_listing_bytes` | integer | `1048576` | 1,024 to 8,388,608. ExtProc ignores a larger `tools/list` response. |
+| `authorization.assessment.max_listing_bytes` | integer | `1048576` | 1,024 to 8,388,608. For a larger `tools/list` response, ExtProc removes the stored definitions of that server (D-02). |
 | `authorization.assessment.catalog_file` | path | none | Required while enabled. |
-| `authorization.assessment.auto_approval.evaluation_record_file` | path | none | Required in the `auto_approve` mode. |
+| `authorization.assessment.auto_approval.evaluation_record_file` | path | none | Required in the `auto_approve` mode. Optional in the `recommend` mode. In that mode, ExtProc reads it if it is set, and `would_auto_approve` uses it (FR-044). Without it, `would_auto_approve` is always false. |
 
 Path values obey the existing rule for policy paths: no `..` segment, and the file must exist at
 startup.
@@ -64,7 +64,8 @@ tool_contexts:
 
 In the `auto_approve` mode, ExtProc rejects a missing or invalid file at startup. If the
 `question_set` value differs from the catalog, ExtProc starts and writes an error record. No call
-then proceeds automatically (User Story 4, scenario 4).
+then proceeds automatically (SC-010). A changed catalog is a normal change and not an invalid
+file. The calls wait for a person until a new evaluation run.
 
 ## 4. Case file
 
@@ -83,7 +84,8 @@ The format is JSON Lines. Each line is one case.
 
 One file for each target server. The content is the unmodified `result` object of a `tools/list`
 response, or the full JSON-RPC response. A file with two or more pages is a JSON list of such
-objects.
+objects. The file must contain the listing as the client sees it through the gateway. On a route
+with two or more MCP targets, the tool names thus have the target prefix of the gateway (D-02).
 
 ## 6. Command
 
@@ -98,8 +100,9 @@ extproc-token-exchange assessment evaluate
 ```
 
 The command uses the catalog, the model settings, and the policy from the configuration file. It
-ignores `mode` and an existing evaluation record. It starts no gRPC server, calls no tool, and
-sends no request to the broker.
+ignores `mode` and an existing evaluation record. It does not require that
+`evaluation_record_file` exists. It sets `input.assessment.evaluated` to `true` for each case
+(D-08). It starts no gRPC server, calls no tool, and sends no request to the broker.
 
 | Exit code | Meaning |
 |---|---|

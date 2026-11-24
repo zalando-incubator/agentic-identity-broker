@@ -6,11 +6,12 @@
 
 This document records the design decisions of the planning phase. The guidance about decision
 models is in [decision-model-research.md](decision-model-research.md) (`R-01` to `R-20`). This
-document refers to its own decisions as `D-01` to `D-13`.
+document refers to its own decisions as `D-01` to `D-15`.
 
-Each decision used the code of this repository and published documentation. No decision used a
-test against a running gateway or model. Thus, three decisions have a verification task before
-the contracts get approval (D-02, D-03, D-07).
+The first version of this document used the code of this repository and published documentation
+only. On 2026-11-24, Docker tests against agentgateway `v1.5.0` and `v1.7.0` replaced the
+assumptions of D-02, D-03, and D-07 with observed results. Each decision states its evidence. The
+section "Verification record" at the end gives the commands and the test files.
 
 ## D-01 — The assessment runs in the request-body phase of ExtProc
 
@@ -42,95 +43,118 @@ direction of issue #206. A gateway webhook moves the policy contract out of this
 ## D-02 — ExtProc learns tool definitions from `tools/list` responses
 
 **Decision**: ExtProc reads the response body of each `tools/list` request that has a resolved
-`target_server_name`. It keeps the stream state for these requests. It copies each response chunk
-into a bounded buffer and returns the chunk to the gateway without a change. At the end of the
-stream, it parses the result and stores each tool definition in memory. The key is the target
-server name and the tool name.
+`target_server_name`. It keeps the stream state of these requests from the request phase to the
+response phase. It copies each response chunk into a bounded buffer and returns the chunk to the
+gateway without a change. At the end of the stream, it parses the result and stores each tool
+definition in memory. The key is the target server name and the tool name as the client sees it.
 
-The parser accepts `application/json` and `text/event-stream`. In an event stream, it uses the
-JSON-RPC response that has the identifier of the request. It ignores a response that has an error
-status, a content encoding, or a size larger than the limit. A listing with a cursor adds or
-replaces only the tools on that page.
+The parser accepts `text/event-stream` and `application/json`. In an event stream, it uses the
+`data` line of the JSON-RPC response that has the identifier of the request. It ignores unknown
+result fields. A listing with a cursor adds or replaces only the tools on that page.
 
-**Rationale**: ExtProc is in the path of each MCP request. The agentgateway documentation says
-that the gateway streams response bodies to ExtProc by default. The existing configurations set
-no processing mode, and `echoResponseBody` (`server.go:1403`) receives the chunks today. Thus,
-the gateway configuration does not change. The `mcp_server` metadata value is mandatory for MCP
-requests (`adrs/028-opa-extproc-authorization.md`, amendment of 2026-09-21). Thus, each listing
-has one target server name.
+ExtProc removes all stored definitions of a target server if a listing response is not usable. A
+response is not usable with an error status, a content encoding, an oversized body, or a body
+that ExtProc cannot parse. Calls to the tools of that server then have the status
+`definition_missing` until a valid listing arrives. Thus, a
+listing that ExtProc cannot read never keeps an old definition that matches the evaluation record.
+A single definition larger than its limit replaces the stored entry with a marker. A call to that
+tool then has the status `context_too_large`.
+
+**Evidence**: The Docker cases in
+`tests/e2e/extproc/assessment_gateway_verification_test.go` ran the real ExtProc server behind a
+real agentgateway container. The test MCP servers use `mcp-go`, as `mocks/mcp-server` does. Each
+result below is the same for `v1.5.0` and `v1.7.0`, and for the MCP protocol versions
+`2025-11-25` and `2026-07-28`, unless the table names a difference.
+
+| Question | Observed result |
+|---|---|
+| Does ExtProc get the response body? | Yes. The gateway configuration sets no processing mode. |
+| One gRPC stream for request and response? | Yes. The message kinds on one stream are `request_headers`, `request_body`, `response_headers`, `response_body`, `response_body`. |
+| Content type at ExtProc | `text/event-stream`, also when the MCP server returns `application/json`. The gateway converts the response. |
+| Event framing | One event: `event: message`, then one `data:` line with the JSON-RPC response. |
+| Chunk sizes | One chunk with the full body, then one empty chunk with the end of the stream. A page of 100 tools gave one chunk of 70,298 bytes. |
+| `Accept-Encoding: gzip` | The gateway sends `Accept-Encoding: gzip` to the server. A compressed server response arrives at ExtProc and at the client without `Content-Encoding` and in plain text. |
+| Bytes at the client | Equal to the bytes that ExtProc returned, in each case. |
+| Tool definition | The `description`, `inputSchema`, and `annotations` at ExtProc are equal to the definition that the server registered. |
+| Pagination in `v1.5.0` | The server returned `nextCursor`, but the client and ExtProc got the first page without `nextCursor`. The tools after the first page are not visible. |
+| Pagination in `v1.7.0` | `nextCursor` arrives. The second page arrives on its own stream with the next 100 tools. |
+| One route with one MCP target | Tool names are not changed (`drive.share_file`). |
+| One route with two MCP targets | Tool names have the target name as prefix (`drive_drive.share_file`, `wiki_wiki.read_page`). ExtProc sees the prefixed name in `tools/list` and in `tools/call`. The gateway removes the prefix before the call gets to the server. |
+
+**Rationale**: ExtProc is in the path of each MCP request and gets the response body today
+(`echoResponseBody`). The gateway configuration does not change. The `mcp_server` metadata value
+is mandatory for MCP requests (`adrs/028-opa-extproc-authorization.md`, amendment of 2026-09-21).
+Thus, each listing has one target server name. The prefix of the gateway keeps the tool names of
+two targets on one route apart, and the names in `tools/list` and in `tools/call` agree.
 
 **Risks**:
 
 - Definitions apply to all users of one instance. A server can return a different listing for each user. The latest listing applies. The fingerprint condition and the change report (FR-063) limit this risk.
-- A route that puts two or more MCP targets behind one `mcp_server` name shows prefixed tool names. The names in `tools/list` and in `tools/call` agree, because ExtProc sees the client side of the two exchanges.
+- If an operator adds a second target to a route, the tool names of the first target get a prefix. Each tool of that route then has no definition and no evaluation record entry until a new listing and a new evaluation run. The calls wait for a person.
+- On a route with two or more MCP targets, the target server name is the `mcp_server` value of the route. It is not the name of one server. An exception in `servers.<name>`, also `assess: false`, thus applies to all targets of the route. A server that needs its own exception needs its own route with its own `mcp_server` value. The verification case "two targets on one route" used `mcp_server: 'workspace-mcp'` for two servers.
 - After a start, an instance knows no definitions.
-
-**Evidence and its limits**: This decision is not proven. No test in this repository sends a
-`tools/list` request through agentgateway, and the planning environment had no container runtime.
-The evidence is indirect:
-
-- The agentgateway documentation for the latest release says that the gateway streams response bodies to ExtProc by default.
-- An analysis of the agentgateway source (main branch) shows that the gateway handles the response of an MCP backend as an upstream response. The ExtProc response phase applies to upstream responses. The analysis did not show each call site.
-- ExtProc has code for response body messages from agentgateway today (`echoResponseBody`). Its comment says that a different mutation type caused body loss. Thus, a person saw these messages before.
-
-Three facts are not known:
-
-- The repository pins agentgateway `v1.5.0`. The documentation describes a later release.
-- The content type and the chunk sizes of a `tools/list` response through the gateway.
-- The effect of a compressed response.
-
-**Verification task**: This task is the first task of the implementation. No other work starts
-before it completes. The Docker suite with agentgateway
-(`tests/e2e/extproc/opa_agentgateway_e2e_test.go`) must prove three facts with the pinned gateway
-version. ExtProc receives the response body of `tools/list`. The content type is one of the two
-accepted types. The client receives the response without a change.
-
-**Fallbacks**: If the task fails, these options apply in this sequence:
-
-1. Set the response body mode in the ExtProc policy of the gateway. This option needs a gateway release that has `processingOptions`.
-2. Receive `tools/list` results through an MCP guardrail processor of the gateway. This option adds a second gRPC service to the ExtProc binary.
-3. Read tool listing files at startup, in the format of the evaluation run. This option needs one exported file for each server and loses the automatic update.
-
-Each fallback changes only the source of the tool definitions. The context, the questions, the
-policy contract, and the fingerprints stay the same.
+- The tests used `mcp-go` servers only. A server that sends the result as an event stream with other events before the result was not tested. The parser looks for the response with the request identifier and thus does not depend on the event sequence.
 
 **Alternatives considered**: An ExtMCP guardrail processor gets parsed MCP data. But it needs a
 second gRPC protocol and a second gateway configuration, and it also gets only the merged
 listing. An active `tools/list` request from ExtProc needs credentials for each server and user.
 A catalog of tool descriptions by the operator is not practical for hundreds of servers. The
-stakeholder rejected it.
+stakeholder rejected it. The fallbacks of the first version of this decision are not necessary.
 
-## D-03 — The decision request is plain JSON in the Decisions shape
+## D-03 — The decision request is plain JSON in the Decisions shape, with the context as text
 
 **Decision**: ExtProc sends `POST <endpoint>` with a JSON body in the OpenAI Decisions shape. It
 uses the existing `internal/extproc/httpclient` package and adds no SDK dependency. The input is
-one user message with two parts: an `input_text` part with the fixed framing, and an `input_json`
-part with the context. The contract is in
-[contracts/decision-request.md](contracts/decision-request.md).
+one user message with two `input_text` parts. The first part is the fixed framing. The second
+part is the context as compact JSON text. The sections keep the sequence of FR-022, because the
+text form makes the sequence visible to the model. The canonical form of D-06 sorts keys and is
+only for fingerprints. The contract is in [contracts/decision-request.md](contracts/decision-request.md).
 
 ExtProc sends no second attempt after an error. The deadline of the request is `request_timeout`.
 ExtProc reads the credential file for each request and sends the value as a bearer token. TLS
 uses the existing `oauth2.tls` settings. The existing rule for plaintext URLs applies
 (`internal/extproc/config/validate.go:86`).
 
-**Rationale**: The request has six fields and the response has four answer shapes. A hand-written
-client is small and keeps the dependency set stable. A file read for each request lets the
-operator replace a mounted credential without a restart.
+**Evidence**: The Docker cases in
+`tests/e2e/extproc/assessment_decision_endpoint_verification_test.go` sent the request of
+Journey 1, step 6, through agentgateway `v1.7.0`. Two test doubles recorded the upstream
+requests: one in the OpenAI Decisions format and one in the TypeSafe System One format. The
+gateway configuration used the `llm` section with two `custom` providers.
 
-**Gateway version**: The repository pins agentgateway `v1.5.0`. The agentgateway documentation
-says that version 1.6 had no route type for Decisions. Thus, the decision endpoint needs a later
-gateway release than the pinned release. The decision endpoint can be a different gateway
-instance than the MCP gateway. The verification task must record the first release that has the
-Decisions route.
+| Question | Observed result |
+|---|---|
+| First release with the Decisions route | `v1.7.0`. The `v1.7.0` documentation says: "Version 1.6 had no Decisions or SystemOne route type." |
+| `input_json` to an OpenAI-format upstream | Arrives unchanged at `/v1/decisions`. |
+| `input_json` to a System One-format upstream | HTTP 400 with the body `failed to process LLM request: failed to parse Decisions request: data did not match any variant of untagged enum DecisionInput`. No request gets to the upstream. |
+| Text form to a System One-format upstream | Arrives at `/v1/systemone`. `state` is `[{"role": "user", "content": "<framing>\n<context JSON text>"}]`. The gateway joins the two parts with a line break. |
+| Request `model` | The request names a model entry of the gateway. The provider entry of the test set `params.model`, and the gateway sent that value to the upstream. |
+| Credential | The gateway replaces the bearer token of the client with the provider key. |
+| Response `model` | The client gets the value of the upstream response unchanged, in the two formats. |
+| `predicate` and `score` answers from System One | The gateway translates `noul` to `predicate`. It translates a `score` to the Decisions form with `value`, `label`, and `probability` for each level. It takes the labels from the request. |
+| `refusal` from an OpenAI-format upstream | Arrives at the client as `{"type": "refusal", "name": "<question>"}`. |
+| A question without an answer from System One | The answer is absent. The System One API has no refusal. ExtProc thus sees "missing", which gives the status `incomplete`. |
+| One instance for MCP and decisions | Yes. One `v1.7.0` instance served the `llm` models and a `binds` route. All existing agentgateway suites of this repository pass on `v1.7.0` (D-14). |
 
-**Verification task**: The agentgateway documentation shows message arrays with `input_text`. It
-does not show `input_json` for the translation to System One. A Docker test with agentgateway and
-a System One test double must prove that the context arrives. If the gateway rejects or removes
-`input_json`, the request puts the canonical JSON text of the context into the `input_text` part.
-The framing is part of the question set fingerprint, thus this selection is visible.
+The OpenAI reference documents `input_json` for user messages, and its guide says the model
+renders it as text. The gateway parser of `v1.7.0` does not know the part. Thus, the text form is
+the only form that works for the two upstream formats.
+
+**Rationale**: The request has a fixed shape and the response has four answer shapes. A
+hand-written client is small and keeps the dependency set stable. A file read for each request
+lets the operator replace a mounted credential without a restart. One request form for the two
+upstream formats keeps one question set fingerprint for both.
+
+**Consequences**:
+
+- The input encoding `input_text` is part of the question set fingerprint (D-06).
+- The limits of `input_json` (256 KiB, 32 levels, 10,000 values) do not apply. The context limit of 16 KiB applies.
+- The `model` field of the request names a model entry of the gateway. The answering model is the `model` field of the response. Its value comes from the provider. An OpenAI response can name `gpt-6-luna` without a version. Then a model change behind that name is not visible to the model condition of FR-041. The tests did not call OpenAI, thus this behavior is not known.
+- The gateway route for decisions must not have the ExtProc policy. Otherwise, ExtProc gets its own model request.
 
 **Alternatives considered**: The `openai-go` SDK adds a large dependency for one request type. A
-direct System One client removes the common contract that the issue prefers.
+direct System One client removes the common contract that the issue prefers. An `input_json` part
+works only for OpenAI-format upstreams. A setting that selects the part for each upstream adds a
+configuration key and a second fingerprint for one question set.
 
 ## D-04 — One status results from each assessment attempt
 
@@ -143,7 +167,7 @@ direct System One client removes the common contract that the issue prefers.
 | The definition or the context is larger than its limit | `context_too_large` |
 | The deadline passes | `timeout` |
 | A transport error, or an HTTP status that is not 200 | `unavailable` |
-| The body is not valid JSON, or an answer is refused, missing, or invalid | `incomplete` |
+| The body is not valid JSON, the `model` value is not valid, or an answer is refused, missing, or invalid | `incomplete` |
 | Each question has a valid answer | `complete` |
 
 An answer is invalid in these cases:
@@ -152,7 +176,16 @@ An answer is invalid in these cases:
 - A wrong type
 - A probability that is not between 0 and 1
 - A wrong number of levels
+- A set of level `value` entries that is not exactly `0` to `n-1`, each one time
+- A level `label` that is not equal to the catalog label of that level
 - A total of the level probabilities that differs from 1 by more than 0.01.
+
+ExtProc puts each level probability at the position of its `value`, not at its position in the
+response. Thus, index 0 of the policy input is always the catalog level with the least risk.
+
+The `model` value is not valid if it is absent, empty, longer than 100 characters, or contains a
+control character. The same limit applies to the summary in the broker ([data-model.md](data-model.md)). Thus, the broker
+never rejects a summary because of the model value.
 
 ExtProc reads a maximum of 256 KiB of a response.
 
@@ -166,9 +199,17 @@ cause (FR-031, FR-032).
 **Decision**: The second evaluation uses the same prepared query and the same input, with the
 added key `assessment`. `ParseDecision` (`internal/extproc/authorization/decision.go:23-59`)
 reads three new fields: `auto_approval.rule` on an `allow` result, and
-`approval_context.recommendation` and `approval_context.findings` on an `approval_required`
-result. Go code applies the conditions of FR-041 after it parses the result. The contract is in
-[contracts/policy-assessment.md](contracts/policy-assessment.md).
+`approval_context.recommendation` and `approval_context.findings` on an `allow` or an
+`approval_required` result. Go code applies the conditions of FR-041 after it parses the result.
+The contract is in [contracts/policy-assessment.md](contracts/policy-assessment.md).
+
+An `allow` result can carry an `approval_context`. The system uses it only if a condition of
+FR-041 is false and the call waits for a person. Without it, the recommendation mode gives the
+person no findings for exactly the calls that a rule approves (US1.2, FR-044).
+
+If the second evaluation fails, ExtProc uses the result of the first evaluation with the status
+`not_available` for the summary. The call waits for a person. An error in the second evaluation
+thus never removes the decision of a person, and it never lets a call proceed.
 
 **Rationale**: `OPAInput` is a map, thus the added key needs no interface change. The system
 conditions are in Go code, thus a policy cannot disable them (FR-043).
@@ -200,21 +241,40 @@ is not necessary, because the same binary calculates all values.
 
 ## D-07 — The broker state finds a second identical call
 
-**Decision**: Before a model request, ExtProc looks for an unexpired pending approval for the
-same principal, agent, tool, and arguments. If one exists, ExtProc sends no model request. It
-calls the idempotent create operation, which returns the existing approval. ExtProc also keeps a
-bounded memory of its own "waits for a person" outcomes for the lifetime of a pending approval.
+**Decision**: The gate reads the approval state of the principal from the broker before an
+assessment, as it does today before it creates a pending approval (`gate.go:86-98`). After that
+read, ExtProc looks for a pending approval of the same agent with the same tool name and the same
+`arguments_hash`. ExtProc calculates the hash with the function of the broker
+(`storage.ComputeArgumentsHash`). The sync response already contains `arguments_hash`
+(`sync_handler.go:46`), and the ExtProc `Record` type adds the field. If such an approval exists,
+ExtProc sends no model request. It calls the idempotent create operation without a summary, which
+returns the existing approval URL.
 
-**Rationale**: The memory of one instance does not satisfy FR-008 for two or more instances. The
-approval state of the broker is common to all instances.
+ExtProc does not use the patterns of the pending record for this lookup. `toolpattern.Matches`
+checks only the keys of the pattern. A call with an added argument thus matches, but the broker
+creates a new approval for it, because the arguments hash differs. That approval then has no
+summary. If the two hash calculations differ for one call, ExtProc assesses the call again, and
+the broker keeps the first summary. That costs one model request and lets no call proceed.
 
-**Verification task**: The schema of the sync response permits `pending` records
-(`api/enduser/openapi.yaml`, `ToolApprovalSummary.status`). The task must make sure that
-`GetSyncState` returns unexpired pending records with their exact patterns. If it does not, the
-broker must add them. This addition does not change the schema.
+ExtProc keeps no memory of its own outcomes for this purpose. The broker state is common to all
+instances and is fresh after the read.
+
+**Evidence**:
+
+- `ListAllActive` returns each record that is not consumed, and a `pending` record only if `expires_at` is in the future (`tool_approval_repository.go:810-811`). `ApplyExactPatterns` gives each pending approval exact patterns on creation.
+- The case "returns an unexpired pending approval with exact patterns and keeps it on a duplicate create (D-07 verification)" in `tests/e2e/approval_api_test.go` passed against the real broker with in-memory storage. The sync response contained the record with `status: pending`, `tool_pattern: drive.share_file`, and `params_pattern` equal to the two arguments. A second create request with a different description returned HTTP 200, the same identifier, and the same `created_at`. The detail kept the first description.
+- The PostgreSQL integration tests `TestToolApprovalRepository_CRUD` (subtests `Create_idempotent` and `ListAllActive`) and `TestToolApprovalRepository_DedupReturnsPersistedApprovalWithoutSyncBump` passed. The last test shows that a duplicate create returns the stored record unchanged and does not change the sync version.
+
+**Consequences**:
+
+- The ExtProc cache keeps pending records today, but `Record.matchable` (`cache.go:332-344`) accepts only `approved` records. The feature adds a separate lookup for `pending` records. The existing match for human decisions does not change.
+- An idempotent create keeps the summary of the first assessment. The broker needs no change for this rule of FR-037.
+- Two instances can assess the same call at the same time. Each sends one model request, and the broker keeps the first summary.
+- A pending record never lets a call proceed. The lookup only selects the path without a model request.
 
 **Alternatives considered**: A create request before the assessment makes a record for calls
-that then proceed automatically. This is against FR-045.
+that then proceed automatically. This is against FR-045. A memory of outcomes in each instance
+does not satisfy FR-008 for two or more instances.
 
 ## D-08 — The evaluation run is the first subcommand of the ExtProc binary
 
@@ -231,18 +291,28 @@ The run calculates the 95% upper bound as an exact one-sided Clopper–Pearson b
 (FR-050). The binary has only a root command today (`cmd/extproc-token-exchange/root.go:33`). The
 subcommand must not change the behavior of the root command.
 
-**Consequence**: `RegisterFlags` registers flags on the root command only. The subcommand
-registers its own flags and uses the configuration loader again.
+**Consequence**: `RegisterFlags` (`internal/extproc/config/loader.go:56`) registers local flags
+on the command that it gets. The root command calls it (`root.go:354`), and a subcommand does not
+inherit these flags. Thus, the subcommand calls `RegisterFlags` for itself and then
+`LoadWithCommand`. `Validate` requires the full service configuration, including the `oauth2`
+keys. The run thus uses the configuration file of the service without a change. The subcommand
+does not require that `evaluation_record_file` exists, because the run writes that file.
+
+The run sets `input.assessment.evaluated` to `true` for each case. Thus, a policy rule that
+requires `evaluated` applies in the run as it will apply in production after the record exists.
 
 **Alternatives considered**: A separate binary doubles the release and container work. A test
 helper is not usable by operators.
 
 ## D-09 — The broker stores the summary in one JSON column
 
-**Decision**: Migration `049` adds a nullable `assessment` JSONB column to `tool_approvals`. The
-domain service validates the limits of API-003 before it stores the value. The two storage
-adapters store and return it with explicit columns. An idempotent create request for an existing
-pending approval does not change the stored summary (FR-037).
+**Decision**: A migration pair adds a nullable `assessment` JSONB column to `tool_approvals`. The
+migration uses the next free number on `main` when the implementation starts. On 2026-11-24, the
+last migration on `main` is `048`, and two open branches use `049`. This plan uses the name
+`NNN_add_tool_approval_assessment`. The domain service validates the limits of API-003 before it
+stores the value. The two storage adapters store and return it with explicit columns. An
+idempotent create request for an existing pending approval does not change the stored summary
+(FR-037).
 
 **Rationale**: The summary belongs to one approval, has no identity of its own, and is not a
 query condition. The repository has no code generation for API types, thus the DTO, the OpenAPI
@@ -289,8 +359,15 @@ its audit record always contains the tool name.
 
 **Consequence**: FR-060 of the spec changes to agree with this decision.
 
+**Existing deviation**: The existing record "opa authorization decision"
+(`internal/extproc/authorization/authorizer.go:323-332`) logs `tool_name` from the request for
+each decision. This value is not bounded by configuration. The record existed before section 6.2
+(added on 2026-11-02). This feature does not change that record. A separate issue must decide
+whether that record keeps the field.
+
 **Alternatives considered**: An exception to the logging standard needs an amendment of the
-standard (Principle XV) for no clear benefit.
+standard (Principle XV) for no clear benefit. The behavior of the existing record is not a
+precedent, because it is older than the standard.
 
 ## D-13 — An audit write error stops the automatic approval
 
@@ -298,8 +375,117 @@ standard (Principle XV) for no clear benefit.
 call. It writes through the `Handle` method of the logger handler and reads the returned error.
 If the handler returns an error, the call waits for a person.
 
+In the `auto_approve` mode, the configuration validation requires `log.level` `debug` or `info`.
+Before each write, ExtProc also calls `Enabled` for the INFO level. If it returns false, the call
+waits for a person.
+
 **Rationale**: SR-009 requires the record for each call that proceeds. The usual logger methods
 do not return an error.
 
+**Limits**: The ExtProc logger is `principalPolicyHandler` around the standard output handler,
+or around `multiHandler` with the standard output handler and the `otelslog` handler
+(`cmd/extproc-token-exchange/root.go:116-165`). `multiHandler.Handle` joins the errors of its
+handlers. The standard output handler returns a write error. The `otelslog` handler always
+returns `nil`, because the export is asynchronous. Thus, the check finds a failed write to
+standard output only. It does not find a failed export or a lost record after the write.
+
+`multiHandler.Handle` skips each handler that is not enabled for the level and then returns
+`nil` (`internal/adapters/telemetry/slog_handler.go:33-42`). With `log.level: warn`, an INFO
+audit record thus disappears without an error. The level rule above closes this gap.
+
 **Alternatives considered**: A durable audit store is not part of this repository. The logging
 standard defines audit records as structured logs.
+
+## D-14 — The deployment uses agentgateway `v1.7.0` for MCP and for decisions
+
+**Decision**: The pinned agentgateway release changes from `v1.5.0` to `v1.7.0` in
+`docker-compose.yml` and in `defaultAgentgatewayImage` (`tests/e2e/extproc/agentgateway_e2e_test.go`).
+One gateway instance can serve the MCP routes with ExtProc and the `llm` models for decisions.
+The documentation states `v1.7.0` as the minimum release.
+
+**Evidence**: The Decisions route first exists in `v1.7.0` (D-03). With
+`AGENTGATEWAY_IMAGE=cr.agentgateway.dev/agentgateway:v1.7.0`, the existing suites "Agentgateway
+Integration", "Agentgateway Re-authentication Challenge", "Metadata Input via Agentgateway",
+"Agentgateway Telemetry Integration", and "OPA Authorization via Agentgateway" passed with 17 of
+17 cases. The verification cases of D-02 passed on `v1.5.0` and on `v1.7.0`. `v1.5.0` removes
+`nextCursor` from a paged `tools/list` result (D-02). Thus, clients of `v1.5.0` see only the
+first page.
+
+**Alternatives considered**: Two gateway instances with two releases double the operation work.
+They also keep the pagination defect of `v1.5.0` on the MCP path.
+
+## D-15 — The existing deadlines limit the time of an assessed call
+
+**Decision**: The feature adds no total deadline. Each step of an assessed call has a deadline:
+
+| Step | Deadline |
+|---|---|
+| First policy evaluation | `authorization.evaluation_timeout` (default 100 ms) |
+| Read of the approval state from the broker (D-07) | `tool_approvals.request_timeout` (default 5 s), as today |
+| Model request | `authorization.assessment.request_timeout` (default 500 ms, maximum 2 s) |
+| Second policy evaluation | `authorization.evaluation_timeout` (default 100 ms) |
+| Create request to the broker | `tool_approvals.request_timeout` (default 5 s), as today |
+
+Just before an automatic approval, ExtProc looks in its local approval cache for a permanent
+denial of the tool, with the rule of `Cache.Match` (`cache.go:297-301`). This lookup is a new
+function that only reads, because `Match` reserves a `once` approval. The cache gets new
+decisions through the existing sync during the
+assessment. If a denial matches, ExtProc denies the call, and the audit record has
+`unmet_condition: denial`. This check reads no data from the broker. Thus, the assessment adds a
+maximum of the model deadline and one evaluation deadline to the path of today. SC-005 of the
+spec states this sum.
+
+**Evidence**: agentgateway has no message timeout for ExtProc. The ExtProc policy of `v1.5.0` and
+`v1.7.0` has no timeout field (`crates/agentgateway/src/http/ext_proc.rs`, struct `ExtProc`). In
+the verification case "waits for a slow ExtProc answer", ExtProc held the request body of
+`tools/call` for 6 s. The call completed with HTTP 200 on the two releases. A manual run of the
+same case with 45 s gave HTTP 200 after 45.0 s on the two releases.
+
+**Consequence**: The gateway does not stop a slow ExtProc. A deadline that ExtProc misses delays
+the call of the agent and does not let it proceed. The MCP client of the agent can have its own
+timeout. With the defaults, the worst case of an assessed call that waits for a person is about
+10.7 s, and 10.2 s of that is the broker path of today.
+
+**Alternatives considered**: A total deadline for the assessment duplicates the deadlines of its
+steps.
+
+## Verification record
+
+The verification ran on 2026-11-24 on macOS (arm64) with Docker Engine 29.5.2 and
+`testcontainers-go` v0.44.0. The test files stay in the repository.
+
+| Command | Result |
+|---|---|
+| `AGENTGATEWAY_IMAGE=cr.agentgateway.dev/agentgateway:v1.5.0 ginkgo -v --focus "Assessment gateway verification" ./tests/e2e/extproc/` | 10 of 10 passed |
+| `AGENTGATEWAY_IMAGE=cr.agentgateway.dev/agentgateway:v1.7.0 ginkgo -v --focus "Assessment gateway verification" ./tests/e2e/extproc/` | 10 of 10 passed |
+| `ginkgo -v --focus "Decision endpoint verification" ./tests/e2e/extproc/` (agentgateway `v1.7.0`) | 5 of 5 passed |
+| `AGENTGATEWAY_IMAGE=cr.agentgateway.dev/agentgateway:v1.7.0 ginkgo -v --focus "Agentgateway\|OPA Authorization via Agentgateway" ./tests/e2e/extproc/` | 17 of 17 passed |
+| `ginkgo -v --focus "D-07 verification" ./tests/e2e/` | 1 of 1 passed |
+| `go test -tags integration ./internal/adapters/storage/postgres/ -run 'TestToolApprovalRepository_(CRUD\|DedupReturnsPersistedApprovalWithoutSyncBump)'` | passed |
+
+The verification cases record their observations with `AddReportEntry`. Run them with `-v` to
+see the values.
+
+These subjects were not tested:
+
+- A real decision model. No model credential and no local System One model were available. The answers, the latency, and the `model` value of a real provider are not known.
+- MCP servers other than `mcp-go`, listings larger than 70 KB, and event streams with more than one event.
+- The Playwright suite with the assessment. The plan changes the browser cases (see [plan.md](plan.md)).
+- The measured results of the example policy on the starter case set. The spec requires them before publication, and they need a real model.
+
+## Review corrections
+
+A review of all planning documents on 2026-11-24 found these gaps. The decisions above contain
+the corrections.
+
+| Gap | Risk before the correction | Correction |
+|---|---|---|
+| `multiHandler.Handle` drops an INFO record without an error if the level is `warn` | A call proceeds without an audit record (SR-009) | D-13 |
+| A listing that ExtProc cannot read keeps the old definitions | A changed tool keeps automatic approval (FR-023) | D-02 |
+| The sequence of level entries in a `score` answer is not checked | The policy reads the wrong level | D-04 |
+| The `model` value has no limit in ExtProc | The broker rejects the summary, and the call is denied | D-04 |
+| The pending lookup uses patterns that check only their own keys | A different call skips its assessment and gets no summary | D-07 |
+| An `allow` result has no findings | In the recommendation mode, the person sees no findings for the calls that a rule approves | D-05 |
+| An error in the second evaluation denies the call | A failure removes the decision of a person | D-05 |
+| No check for a permanent denial after the model request | A denial that arrives during the assessment has no priority | D-15 |
+| The evaluation run has no defined value for `evaluated` and needs the record file | A rule that requires `evaluated` is not measured, and the first run cannot start | D-08 |

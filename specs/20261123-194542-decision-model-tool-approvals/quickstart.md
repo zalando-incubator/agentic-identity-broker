@@ -7,12 +7,13 @@ the [plan](plan.md), the [data model](data-model.md), and the [contracts](contra
 
 - The Go and Node versions of the manifests, `just`, and the existing test tools.
 - Playwright Chromium for the browser cases.
-- Docker or Podman for the agentgateway cases and the PostgreSQL cases.
+- Docker or Podman for the agentgateway cases and the PostgreSQL cases. The agentgateway cases are in the ExtProc suite and use agentgateway `v1.7.0` (D-14).
 - No account at a model provider. All automated checks use test doubles for the decision endpoint.
 
-The gates of the plan must be complete before behavior changes: the verification tasks, the
-approved contracts, and the Accepted ADR. The verification task for tool listings is the first
-task.
+The verification of D-02, D-03, and D-07 is complete. The section "Verification record" in
+[research.md](research.md) gives the results. Two gates stay before behavior changes: the
+approved contracts and the Accepted ADR. The first implementation task changes the pinned
+agentgateway release to `v1.7.0` and runs the verification cases again.
 
 ## Commands
 
@@ -45,13 +46,13 @@ Each journey uses the values of the journeys in [spec.md](spec.md).
 6. **Automatic approval (Journey 2).** Start ExtProc in the `auto_approve` mode with the evaluation record of step 5. Send the internal reader share. Make sure that the tool double received the call and the broker double received no create request. Find the record `assessment.tool_call.assessed` with the rule name. Make sure that it contains no argument value.
 7. **Stops of automatic approval.** Do step 6 again with a different `model` value in the response. Do it again after a new `tools/list` exchange with a changed description. Do it again with a tool that the evaluation record does not name. Do it again with an argument that the definition does not describe. For each change, make sure that the call waits for a person.
 8. **Disabled feature.** Set `authorization.assessment.enabled` to `false`. Send the external editor share. Make sure that the double received no request. Make sure that the create request and the approval page are the same as before this feature.
-9. **Gateway path.** In the Docker suite, send the `tools/list` exchange and the share through agentgateway. Make sure that ExtProc learned the definition and that the client received the listing without a change. Make sure that the Decisions request gets to the OpenAI-format double and to the System One-format double.
-10. **Storage.** Apply migration `049` up, down, and up against PostgreSQL. Make sure that existing approvals stay valid and read as "no assessment information".
+9. **Gateway path.** In the ExtProc suite with agentgateway `v1.7.0`, send the `tools/list` exchange and the share through agentgateway. Make sure that ExtProc learned the definition and that the client received the bytes that ExtProc returned. Make sure that the Decisions request with two `input_text` parts gets to the OpenAI-format double and to the System One-format double.
+10. **Storage.** Apply the new migration up, down, and up against PostgreSQL. Make sure that existing approvals stay valid and read as "no assessment information".
 
 ## Evidence and limits
 
 - Map each of the 28 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
 - Keep the screenshots of the three page states under `tests/e2e/screenshots/`.
-- Record the results of the three verification cases for D-02, D-03, and D-07 in the ADR.
+- Copy the verification record of [research.md](research.md) into the ADR. The cases in `tests/e2e/extproc/assessment_gateway_verification_test.go`, `tests/e2e/extproc/assessment_decision_endpoint_verification_test.go`, and `tests/e2e/approval_api_test.go` stay in the suites.
 - The automated checks prove the behavior of the system around the model. They do not measure a model. The false-approval rate of a real model comes only from an evaluation run of the operator with real cases.
 - The checks do not prove that a tool description from a server is true. This risk stays, and the documentation must state it (SR-010).

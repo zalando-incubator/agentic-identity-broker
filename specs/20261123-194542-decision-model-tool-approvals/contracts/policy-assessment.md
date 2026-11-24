@@ -61,13 +61,13 @@ The input never contains approval records (FR-034).
 | `model` | string | The model that the response names. Absent if no response arrived. |
 | `question_set` | fingerprint | Always present. |
 | `evaluated` | boolean | True only if the evaluation record contains the model, the question set, and the tool context. |
-| `tool.written_by` | `server`, `operator` | Absent if no definition is known. |
-| `tool.context` | fingerprint | Absent if no definition is known. |
+| `tool.written_by` | `server`, `operator` | Absent for `excluded` and `definition_missing`. |
+| `tool.context` | fingerprint | Absent for `excluded` and `definition_missing`. |
 | `context.*` | lists and a number | Absent if the system built no context. |
 | `answers` | map with the question name as the key | One entry for each question of the catalog. Empty if no response arrived. |
 | `answers.*.status` | `answered`, `refused`, `missing`, `invalid` | Always present in an entry. |
 | `answers.*.probability` | number from 0 to 1 | Only for an answered `predicate`. |
-| `answers.*.probabilities` | list of numbers | Only for an answered `score`. Index 0 is the level with the least risk. |
+| `answers.*.probabilities` | list of numbers | Only for an answered `score`. ExtProc puts each probability at the position of its level `value`. Index 0 is the level with the least risk. |
 | `answers.*.score`, `answers.*.confidence` | number | Only for an answered `score`. Do not use them alone for automatic approval (R-17). |
 
 A higher value always shows more risk (FR-027).
@@ -79,11 +79,12 @@ The second evaluation can return each existing action. Three fields are new.
 | Action | New field | Type | Rules |
 |---|---|---|---|
 | `allow` | `auto_approval.rule` | string, pattern `^[a-z][a-z0-9_]{0,63}$` | It names the rule for the audit record. |
-| `approval_required` | `approval_context.recommendation` | `routine` or `attention` | Optional. |
-| `approval_required` | `approval_context.findings` | list of `{"question", "state"}` | Optional. `state` is `indicated`, `not_indicated`, or `unclear`. |
+| `allow`, `approval_required` | `approval_context.recommendation` | `routine` or `attention` | Optional. |
+| `allow`, `approval_required` | `approval_context.findings` | list of `{"question", "state"}` | Optional. `state` is `indicated`, `not_indicated`, or `unclear`. |
 
 `approval_context.description` and `approval_context.risk_level` keep their rules. A policy can
-derive `risk_level` from the answers.
+derive `risk_level` from the answers. On an `allow` result, the system uses `approval_context`
+only if the call waits for a person (D-05).
 
 ## 4. Rules that the system applies to the result
 
@@ -93,16 +94,23 @@ The system applies these rules in Go code. A policy cannot change them (FR-043).
 |---|---|
 | `deny` | The system denies the call. |
 | `approval_required` | The system creates a pending approval. It accepts the recommendation and the findings only if the status is `complete` (FR-036). |
-| `allow`, and all conditions of FR-041 are true | The call proceeds. The system writes the audit record first (D-13). |
-| `allow`, and one condition of FR-041 is false | The system uses `approval_required`. The description and the risk level come from the first evaluation. |
-| `ciba_required`, an unknown action, or an evaluation error | The system denies the call, as before this feature. |
+| `allow`, all conditions of FR-041 are true, and the local cache has no permanent denial of the tool | The call proceeds. The system writes the audit record first (D-13). |
+| `allow`, and the local cache has a permanent denial of the tool | The system denies the call (D-15). |
+| `allow`, and one condition of FR-041 is false | The system uses `approval_required`. The recommendation and the findings come from the `approval_context` of the `allow` result. The description and the risk level come from that `approval_context`, or from the first evaluation if it has none. |
+| `ciba_required` or an unknown action | The system denies the call, as before this feature. |
+| An evaluation error | The system uses the result of the first evaluation. The summary has the status `not_available`. The call waits for a person (D-05). |
 
-More rules for an `approval_required` result:
+More rules for an `approval_context`:
 
 - The system removes a finding with an unknown question name or an unknown state.
+- The system keeps only the first finding for each question name.
 - The system removes an unknown recommendation value.
 - The system adds the catalog `statement` to each finding. A policy cannot supply statement text.
 - The system keeps a maximum of 16 findings.
+- The system counts each removed entry in the metric `extproc.assessment.policy_result.removed`.
+
+Thus, each summary that ExtProc sends obeys the rules of the broker. A policy result cannot stop
+the creation of a pending approval.
 
 In the first evaluation, the system reads only the existing fields. It ignores `auto_approval`,
 `recommendation`, and `findings` there.

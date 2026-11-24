@@ -16,7 +16,8 @@ stores an optional assessment summary on a pending approval, and the approval pa
 new subcommand of the ExtProc binary measures labeled cases and writes the evaluation record that
 automatic approval requires.
 
-[research.md](research.md) records the design decisions `D-01` to `D-13` with their alternatives.
+[research.md](research.md) records the design decisions `D-01` to `D-15` with their alternatives
+and the verification record of 2026-11-24.
 The contracts are in [contracts/](contracts/).
 
 ## Technical Context
@@ -25,13 +26,13 @@ The contracts are in [contracts/](contracts/).
 
 **Primary Dependencies**: Existing OPA library, `net/http` through `internal/extproc/httpclient`, `crypto/sha256`, `encoding/json`, `math`, Cobra and Viper, chi, sqlx and pgx, OpenTelemetry. The plan adds no dependency. It adds no OpenAI SDK and no gRPC protocol.
 
-**Storage**: One nullable JSONB column on `tool_approvals` (migration `049`) with an equal field in the memory adapter. ExtProc keeps tool definitions, the catalog, and the evaluation record in memory only.
+**Storage**: One nullable JSONB column on `tool_approvals` (the next free migration number on `main`, D-09) with an equal field in the memory adapter. ExtProc keeps tool definitions, the catalog, and the evaluation record in memory only.
 
-**Testing**: Go unit tests, the Ginkgo ExtProc suite with `httptest` doubles, the Docker suite with agentgateway, PostgreSQL integration tests, the Playwright suite, and Vitest.
+**Testing**: Go unit tests, the Ginkgo ExtProc suite with `httptest` doubles and agentgateway containers, PostgreSQL integration tests, the Playwright suite, and Vitest.
 
-**Target Platform**: The standalone ExtProc service behind agentgateway, the broker, and the existing SPA. The Helm chart does not deploy ExtProc and does not change.
+**Target Platform**: The standalone ExtProc service behind agentgateway `v1.7.0` or later (D-14), the broker, and the existing SPA. The Helm chart does not deploy ExtProc and does not change.
 
-**Performance Goals**: A call that the policy allows or denies gets no delay and no model request. An assessed call gets a maximum delay of `request_timeout` (500 ms by default) and one more policy evaluation (100 ms maximum). The copy of a `tools/list` response does not delay the response.
+**Performance Goals**: A call that the policy allows or denies gets no delay and no model request. An assessed call gets a maximum added delay of `request_timeout` (500 ms by default) and one more policy evaluation (100 ms by default). agentgateway has no ExtProc message timeout, thus the deadlines of ExtProc limit the delay (D-15). The copy of a `tools/list` response does not delay the response.
 
 **Constraints**: A context of a maximum of 16 KiB. A listing of a maximum of 1 MiB. A maximum of 10,000 tool definitions for each instance. A maximum of 64 model requests in progress for each instance. No argument value in a log, span, or metric. Each failure keeps the call for a person or denies it.
 
@@ -45,22 +46,21 @@ Assessment Summary is a value object on the existing `ToolApproval` aggregate.
 | Principles | Decision and gate |
 |---|---|
 | I, III | Assessment and automatic approval are disabled by default. Each failure keeps the call for a person or denies it (D-04). The system conditions of FR-041 are Go code that a policy cannot disable (D-05). Fingerprints use `crypto/sha256` (D-06). The plan adds no cryptography of its own. The assurance case gets the new trust boundary (SR-011). |
-| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-05, and D-07. It amends the policy contract of `adrs/028-opa-extproc-authorization.md` and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The rule "no approval records in the policy input" of that ADR stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
+| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-03, D-05, D-07, and D-14. It amends the policy contract of `adrs/028-opa-extproc-authorization.md` and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The rule "no approval records in the policy input" of that ADR stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
 | IV, X | The contracts are drafts. The stakeholder approved the direction of the spec but not these contracts. Approval of the four contracts of API-006 is a gate before implementation. Publish the schema change in `api/enduser/openapi.yaml` and the documentation in `docs/api/` before behavior. |
 | VI, XII | ExtProc has its own structure under `adrs/011-extproc-standalone-binary.md`: packages under `internal/extproc/` and wiring in `cmd/extproc-token-exchange/root.go`. The new package has no import from broker adapters. In the broker, the handler passes the summary to `approval.Service`, which validates it. The repositories only store it. The broker needs no new wiring. |
-| VII | New keys are in the ExtProc configuration schema with defaults and validation ([contracts/assessment-files.md](contracts/assessment-files.md)). Update `docs/configuration.md`, the examples, `configs/config.extproc.docker.yaml`, and `internal/extproc/AGENTS.md`. The Helm chart does not deploy ExtProc, thus it does not change. |
+| VII | New keys are in the ExtProc configuration schema with defaults and validation ([contracts/assessment-files.md](contracts/assessment-files.md)). Update `docs/configuration.md`, the examples, `configs/config.extproc.docker.yaml`, and `internal/extproc/AGENTS.md`. The documentation states the minimum agentgateway release `v1.7.0` and the gateway requirements of [contracts/decision-request.md](contracts/decision-request.md). The Helm chart does not deploy ExtProc, thus it does not change. |
 | VIII, XIII | Write one Ginkgo case for each of the 28 scenarios before behavior, with realistic assertions and no pending or skipped case. Write unit tests first for the parser, the context builder, the validation, the fingerprints, and the statistics. |
-| IX | One atomic migration pair `049`. The two adapters store the summary. All SQL uses explicit columns. Integration tests apply the migration up, down, and up against PostgreSQL. |
+| IX | One atomic migration pair with the next free number on `main` (D-09). The two adapters store the summary. All SQL uses explicit columns. Integration tests apply the migration up, down, and up against PostgreSQL. |
 | XI, XIV | One application component with semantic tokens and WCAG 2.1 AA ([contracts/approval-assessment.md](contracts/approval-assessment.md)). The spec has the journeys and the two wireframes. Playwright cases capture screenshots of each state. |
 | XV | [contracts/observability.md](contracts/observability.md) defines the events, spans, and instruments. Add the `assessment` namespace to `coding-standards/OPENTELEMETRY.md`. Tool names obey section 6.2 of `coding-standards/LOGGING.md` (D-12). |
 
-**Gate outcome**: The design has no violation of the constitution. Four prerequisites stay open
+**Gate outcome**: The design has no violation of the constitution. The verification of D-02,
+D-03, and D-07 is complete, and the contracts agree with the results. Two prerequisites stay open
 before implementation starts. These are unfinished work, not exceptions:
 
-1. The verification task of D-02 completes first. The design depends on it, and it is not proven. [research.md](research.md) gives the evidence and three fallbacks.
-2. The verification tasks of D-03 and D-07 complete, and the contracts agree with the results.
-3. The stakeholder approves the four contracts of API-006.
-4. The ADR has the status Accepted.
+1. The stakeholder approves the four contracts of API-006.
+2. The ADR has the status Accepted.
 
 ## Project Structure
 
@@ -71,7 +71,7 @@ specs/20261123-194542-decision-model-tool-approvals/
 ├── spec.md
 ├── decision-model-research.md       # Guidance about decision models (R-01 to R-20)
 ├── plan.md                          # This file
-├── research.md                      # Design decisions (D-01 to D-13)
+├── research.md                      # Design decisions (D-01 to D-15) and verification record
 ├── data-model.md
 ├── quickstart.md
 ├── contracts/
@@ -96,6 +96,7 @@ internal/extproc/
 │                                    #      conditions, evaluation run and its statistics
 ├── authorization/decision.go        # New result fields (D-05)
 ├── approval/gate.go, client.go      # Gate in two steps, summary in the create request (D-01)
+├── approval/cache.go                # Lookup of a matching pending approval (D-07)
 ├── config/                          # New keys, defaults, validation
 └── server/server.go                 # Assessment in the approval branch, response observation
 cmd/extproc-token-exchange/          # Wiring in root.go, new subcommand `assessment evaluate`
@@ -104,7 +105,7 @@ internal/domain/storage/tool_approval.go          # Assessment Summary value obj
 internal/domain/approval/service.go               # Validation, create, detail
 internal/adapters/storage/{memory,postgres}/      # Store and return the summary
 internal/adapters/http/handlers/approval/         # create and get DTOs
-migrations/049_add_tool_approval_assessment.{up,down}.sql
+migrations/NNN_add_tool_approval_assessment.{up,down}.sql   # next free number (D-09)
 api/enduser/openapi.yaml, docs/api/
 
 web/src/components/approvals/AssessmentSummary.tsx   # NEW
@@ -112,7 +113,13 @@ web/src/components/approvals/ApprovalReviewPage.tsx
 web/src/types/approval.ts
 
 tests/e2e/extproc/, tests/e2e/frontend/, tests/e2e/pages/, tests/integration/
+docker-compose.yml, tests/e2e/extproc/agentgateway_e2e_test.go   # agentgateway v1.7.0 (D-14)
+mocks/agentgateway/config.yaml       # decision endpoint example in the llm section
 examples/config/, configs/, docs/configuration.md, docs/resources/assurance-case.md
+examples/config/assessment-catalog.yaml     # starter question set (FR-027)
+examples/config/assessment-cases.jsonl      # starter case set (FR-053)
+examples/config/assessment-policy.rego      # example policy of the spec journeys
+docs/guides/assess-tool-calls.md           # NEW: authoring rules with examples (FR-027), evaluation run, SR-010 notice
 ARCHITECTURE.md, adrs/, coding-standards/OPENTELEMETRY.md, internal/extproc/AGENTS.md
 ```
 
@@ -122,10 +129,11 @@ dependencies through constructors, and `root.go` connects them. The server calls
 through one small interface, as it calls the authorizer and the gate today. The broker and the
 SPA change only in existing files, apart from one new component and one migration pair.
 
-Three seams need care:
+Four seams need care:
 
 - **The approval branch** (`server.go:589-607`). The new sequence is in D-01. `approval.Invocation` gets the target server name and the summary.
-- **The response phase** (`server.go:406-415`). Today, the server discards the stream state after the request body. For a `tools/list` request, it keeps a small state and copies the response chunks (D-02). The bytes that the client receives do not change.
+- **The response phase** (`server.go:406-415`). Today, the server discards the stream state after the request body. For a `tools/list` request, it keeps a small state and copies the response chunks (D-02). The verification showed that the request and the response of one exchange use one gRPC stream. The bytes that the client receives do not change.
+- **The pending lookup** (`cache.go:332-344`). `Record.matchable` accepts only approved records. The lookup for a pending approval is a separate function, so that a pending record never lets a call proceed (D-07).
 - **The decision parser** (`decision.go:23-59`). The `allow` case discards all other fields today. It must read `auto_approval.rule`. The audit switch in `finalizeDecision` must also change.
 
 ## Implementation Phase Overview
@@ -133,13 +141,13 @@ Three seams need care:
 | Phase | Purpose |
 |---|---|
 | Phase 0 | Refactoring without a behavior change: divide `Gate.Evaluate` into "find an existing decision" and "create a pending approval". |
-| Phase 1 | Setup: read the scoped `AGENTS.md` files, confirm the migration number, and prepare the test doubles. |
-| Phase 2 | Design preconditions: the three verification tasks, the stakeholder approvals, the Accepted ADR, the glossary, the OpenAPI document, the configuration examples, the observability contract, and the 28 acceptance cases. |
+| Phase 1 | Setup: read the scoped `AGENTS.md` files, confirm the migration number, and prepare the test doubles. Change the pinned agentgateway release to `v1.7.0` and update `agentgateway_image_test.go`. Run the existing agentgateway suites and the verification cases (D-14). Give the frontend test context the token exchange configuration (see "Browser cases"). |
+| Phase 2 | Design preconditions: the stakeholder approvals, the Accepted ADR, the glossary, the OpenAPI document, the configuration examples, the observability contract, and the 28 acceptance cases. |
 | Phase 2.5 | Foundations in the new package, each with tests first: catalog, fingerprints, listing parser and store, context builder, model client, answer validation. |
 | US2 | The model interface in the request path: context, disclosure, one request, no request for other calls. |
 | US3 | Each failure status, the second identical call, and the system rules for the policy result. |
 | US1 | The summary in the broker, the API, and the approval page. |
-| US5 | The evaluation run, the report, and the evaluation record. |
+| US5 | The evaluation run, the report, and the evaluation record. The starter question set, the starter case set, the example policy, and the authoring rules (FR-027, FR-053). |
 | US4 | Automatic approval with the conditions of FR-041 and the audit record. |
 | Phase N | Constitution compliance: documentation, assurance case, security review, full gate. |
 
@@ -150,6 +158,13 @@ The sequence of the user stories differs from their numbers for one reason. US2 
 the request path that US1 shows to the approver. US5 writes the evaluation record that US4 needs.
 The priorities of the spec stay: US1 to US3 form the first release, and automatic approval stays
 disabled until US5 and US4 complete.
+
+The starter case set contains the calls of issue #206, dangerous counterexamples, and adversarial
+argument variants, each with a label. One ExtProc case runs `assessment evaluate` on the starter
+files with the decision endpoint double. It proves SC-003 for the double. The measured results
+of the example policy with a real model need a model credential. The spec requires them before
+publication. This plan cannot produce them without that credential (see the open items in
+[research.md](research.md)).
 
 ## Testing Strategy
 
@@ -192,37 +207,52 @@ The tests do not exist at this time.
 ExtProc cases are in `tests/e2e/extproc/tool_assessment_test.go` and
 `tests/e2e/extproc/assessment_evaluate_test.go`. They use the existing bootstrap with the broker
 double (`bootstrap/broker.go`) and a new decision endpoint double in the same directory. The test
-sends response-phase messages with a `tools/list` result to supply definitions. Browser cases are
-in `tests/e2e/frontend/approval_assessment_ui_test.go` with the existing page object
-`tests/e2e/pages/approval_page.go`. They use the ExtProc environment of the journey bootstrap, as
-`tests/e2e/extproc_approval_journey_test.go` does, with the real broker.
+sends response-phase messages with a `tools/list` result to supply definitions. The messages use
+the observed gateway form: `text/event-stream`, one `data:` line, and one empty end-of-stream
+chunk (D-02).
+
+### Browser cases
+
+Browser cases are in `tests/e2e/frontend/approval_assessment_ui_test.go` with the existing page
+object `tests/e2e/pages/approval_page.go`. They use the ExtProc environment of
+`tests/e2e/bootstrap/extproc.go` with the real broker and a decision endpoint double, as
+`tests/e2e/extproc_approval_journey_test.go` does.
+
+The frontend suite cannot do this today. Its test context builds the broker with
+`fixtures.OAuth2ConfigWithUpstream` (`tests/e2e/frontend/frontend_suite_test.go:273`). That
+configuration has no token exchange trust, so the broker cannot authenticate the create request
+of ExtProc. The journey test uses `fixtures.OAuth2ConfigWithTokenExchange`. Phase 1 changes the
+frontend test context to that configuration and runs the full frontend suite. If a case fails,
+the test context gets an option for each case instead.
 
 New fixtures: one catalog, the policy of the spec under `tests/e2e/extproc/fixtures/policies/`,
 one evaluation record, one case file, and one tool listing. All values are synthetic.
 
 ### Verification with agentgateway
 
-Three Docker cases in `tests/e2e/extproc/opa_agentgateway_e2e_test.go` prove the assumptions of
-the design. They are not acceptance scenarios.
+The verification cases of 2026-11-24 stay in the suites. They are not acceptance scenarios. The
+results are in the verification record of [research.md](research.md).
 
-| Decision | Proof |
-|---|---|
-| D-02 | ExtProc receives the body of a `tools/list` response through agentgateway, learns the definition, and the client receives the response without a change. |
-| D-03 | A Decisions request with an `input_json` part gets to an OpenAI-format double and to a System One-format double behind agentgateway. |
-| D-07 | The sync response of the real broker contains an unexpired pending approval. |
+| Decision | File | Proof |
+|---|---|---|
+| D-02, D-15 | `tests/e2e/extproc/assessment_gateway_verification_test.go` | ExtProc receives the body of a `tools/list` response on the stream of the request. The definition is intact, and the client receives the bytes that ExtProc returned. Compression, pages, two targets on one route, and a 6 s delay in the request-body phase. |
+| D-03, D-14 | `tests/e2e/extproc/assessment_decision_endpoint_verification_test.go` | The text form gets to an OpenAI-format double and to a System One-format double behind agentgateway `v1.7.0`. An `input_json` part fails for System One. One instance serves `llm` and `binds`. |
+| D-07 | `tests/e2e/approval_api_test.go` | The sync response of the real broker contains an unexpired pending approval with exact patterns. A duplicate create returns it without a change. |
 
 ### Unit, integration, and browser proof
 
 Unit tests come first for each of these subjects:
 
-- The listing parser: JSON and event-stream bodies, pages, an error result, a size at the limit and one byte more, and bodies that are not valid.
-- The store: the latest definition applies, the limit, and the change report.
-- The context builder: each disclosure setting, name patterns, oversized values, undescribed arguments, and a constant byte sequence for equal input.
-- The answer validation: each status of D-04 and the tolerance of 0.01.
+- The listing parser: event-stream bodies with one or more events, JSON bodies, pages, a result with unknown fields, an error result, a size at the limit and one byte more, and bodies that are not valid.
+- The store: the latest definition applies, the limit, the change report, the removal of all definitions of a server after a listing that ExtProc cannot read, and the marker for an oversized definition.
+- The context builder: each disclosure setting, name patterns, oversized values, undescribed arguments, absent empty lists, and a constant byte sequence for equal input.
+- The answer validation: each status of D-04, the tolerance of 0.01, level entries in a different sequence, a missing or duplicate level `value`, a wrong level `label`, and each invalid `model` value.
 - The fingerprints: each field of the canonical documents changes the value, and key sequence does not.
-- The decision parser and the system rules of [contracts/policy-assessment.md](contracts/policy-assessment.md).
+- The decision parser and the system rules of [contracts/policy-assessment.md](contracts/policy-assessment.md): the `approval_context` of an `allow` result after a downgrade, the first finding for each question, and the fallback after an error in the second evaluation.
+- The gate: the pending lookup by tool name and `arguments_hash` (a call with an added argument does not match), the read-only lookup for a permanent denial, and the hash agreement with `storage.ComputeArgumentsHash` for the fixture arguments.
+- The audit write: an error from `Handle` and a disabled INFO level each keep the call for a person.
 - The statistics: the exact bound against known values, including 0 of 410 and 1 of 410.
-- The configuration: defaults, each validation rule, and each invalid catalog.
+- The configuration: defaults, each validation rule, `auto_approve` with `log.level: warn`, and each invalid catalog.
 
 A fuzz test covers the listing parser, because it reads data from MCP servers.
 

@@ -46,12 +46,12 @@ The source is the catalog file. ExtProc reads it one time at startup (D-11).
 
 ### Tool Definition
 
-The source is a `tools/list` result (D-02).
+The source is a `tools/list` result as the client sees it through the gateway (D-02).
 
 | Field | Type | Rules |
 |---|---|---|
 | `target_server_name` | string | From the gateway metadata. Part of the key. |
-| `name` | string | Required. Maximum 255 characters. Part of the key. |
+| `name` | string | Required. Maximum 255 characters. Part of the key. The name as the client sees it. On a route with two or more MCP targets, the gateway adds the target name as a prefix, for example `drive_drive.share_file` (D-02). |
 | `description` | string | Optional. |
 | `input_schema` | JSON object | Optional. The system uses only the entries in `properties`. |
 | `annotations` | JSON object | Optional. The system keeps only the four hint values of the MCP specification. |
@@ -60,7 +60,9 @@ The source is a `tools/list` result (D-02).
 
 The store keeps a maximum of 10,000 definitions. One definition has a maximum of 16 KiB of
 canonical JSON. If the store is full, it removes the definition with the oldest listing time. A
-larger definition gets no entry. The status of a call to that tool is then `definition_missing`.
+larger definition replaces the stored entry with a marker. The status of a call to that tool is
+then `context_too_large`. A listing that ExtProc cannot read removes all definitions of its target
+server (D-02).
 
 ### Assessment Context
 
@@ -79,6 +81,7 @@ Rules:
 - One argument value has a maximum of 4 KiB of canonical JSON and a maximum of 8 levels. A larger value is oversized.
 - The full context has a maximum of `max_context_bytes`.
 - The names in `withheld_arguments` and `oversized_arguments` are names that the definition describes.
+- In the model context, an empty `withheld_arguments` or `oversized_arguments` list is absent. `undescribed_argument_count` is always present. In the policy input, each of the three is always present.
 
 ### Assessment and Answer
 
@@ -132,7 +135,8 @@ a validation error, and the service creates no approval.
 
 ### Storage
 
-Migration `049_add_tool_approval_assessment` adds one column to `tool_approvals`:
+The next free migration number on `main` names the pair (D-09). This document uses `NNN`.
+Migration `NNN_add_tool_approval_assessment` adds one column to `tool_approvals`:
 
 | Column | Type | Rules |
 |---|---|---|
@@ -149,7 +153,6 @@ column to each explicit column list.
 | Assessment Catalog, Evaluation Record | From startup to stop of the ExtProc process |
 | Tool Definition | From a listing to the next listing of that tool, or to removal from the full store |
 | Assessment Context, Assessment, raw model response | One tool call |
-| Memory of "waits for a person" outcomes | The lifetime of a pending approval (D-07) |
 | Assessment Summary | The lifetime of the tool approval record |
 
 The feature adds no state transition to `ToolApproval`.
