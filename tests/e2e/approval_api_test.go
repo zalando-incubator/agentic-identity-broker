@@ -560,6 +560,47 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(syncResp.Data.Pairs).NotTo(BeEmpty())
 		})
 
+		// Design verification D-07 of specs/20261123-194542-decision-model-tool-approvals.
+		It("returns an unexpired pending approval with exact patterns and keeps it on a duplicate create (D-07 verification)", func() {
+			args := map[string]any{"role": "editor", "grantee_domain": "thirdparty.example.com"}
+			first := createPendingApprovalWithRequest(server, machineAuth, alicePrincipal, helpers.CreateApprovalRequest{
+				Metadata:  helpers.CreateApprovalMetadata{Description: "First description"},
+				ToolName:  "drive.share_file",
+				Arguments: args,
+			})
+			headers := helpers.ApprovalCreateHeaders(subjectTokenFor(machineAuth, alicePrincipal), machineAuth.ClientAssertion, machineAuth.AgentID)
+			resp, err := postJSONWithHeaders(server, "/api/approvals", headers, helpers.CreateApprovalRequest{
+				Metadata:  helpers.CreateApprovalMetadata{Description: "Second description"},
+				ToolName:  "drive.share_file",
+				Arguments: args,
+			})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(resp.StatusCode).To(Equal(http.StatusOK), "a duplicate create returns the existing approval")
+			second := decodeJSON[helpers.CreateApprovalResponse](resp)
+			Expect(second.Data.ID).To(Equal(first.Data.ID))
+			Expect(second.Data.CreatedAt).To(Equal(first.Data.CreatedAt))
+
+			detail, err := server.DirectRequest(http.MethodGet, "/api/approvals/"+first.Data.ID, alicePrincipal, nil, nil)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(decodeJSON[helpers.ApprovalDetailResponse](detail).Data.Description).To(Equal("First description"))
+
+			sync, err := server.DirectRequest(http.MethodGet, "/api/approvals", "", helpers.ApprovalSyncHeaders(machineAuth.ClientAssertion), nil)
+			Expect(err).NotTo(HaveOccurred())
+			var pending *helpers.ApprovalSummary
+			for _, pair := range decodeJSON[helpers.ApprovalSyncResponse](sync).Data.Pairs {
+				for i := range pair.Approvals {
+					if pair.Approvals[i].ID == first.Data.ID {
+						pending = &pair.Approvals[i]
+					}
+				}
+			}
+			Expect(pending).NotTo(BeNil(), "the sync response contains the pending approval")
+			Expect(pending.Status).To(Equal("pending"))
+			Expect(pending.ToolPattern).To(Equal("drive.share_file"))
+			Expect(pending.ParamsPattern).To(Equal(map[string]string{"role": "editor", "grantee_domain": "thirdparty.example.com"}))
+			Expect(pending.ArgumentsHash).NotTo(BeEmpty())
+		})
+
 		// Scenario US4-S2: 304 when no changes within timeout
 		It("returns 304 when no changes within timeout (US4-S2)", func() {
 			createPendingApproval(server, machineAuth, alicePrincipal, "timeout_test_tool", map[string]any{})
