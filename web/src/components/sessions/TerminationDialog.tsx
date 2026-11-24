@@ -22,12 +22,14 @@ import { Button } from '@design-system/components/primitives/Button';
 import { Stack } from '@design-system/components/layout/Stack';
 import { Badge } from '@design-system/components/primitives/Badge';
 import type { AgentInfo } from '@services/api/sessions';
+import { ServiceIcon } from '@components/services/ServiceIcon';
 
 interface TerminationDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
   serviceName: string;
+  serviceIconSvg?: string | null;
   dependentAgents: AgentInfo[];
   loading: boolean;
   error?: string | null;
@@ -55,6 +57,7 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
   onClose,
   onConfirm,
   serviceName,
+  serviceIconSvg,
   dependentAgents,
   loading,
   error,
@@ -75,7 +78,8 @@ export const TerminationDialog: React.FC<TerminationDialogProps> = ({
       <Stack gap="md">
         {/* Dialog header */}
         <div>
-          <Dialog.Description className="text-sm text-text-secondary">
+          <ServiceIcon iconSvg={serviceIconSvg} className="mb-3" />
+          <Dialog.Description id="termination-dialog-description" className="text-sm text-text-secondary">
             Are you sure you want to terminate your session with{' '}
             <strong>{serviceName}</strong>?
           </Dialog.Description>

@@ -1,36 +1,53 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SessionsApiService } from './sessions';
-
-vi.mock('./client', () => ({
-  apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
-}));
-
-vi.mock('./cache', () => ({
-  apiCache: { get: vi.fn().mockReturnValue(null), set: vi.fn(), invalidatePattern: vi.fn() },
-}));
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiClient } from './client';
 import { apiCache } from './cache';
+import { SessionsApiService, type SessionSummary } from './sessions';
 
-describe('SessionsApiService.getServiceSessionDetail', () => {
-  beforeEach(() => vi.clearAllMocks());
+vi.mock('./client', () => ({ apiClient: { get: vi.fn(), post: vi.fn(), delete: vi.fn() } }));
 
-  it('reads the service detail by identifier without caching it', async () => {
-    const data = {
-      service: { id: 'svc', canonical_id: 'github', display_name: 'GitHub Production', scope_url: 'https://broker.example.com/sessions/github' },
-      session: null,
-      dependent_agents: [],
-    };
-    vi.mocked(apiClient.get).mockResolvedValue({ data: { data } });
+const source = '<svg xmlns="http://www.w3.org/2000/svg"><text>Å &amp; 雲</text></svg>';
+const base: SessionSummary = {
+  id: 'session', service_id: 'atlas', service_display_name: 'Atlas Files',
+  token_type: 'Bearer', scope: ['files.read'], initiated_at: '2026-11-18T10:00:00Z',
+  requires_reauthentication: false, access_token_expired: false,
+  has_refresh_token: true, dependent_agent_count: 1, is_encrypted: true,
+};
 
-    await expect(new SessionsApiService().getServiceSessionDetail('github')).resolves.toEqual(data);
-    expect(apiClient.get).toHaveBeenCalledWith('/third-party/sessions/github');
-    expect(apiCache.set).not.toHaveBeenCalled();
+describe('SessionsApiService current service icons', () => {
+  const service = new SessionsApiService();
+  beforeEach(() => { vi.clearAllMocks(); apiCache.clear(); });
+  afterEach(() => { vi.useRealTimers(); apiCache.clear(); });
+
+  it.each([undefined, null])('replaces cached list and detail metadata with absent source %s after refresh invalidation', async (service_icon_svg) => {
+    const original = { ...base, service_icon_svg: source };
+    const cleared = service_icon_svg === undefined ? { ...base } : { ...base, service_icon_svg };
+    vi.mocked(apiClient.get)
+      .mockResolvedValueOnce({ data: { data: { sessions: [original] } } })
+      .mockResolvedValueOnce({ data: { data: { session: original, dependent_agents: [] } } })
+      .mockResolvedValueOnce({ data: { data: { sessions: [cleared] } } })
+      .mockResolvedValueOnce({ data: { data: { session: cleared, dependent_agents: [] } } });
+    expect((await service.listSessions())[0].service_icon_svg).toBe(source);
+    expect((await service.getSessionDetails('atlas')).session.service_icon_svg).toBe(source);
+    await service.listSessions();
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
+    vi.mocked(apiClient.post).mockResolvedValue({ data: { data: cleared } });
+    expect((await service.refreshSession('atlas')).service_icon_svg).toBe(service_icon_svg);
+    expect((await service.listSessions())[0].service_icon_svg).toBe(service_icon_svg);
+    expect((await service.getSessionDetails('atlas')).session.service_icon_svg).toBe(service_icon_svg);
+    expect(apiClient.get).toHaveBeenCalledTimes(4);
   });
 
-  it('encodes the identifier as one path segment', async () => {
-    vi.mocked(apiClient.get).mockResolvedValue({ data: { data: {} } });
-    await new SessionsApiService().getServiceSessionDetail('a/b');
-    expect(apiClient.get).toHaveBeenCalledWith('/third-party/sessions/a%2Fb');
+  it('retains the two-minute cache and then returns exact current source', async () => {
+    vi.useFakeTimers();
+    vi.mocked(apiClient.get)
+      .mockResolvedValueOnce({ data: { data: { sessions: [base] } } })
+      .mockResolvedValueOnce({ data: { data: { sessions: [{ ...base, service_icon_svg: source }] } } });
+    await service.listSessions();
+    vi.advanceTimersByTime(2 * 60 * 1000);
+    expect((await service.listSessions())[0].service_icon_svg).toBeUndefined();
+    expect(apiClient.get).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1);
+    expect((await service.listSessions())[0].service_icon_svg).toBe(source);
+    expect(apiClient.get).toHaveBeenCalledTimes(2);
   });
 });

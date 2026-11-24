@@ -52,7 +52,7 @@ func TestSPAHandlerSetsSecurityHeaders(t *testing.T) {
 	securityHeaders := map[string]string{
 		"X-Frame-Options":         "DENY",
 		"X-Content-Type-Options":  "nosniff",
-		"Content-Security-Policy": "frame-ancestors 'none'",
+		"Content-Security-Policy": "frame-ancestors 'none'; object-src 'none'",
 	}
 
 	for _, test := range []struct {

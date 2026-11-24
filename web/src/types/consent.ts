@@ -119,7 +119,6 @@ export interface ServiceWithScopes {
   kind: 'scoped';
   serviceId: string;
   displayName?: string;
-  logoUrl?: string;
   scopes?: ServiceScope[];
   /** Effective requirement type, set by the permission-sets layer (PS feature). */
   requirementType?: 'mandatory' | 'optional';
@@ -367,6 +366,7 @@ export interface ServiceRequirement {
   kind: 'requirement';
   serviceId: string;
   serviceName: string;
+  iconSvg?: string | null;
   requirementType: 'mandatory' | 'optional';
   /**
    * Explicit requirements expose their configured scope ceiling. All-scope requirements expose
@@ -377,7 +377,6 @@ export interface ServiceRequirement {
     description?: string;
   }>;
   connectionStatus: 'connected' | 'not_connected';
-  logoUrl?: string;
 }
 
 /**

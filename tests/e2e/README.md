@@ -347,6 +347,7 @@ GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend-dev
 
 Development mode uses fixed broker port 8000.
 The one-worker override is necessary because the recipe still defaults to two workers ([frontend guidance](frontend/AGENTS.md), [recipe](../../justfile)).
+Development mode excludes `built-frontend` specs. Service Icon journeys need the broker-served bundle, signed browser identities, and production CSP.
 
 The normal recipes disable screenshot capture by default ([configuration](../../justfile)).
 For artifact capture, use the serial configuration from the [frontend instructions](frontend/AGENTS.md#screenshots-and-performance):

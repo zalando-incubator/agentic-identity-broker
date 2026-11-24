@@ -435,6 +435,7 @@ func (s *OAuth2SessionService) CreateStateToken(claims *OAuth2StateTokenClaims) 
 // and A256GCM content encryption. Any tampering with the token will cause decryption
 // to fail due to GCM authentication tag verification.
 func (s *OAuth2SessionService) ValidateStateToken(
+	ctx context.Context,
 	tokenString string,
 	currentPrincipal id.Principal,
 	expectedServiceID id.ServiceID,
@@ -460,7 +461,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 	// Check expiration
 	if claims.IsExpired() {
 		// Audit log: state token expired
-		s.logger.Warn("oauth2 state token expired",
+		s.logger.WarnContext(ctx, "oauth2 state token expired",
 			"event", "session.oauth2.state_expired",
 			"principal", claims.Principal,
 			"service_id", claims.ServiceID,
@@ -472,7 +473,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 	// Check principal match (CSRF protection)
 	if claims.Principal != currentPrincipal {
 		// Audit log: principal mismatch (CSRF attack detection)
-		s.logger.Error("oauth2 state validation failed",
+		s.logger.ErrorContext(ctx, "oauth2 state validation failed",
 			"event", "session.oauth2.state_validation_failed",
 			"reason", "principal_mismatch",
 			"expected_principal", currentPrincipal,
@@ -484,7 +485,7 @@ func (s *OAuth2SessionService) ValidateStateToken(
 
 	// Check service ID match
 	if claims.ServiceID != expectedServiceID {
-		s.logger.Error("oauth2 state validation failed",
+		s.logger.ErrorContext(ctx, "oauth2 state validation failed",
 			"event", "session.oauth2.state_validation_failed",
 			"reason", "service_id_mismatch",
 			"expected_service_id", expectedServiceID,
@@ -960,7 +961,7 @@ func (s *OAuth2SessionService) HandleCallback(
 
 	// Validate sealed state before processing any provider response, including errors.
 
-	claims, err := s.ValidateStateToken(req.State, principal, req.ServiceID)
+	claims, err := s.ValidateStateToken(ctx, req.State, principal, req.ServiceID)
 	if err != nil {
 		if errors.Is(err, model.ErrCredentialSourceUnavailable) {
 			failure := sessionOperationError(ctx, OperationCodeExchange, DetailCredentialSourceUnavailable, err)
@@ -1490,6 +1491,7 @@ func (s *OAuth2SessionService) ListUserSessions(
 			agentCount = 0
 		}
 		summary.ServiceDisplayName = service.DisplayName
+		summary.ServiceIconSVG = service.IconSVG
 		summary.DependentAgentCount = agentCount
 		result = append(result, summary)
 	}
@@ -1638,15 +1640,19 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 		"service_id", serviceID,
 		"dependent_agent_count", len(dependentAgents))
 
-	serviceDisplayName := ""
+	var serviceDisplayName string
+	var serviceIconSVG *string
 	if service, err := s.providerService.Get(ctx, serviceID); err != nil {
 		s.logger.WarnContext(ctx, "failed to load session service", "service_id", serviceID, "error", err)
 	} else {
 		serviceDisplayName = service.DisplayName
+		serviceIconSVG = service.IconSVG
 	}
+	details := storage.NewUserSessionDetails(session, serviceDisplayName, len(dependentAgents))
+	details.ServiceIconSVG = serviceIconSVG
 
 	return &SessionWithAgents{
-		Session:         storage.NewUserSessionDetails(session, serviceDisplayName, len(dependentAgents)),
+		Session:         details,
 		DependentAgents: dependentAgents,
 	}, nil
 }
@@ -2044,7 +2050,9 @@ func (s *OAuth2SessionService) ForceRefreshSession(
 		s.logger.WarnContext(ctx, "failed to count agents after refresh", "service_id", serviceID, "oauth2_session", NewErrorMetadata(OperationRefresh, DetailRepositoryUnavailable).WithDependency(DependencySessionRepository))
 		agentCount = 0
 	}
-	return storage.NewUserSessionSummary(session, service.DisplayName, agentCount), nil
+	summary = storage.NewUserSessionSummary(session, service.DisplayName, agentCount)
+	summary.ServiceIconSVG = service.IconSVG
+	return summary, nil
 }
 
 type sharedRefreshContextKey struct{}

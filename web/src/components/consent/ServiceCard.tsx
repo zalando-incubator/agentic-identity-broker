@@ -16,6 +16,7 @@ import { Badge } from '@design-system/components/primitives/Badge';
 import { Avatar } from '@design-system/components/primitives/Avatar';
 import { StatusIndicator } from '@design-system/components/data-display/StatusIndicator';
 import { Tooltip } from '@design-system/components/overlays/Tooltip';
+import { ServiceIcon } from '@components/services/ServiceIcon';
 
 interface ServiceCardProps {
   service: ThirdpartyService;
@@ -81,12 +82,16 @@ export function ServiceCard({
     <Stack direction="row" gap="md" align="start">
       {/* Avatar */}
       <div className="flex-shrink-0">
-        <Avatar
-          src={service.logoUrl}
-          alt={`${serviceDisplayName} logo`}
-          initials={serviceDisplayName.charAt(0).toUpperCase()}
-          size="lg"
-          shape="rounded"
+        <ServiceIcon
+          iconSvg={service.kind === 'requirement' ? service.iconSvg : undefined}
+          className="h-12 w-12"
+          fallback={
+            <Avatar
+              initials={serviceDisplayName.charAt(0).toUpperCase()}
+              size="lg"
+              shape="rounded"
+            />
+          }
         />
       </div>
 

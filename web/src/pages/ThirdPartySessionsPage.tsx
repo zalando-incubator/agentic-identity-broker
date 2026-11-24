@@ -427,6 +427,7 @@ export const ThirdPartySessionsPage: React.FC = () => {
           onClose={handleTerminationCancel}
           onConfirm={handleTerminationConfirm}
           serviceName={selectedSessionDetails.session.service_display_name}
+          serviceIconSvg={selectedSessionDetails.session.service_icon_svg}
           dependentAgents={selectedSessionDetails.dependent_agents || []}
           loading={terminatingLoading}
           error={terminationError}

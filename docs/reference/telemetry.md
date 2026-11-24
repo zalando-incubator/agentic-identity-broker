@@ -1143,19 +1143,57 @@ Created in `internal/domain/oauth2session/sweep.go`.
 
 ### internal/domain/oauth2session.Dependency
 
-`credential_source`, `encryption`, `none`, `provider`, `provider_repository`, `session_repository`, `signing`
+| Value | Meaning |
+|---|---|
+| `credential_source` | The service's credential files are not configured or could not be read, or the recorded client ID is missing or differs. |
+| `encryption` | Encrypting or decrypting the session's tokens or the service's client secret failed. |
+| `none` | The failure is not attributed to a dependency, as for most configuration errors, cancellations and unclassified failures. |
+| `provider` | The provider's token endpoint failed, rejected the request or sent an invalid response. |
+| `provider_repository` | The broker could not load the service registration, because storage failed or the service is missing. |
+| `session_repository` | The failure concerns the stored session: storage failed, or the session is missing or has no refresh token. |
+| `signing` | The broker had no usable key to sign the client assertion, or signing it failed. |
 
 ### internal/domain/oauth2session.ErrorDetail
 
-`access_token_expired`, `caller_canceled`, `configuration`, `credential_source_unavailable`, `decryption_failed`, `encryption_failed`, `internal_unclassified`, `persistence_failed`, `provider_client_rejected`, `provider_rejected`, `provider_response_invalid`, `provider_unavailable`, `refresh_rejected`, `refresh_unavailable`, `repository_unavailable`, `session_missing`
+| Value | Meaning |
+|---|---|
+| `access_token_expired` | The access token has expired and the session has no refresh token, so the user must reconnect to the service. |
+| `caller_canceled` | The request was canceled, or its deadline passed, before the session operation finished. A refresh that other requests share keeps running and reports its own result. |
+| `configuration` | The service's OAuth2 registration is missing, invalid or incomplete, so fix the service configuration. |
+| `credential_source_unavailable` | No credential files are configured for the service, the broker could not read them, or the recorded client ID is missing or differs from the configured one. A token exchange reports the client ID cases as `credential_identity_changed`. |
+| `decryption_failed` | The broker could not decrypt the session's stored tokens or the service's client secret, so check the encryption keys. |
+| `encryption_failed` | The broker could not encrypt new tokens from the provider before storing them, so check the encryption keys. Starting an authorization also logs it when the broker cannot encrypt the authorization state. |
+| `internal_unclassified` | The broker could not classify the failure into any other detail. |
+| `persistence_failed` | The broker could not save new tokens, or a recorded refresh rejection, to the session, so check the storage backend. The session sweep stops at this failure instead of counting it. |
+| `provider_client_rejected` | The provider answered with a 4xx `invalid_client` or `unauthorized_client` error, so fix the client credentials or the client registration of the service. |
+| `provider_rejected` | The provider's token endpoint refused the request with a 4xx error that is neither a client rejection nor a refresh `invalid_grant`. At the callback, this includes an authorization code that the provider no longer accepts. |
+| `provider_response_invalid` | The provider answered a refresh with a success status but a malformed or oversized body, or one without an access token. |
+| `provider_unavailable` | The provider's token endpoint was unreachable, timed out or answered 429 or 5xx, or signing the client assertion failed. The dependency is `signing` for the signing case. |
+| `refresh_rejected` | The provider answered a refresh with a 4xx `invalid_grant` error, now or earlier, so the user must reconnect to the service. The broker records the rejection and stops refreshing the session until the user reconnects. |
+| `refresh_unavailable` | A refresh was due or requested but the session has no refresh token, so the user must reconnect to the service; if the access token has already expired when a refresh is due, the detail is `access_token_expired` instead. |
+| `repository_unavailable` | The broker could not read or lock the stored session, or read the service registration, so check the storage backend. The session sweep stops at this failure instead of counting it. |
+| `session_missing` | No session is stored for the user and the service, so the user must connect to the service. The background refresh and the session sweep skip such sessions instead of counting a failure. |
 
 ### internal/domain/oauth2session.ErrorKind
 
-`canceled`, `configuration`, `infrastructure`, `internal`, `provider`, `session`
+| Value | Meaning |
+|---|---|
+| `canceled` | The request was canceled, or its deadline passed, before the session operation finished. |
+| `configuration` | The service's configuration is wrong, including a provider that rejects the broker's client, so fix the configuration. |
+| `infrastructure` | A dependency failed: the provider was unavailable, or storage, encryption, signing or the credential files failed. |
+| `internal` | The broker could not classify the failure. |
+| `provider` | The provider rejected the request, including a rejected refresh token, or answered a refresh with an invalid response. |
+| `session` | No session is stored, or a due refresh is impossible because the session has no refresh token, so the user must connect to the service. |
 
 ### internal/domain/oauth2session.Operation
 
-`code_exchange`, `refresh`, `scope_validation`, `session_lookup`, `unknown`
+| Value | Meaning |
+|---|---|
+| `code_exchange` | Connecting the user to the service failed, while starting the authorization or while exchanging the authorization code on the callback. Token exchanges never report it. |
+| `refresh` | The broker could not renew the access token with the stored refresh token, or could not save the renewed tokens. |
+| `scope_validation` | Reserved and currently unused; a token exchange reports missing session scopes as `session_scope_insufficient` in `token_exchange.failure_detail`. |
+| `session_lookup` | The broker failed to read or decrypt the stored session of the user for the service, or found none. |
+| `unknown` | The broker could not tell which session operation failed; it comes with the `internal_unclassified` detail. |
 
 ### internal/domain/oauth2session.SessionHealthExpiry
 
@@ -1168,79 +1206,250 @@ Created in `internal/domain/oauth2session/sweep.go`.
 
 ### internal/domain/storage.ApprovalPersistence
 
-`once`, `permanent`, `session`
+| Value | Meaning |
+|---|---|
+| `once` | The approval covers one call to the tool with the approved arguments, and ExtProc consumes it when it lets that call through. |
+| `permanent` | The decision covers matching tool calls until the user revokes it, and a permanent denial blocks the tool for any arguments. |
+| `session` | The approval covers matching tool calls in the agent session it was requested in, while that session is active. |
 
 ### internal/domain/storage.ApprovalStatus
 
-`approved`, `denied`, `pending`
+| Value | Meaning |
+|---|---|
+| `approved` | The user approved the tool call, and the approval lets matching calls through within its persistence scope. |
+| `denied` | The user denied the tool call or revoked a permanent decision, and only a permanent denial keeps blocking the tool. |
+| `pending` | The approval waits for the user's decision, and it expires if the user does not decide within `approvals.pending_ttl`. ExtProc answers the tool call with the approval URL at once, so the agent calls the tool again after the decision. |
 
 ### internal/domain/storage.ErrorKind
 
 | Value | Meaning |
 |---|---|
-| `conflict` | Operation conflicts with existing data. |
-| `connection` | Storage backend connection failed or disconnected. |
-| `not_found` | Requested entity does not exist. |
-| `timeout` | Operation exceeded its timeout deadline. |
-| `unknown` | Error cause is unknown or unexpected. |
-| `validation` | Input validation failed. |
+| `conflict` | The write conflicts with stored data: a unique value is already taken, the transaction failed to serialize, the stored version is newer, or a referenced row is missing or was deleted concurrently. Storage spans record it as `storage.outcome`, because the caller handles it. |
+| `connection` | The database was not initialized, or a query, the start of a transaction or a commit failed in a way that the repository does not classify further, so check the database and its connections. Storage spans record it as `error.type`. |
+| `not_found` | The requested row does not exist, an update or a delete matched no row, or a write referenced a row that does not exist. Storage spans record it as `storage.outcome`, because the caller handles it. |
+| `timeout` | The operation passed its deadline, from `storage.timeouts.read`, `storage.timeouts.write` or the caller, or PostgreSQL canceled a statement after its statement timeout. Storage spans record it as `error.type`. |
+| `unknown` | The repository could not classify the failure, such as a stored value that it could not decode, a row count that it could not read or a broken invariant. Storage spans also record it as `error.type` for an error that is not a storage error. |
+| `validation` | The repository rejected the input, such as an empty ID, a nil entity, a value that it could not encode as JSON or a value that a check constraint refuses. Storage spans record it as `storage.outcome`, because the caller handles it. |
 
 ### internal/domain/tokenexchange.ExchangeKind
 
-`impersonation`, `third_party`
+| Value | Meaning |
+|---|---|
+| `impersonation` | The `audience` parameter selected a target agent, so the broker mints its own token for the subject instead of returning a provider token. |
+| `third_party` | The caller exchanged a subject token for the user's stored access token to a registered service. The broker also uses it when token exchange is not enabled. |
 
 ### internal/domain/tokenexchange.FailureDetail
 
-`access_token_expired`, `agent_invalid`, `agent_missing`, `agent_repository_unavailable`, `caller_canceled`, `cel_configuration`, `cel_evaluation_failed`, `client_expired`, `client_invalid`, `client_policy_denied`, `credential_identity_changed`, `credential_source_unavailable`, `grant_empty`, `grant_expired`, `grant_missing`, `grant_permission_set_missing`, `grant_permission_set_undeclared`, `grant_repository_unavailable`, `grant_scope_intersection_empty`, `grant_service_definition_missing`, `grant_service_omitted`, `grant_service_requirement_excluded`, `internal_unclassified`, `jwks_unavailable`, `jwt_configuration`, `none`, `provider_client_rejected`, `provider_rejected`, `provider_response_invalid`, `provider_unavailable`, `refresh_rejected`, `refresh_unavailable`, `request_malformed`, `resource_ambiguous`, `resource_missing`, `resource_repository_unavailable`, `resource_unregistered`, `response_write_failed`, `session_configuration`, `session_decryption_failed`, `session_encryption_failed`, `session_missing`, `session_persistence_failed`, `session_repository_unavailable`, `session_scope_insufficient`, `subject_category_ineligible`, `subject_category_unsupported`, `subject_expired`, `subject_invalid`
+| Value | Meaning |
+|---|---|
+| `access_token_expired` | The stored access token has expired and the session has no refresh token, so the user must reconnect the service. |
+| `agent_invalid` | The agent ID from the token claims is not a valid agent UUID, or the client ID that it is resolved from matches several registered agents. |
+| `agent_missing` | No registered agent matches the agent ID that the token claims resolve to, or that the impersonation `audience` names, in which case the caller may have named the wrong agent. |
+| `agent_repository_unavailable` | Looking up the agent in storage failed for a reason other than the agent not existing. |
+| `caller_canceled` | The request was canceled or its deadline passed before the broker finished it, usually because the caller disconnected. |
+| `cel_configuration` | A configured CEL expression returned a value of the wrong type or an empty value, so check the expression and the token claims that it reads; impersonation reports such values as `cel_evaluation_failed` instead. A CEL expression that fails to compile stops the broker at startup. |
+| `cel_evaluation_failed` | A CEL expression failed or timed out while it ran, such as when it reads a claim that the token lacks, or an impersonation expression returned a value that is not a string or an empty identity. |
+| `client_expired` | The client assertion has expired, so the calling client must create a new one. |
+| `client_invalid` | The client assertion failed validation, is not trusted or lacks a required subject, or an access evaluation request carried no bearer assertion. |
+| `client_policy_denied` | The CEL authorization policy, or an impersonation rule's authorization predicate, denied the calling client. |
+| `credential_identity_changed` | The service's configured client ID differs from the one that the session recorded, or the session recorded none, so the user must reconnect. |
+| `credential_source_unavailable` | No credential files are configured for the service, or the broker could not read them during refresh. |
+| `grant_empty` | The user's grant for the agent has no permission set entries. |
+| `grant_expired` | The user's grant for the agent has passed its expiry time, so the user must renew it on the agent's consent page. |
+| `grant_missing` | The user has not granted the agent access or has revoked the grant, so the user must consent on the agent's consent page. |
+| `grant_permission_set_missing` | The grant references a permission set that no longer exists, even one unrelated to the requested service. |
+| `grant_permission_set_undeclared` | The grant references a permission set that the agent no longer declares. |
+| `grant_repository_unavailable` | The broker could not read the user's grant, or the permission sets that it references, from storage. |
+| `grant_scope_intersection_empty` | None of the scopes granted for the service is in the agent's required scopes for it, so check those required scopes. |
+| `grant_service_definition_missing` | The grant includes the requested service, but none of the permission sets that include it defines that service. |
+| `grant_service_omitted` | None of the grant's permission set entries includes the requested service. |
+| `grant_service_requirement_excluded` | The grant covers the requested service, but the agent declares service requirements that do not list it, so check those requirements. |
+| `internal_unclassified` | The broker has no specific classification for the failure, and the failure stage shows where it happened. |
+| `jwks_unavailable` | The broker could not fetch the signing keys that it needs to verify the subject token, an actor token or the client assertion. |
+| `jwt_configuration` | The token validation settings, such as issuers, audience or clock skew, are invalid, which stops the broker at startup instead of failing a request. |
+| `none` | The exchange or access evaluation succeeded, and broker spans and logs then leave out the failure detail. |
+| `provider_client_rejected` | The provider answered the refresh with `invalid_client` or `unauthorized_client`, so fix the client credentials or registration of the service. |
+| `provider_rejected` | The provider refused the refresh with a 4xx error that is neither a client rejection nor `invalid_grant`. |
+| `provider_response_invalid` | The provider answered the refresh with a success status but a malformed or oversized body, or one without an access token. |
+| `provider_unavailable` | The provider's token endpoint was unreachable, timed out or answered 429 or 5xx during refresh, or signing the client assertion failed. |
+| `refresh_rejected` | The provider rejected the session's refresh token with `invalid_grant`, now or on an earlier refresh, so the user must reconnect the service. |
+| `refresh_unavailable` | The broker had to renew the access token but found no usable refresh token, so the user must reconnect the service. |
+| `request_malformed` | A parameter or the request body was missing, repeated or invalid, repeated `resource` values differ, an impersonation asked for a scope that the target agent does not allow, or the `context.agent` of an access evaluation does not match the subject token. |
+| `resource_ambiguous` | More than one registered service claims the requested resource; storage keeps each resource unique to one service, so the broker does not currently set it. |
+| `resource_missing` | The third-party exchange request had no `resource` parameter. |
+| `resource_repository_unavailable` | Looking up the service for the resource failed in storage, or an access evaluation could not load canonical service IDs. |
+| `resource_unregistered` | No registered service lists the requested resource among its protected resources. |
+| `response_write_failed` | The broker could not encode or fully write its response to the client. |
+| `session_configuration` | The service's OAuth2 registration is missing, invalid or incomplete for a refresh, or no key is configured to sign client assertions. |
+| `session_decryption_failed` | The broker could not decrypt the session's stored tokens or the service's client secret, so check the encryption keys. |
+| `session_encryption_failed` | The broker could not encrypt the tokens from a refresh before storing them, so check the encryption keys. |
+| `session_missing` | The user has no stored session for the service, so the user must connect it through the `error_uri` of the `invalid_grant` response. |
+| `session_persistence_failed` | The broker could not save refreshed tokens, or a recorded refresh rejection, to the session store. |
+| `session_repository_unavailable` | The broker could not read or lock the stored session, or read the service registration for a refresh. |
+| `session_scope_insufficient` | The user's stored session lacks scopes that the grant gives the agent for the service, so the user must reconnect the service, which helps only if the service registration requests those scopes. |
+| `subject_category_ineligible` | An impersonation rule does not allow the subject's category, human or agent, or the subject is a different registered agent. |
+| `subject_category_unsupported` | The agent-subject expression matched, so the subject token is an agent's own token, which third-party exchange and access evaluation reject. |
+| `subject_expired` | The subject token, or an impersonation actor token, has expired, so the caller needs a new one. |
+| `subject_invalid` | The subject token, or an impersonation actor token, failed parsing or its signature, issuer, audience or claim checks. |
 
 ### internal/domain/tokenexchange.FailureStage
 
-`client_authorization`, `client_validation`, `exchange_routing`, `grant_authorization`, `identity_resolution`, `none`, `refresh`, `request_validation`, `resource_resolution`, `response_write`, `scope_validation`, `session_lookup`, `subject_validation`
+| Value | Meaning |
+|---|---|
+| `client_authorization` | The broker was evaluating the authorization policy for the calling client, or the subject categories that an impersonation rule allows. |
+| `client_validation` | The broker was validating the client assertion that authenticates the calling client, including fetching its signing keys. |
+| `exchange_routing` | The failure is not tied to one exchange step, such as when token exchange is not enabled or an impersonation token cannot be minted. The broker also uses it for an error that carries no stage. |
+| `grant_authorization` | The broker was checking that the user's grant for the agent exists, has not expired and covers the requested service. |
+| `identity_resolution` | The broker was deriving identities and the subject category from token claims with CEL, or looking up the agent. |
+| `none` | The exchange or access evaluation succeeded, and broker spans and logs then leave out the failure stage. |
+| `refresh` | The broker was renewing the session's access token with its refresh token, or found that it cannot. |
+| `request_validation` | The broker was checking the request's parameters or body, such as the grant type, token types, resource or audience. |
+| `resource_resolution` | The broker was looking up the registered service whose protected resources include the requested resource. An access evaluation also uses it while loading canonical service IDs. |
+| `response_write` | The broker was encoding or writing its response to the client. |
+| `scope_validation` | The broker was checking that the session's scopes cover the scopes that the grant gives the agent for the service. |
+| `session_lookup` | The broker was reading and decrypting the user's stored session for the service. |
+| `subject_validation` | The broker was validating the subject token, or an impersonation actor token, including fetching its signing keys. |
 
 ### internal/domain/tokenexchange.Outcome
 
-`authentication_failed`, `authorization_denied`, `canceled`, `configuration_error`, `infrastructure_error`, `invalid_request`, `reauth_required`, `success`
+| Value | Meaning |
+|---|---|
+| `authentication_failed` | The subject token, an impersonation actor token or the client assertion was invalid or expired. |
+| `authorization_denied` | The credentials were valid, but the authorization policy, the subject category or the user's grant did not allow the exchange. |
+| `canceled` | The request was canceled or its deadline passed before the broker finished it, usually because the caller disconnected. |
+| `configuration_error` | The broker configuration or an agent or service registration prevents the exchange, so a retry fails the same way until an operator fixes it. |
+| `infrastructure_error` | Storage, the signing key set, encryption, the provider, a CEL evaluation or the response write failed, or the failure is unclassified. |
+| `invalid_request` | The request was malformed, had no resource, or named a resource that no service registers. |
+| `reauth_required` | The user's stored session with the service is missing or unusable, so the broker answered `invalid_grant` with an `error_uri` to reconnect it. |
+| `success` | The broker issued the requested token, or an access evaluation permitted the request. |
 
 ### internal/domain/tokenexchange.RecoveryAction
 
-`fix_configuration`, `none`, `reauthenticate`, `reconsent`, `retry`
+| Value | Meaning |
+|---|---|
+| `fix_configuration` | An operator must correct the broker configuration or an agent or service registration before the exchange can succeed. |
+| `none` | The broker suggests no repair, as for a success, an invalid request, a policy or subject category denial, or a cancellation. |
+| `reauthenticate` | A fresh credential is needed, which the recovery target names: a subject token, a client assertion or the user's session with the service. |
+| `reconsent` | A grant check denied the request, so the user should review the grant on the consent page that the response links to, unless the failure detail points to the agent's service requirements. |
+| `retry` | The failure is an infrastructure failure or unclassified, so a later request may succeed if its cause was temporary. |
 
 ### internal/domain/tokenexchange.RecoveryTarget
 
-`broker_configuration`, `calling_client`, `consent`, `none`, `provider_session`, `subject_identity`
+| Value | Meaning |
+|---|---|
+| `broker_configuration` | The broker configuration or an agent or service registration, which an operator must fix. |
+| `calling_client` | The calling client's client assertion, which the client must replace with a new, valid one. |
+| `consent` | The user's grant for the agent, which the user manages on the agent's consent page; it goes with `reconsent`. |
+| `none` | The recovery action has no target, which holds for `none` and `retry`. |
+| `provider_session` | The user's stored session with the service, which the user reconnects through the `error_uri` of the `invalid_grant` response. |
+| `subject_identity` | The subject token, or an impersonation actor token, which the caller must replace with a new, valid one. |
 
 ### internal/extproc/server.Dependency
 
-`broker`, `local`, `oauth_provider`
+| Value | Meaning |
+|---|---|
+| `broker` | The broker's token endpoint, which ExtProc calls for the token exchange behind its circuit breaker. |
+| `local` | ExtProc itself, without an outbound call, such as its configuration or its expired client assertion; ExtProc also uses it for an unknown dependency. |
+| `oauth_provider` | The OAuth provider that issues ExtProc's client assertion through the client credentials grant, not a provider behind the broker. |
 
 ### internal/extproc/server.ErrorKind
 
-`assertion_expired`, `caller_canceled`, `circuit_open`, `configuration`, `internal`, `invalid_response`, `none`, `rejected`, `unavailable`
+| Value | Meaning |
+|---|---|
+| `assertion_expired` | ExtProc's own client assertion had expired when an exchange needed it, so ExtProc answered 503 without calling the broker. |
+| `caller_canceled` | The request was canceled, or its deadline passed, while ExtProc waited for the exchange; ExtProc sets no error status for it. |
+| `circuit_open` | ExtProc's circuit breaker for the broker was open, or half-open with no free probe, so ExtProc answered 503 without calling the broker; failures inside ExtProc also count toward opening it. |
+| `configuration` | ExtProc's own configuration is unusable, such as a client assertion type that it does not support or a token endpoint that it cannot build a request for. |
+| `internal` | ExtProc could not classify the error; it is also the fallback for an unknown kind. |
+| `invalid_response` | The broker or the OAuth provider answered with a body that ExtProc could not use, or the delegation permit carried an invalid grant timestamp. |
+| `none` | Nothing failed; ExtProc never sets `error.type` to it. |
+| `rejected` | The broker or the OAuth provider answered with a 4xx error, or ExtProc rejected the request's token-exchange metadata and answered 503. |
+| `unavailable` | The broker or the OAuth provider was unreachable, timed out or answered 5xx or 429, or ExtProc had no usable grant context. |
 
 ### internal/extproc/server.ExchangeKind
 
-`impersonation`, `third_party`, `unknown`
+| Value | Meaning |
+|---|---|
+| `impersonation` | A user impersonation exchange; ExtProc never sets it, because it cannot observe the broker's exchange kind. |
+| `third_party` | A third-party service token exchange; ExtProc never sets it, because it cannot observe the broker's exchange kind. |
+| `unknown` | ExtProc cannot observe which kind of exchange the broker performed; ExtProc always sets this value. |
 
 ### internal/extproc/server.FailureDetail
 
-`authorization_denied`, `broker_response_invalid`, `broker_unavailable`, `caller_canceled`, `circuit_open`, `client_expired`, `client_invalid`, `configuration`, `consent_required`, `credential_rejected`, `grant_context_denied`, `grant_context_unavailable`, `internal_unclassified`, `none`, `policy_configuration`, `policy_denied`, `policy_evaluation_failed`, `provider_response_invalid`, `provider_unavailable`, `reauth_required`, `request_malformed`, `resource_missing`, `response_write_failed`, `session_reauth_required`, `subject_invalid`
+| Value | Meaning |
+|---|---|
+| `authorization_denied` | The broker, or the OAuth provider during refresh, answered `access_denied` without an `error_uri`, so ExtProc had no consent URL to return. |
+| `broker_response_invalid` | The broker answered 200, but ExtProc could not read or parse the body, or the body had no access token. |
+| `broker_unavailable` | ExtProc could not reach the broker in time, or the broker answered with a 5xx or 429 status or with `server_error` or `temporarily_unavailable`. |
+| `caller_canceled` | The request was canceled, or its deadline passed, while ExtProc waited for the exchange or was sending its response. |
+| `circuit_open` | ExtProc's circuit breaker for the broker was open, or half-open with no free probe, so ExtProc answered 503 without calling the broker; failures inside ExtProc, such as an expired client assertion, also count toward opening it. |
+| `client_expired` | ExtProc's own client assertion had expired, so ExtProc answered 503 without calling the broker; look for failed `extproc.client_assertion.refresh` spans. |
+| `client_invalid` | The broker or the OAuth provider answered `invalid_client` or `unauthorized_client`: it rejected ExtProc's client authentication, or ExtProc may not use that grant. |
+| `configuration` | ExtProc's own configuration is unusable: it could not build the request to the broker, or the client assertion type is neither `id_token` nor `access_token`. |
+| `consent_required` | The broker answered `access_denied` with an `error_uri`, and ExtProc returned that URL to the client in a 403 `insufficient_scope` challenge. |
+| `credential_rejected` | The broker answered `invalid_grant` without an `error_uri`, which it does only when the subject token fails validation, or the OAuth provider did so during refresh. The client gets no sign-in URL. |
+| `grant_context_denied` | The broker's grant context evaluation denied the delegation, and ExtProc answered 403 `access_denied` with the consent URL as `error_uri`. |
+| `grant_context_unavailable` | ExtProc had no usable delegation permit and answered 503: the broker evaluation failed or could not run, the request was canceled meanwhile, the permit expired or was invalid, or the exchange result did not match it. |
+| `internal_unclassified` | ExtProc could not classify the failure, such as an unexpected error or an OAuth error code that it does not map to a detail. |
+| `none` | Nothing failed; metrics of successful requests and successful `extproc.grant_context.*` spans carry it, while other successful spans and logs leave out the failure detail. |
+| `policy_configuration` | Authorization is enabled but the gateway sent no protocol metadata, or no `mcp_server` metadata for an MCP request; ExtProc answered 403. |
+| `policy_denied` | The OPA decision did not allow the request, also after a policy error, a timeout or an undefined result, so ExtProc answered 403 `access_denied`; `authorization.result_code` on `extproc.opa.evaluate` tells which, and for a request with a body only logs carry this detail. |
+| `policy_evaluation_failed` | The authorizer returned an error instead of a decision; the OPA authorizer never does, because it reports errors, timeouts and undefined results as `policy_denied`. |
+| `provider_response_invalid` | The OAuth provider answered the client assertion refresh with a response that ExtProc could not read or parse, or without the configured `id_token` or `access_token`. |
+| `provider_unavailable` | ExtProc could not reach the OAuth provider in time to refresh its client assertion, or the provider answered 5xx, 429, `server_error` or `temporarily_unavailable`. |
+| `reauth_required` | An OAuth error had the code `reauth_required` and no `error_uri`; the broker never sends this code, so it can only come from the OAuth provider during refresh. |
+| `request_malformed` | ExtProc found the request's metadata, method or body malformed, or the broker or the OAuth provider answered `invalid_request`, `invalid_target`, `invalid_scope` or `unsupported_grant_type`. |
+| `resource_missing` | The request's token-exchange metadata has no resource URI, or a blank one; check that the gateway sets it, because ExtProc answers 503. |
+| `response_write_failed` | ExtProc could not send its response to the gateway on the processing stream; only logs carry it, since the span has already ended. |
+| `session_reauth_required` | The broker answered `invalid_grant` with an `error_uri` because the user must reconnect the provider session, and ExtProc returned that URL to the client in a 403 `insufficient_scope` challenge. |
+| `subject_invalid` | The broker, or the OAuth provider during refresh, answered `invalid_token`; the broker reports a rejected subject token as `invalid_grant`, which is `credential_rejected`. |
 
 ### internal/extproc/server.FailureStage
 
-`client_authorization`, `exchange_routing`, `none`, `refresh`, `request_validation`, `response_write`
+| Value | Meaning |
+|---|---|
+| `client_authorization` | ExtProc's own authorization step failed or denied the request: the OPA policy, the gateway metadata that it needs, or the grant context. |
+| `exchange_routing` | The token exchange with the broker failed, including an open circuit breaker and a canceled wait; ExtProc also uses it for an unknown stage. |
+| `none` | Nothing failed; metrics of successful requests carry it, while successful spans and logs leave out the failure stage. |
+| `refresh` | ExtProc's own client assertion refresh failed, or an exchange found the assertion expired; it is not the broker's refresh of a provider session. |
+| `request_validation` | ExtProc rejected the request itself: its token-exchange metadata, its HTTP method or its body was missing or malformed. |
+| `response_write` | ExtProc could not send its response to the gateway; only logs carry it, since the span has already ended. |
 
 ### internal/extproc/server.Operation
 
-`assertion_refresh`, `configuration`, `exchange`
+| Value | Meaning |
+|---|---|
+| `assertion_refresh` | The refresh of ExtProc's own client assertion at the OAuth provider; an exchange that finds the assertion expired also reports it. |
+| `configuration` | Building the token exchanger at startup; a failure stops ExtProc, so no span or metric carries this value. |
+| `exchange` | The token exchange with the broker, including the wait for a shared exchange; ExtProc also uses it for an unknown operation. |
 
 ### internal/extproc/server.Outcome
 
-`authentication_failed`, `authorization_denied`, `canceled`, `configuration_error`, `infrastructure_error`, `invalid_request`, `reauth_required`, `success`
+| Value | Meaning |
+|---|---|
+| `authentication_failed` | The broker or the OAuth provider rejected a credential, or ExtProc's own client assertion had expired; the failure detail tells which. |
+| `authorization_denied` | The OPA policy, the grant context, the broker or the OAuth provider refused access; the failure detail tells which, and whether ExtProc returned a consent URL. |
+| `canceled` | The request was canceled, or its deadline passed, while ExtProc waited for the exchange or sent its response; ExtProc does not set the error status on the span. |
+| `configuration_error` | ExtProc's configuration, or the metadata that the gateway sends for policy evaluation, is unusable; fix it, because a retry fails the same way. |
+| `infrastructure_error` | A dependency or ExtProc itself failed, such as an unreachable broker, an open circuit breaker or an unavailable grant context; a retry may succeed. |
+| `invalid_request` | ExtProc found the request's metadata, method or body malformed, or the broker or the OAuth provider rejected the request it received as invalid. |
+| `reauth_required` | The broker answered `invalid_grant` with an `error_uri` for a new sign-in, or an OAuth error had the code `reauth_required`; the failure detail tells whether the client got the URL. |
+| `success` | The checks and the exchange passed, or the client assertion was refreshed; a later policy decision on a request body does not change it. |
 
 ### internal/extproc/server.RecoveryAction
 
-`fix_configuration`, `none`, `reauthenticate`, `reconsent`, `retry`
+| Value | Meaning |
+|---|---|
+| `fix_configuration` | An operator should fix ExtProc's configuration or the gateway's metadata; ExtProc suggests it for `configuration` and `policy_configuration`. |
+| `none` | ExtProc suggests no recovery: the request succeeded or was canceled, or no listed action fits, as for rejected credentials and policy denials. |
+| `reauthenticate` | The user should sign in again at the `error_uri` that ExtProc returned; ExtProc suggests it only for `session_reauth_required`. |
+| `reconsent` | The user should grant consent again at the URL that ExtProc returned; ExtProc suggests it for `consent_required` and `grant_context_denied`. |
+| `retry` | The failure may be temporary and a later request may succeed; ExtProc suggests it for every `infrastructure_error` outcome. |
 
 ### internal/extproc/server.RecoveryTarget
 
-`consent`, `none`, `provider_session`
+| Value | Meaning |
+|---|---|
+| `consent` | The user's consent for the agent, which the user renews at the consent URL that ExtProc returned; it goes with `reconsent`. |
+| `none` | The recovery action has no target, which holds for every action except `reconsent` and `reauthenticate`. |
+| `provider_session` | The user's provider session that the broker holds, which the user renews at the returned `error_uri`; it goes with `reauthenticate`. |

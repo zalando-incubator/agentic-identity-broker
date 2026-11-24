@@ -48,6 +48,7 @@ func NewServicesHandler(providerService *thirdparty.ThirdpartyOAuth2ProviderServ
 type ServiceRequest struct {
 	CanonicalID                *string                  `json:"canonical_id,omitempty"`
 	DisplayName                string                   `json:"display_name"`
+	IconSVG                    *string                  `json:"icon_svg,omitempty"`
 	CredentialSource           model.CredentialSource   `json:"credential_source,omitempty"`
 	ClientRegistration         model.ClientRegistration `json:"client_registration,omitempty"`
 	ClientID                   string                   `json:"client_id"`
@@ -66,12 +67,19 @@ type ServiceRequest struct {
 	ClientSecretProvided       bool                     `json:"-"`
 	clearCanonicalID           bool
 	protectedResourcesProvided bool
+	iconSVGProvided            bool
 }
 
 // UnmarshalJSON retains field presence so explicit null values are not omissions.
 func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
-	type request ServiceRequest
+	type requestFields ServiceRequest
+	type request struct {
+		requestFields
+		IconSVG **string `json:"icon_svg"`
+	}
 	var decoded request
+	// Omission leaves a pointer to nil; explicit null clears the outer pointer.
+	decoded.IconSVG = &decoded.requestFields.IconSVG
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
 	}
@@ -93,13 +101,20 @@ func (req *ServiceRequest) UnmarshalJSON(data []byte) error {
 	if fields.ClientIDFile != nil || fields.ClientSecretFile != nil || fields.CredentialFiles != nil || fields.CredentialSourceTransitioned != nil {
 		return errors.New("credential file configuration and transition history are not service request fields")
 	}
-	*req = ServiceRequest(decoded)
+	*req = ServiceRequest(decoded.requestFields)
 	req.CredentialSourceProvided = fields.CredentialSource != nil
 	req.ClientRegistrationProvided = fields.ClientRegistration != nil
 	req.ClientIDProvided = fields.ClientID != nil
 	req.ClientSecretProvided = fields.ClientSecret != nil
 	req.clearCanonicalID = isJSONNull(fields.CanonicalID)
 	req.protectedResourcesProvided = fields.ProtectedResources != nil && !isJSONNull(fields.ProtectedResources)
+	if decoded.IconSVG == nil {
+		req.IconSVG = nil
+		req.iconSVGProvided = true
+	} else {
+		req.IconSVG = *decoded.IconSVG
+		req.iconSVGProvided = req.IconSVG != nil
+	}
 	return nil
 }
 
@@ -129,6 +144,7 @@ type ServiceResponse struct {
 	ID                      string                   `json:"id"`
 	CanonicalID             *string                  `json:"canonical_id"`
 	DisplayName             string                   `json:"display_name"`
+	IconSVG                 *string                  `json:"icon_svg,omitempty"`
 	CredentialSource        model.CredentialSource   `json:"credential_source"`
 	ClientRegistration      model.ClientRegistration `json:"client_registration"`
 	ClientID                string                   `json:"client_id,omitempty"`
@@ -220,7 +236,7 @@ func (h *ServicesHandler) setDiscoveryResponseDeadline(w http.ResponseWriter, r 
 	}
 	if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil {
 		h.logger.ErrorContext(r.Context(), "discovery response write deadline unavailable", "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return false
 	}
 	return true
@@ -233,14 +249,14 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	var req ServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
 	if err != nil {
 		h.logger.WarnContext(ctx, "service validation failed", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -267,6 +283,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		ID:                         serviceID,
 		CanonicalID:                req.CanonicalID,
 		DisplayName:                req.DisplayName,
+		IconSVG:                    req.IconSVG,
 		ClientID:                   id.ClientID(req.ClientID),
 		Secret:                     secret,
 		CredentialSource:           req.CredentialSource,
@@ -300,14 +317,14 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	if req.Discovery.ResourceURL != nil {
 		if err := entity.ValidateDiscoveryRequest(); err != nil {
-			h.writeDiscoveryRequestError(w, err)
+			h.writeDiscoveryRequestError(ctx, w, err)
 			return
 		}
 	} else if err := entity.ValidateForCreate(skipHTTPSValidation); err != nil {
 		h.logger.WarnContext(ctx, "service validation failed",
 			"client_id", entity.ClientID,
 			"error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -334,7 +351,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 			h.logger.WarnContext(ctx, "service validation failed",
 				"client_id", entity.ClientID,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 			return
 		}
 	}
@@ -345,7 +362,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 			h.logger.WarnContext(ctx, "protected_resources validation failed",
 				"service_id", entity.ID,
 				"error", err)
-			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 			return
 		}
 	}
@@ -362,7 +379,7 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 
 	// Return the created service without exposing its secret.
 	resp := h.toResponse(entity.RedactedCopy())
-	h.writeJSON(w, http.StatusCreated, resp)
+	h.writeJSON(ctx, w, http.StatusCreated, resp)
 }
 
 // GetService handles GET /api/services/{service-id}
@@ -372,7 +389,7 @@ func (h *ServicesHandler) GetService(w http.ResponseWriter, r *http.Request) {
 	serviceID := chi.URLParam(r, "service-id")
 
 	if serviceID == "" {
-		h.writeError(w, http.StatusBadRequest, "service ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "service ID is required", "")
 		return
 	}
 
@@ -391,23 +408,23 @@ func (h *ServicesHandler) GetService(w http.ResponseWriter, r *http.Request) {
 	// Return the service without exposing its secret.
 	w.Header().Set("ETag", strongETag(entity.Version))
 	resp := h.toResponse(entity.RedactedCopy())
-	h.writeJSON(w, http.StatusOK, resp)
+	h.writeJSON(ctx, w, http.StatusOK, resp)
 }
 
 // GetDiscoveryStatus reads committed state without contacting the provider.
 func (h *ServicesHandler) GetDiscoveryStatus(w http.ResponseWriter, r *http.Request) {
 	if subject, ok := principal.FromContext(r.Context()); !ok || subject == "" {
-		h.writeError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		h.writeError(r.Context(), w, http.StatusUnauthorized, "unauthorized", "authentication required")
 		return
 	}
 	serviceID := chi.URLParam(r, "service-id")
 	if serviceID == "" {
-		h.writeError(w, http.StatusBadRequest, "invalid service ID", "service ID is required")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid service ID", "service ID is required")
 		return
 	}
 	if _, err := id.ParseServiceID(serviceID); err != nil {
 		if canonical.Validate(&serviceID) != nil {
-			h.writeError(w, http.StatusBadRequest, "invalid service ID", "service ID is invalid")
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid service ID", "service ID is invalid")
 			return
 		}
 	}
@@ -421,7 +438,7 @@ func (h *ServicesHandler) GetDiscoveryStatus(w http.ResponseWriter, r *http.Requ
 		h.handleStorageError(w, r, "GetDiscoveryStatus", err)
 		return
 	}
-	h.writeJSON(w, http.StatusOK, struct {
+	h.writeJSON(r.Context(), w, http.StatusOK, struct {
 		Status        string     `json:"status"`
 		ResourceURL   *string    `json:"resource_url"`
 		IssuerURI     *string    `json:"issuer_uri"`
@@ -438,26 +455,26 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	serviceID := chi.URLParam(r, "service-id")
 
 	if serviceID == "" {
-		h.writeError(w, http.StatusBadRequest, "service ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "service ID is required", "")
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 	var req ServiceRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
 	tokenEndpointAuthMethod, secret, err := serviceClientAuthentication(req)
 	if err != nil {
 		h.logger.WarnContext(ctx, "service validation failed", "error", err)
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -492,6 +509,8 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		ID:                         parsedSvcID,
 		CanonicalID:                req.CanonicalID,
 		DisplayName:                req.DisplayName,
+		IconSVG:                    req.IconSVG,
+		IconSVGProvided:            req.iconSVGProvided,
 		ClearCanonicalID:           req.clearCanonicalID,
 		ClientID:                   id.ClientID(req.ClientID),
 		Secret:                     secret,
@@ -529,7 +548,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 			if errors.As(err, &storageErr) {
 				h.handleServiceMutationError(w, r, "UpdateService", err, true)
 			} else {
-				h.writeDiscoveryRequestError(w, err)
+				h.writeDiscoveryRequestError(ctx, w, err)
 			}
 			return
 		}
@@ -541,7 +560,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 			h.handleStorageError(w, r, "UpdateService", err)
 			return
 		}
-		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
 
@@ -573,7 +592,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 				h.handleStorageError(w, r, "UpdateService", err)
 				return
 			}
-			h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+			h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 			return
 		}
 	}
@@ -582,7 +601,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	if req.protectedResourcesProvided {
 		parsedVersion, err := parseStrongETag(r.Header.Get("If-Match"))
 		if err != nil {
-			h.writeError(w, http.StatusPreconditionRequired, "precondition required", "If-Match with a strong ETag is required when replacing protected_resources")
+			h.writeError(ctx, w, http.StatusPreconditionRequired, "precondition required", "If-Match with a strong ETag is required when replacing protected_resources")
 			return
 		}
 		expectedVersion = &parsedVersion
@@ -590,7 +609,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		if req.Discovery.ResourceURL == nil {
 			if err := entity.ValidateProtectedResources(); err != nil {
 				h.logger.WarnContext(ctx, "protected_resources validation failed", "service_id", entity.ID, "error", err)
-				h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+				h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 				return
 			}
 		}
@@ -599,7 +618,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	if err := h.providerService.Update(ctx, entity, expectedVersion); err != nil {
 		var storageErr *storage.StorageError
 		if expectedVersion != nil && errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindConflict && strings.Contains(storageErr.Message, "version") {
-			h.writeError(w, http.StatusPreconditionFailed, "precondition failed", storageErr.Message)
+			h.writeError(ctx, w, http.StatusPreconditionFailed, "precondition failed", storageErr.Message)
 			return
 		}
 		h.handleServiceMutationError(w, r, "UpdateService", err, req.Discovery.ResourceURL != nil)
@@ -614,7 +633,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 
 	resp := h.toResponse(entity.RedactedCopy())
 	w.Header().Set("ETag", strongETag(entity.Version))
-	h.writeJSON(w, http.StatusOK, resp)
+	h.writeJSON(ctx, w, http.StatusOK, resp)
 }
 
 func parseStrongETag(value string) (int64, error) {
@@ -642,7 +661,7 @@ func (h *ServicesHandler) DeleteService(w http.ResponseWriter, r *http.Request) 
 	serviceID := chi.URLParam(r, "service-id")
 
 	if serviceID == "" {
-		h.writeError(w, http.StatusBadRequest, "service ID is required", "")
+		h.writeError(ctx, w, http.StatusBadRequest, "service ID is required", "")
 		return
 	}
 
@@ -661,7 +680,7 @@ func (h *ServicesHandler) DeleteService(w http.ResponseWriter, r *http.Request) 
 			h.logger.WarnContext(ctx, "service deletion blocked due to existing grants",
 				"service_id", serviceID,
 				"error", message)
-			h.writeError(w, http.StatusConflict, "conflict", message)
+			h.writeError(ctx, w, http.StatusConflict, "conflict", message)
 			return
 		}
 
@@ -692,7 +711,7 @@ func (h *ServicesHandler) ListServices(w http.ResponseWriter, r *http.Request) {
 		responses[i] = h.toResponse(entity.RedactedCopy())
 	}
 
-	h.writeJSON(w, http.StatusOK, responses)
+	h.writeJSON(ctx, w, http.StatusOK, responses)
 }
 
 // toResponse converts a ThirdpartyOAuth2ProviderEntity to ServiceResponse.
@@ -719,6 +738,7 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		ID:                 entity.ID.String(),
 		CanonicalID:        entity.CanonicalID,
 		DisplayName:        entity.DisplayName,
+		IconSVG:            entity.IconSVG,
 		CredentialSource:   credentialSource,
 		ClientRegistration: entity.ClientRegistration,
 		OAuth2Flavor:       flavor.String(),
@@ -765,12 +785,12 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 	return response
 }
 
-func (h *ServicesHandler) writeDiscoveryRequestError(w http.ResponseWriter, err error) {
+func (h *ServicesHandler) writeDiscoveryRequestError(ctx context.Context, w http.ResponseWriter, err error) {
 	if errors.Is(err, model.ErrUnsafeDiscoveryResourceURL) {
-		h.writeDiscoveryError(w, &thirdparty.DiscoveryError{Code: "unsafe_destination"})
+		h.writeDiscoveryError(ctx, w, &thirdparty.DiscoveryError{Code: "unsafe_destination"})
 		return
 	}
-	h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+	h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 }
 
 // handleServiceMutationError keeps remote discovery and registration errors out of handler logs.
@@ -784,28 +804,28 @@ func (h *ServicesHandler) handleServiceMutationError(w http.ResponseWriter, r *h
 	}
 	var discoveryErr *thirdparty.DiscoveryError
 	if errors.As(err, &discoveryErr) {
-		h.writeDiscoveryError(w, discoveryErr)
+		h.writeDiscoveryError(r.Context(), w, discoveryErr)
 		return
 	}
 	var storageErr *storage.StorageError
 	if errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindConflict {
 		if errors.Is(storageErr, storage.ErrDuplicateDCRClientIdentity) {
-			h.writeError(w, http.StatusConflict, "conflict", "duplicate_client_identity")
+			h.writeError(r.Context(), w, http.StatusConflict, "conflict", "duplicate_client_identity")
 			return
 		}
 		if errors.Is(storageErr, storage.ErrIssuerChangeHasSessions) {
-			h.writeError(w, http.StatusConflict, "conflict", "issuer_change_requires_no_sessions")
+			h.writeError(r.Context(), w, http.StatusConflict, "conflict", "issuer_change_requires_no_sessions")
 			return
 		}
 		if errors.Is(storageErr, storage.ErrResourceChangeHasSessions) {
-			h.writeError(w, http.StatusConflict, "conflict", "resource_change_requires_no_sessions")
+			h.writeError(r.Context(), w, http.StatusConflict, "conflict", "resource_change_requires_no_sessions")
 			return
 		}
 		if errors.Is(storageErr, storage.ErrProtectedResourceOwned) {
-			h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
+			h.writeError(r.Context(), w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
 			return
 		}
-		h.writeError(w, http.StatusConflict, "conflict", "service conflict")
+		h.writeError(r.Context(), w, http.StatusConflict, "conflict", "service conflict")
 		return
 	}
 	failureClass := "internal_failure"
@@ -813,53 +833,53 @@ func (h *ServicesHandler) handleServiceMutationError(w http.ResponseWriter, r *h
 		failureClass = "storage_" + string(storageErr.Kind)
 	}
 	h.logger.ErrorContext(r.Context(), "discovery service mutation failed", "operation", operation, "failure_class", failureClass)
-	h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+	h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 }
 
 // handleStorageError converts storage errors to HTTP responses.
 func (h *ServicesHandler) handleStorageError(w http.ResponseWriter, r *http.Request, operation string, err error) {
 	var discoveryErr *thirdparty.DiscoveryError
 	if errors.As(err, &discoveryErr) {
-		h.writeDiscoveryError(w, discoveryErr)
+		h.writeDiscoveryError(r.Context(), w, discoveryErr)
 		return
 	}
 	var storageErr *storage.StorageError
 	if !errors.As(err, &storageErr) {
 		h.logger.ErrorContext(r.Context(), "unexpected error type", "operation", operation, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 	if errors.Is(storageErr, storage.ErrResourceChangeHasSessions) {
-		h.writeError(w, http.StatusConflict, "conflict", "resource_change_requires_no_sessions")
+		h.writeError(r.Context(), w, http.StatusConflict, "conflict", "resource_change_requires_no_sessions")
 		return
 	}
 	if errors.Is(storageErr, storage.ErrProtectedResourceOwned) {
-		h.writeError(w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
+		h.writeError(r.Context(), w, http.StatusConflict, "conflict", "protected resource URI already configured for another service")
 		return
 	}
 
 	switch storageErr.Kind {
 	case storage.ErrorKindNotFound:
-		h.writeError(w, http.StatusNotFound, "service not found", storageErr.Message)
+		h.writeError(r.Context(), w, http.StatusNotFound, "service not found", storageErr.Message)
 	case storage.ErrorKindConflict:
 		message := storageErr.Message
 		if strings.Contains(message, "grants reference it") {
-			h.writeError(w, http.StatusConflict, "conflict", message)
+			h.writeError(r.Context(), w, http.StatusConflict, "conflict", message)
 		} else {
-			h.writeError(w, http.StatusConflict, "conflict", storageErr.Message)
+			h.writeError(r.Context(), w, http.StatusConflict, "conflict", storageErr.Message)
 		}
 	case storage.ErrorKindValidation:
-		h.writeError(w, http.StatusBadRequest, "validation failed", storageErr.Message)
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", storageErr.Message)
 	case storage.ErrorKindTimeout:
-		h.writeError(w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
+		h.writeError(r.Context(), w, http.StatusGatewayTimeout, "operation timed out", storageErr.Message)
 	default:
 		h.logger.ErrorContext(r.Context(), "storage operation failed", "operation", operation, "kind", storageErr.Kind, "error", storageErr)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 	}
 }
 
 // writeDiscoveryError returns only approved failure codes, never remote response text.
-func (h *ServicesHandler) writeDiscoveryError(w http.ResponseWriter, discoveryErr *thirdparty.DiscoveryError) {
+func (h *ServicesHandler) writeDiscoveryError(ctx context.Context, w http.ResponseWriter, discoveryErr *thirdparty.DiscoveryError) {
 	status, category := http.StatusBadRequest, "discovery failed"
 	switch discoveryErr.Code {
 	case "resource_metadata_not_found", "resource_metadata_unavailable", "resource_metadata_invalid",
@@ -875,29 +895,29 @@ func (h *ServicesHandler) writeDiscoveryError(w http.ResponseWriter, discoveryEr
 	case "duplicate_client_identity", "issuer_change_requires_no_sessions", "resource_change_requires_no_sessions":
 		status, category = http.StatusConflict, "conflict"
 	default:
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(ctx, w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
 	if discoveryErr.Code == "issuer_selection_required" {
 		if len(discoveryErr.AuthorizationServers) < 2 {
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(ctx, w, http.StatusInternalServerError, "internal server error", "")
 			return
 		}
 		seen := make(map[string]struct{}, len(discoveryErr.AuthorizationServers))
 		for _, issuer := range discoveryErr.AuthorizationServers {
 			parsed, err := url.Parse(issuer)
 			if err != nil || model.ValidatePublicHTTPSURL(issuer) != nil || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(issuer, "#") {
-				h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+				h.writeError(ctx, w, http.StatusInternalServerError, "internal server error", "")
 				return
 			}
 			if _, exists := seen[issuer]; exists {
-				h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+				h.writeError(ctx, w, http.StatusInternalServerError, "internal server error", "")
 				return
 			}
 			seen[issuer] = struct{}{}
 		}
-		h.writeJSON(w, status, struct {
+		h.writeJSON(ctx, w, status, struct {
 			Error                string   `json:"error"`
 			Message              string   `json:"message"`
 			AuthorizationServers []string `json:"authorization_servers"`
@@ -905,23 +925,23 @@ func (h *ServicesHandler) writeDiscoveryError(w http.ResponseWriter, discoveryEr
 		return
 	}
 
-	h.writeError(w, status, category, discoveryErr.Code)
+	h.writeError(ctx, w, status, category, discoveryErr.Code)
 }
 
 // writeJSON writes a JSON response.
-func (h *ServicesHandler) writeJSON(w http.ResponseWriter, statusCode int, data any) {
+func (h *ServicesHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
 // writeError writes an error response.
-func (h *ServicesHandler) writeError(w http.ResponseWriter, statusCode int, error string, message string) {
+func (h *ServicesHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, error string, message string) {
 	resp := ErrorResponse{
 		Error:   error,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }

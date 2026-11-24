@@ -71,7 +71,7 @@ func (h *SigningKeysHandler) Add(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, io.EOF) {
 			req.Algorithm = "ES256"
 		} else {
-			h.writeError(w, http.StatusBadRequest, "invalid request body", "")
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", "")
 			return
 		}
 	}
@@ -79,14 +79,14 @@ func (h *SigningKeysHandler) Add(w http.ResponseWriter, r *http.Request) {
 		req.Algorithm = "ES256"
 	}
 	if req.Algorithm != "ES256" {
-		h.writeError(w, http.StatusBadRequest, "unsupported algorithm", "algorithm must be ES256")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "unsupported algorithm", "algorithm must be ES256")
 		return
 	}
 
 	key, err := h.signingKeyService.GenerateAndStoreKey(r.Context(), req.Algorithm, true)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "failed to add signing key", "operator_principal", operatorPrincipal, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -99,7 +99,7 @@ func (h *SigningKeysHandler) Add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.InfoContext(r.Context(), "signing key added", "operator_principal", operatorPrincipal, "kid", key.KID, "algorithm", key.Algorithm, "activates_at", key.ActivatesAt)
-	h.writeJSON(w, http.StatusCreated, resp)
+	h.writeJSON(r.Context(), w, http.StatusCreated, resp)
 }
 
 // List returns all active signing keys (without private material).
@@ -113,7 +113,7 @@ func (h *SigningKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 	keys, err := h.signingKeyService.ListKeys(r.Context())
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "failed to list signing keys", "operator_principal", operatorPrincipal, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -128,7 +128,7 @@ func (h *SigningKeysHandler) List(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	h.writeJSON(w, http.StatusOK, map[string]interface{}{
+	h.writeJSON(r.Context(), w, http.StatusOK, map[string]interface{}{
 		"items": items,
 	})
 }
@@ -142,18 +142,18 @@ func (h *SigningKeysHandler) SetCurrent(w http.ResponseWriter, r *http.Request) 
 	}
 	kid := chi.URLParam(r, "kid")
 	if kid == "" {
-		h.writeError(w, http.StatusBadRequest, "kid is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "kid is required", "")
 		return
 	}
 
 	key, err := h.signingKeyService.PromoteKey(r.Context(), id.NewKeyID(kid))
 	if err != nil {
 		if ports.IsNotFoundErr(err) {
-			h.writeError(w, http.StatusNotFound, "signing key not found", "")
+			h.writeError(r.Context(), w, http.StatusNotFound, "signing key not found", "")
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "failed to set current key", "operator_principal", operatorPrincipal, "kid", kid, "error", err)
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
@@ -166,7 +166,7 @@ func (h *SigningKeysHandler) SetCurrent(w http.ResponseWriter, r *http.Request) 
 	}
 
 	h.logger.InfoContext(r.Context(), "signing key promoted to current", "operator_principal", operatorPrincipal, "kid", kid)
-	h.writeJSON(w, http.StatusOK, resp)
+	h.writeJSON(r.Context(), w, http.StatusOK, resp)
 }
 
 // Remove soft-deletes a signing key.
@@ -178,23 +178,23 @@ func (h *SigningKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	}
 	kid := chi.URLParam(r, "kid")
 	if kid == "" {
-		h.writeError(w, http.StatusBadRequest, "kid is required", "")
+		h.writeError(r.Context(), w, http.StatusBadRequest, "kid is required", "")
 		return
 	}
 
 	if err := h.signingKeyService.DeleteKey(r.Context(), id.NewKeyID(kid)); err != nil {
 		switch {
 		case ports.IsNotFoundErr(err):
-			h.writeError(w, http.StatusNotFound, "signing key not found", "")
+			h.writeError(r.Context(), w, http.StatusNotFound, "signing key not found", "")
 		case errors.Is(err, ports.ErrLastActiveKey):
-			h.writeError(w, http.StatusConflict, signingKeyDeleteLastKeyError, signingKeyDeleteLastKeyMessage)
+			h.writeError(r.Context(), w, http.StatusConflict, signingKeyDeleteLastKeyError, signingKeyDeleteLastKeyMessage)
 		case errors.Is(err, ports.ErrCurrentKey):
-			h.writeError(w, http.StatusConflict, signingKeyDeleteCurrentKeyError, signingKeyDeleteCurrentKeyMessage)
+			h.writeError(r.Context(), w, http.StatusConflict, signingKeyDeleteCurrentKeyError, signingKeyDeleteCurrentKeyMessage)
 		case errors.Is(err, ports.ErrEffectiveCurrentKey):
-			h.writeError(w, http.StatusConflict, signingKeyDeleteCurrentKeyError, signingKeyDeleteEffectiveCurrentKeyMessage)
+			h.writeError(r.Context(), w, http.StatusConflict, signingKeyDeleteCurrentKeyError, signingKeyDeleteEffectiveCurrentKeyMessage)
 		default:
 			h.logger.ErrorContext(r.Context(), "failed to remove signing key", "operator_principal", operatorPrincipal, "kid", kid, "error", err)
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		}
 		return
 	}
@@ -203,26 +203,26 @@ func (h *SigningKeysHandler) Remove(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *SigningKeysHandler) writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
+func (h *SigningKeysHandler) writeJSON(ctx context.Context, w http.ResponseWriter, statusCode int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		h.logger.Error("failed to encode response", "error", err)
+		h.logger.ErrorContext(ctx, "failed to encode response", "error", err)
 	}
 }
 
-func (h *SigningKeysHandler) writeError(w http.ResponseWriter, statusCode int, errMsg string, message string) {
+func (h *SigningKeysHandler) writeError(ctx context.Context, w http.ResponseWriter, statusCode int, errMsg string, message string) {
 	resp := ErrorResponse{
 		Error:   errMsg,
 		Message: message,
 	}
-	h.writeJSON(w, statusCode, resp)
+	h.writeJSON(ctx, w, statusCode, resp)
 }
 
 func (h *SigningKeysHandler) requireOperatorPrincipal(w http.ResponseWriter, ctx context.Context) (id.Principal, bool) {
 	operatorPrincipal, ok := operatorPrincipalFromContext(ctx, h.logger)
 	if !ok {
-		h.writeError(w, http.StatusInternalServerError, signingKeyOperatorPrincipalError, signingKeyOperatorPrincipalMessage)
+		h.writeError(ctx, w, http.StatusInternalServerError, signingKeyOperatorPrincipalError, signingKeyOperatorPrincipalMessage)
 		return "", false
 	}
 	return operatorPrincipal, true
