@@ -108,6 +108,7 @@ The interface shows **Local Research Agent** and its requested permission sets.
 
 Select the optional **Identity Access** permission set.
 Connect **Mock OAuth2 Service (Dev)** before you submit consent.
+The service shows the Zalando icon in the consent interface.
 Complete the mock provider authorization in the browser. This stores the provider token in the broker, not the agent.
 
 Review your selection, then submit consent.

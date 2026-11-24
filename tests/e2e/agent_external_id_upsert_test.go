@@ -557,10 +557,12 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			postgres, err = bootstrap.NewPostgresFixtureAtVersion(ctx, 46)
 			Expect(err).To(Succeed())
 			Expect(postgres.RecoverExternalIDMigration(ctx)).NotTo(Succeed())
-			legacyStore = externalIDPostgresStorage(postgres)
-			legacyServer = externalIDAdminServer(legacyStore)
 			db, err = sql.Open("pgx", postgres.ConnectionURL)
 			Expect(err).To(Succeed())
+			// Current provider repositories need the icon column while the legacy broker is running.
+			Expect(postgres.ApplyMigrationFile(ctx, "049_service_icon_svg.up.sql")).To(Succeed())
+			legacyStore = externalIDPostgresStorage(postgres)
+			legacyServer = externalIDAdminServer(legacyStore)
 			legacy = nil
 			for range 3 {
 				a := fixtures.AgentWithExternalID(id.ExternalID(id.NewAgentID().String()), fixtures.PlaceholderPermissionSetID)
@@ -601,7 +603,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 		}
 		expectBlocked := func(affected ...*storage.Agent) {
 			before := snapshot()
-			err := postgres.MigrateTo(0)
+			err := postgres.MigrateTo(47)
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("agent external_id uniqueness migration blocked"))
 			for _, a := range affected {
@@ -652,6 +654,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			}
 			before := snapshot()
 			Expect(postgres.RecoverExternalIDMigration(ctx)).To(Succeed())
+			Expect(postgres.ApplyMigrationFile(ctx, "049_service_icon_svg.down.sql")).To(Succeed())
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
 			definition["external_id"] = string(selector)
@@ -666,6 +669,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 		It("should preserve agents and relationships across rollback and reapply", func() {
 			setID(legacy[2], nil)
 			before := snapshot()
+			Expect(postgres.ApplyMigrationFile(ctx, "049_service_icon_svg.down.sql")).To(Succeed())
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
 			Expect(postgres.MigrateTo(46)).To(Succeed())

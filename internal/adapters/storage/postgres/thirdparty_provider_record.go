@@ -27,6 +27,7 @@ type ThirdpartyOAuth2ProviderRecord struct {
 	ID                           string                      `db:"id"`
 	CanonicalID                  *string                     `db:"canonical_id"`
 	DisplayName                  string                      `db:"display_name"`
+	IconSVG                      *string                     `db:"icon_svg"`
 	ClientID                     *string                     `db:"client_id"`
 	SecretCiphertext             []byte                      `db:"client_secret_encrypted"`
 	TokenEndpointAuthMethod      *string                     `db:"token_endpoint_auth_method"`
@@ -192,6 +193,10 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 		AuthorizationParams:          providerAuthorizationParams(maps.Clone(entity.AuthorizationParams)),
 		UpdatedAt:                    entity.UpdatedAt,
 	}
+	if entity.IconSVG != nil {
+		source := *entity.IconSVG
+		record.IconSVG = &source
+	}
 
 	if entity.Discovery.MetadataURL != nil {
 		s := *entity.Discovery.MetadataURL
@@ -281,6 +286,10 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 		AuthorizationParams: maps.Clone(map[string]string(record.AuthorizationParams)),
 		UpdatedAt:           record.UpdatedAt,
 		Version:             record.Version,
+	}
+	if record.IconSVG != nil {
+		source := *record.IconSVG
+		entity.IconSVG = &source
 	}
 	if record.ClientID != nil {
 		entity.ClientID = id.ClientID(*record.ClientID)

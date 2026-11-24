@@ -127,10 +127,7 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to get agent name")
 		Expect(agentName).NotTo(BeEmpty(), "Agent name should be displayed")
 
-		err = consentPage.SubmitConsent(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to click Approve & Delegate button")
-
-		err = consentPage.WaitForGrantSuccess(ctx)
+		err = consentPage.ExpectGrantSuccess(func() error { return consentPage.SubmitConsent(ctx) })
 		Expect(err).NotTo(HaveOccurred(), "Grant save should succeed")
 	})
 
@@ -144,10 +141,7 @@ var _ = Describe("Consent Grant Save Flow", func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(agentName).NotTo(BeEmpty())
 
-		err = consentPage.SubmitConsent(ctx)
-		Expect(err).NotTo(HaveOccurred(), "Failed to submit consent with redirect_uri")
-
-		Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(),
+		Expect(consentPage.ExpectGrantSuccess(func() error { return consentPage.SubmitConsent(ctx) })).To(Succeed(),
 			"Direct grant save should display success even with redirect_uri in the page URL")
 		hasError, err := consentPage.HasError(ctx)
 		Expect(err).NotTo(HaveOccurred())
