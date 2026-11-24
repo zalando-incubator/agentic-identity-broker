@@ -65,7 +65,7 @@ The artifact prerequisites are complete. Task completion and remaining verificat
 - [x] **Database Design**: Atomic migration `049_create_domain_events` and schema-specific tests are present. PostgreSQL migration and repository execution passed through `just test-integration-infra` (T014, T031, T071, T089).
 - [x] **E2E Acceptance Tests**: The original five container-backed scenarios preceded foundation behavior (T018–T020). Review coverage adds US1.5, for six mapped scenarios.
 - [x] **E2E Test Mapping**: One `It()` per scenario (table in Testing Strategy).
-- [x] **E2E Red Phase**: Compiling acceptance/performance tests with persistence assertions preceded foundation behavior. Docker was initially unavailable; the final PostgreSQL acceptance and SC-004 performance runs have now passed (T021, T084, T053, T055, T056).
+- [x] **E2E Red Phase**: The original five acceptance tests and the SC-004 test compiled with persistence assertions before ledger implementation. The final PostgreSQL acceptance and SC-004 runs passed (T021, T084, T053, T055, T056).
 - [x] **Frontend Playwright E2E**: Not applicable. No UI change.
 - [x] **Frontend Screenshots**: Not applicable.
 
@@ -179,7 +179,6 @@ T035 precedes T042's loader defaults, environment bindings, CLI registration, an
 The stages below explain the implementation boundaries and integration order. Task IDs refer to
 the existing `tasks.md`; they are traceability references, not permission to follow stale task
 instructions over the constitution. Each stage writes its behavior tests before implementation.
-Container-backed tests may first run in CI when no local container runtime is available.
 
 ### Phase 2 completion: executable design prerequisites
 
@@ -192,12 +191,9 @@ HTTP acceptance scenarios, using PostgreSQL inspection in test code, not a produ
 T031 defines migration-specific schema assertions before T014 creates the SQL. Both tasks belong
 to Phase 2d. The existing general migration lifecycle test does not assert the new table's
 columns, constraints, or retention, principal, and agent index definitions.
-T084 writes the SC-004 performance test after T017 and before Phase 2.5. Its enabled-block
-persistence assertions must detect the missing ledger behavior. If a local container runtime is
-available, verify semantic failure before implementation. If no local container runtime is available,
-[Constitution Principle VIII](../../.specify/memory/constitution.md#viii-test-driven-development--automated-testing)
-permits the first run in CI on a commit that includes the implementation. T053 runs the final
-measurement with unchanged assertions. T080 verifies this test-first ordering.
+T084 writes the SC-004 performance test after T017 and before Phase 2.5. Verify that its
+enabled-block assertions fail because the ledger does not store the event. T053 runs the final
+measurement with unchanged assertions. T080 checks that the tests preceded implementation.
 
 **Exit**: Design approvals and prerequisite artifacts are complete; acceptance tests compile
 and exercise concrete outcomes; schema-specific tests precede the migration. No production
@@ -414,7 +410,7 @@ Not applicable. No UI change.
 
 **Unit Tests**:
 - `internal/domain/domainevent/definition_test.go`: identifier validation, duplicate panic, `LogValue`, `Definitions()` order. Definitions without and with `domainevent.OwnerVisible()` return false and true, respectively, including their entries in `Definitions()`.
-- `internal/domain/model/domain_event_test.go`: `Validate`, `Copy`.
+- `internal/domain/model/domain_event_test.go`: occurrence validation.
 - `internal/adapters/storage/memory/domain_event_test.go`: append, conflict, defensive copy, and retention delete, observed through adapter-private state in same-package tests.
   Include fixed sub-microsecond occurrence times and assert full nanosecond preservation with `time.Time.Equal` (T028).
 - `internal/domain/domainevent/retention/service_test.go`: batching, cancellation, no deletion log, and failed-run logging. Controlled-time tests cover immediate startup, expiry just after a cutoff, scheduled deletion, and multi-batch recovery after failure or re-enable (T033; SC-005). Healthy runs start no more than one interval apart and complete before the next scheduled start. Without concurrent retention deletes, recovery tests assert deletion of all rows older than the recovery run's cutoff and preservation of newer rows. A simulated short concurrent delete leaves expired rows while the competing run fails. The next scheduled run resumes cleanup and clears the backlog without deleting newer rows.
