@@ -139,6 +139,10 @@ bootstrap_subset:            # API-BOOT, managed mode only
     - reject every OPA-native local file read, including bearer token_path, TLS file paths, client_tls, and file:// bundles
     - validate nested settings against the pinned OPA types before sdk.New; unchecked local-file references are forbidden
     - OPA parser errors are not echoed; the diagnostic gives the field and a reason class
+  transport_and_signing: >-
+    No broker requirement (spec clarification 2026-11-24), as in ExtProc: http and https service
+    URLs and unsigned or signed bundles are accepted as OPA accepts them. Documentation recommends
+    https services and bundle signing with keys, because bundles decide token issuance.
   reuse_from_extproc: >-
     An ExtProc bootstrap file is accepted only if it uses the subset above. Files with
     decision_logs, status, discovery, or other plugins fail startup by design; copy only services,
