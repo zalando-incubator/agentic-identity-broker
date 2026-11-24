@@ -45,8 +45,11 @@ These requirement clarifications remain pending the named plan approval items; t
 approval or change the accepted Q1/Q2 scope direction.
 
 - Governance identity (F1): FR-006 adds `context.agent.external_id`, literally from the resolved
-  broker Agent or `""` when absent; Journey 1 indexes governance by External ID without UUID
-  fallback. Reason: the broker is authoritative for the UUID/governance mapping (API-INPUT).
+  broker Agent and omitted when absent; Journey 1 indexes governance by External ID without UUID
+  fallback. `context.agent` reuses ExtProc's Grant Context agent object (`id`, optional
+  `canonical_id`) from ADR `048-authzen-delegation-pip`, and the input carries
+  `type: "impersonation"`. ExtProc grant-context members stay absent because OPA runs before
+  delegation (research R8). Reason: the broker is authoritative for the UUID/governance mapping (API-INPUT).
   Main alternative: UUID-only input with operators synchronizing UUID-to-governance maps.
 - Initial readiness (I1): FR-003/SR-002 require the first admitted serving snapshot itself to
   include every configured bundle. Reason: a usable subset cannot satisfy readiness when the
@@ -102,7 +105,7 @@ A policy author reuses Envoy-compatible request predicates alongside checks on t
 
 **Acceptance Scenarios**:
 
-1. **Scenario 2.1 — Context parity**: **Given** signed credentials with distinct client, actor, and subject claims and a resolved target agent, **When** a policy checks the Envoy-compatible HTTP fields and broker context described below, **Then** it observes the same claim values, JSON value types, verification indicator, and exchange parameters as equivalent CEL authorization, plus the literal External ID from the broker-resolved Agent (empty when unset), and permits the request only when they all match; headers and token claims cannot override that mapping.
+1. **Scenario 2.1 — Context parity**: **Given** signed credentials with distinct client, actor, and subject claims and a resolved target agent, **When** a policy checks the Envoy-compatible HTTP fields and broker context described below, **Then** it observes the same claim values, JSON value types, verification indicator, and exchange parameters as equivalent CEL authorization, plus the broker-resolved Agent's UUID, Canonical ID, and literal External ID in ExtProc's `agent` shape (optional IDs omitted when unset), and permits the request only when they all match; headers and token claims cannot override that mapping.
 2. **Scenario 2.2 — Untrusted transport cannot replace identity**: **Given** a valid request with a caller-provided identity-looking HTTP header and a policy requiring a different verified client identity, **When** the client submits the request, **Then** the header cannot overwrite verified context, authorization is denied, and no token is issued.
 3. **Scenario 2.3 — Unsigned human and bound email**: **Given** an explicitly unverified subject rule, signed verified client and actor, an unsigned `alg:none` human subject, active delegation, and an OPA decision binding the subject and its email, **When** the policy permits the request, **Then** `context.subject_unverified` is `true`, the subject claims remain caller-asserted data, and the normal human token is issued with the bound email. A revision without the email binding must not enable minting that email.
 4. **Scenario 2.4 — Unsigned self-agent**: **Given** an OPA rule allowing agent subjects whose decision binds `context.subject_token.sub` to the approved target UUID, and an unsigned subject with that exact raw `sub`, **When** signed client and actor validation and governance checks pass, **Then** the normal target-derived agent token is issued without a human grant or session. A different registered agent's raw `sub` or extracted principal remains ineligible without human fallback or a consent link; without the `sub` binding an unsigned exact-target subject remains human and needs human eligibility and delegation.
@@ -210,8 +213,8 @@ bundles:
 ```
 
 The bundle supplies `company.impersonation.result` and governance data. Its business rule requires method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration keyed by `context.agent.external_id` (`inventory-agent`) assigned to
-`inventory-api`. The resolved broker Agent supplies this literal External ID; missing IDs deny the
-example policy, without UUID fallback. UUID remains the target and minted identity. The decision is `{"action":"allow"}` only when all checks pass; otherwise it is `{"action":"deny"}`. Bundle authentication, update cadence, and data freshness are operator-owned bootstrap settings, not credentials embedded in this example. Policy-time network access, including `http.send`, is prohibited (Q1). An initial or updated revision using network-capable policy built-ins cannot activate; configured bundle retrieval is not a policy-time lookup.
+`inventory-api`. The resolved broker Agent supplies this literal External ID; a missing ID is omitted, so the
+lookup is undefined and the example policy denies, without UUID fallback. UUID remains the target and minted identity. The decision is `{"action":"allow"}` only when all checks pass; otherwise it is `{"action":"deny"}`. Bundle authentication, update cadence, and data freshness are operator-owned bootstrap settings, not credentials embedded in this example. Policy-time network access, including `http.send`, is prohibited (Q1). An initial or updated revision using network-capable policy built-ins cannot activate; configured bundle retrieval is not a policy-time lookup.
 
 **Step 2 — Client submits the exchange.** `SYNTHETIC_CLIENT_JWT`, `SYNTHETIC_ACTOR_JWT`, and `SYNTHETIC_SUBJECT_JWT` denote test-issued signed JWTs, not literal wire-valid tokens. All use decoded header `{"alg":"RS256","kid":"identity-test-key","typ":"JWT"}` and have these decoded claims:
 
@@ -246,6 +249,7 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=ht
 
 ```json
 {
+  "type": "impersonation",
   "attributes": {
     "request": {
       "http": {
@@ -262,7 +266,7 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=ht
     "actor_token": {"sub": "automation-worker"},
     "subject_token": {"sub": "alice@example.com"},
     "subject_unverified": false,
-    "agent": {"external_id": "inventory-agent"},
+    "agent": {"id": "550e8400-e29b-41d4-a716-446655440000", "external_id": "inventory-agent"},
     "request": {
       "resource": "",
       "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -473,7 +477,7 @@ If a later valid revision still authorizes the subject but does not bind its ema
 - **FR-003**: OPA configuration MUST accept an OPA-native bootstrap configuration file comparable to ExtProc's managed-policy configuration, including managed policy/data bundles and a selected decision document. It MUST be an absolute regular file read through `os.Root` under `security.trust_material_dir`, at most 1 MiB; SDK-local-file references are unsupported. Invalid configuration or no admitted snapshot containing every configured bundle within a bounded startup interval MUST prevent readiness; historical activations cannot make an earlier subset usable.
 - **FR-004**: A successfully activated managed policy/data update MUST affect subsequent evaluations without rebuilding or restarting the broker. Updates MUST activate consistently; the broker MUST NOT reuse a previous request's allow decision.
 - **FR-005**: For all existing local-mode impersonation credential modes (FR-013), the input MUST provide the Envoy OPA plugin-compatible `attributes.request.http` envelope for the token endpoint request and the namespaced `context` fields in Journeys 1 and 4. For each existing CEL variable `v` among `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, and `request`, `input.context.v` MUST preserve the same semantics and value types. `subject_unverified` MUST be `true` only for an explicitly unverified subject and `false` for a verified signed subject; unsigned subject claims MUST NOT be presented as verified. This does not promise identical policy syntax between CEL and Rego.
-- **FR-006**: Policy context MUST be derived from the same validated per-rule credentials and resolved target used by CEL, not raw request-supplied identity headers. The `request` extension MUST preserve `resource`, `grant_type`, `scope`, and target UUID `agent_id`; it MUST NOT confuse the routing audience with the minted token audience. `context.agent.external_id` MUST be the resolved broker Agent's literal External ID or `""` when absent; callers and bundles cannot override the mapping. Governance examples MUST use this ID without falling back to UUID.
+- **FR-006**: Policy context MUST be derived from the same validated per-rule credentials and resolved target used by CEL, not raw request-supplied identity headers. The `request` extension MUST preserve `resource`, `grant_type`, `scope`, and target UUID `agent_id`; it MUST NOT confuse the routing audience with the minted token audience. `context.agent` MUST use ExtProc's Grant Context agent shape: `id` is the target UUID, and `canonical_id` and `external_id` are the resolved broker Agent's literal values, each omitted when unset (never `null` or `""`). Callers and bundles cannot override the mapping. Governance examples MUST use `external_id` without falling back to UUID. The input MUST carry `type: "impersonation"` and MUST NOT carry ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`, `granted_permission_sets`, `granted_permission_sets_available`, `agent_session_id`).
 - **FR-007**: A well-formed `{"action":"allow"}` decision MUST satisfy only the selected rule's authorization predicate. `{"action":"deny"}` MUST act as an explicit policy non-match. Other action values, missing/undefined decisions, malformed output, evaluation errors, cancellation, and timeouts MUST issue no token and terminate internally with `server_error`, without fallback to another rule or engine. Connected callers receive HTTP 500; disconnected callers have no response guarantee and cancellation acceptance uses request-correlated telemetry and no issuance/fallthrough. ExtProc approval actions and response mutations are outside this decision contract.
 - **FR-008**: Ordered first-match rules, per-rule credential validation and extraction, category eligibility, human delegation, target/scope validation, and local token issuance MUST retain their established behavior. OPA MUST NOT select the minted subject, alter reserved token claims, or bypass a terminal delegation failure.
 - **FR-009**: CEL MUST remain the engine for role principal/email extraction, local token-claims expressions, and existing third-party agent-subject detection. This feature MUST NOT enable OPA for ordinary third-party exchange or proxy/hybrid impersonation. Explicit `token_exchange.authorization.type: opa` MUST fail startup rather than being accepted and ignored; valid CEL settings/defaults remain unchanged.

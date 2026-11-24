@@ -8,10 +8,16 @@ The policy is evaluated at `data.<policy.package>.<policy.decision>` with the in
 evaluated OPA rule, after credential validation, extraction, subject classification, and category
 eligibility, and before human delegation (the existing CEL position in the rule pipeline).
 
+The input shares one OPA vocabulary with ExtProc (ADR `028-opa-extproc-authorization`, amended by
+ADR `048-authzen-delegation-pip`): the same Envoy envelope, an `input.type` discriminator, and the
+same `input.context.agent` object as ExtProc's AuthZEN-fed Grant Context. § 1.1 defines the shared
+and the reserved members.
+
 ## 1. Input document
 
 ```json
 {
+  "type": "impersonation",
   "attributes": {
     "request": {
       "http": {
@@ -36,7 +42,11 @@ eligibility, and before human delegation (the existing CEL position in the rule 
     "actor_token": {"iss": "https://identity.example.com", "sub": "automation-worker", "aud": "broker-impersonation", "iat": 1795165140, "exp": 1795168800},
     "subject_token": {"iss": "https://identity.example.com", "sub": "alice@example.com", "aud": "broker-impersonation", "iat": 1795165140, "exp": 1795168800},
     "subject_unverified": false,
-    "agent": {"external_id": "inventory-agent"},
+    "agent": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "canonical_id": "inventory-assistant",
+      "external_id": "inventory-agent"
+    },
     "request": {
       "resource": "",
       "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -49,6 +59,7 @@ eligibility, and before human delegation (the existing CEL position in the rule 
 
 | Path | Source | Rules |
 | --- | --- | --- |
+| `type` | Constant | Always `"impersonation"`; ExtProc's values are `mcp_tool_call`, `mcp_method`, `mcp_headers_only`, and `unknown` |
 | `attributes.request.http.method` | Request method | Always `POST` on the token endpoint |
 | `attributes.request.http.path` | Request URL path | No query string |
 | `attributes.request.http.host`, `.scheme` | `server.enduser.public_url` | Trusted configuration, not the `Host` header or TLS state |
@@ -61,16 +72,41 @@ eligibility, and before human delegation (the existing CEL position in the rule 
 | `context.subject_token` | Signed and verified claims, or the caller-asserted claims of an unsigned subject | Same map as the CEL variable |
 | `context.subject_unverified` | Rule's subject `verification` | `true` only for `verification: none` |
 | `context.request` | Exchange parameters and resolved target | Same map as the CEL `request` variable; `resource` is always `""` |
-| `context.agent.external_id` | Resolved broker Agent | Literal External ID, `""` when absent; broker-owned UUID mapping, never caller- or bundle-supplied; no UUID fallback |
+| `context.agent.id` | Resolved broker Agent | Target Agent UUID; equal to `context.request.agent_id`. Same member and meaning as ExtProc `input.context.agent.id` |
+| `context.agent.canonical_id` | Resolved broker Agent | Canonical ID; **omitted** when unset, never `null` or `""`. Same member and meaning as ExtProc `input.context.agent.canonical_id` |
+| `context.agent.external_id` | Resolved broker Agent | Literal External ID; **omitted** when unset, never `null` or `""`; broker-owned UUID mapping, never caller- or bundle-supplied; no UUID or Canonical ID fallback. Not yet in ExtProc's Grant Context (§ 1.1) |
 
 Absent optional claims stay absent. Strings, numbers, booleans, arrays, and nested objects keep their
 JSON types. Empty claim maps are `{}`. The input has no other members: no `body`, `raw_body`,
-`source`, `destination`, `id`, raw JWT strings, or cookies. Caller headers cannot populate or
+`source`, `destination`, `id`, `mcp`, raw JWT strings, or cookies. Caller headers cannot populate or
 overwrite `context`, because `context` is built only from validated values.
 
 Envoy compatibility covers the listed paths and their meanings. It does not guarantee that every
 Envoy policy runs unchanged, for example policies that read bodies, source addresses, or
 `authorization` headers.
+
+### 1.1 Alignment with the ExtProc Grant Context
+
+ExtProc's enabled-mode `input.context` is the typed projection of the broker's AuthZEN permit
+(`specs/054-authzen-delegation-pip/contracts/extproc-grant-context.md` § 4). An organization can
+run one bundle for both engines, so a shared name MUST have one meaning, and a name with an ExtProc
+meaning MUST NOT be reused with another meaning here.
+
+| `input.context` member | ExtProc (grant context enabled) | Impersonation input | Reason |
+| --- | --- | --- | --- |
+| `agent.id`, `agent.canonical_id` | Permit agent | Resolved target Agent, same shape and omission rule | One agent object across engines |
+| `agent.external_id` | Absent | Resolved target Agent | Governance key (F1). Adding it to the AuthZEN permit and ExtProc is a separate change to ADR `048-authzen-delegation-pip` |
+| `principal` | Permit `subject.id`, backed by an active UserGrant | **Absent** | OPA runs before human delegation; the extracted principal may be unsigned. Policies read `subject_token` and `subject_unverified` instead |
+| `resource`, `grant`, `permission_sets` | Permit members | **Absent** | No Grant Context exists before delegation, and impersonation has no protected resource |
+| `granted_permission_sets`, `granted_permission_sets_available` | Compatibility members | **Absent** | Same as above. An absent member makes ExtProc-style checks undefined, so they fail closed |
+| `agent_session_id` | MCP session header | **Absent** | No MCP session on the token endpoint |
+| `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, `request` | Absent | Present | CEL parity (FR-005); ExtProc does not use these names |
+
+The impersonation input never contains a reserved ExtProc member. A later feature that runs OPA
+after delegation and supplies a Grant Context MUST use the ExtProc members and shapes above.
+
+Neither `context.agent.id` nor `context.request.agent_id` is subject binding evidence. Policies
+that admit unverified agent subjects still compare `context.subject_token.sub` (§ 4).
 
 ## 2. Sensitivity
 
@@ -98,6 +134,21 @@ no issuance, and no later-rule authorization. Connected failure variants still a
 Other members of the decision object (`reasons`, `approval_context`, response headers) are ignored.
 They are never logged, recorded, or returned. A decision is never reused for another request.
 
+**Divergence from ExtProc's parser** (`internal/extproc/authorization/decision.go`): the same
+document has different effects. The broker treats a decision as a rule predicate, so anything other
+than `allow` or `deny` is an authoring error and is terminal, not a deny:
+
+| Decision value | ExtProc | Impersonation |
+| --- | --- | --- |
+| `allow` | Forward | Rule matches |
+| `deny` (with optional `reasons`) | 403, reasons used | Non-match; reasons ignored |
+| `approval_required` | Tool approval flow | Terminal 500 `opa_decision_invalid` |
+| `ciba_required` | Deny ("not yet supported") | Terminal 500 `opa_decision_invalid` |
+| Undefined, non-object, unknown action | Deny | Terminal 500 `opa_decision_invalid` |
+
+A bundle shared with ExtProc MUST therefore branch on `input.type` and return only `allow` or
+`deny` when `input.type == "impersonation"`.
+
 Minimal policy (Journey 1):
 
 ```rego
@@ -108,11 +159,11 @@ import rego.v1
 default result := {"action": "deny"}
 
 result := {"action": "allow"} if {
+	input.type == "impersonation"
 	input.attributes.request.http.method == "POST"
 	input.parsed_path == ["oauth2", "token"]
 	input.context.client_assertion.sub == "gateway-1"
 	input.context.actor_token.sub == "automation-worker"
-	input.context.agent.external_id != ""
 	registration := data.governance.agents[input.context.agent.external_id]
 	registration.status == "approved"
 	registration.application == "inventory-api"

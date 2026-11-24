@@ -237,8 +237,9 @@ protocol, header map) into `impersonation.Request`. The domain builds the input:
   or `id`.
 - `context`: `client_assertion`, `actor_token`, `subject_token` (validated claim maps, `{}` when
   empty), `subject_unverified`, and `request` (`resource`, `grant_type`, `scope`, `agent_id`), built
-  from the same values as the CEL activation; plus `agent.external_id` read literally from the
-  broker-resolved Agent (empty string when unset). Governance examples index bundles by that
+  from the same values as the CEL activation; plus `agent` from the broker-resolved Agent:
+  `id` (UUID), and `canonical_id` and literal `external_id`, each omitted when unset. Top-level
+  `type: "impersonation"`. Governance examples index bundles by that
   External ID, not UUID. The broker is authoritative for UUID-to-External-ID mapping; callers and
   bundles cannot override it. UUID remains the routing and minted identity.
 
@@ -257,6 +258,23 @@ trusted configuration; the request `Host` header and a TLS-terminating ingress w
 the opa-envoy-plugin dependency to the broker binary for a handful of fields, and its body parsing
 must then be disabled). Include all headers (exposes `authorization` and cookies). Allowlist headers
 (breaks reuse of header predicates such as tenant headers).
+
+**Context consistency with ExtProc's Grant Context** (2026-11-24 revision, after rebasing on
+`release/v0.2`): ADR `048-authzen-delegation-pip` gives ExtProc an `input.context` projected from
+the broker's AuthZEN permit: `principal`, `agent {id, canonical_id?}`, `resource`, `grant`,
+`permission_sets`, and compatibility members, with optional IDs omitted, never `""`. The previous
+flat `context.agent.external_id` with `""` for absent would have defined a second `agent` shape.
+Decision: reuse ExtProc's `agent` object and its omission rule, and add `external_id` to it. Add
+`input.type: "impersonation"` next to ExtProc's discriminator values, so shared bundles can branch.
+Keep grant-context members absent: OPA runs before human delegation, so no permit-backed
+principal, grant, or permission sets exist, and an unsigned extracted principal must not look like
+ExtProc's grant-backed `principal`. Alternatives: (a) keep the flat member with `""` (two `agent`
+shapes; `!= ""` guards versus undefined); (b) add `principal` from extraction (same name, weaker
+meaning, and it bypasses DEC-BIND's `subject_token` evidence); (c) evaluate OPA after delegation
+and supply a full Grant Context (moves the rule predicate after delegation and changes first-match
+semantics; possible later feature). Follow-up outside this feature: add `external_id` to the
+AuthZEN permit agent and the ExtProc `AgentContext` under a revision of ADR
+`048-authzen-delegation-pip`.
 
 **Envelope consistency**: Keep the domain builder, but add shared JSON request/output vectors under
 `tests/testdata/opa-envoy-input/`, consumed by broker-domain and ExtProc authorization tests without

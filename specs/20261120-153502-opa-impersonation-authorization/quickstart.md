@@ -33,8 +33,9 @@ above is not evidence that the full recipe passed; do not change tests or CI to 
    [contracts/policy-input-decision.md § 3](contracts/policy-input-decision.md#3-decision-document)
    and `data.json` containing
    `{"governance":{"agents":{"inventory-agent":{"status":"approved","application":"inventory-api"}}}}`.
-   The broker Agent with Journey 1's UUID must have literal External ID `inventory-agent`; unset
-   or unknown External IDs deny the example policy, never falling back to UUID.
+   The broker Agent with Journey 1's UUID must have literal External ID `inventory-agent`. An
+   unset External ID is omitted from `input.context.agent`, so the lookup is undefined; unset or
+   unknown External IDs deny the example policy, never falling back to UUID.
 2. Package the modules and data as an OPA bundle tarball and serve it from a local test HTTP
    server at `http://127.0.0.1:8182/bundles/impersonation.tar.gz`, with a new ETag on each revision.
    Write the bootstrap as `/etc/broker/opa/bootstrap.yaml` under an operator-owned trust directory

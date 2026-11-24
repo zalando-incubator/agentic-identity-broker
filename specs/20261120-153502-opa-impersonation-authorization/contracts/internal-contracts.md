@@ -117,9 +117,14 @@ type PolicySourceFactory func(ruleName string, cfg ports.ImpersonationOPAAuthori
   `client_authorization/opa_evaluation_failed`; `ErrPolicyDecisionInvalid` → same response with
   `client_authorization/opa_decision_invalid`; both are `abort` results.
 - `AuditRecord` gains `AuthorizationEngine`, `PolicyRevision`, and `PolicyAdmissionID`.
-- `context.agent.external_id` is copied from the resolved broker Agent, literally or `""` when
-  absent, independently of credential claims, caller headers, and bundle mappings. Missing External
-  ID denies the example governance policy rather than falling back to UUID.
+- `input.type` is the constant `"impersonation"`. `context.agent` is copied from the resolved
+  broker Agent as `{id, canonical_id?, external_id?}`, the ExtProc Grant Context agent shape
+  plus `external_id`. Unset optional IDs are omitted, never `null` or `""`. The values are
+  independent of credential claims, caller headers, and bundle mappings. A missing External ID
+  makes the example governance lookup undefined, so it denies, with no UUID or Canonical ID
+  fallback. Reserved ExtProc members (`principal`, `resource`, `grant`, `permission_sets`,
+  `granted_permission_sets*`, `agent_session_id`, `mcp`) are never set
+  (policy-input-decision.md § 1.1).
 - Shared input vectors in `tests/testdata/opa-envoy-input/` must be consumed by both
   `internal/domain/impersonation/policy_input_test.go` and
   `internal/extproc/authorization/input_builder_test.go` for common Envoy fields and deliberate

@@ -93,9 +93,13 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    CEL-equivalent `context`. Claim maps, decision members other than `action`, and bootstrap values
    never appear in logs, spans, metrics, or error responses. The sensitive named input implements
    redacted `LogValue`, `String`, and `GoString` methods.
-8. **Broker-authoritative governance identity.** `context.agent.external_id` is the resolved broker
-   Agent's literal External ID or `""` when absent. Governance examples key by it with no UUID
-   fallback. Callers and bundles cannot override the mapping; routing/minted identity remains UUID.
+8. **Broker-authoritative governance identity in ExtProc's vocabulary.** `context.agent` reuses
+   the Grant Context agent object of ADR `048-authzen-delegation-pip`: `id` (UUID) and optional
+   `canonical_id`, plus `external_id`, the resolved Agent's literal External ID. Unset IDs are
+   omitted. Governance examples key by `external_id` with no UUID fallback. Callers and bundles
+   cannot override the mapping; routing/minted identity remains UUID. The input carries
+   `type: "impersonation"`, and ExtProc grant-context members are reserved and absent, because
+   OPA runs before human delegation.
 9. **Envelope consistency without binary coupling.** Keep the domain builder; shared request/input
    vectors under `tests/testdata/opa-envoy-input/` are tested by broker and ExtProc for supported
    common Envoy fields, with broker credential/body exclusions asserted separately. Production
