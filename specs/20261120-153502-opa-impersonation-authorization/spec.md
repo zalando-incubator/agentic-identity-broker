@@ -158,7 +158,7 @@ An operator retains existing CEL rules while opting individual impersonation rul
 
 ### Journey 1 — Permit only a governed agent (User Story 1, Scenarios 1.1–1.4; User Story 2, Scenarios 2.1–2.2)
 
-**Cast and initial state**: Broker `https://broker.example.com` runs in local mode. Registered agent `550e8400-e29b-41d4-a716-446655440000` has broker External ID `inventory-agent` and belongs to application `inventory-api` in the organization's governance data and permits scope `read`. Human `alice@example.com` has an active UserGrant for that agent. Privileged client `gateway-1` and actor `automation-worker` use issuer `https://identity.example.com`. All times and credentials below are synthetic; the clock is 2026-11-20 09:00:00 UTC.
+**Cast and initial state**: Broker `https://broker.example.com` runs in local mode. Registered agent `550e8400-e29b-41d4-a716-446655440000` has broker Canonical ID `inventory-assistant` and External ID `inventory-agent` and belongs to application `inventory-api` in the organization's governance data and permits scope `read`. Human `alice@example.com` has an active UserGrant for that agent. Privileged client `gateway-1` and actor `automation-worker` use issuer `https://identity.example.com`. All times and credentials below are synthetic; the clock is 2026-11-20 09:00:00 UTC.
 
 **Step 1 — Operator selects OPA for this rule.** Other normal broker settings are omitted. The OPA subsection is the proposed feature contract, not a claim that the currently reserved broker OPA fields already work. The canonical existing prefix is singular `oauth2_authorization_server.impersonation`, despite the issue's informal `impersonations` spelling.
 
@@ -212,7 +212,7 @@ bundles:
     resource: bundles/impersonation.tar.gz
 ```
 
-The bundle supplies `company.impersonation.result` and governance data. Its business rule requires method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration keyed by `context.agent.external_id` (`inventory-agent`) assigned to
+The bundle supplies `company.impersonation.result` and governance data. Its business rule requires input type `impersonation`, method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration keyed by `context.agent.external_id` (`inventory-agent`) assigned to
 `inventory-api`. The resolved broker Agent supplies this literal External ID; a missing ID is omitted, so the
 lookup is undefined and the example policy denies, without UUID fallback. UUID remains the target and minted identity. The decision is `{"action":"allow"}` only when all checks pass; otherwise it is `{"action":"deny"}`. Bundle authentication, update cadence, and data freshness are operator-owned bootstrap settings, not credentials embedded in this example. Policy-time network access, including `http.send`, is prohibited (Q1). An initial or updated revision using network-capable policy built-ins cannot activate; configured bundle retrieval is not a policy-time lookup.
 
@@ -257,16 +257,25 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=ht
         "path": "/oauth2/token",
         "scheme": "https",
         "host": "broker.example.com",
+        "protocol": "HTTP/1.1",
         "headers": {"content-type": "application/x-www-form-urlencoded"}
       }
     }
   },
+  "parsed_path": ["oauth2", "token"],
+  "parsed_query": {},
+  "parsed_body": null,
+  "truncated_body": false,
   "context": {
     "client_assertion": {"sub": "gateway-1"},
     "actor_token": {"sub": "automation-worker"},
     "subject_token": {"sub": "alice@example.com"},
     "subject_unverified": false,
-    "agent": {"id": "550e8400-e29b-41d4-a716-446655440000", "external_id": "inventory-agent"},
+    "agent": {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "canonical_id": "inventory-assistant",
+      "external_id": "inventory-agent"
+    },
     "request": {
       "resource": "",
       "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -277,7 +286,7 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=ht
 }
 ```
 
-Envoy compatibility concerns field shapes and meanings, not forwarding credentials. The credential-bearing form body, raw token strings, cookies, and authorization headers are not policy input. The verified claim maps are sensitive policy inputs, not material for decision logs. Caller headers cannot populate or overwrite `context`.
+The input has no ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`): OPA runs before Alice's delegation is checked. Envoy compatibility concerns field shapes and meanings, not forwarding credentials. The credential-bearing form body, raw token strings, cookies, and authorization headers are not policy input. The verified claim maps are sensitive policy inputs, not material for decision logs. Caller headers cannot populate or overwrite `context`.
 
 **Step 4 — Client receives the response and normal claims.** The response to Step 2 is:
 
@@ -307,7 +316,7 @@ Pragma: no-cache
 
 The local token-claims policy, not OPA and not the routing audience, supplies `aud`.
 
-**Step 5 — Denied variants use the same request.** For Scenario 1.2, mark the governance registration unapproved and activate that data. For Scenario 2.2, require client `gateway-2` in policy but add `X-Client-Identity: gateway-2` to the request while keeping the signed client subject `gateway-1`. With no later authorizing rule, either request returns:
+**Step 5 — Denied variants use the same request.** For Scenario 1.2, mark the governance registration unapproved and activate that data. For Scenario 2.2, require client `gateway-2` in policy but add `X-Client-Identity: gateway-2` to the request while keeping the signed client subject `gateway-1`. The header appears only as `attributes.request.http.headers["x-client-identity"]`; `context.client_assertion.sub` stays `gateway-1`. With no later authorizing rule, either request returns:
 
 ```http
 HTTP/1.1 403 Forbidden
@@ -460,7 +469,7 @@ The output is signed by the broker with Journey 1's broker header, not `alg:none
 
 If a later valid revision still authorizes the subject but does not bind its email, the existing unverified-email control must prevent minting that email; a local expression cannot recover it from the caller-asserted map. Removing delegation gives Journey 1's terminal delegation error, never a consent bypass. Supplying a signed subject to this unsigned rule, or this unsigned subject to a signed rule, fails the existing credential guard rather than reaching issuance.
 
-**Step 3 — Assert only the approved agent (Scenario 2.4).** On a separate variant, set `allowed_subject_categories: [agent]`, remove the optional subject `email_expression`, and use Journey 1's audience-only local token-claims expression. The OPA decision binds `context.subject_token.sub` to the literal approved UUID `550e8400-e29b-41d4-a716-446655440000` in addition to the signed client/actor and governance checks. Merely comparing it to `context.request.agent_id` would not restrict which registered agent that client could represent. `SYNTHETIC_UNSIGNED_AGENT_JWT` has the same unsigned header and empty signature, with decoded payload `{"sub":"550e8400-e29b-41d4-a716-446655440000"}`. Send Step 2's complete request with only `subject_token` replaced by that marker. With no human grant, the response is Journey 1 Step 6's `200` response and decoded agent claims. It creates no grant or session. Changing the unsigned `sub` or extracted subject principal to registered agent `660e8400-e29b-41d4-a716-446655440001` remains a rejected cross-agent request with no human fallback or consent link. Removing only the policy's `sub` field binding makes an exact-target unsigned subject human, not an implicitly permitted agent; on this agent-only rule it cannot obtain a token.
+**Step 3 — Assert only the approved agent (Scenario 2.4).** On a separate variant, set `allowed_subject_categories: [agent]`, remove the optional subject `email_expression`, and use Journey 1's audience-only local token-claims expression. The OPA decision binds `context.subject_token.sub` to the literal approved UUID `550e8400-e29b-41d4-a716-446655440000` in addition to the signed client/actor and governance checks. Merely comparing it to `context.request.agent_id` or `context.agent.id` would not restrict which registered agent that client could represent, and neither is binding evidence. `SYNTHETIC_UNSIGNED_AGENT_JWT` has the same unsigned header and empty signature, with decoded payload `{"sub":"550e8400-e29b-41d4-a716-446655440000"}`. Send Step 2's complete request with only `subject_token` replaced by that marker. With no human grant, the response is Journey 1 Step 6's `200` response and decoded agent claims. It creates no grant or session. Changing the unsigned `sub` or extracted subject principal to registered agent `660e8400-e29b-41d4-a716-446655440001` remains a rejected cross-agent request with no human fallback or consent link. Removing only the policy's `sub` field binding makes an exact-target unsigned subject human, not an implicitly permitted agent; on this agent-only rule it cannot obtain a token.
 
 **Step 4 — Accept absent audiences only when opted in (Scenario 2.5).** Independently return to Journey 1's signed-subject rule, with Alice's delegation and the original signed claim sets. For each signed role in turn, replace its `expected_audience` with `audience_requirement: absent` and remove `aud` from only that role's signed JWT payload. Retain the `RS256` header, issuer, subject, `iat`, and `exp` from Journey 1; the selected OPA decision explicitly references each opted-in role's token map and checks its expected subject. Send Journey 1 Step 2's complete request using the newly signed marker in that role. The response and decoded output claims are Journey 1 Step 4's normal `200` result, and `subject_unverified` stays `false`. Repeat with all three signed roles opted in together, and with an unsigned subject plus audience-absent signed client/actor roles: each valid combination remains supported with the corresponding references. Restoring any opted-in role's `aud` claim, invalidating its signature, or expiring it prevents issuance regardless of the allowing policy. Unsigned subjects have no audience setting; `audience_requirement: absent` does not permit unsigned client assertions or actors.
 

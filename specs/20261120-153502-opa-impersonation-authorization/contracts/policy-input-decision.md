@@ -149,7 +149,7 @@ than `allow` or `deny` is an authoring error and is terminal, not a deny:
 A bundle shared with ExtProc MUST therefore branch on `input.type` and return only `allow` or
 `deny` when `input.type == "impersonation"`.
 
-Minimal policy (Journey 1):
+Minimal policy (Journey 1; spec Journey 1 Step 3 shows the matching input):
 
 ```rego
 package company.impersonation
