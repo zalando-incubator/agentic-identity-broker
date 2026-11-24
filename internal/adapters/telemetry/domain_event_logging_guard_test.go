@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"slices"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 			exprs = exprs[1:]
 		}
 	}
-	ast.Inspect(file, func(node ast.Node) bool {
+	ast.PreorderStack(file, nil, func(node ast.Node, stack []ast.Node) bool {
 		switch n := node.(type) {
 		case *ast.CallExpr:
 			if isAppendToAnySlice(info, n) {
@@ -113,12 +114,8 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 				}
 			}
 			if name, ok := value.(*ast.Ident); ok {
-				binding := initializers[info.ObjectOf(name)]
-				value = nil
-				if binding.value != nil && binding.value.End() <= name.Pos() &&
-					(!binding.reassignedAt.IsValid() || name.Pos() < binding.reassignedAt) {
-					value = binding.value
-				}
+				obj := info.ObjectOf(name)
+				value = initializers[obj].valueAt(obj, name.Pos(), stack)
 			}
 			call, ok := value.(*ast.CallExpr)
 			if !ok || len(call.Args) != 1 || !callsSlog(info, call) {
@@ -136,6 +133,29 @@ func miskeyedDomainEvents(info *types.Info, file *ast.File) []ast.Expr {
 type domainEventGuardBinding struct {
 	value        ast.Expr
 	reassignedAt token.Pos
+}
+
+func (b domainEventGuardBinding) valueAt(obj types.Object, pos token.Pos, stack []ast.Node) ast.Expr {
+	if b.value == nil || b.value.End() > pos {
+		return nil
+	}
+	if !b.reassignedAt.IsValid() {
+		return b.value
+	}
+	if pos >= b.reassignedAt {
+		return nil
+	}
+	for _, node := range slices.Backward(stack) {
+		switch node.(type) {
+		case *ast.FuncDecl, *ast.FuncLit:
+			// Source order does not establish when a closure reads a captured variable.
+			if obj.Pos() >= node.Pos() {
+				return b.value
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 func domainEventGuardBindings(info *types.Info, file *ast.File) (map[types.Object]domainEventGuardBinding, map[*ast.CallExpr][]ast.Expr) {
@@ -282,6 +302,24 @@ func TestDomainEventGuardDetectsWrongKeys(t *testing.T) {
 		{"attr before local assignment", `var value slog.Value; _ = slog.Attr{Key: "action", Value: value}; value = slog.AnyValue(definition)`, 0},
 		{"attr before reassignment", `value := slog.AnyValue(definition); _ = slog.Attr{Key: "action", Value: value}; value = slog.StringValue("ordinary")`, 1},
 		{"attr after reassignment", `value := slog.AnyValue(definition); value = slog.StringValue("ordinary"); _ = slog.Attr{Key: "action", Value: value}`, 0},
+		{"captured attr after reassignment", `
+			value := slog.AnyValue(definition)
+			attr := func() slog.Attr { return slog.Attr{Key: "action", Value: value} }
+			value = slog.StringValue("ordinary")
+			_ = attr()
+		`, 0},
+		{"captured attr without reassignment", `
+			value := slog.AnyValue(definition)
+			attr := func() slog.Attr { return slog.Attr{Key: "action", Value: value} }
+			_ = attr()
+		`, 1},
+		{"closure-local attr before reassignment", `
+			func() {
+				value := slog.AnyValue(definition)
+				_ = slog.Attr{Key: "action", Value: value}
+				value = slog.StringValue("ordinary")
+			}()
+		`, 1},
 		{"correct literal", `_ = slog.Attr{Key: "event", Value: slog.AnyValue(definition)}`, 0},
 		{"slice", `args := []any{"action", definition}; logger.InfoContext(nil, "record", args...)`, 1},
 		{"append", `args := []any{}; args = append(args, "action", definition); logger.InfoContext(nil, "record", args...)`, 1},

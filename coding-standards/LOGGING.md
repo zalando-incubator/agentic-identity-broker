@@ -218,6 +218,7 @@ If the ledger is enabled, the handler in the builder chain attempts to store eac
 - For each path that logs a principal, assert that the attribute value is the policy output.
 - `TestLoggedPrincipalsAreTyped` (`internal/adapters/telemetry`) type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It fails when a value under a reserved principal key is not an `id.Principal`. It checks key-value arguments, key-value pairs in `[]any` literals and in `append` calls on a `[]any` (lists spread with `args...`), and `slog.Attr` literals, where the value must be `slog.AnyValue` of an `id.Principal` (section 5.1, rules 2 and 5).
 - The guard test in `internal/adapters/telemetry/domain_event_logging_guard_test.go` type-checks every `log/slog` call in `internal/` and `cmd/`, except ExtProc. It rejects a `domainevent.Definition` under a key other than `event`.
+  The guard treats reassigned variables that closures capture as unknown.
 - Assert `event` and the key attributes. Do not assert message text.
 
 ## 10. Review Checklist
