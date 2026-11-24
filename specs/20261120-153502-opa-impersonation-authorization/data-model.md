@@ -13,21 +13,32 @@ UserGrant are unchanged. All new concepts are configuration or request-local val
 | --- | --- | --- |
 | `authorization.type` | `cel` \| `opa` | Exactly one engine; unknown fails startup |
 | `authorization.cel` | CEL block | Required for `cel`; empty for `opa` |
-| `authorization.opa` | OPA authorization | Required for `opa`; empty for `cel` |
+| `authorization.opa` | OPA rule decision | Optional for `opa` (defaults apply); empty for `cel` |
 | Binding requirements | derived set of policy roles | `subject_token` if `roles.subject.verification: none`; each role with `audience_requirement: absent` |
 
 Ordering, first-match semantics, roles, trusted issuers, and `allowed_subject_categories` are
 unchanged. Contract: [contracts/impersonation-opa-config.yaml](contracts/impersonation-opa-config.yaml).
 
-### OPA Authorization (configuration)
+### OPA Engine (configuration, `impersonation.opa`)
+
+One per deployment, shared by every OPA rule (R11). Required when a rule selects `opa`; must be
+empty otherwise.
 
 | Field | Type | Default | Validation |
 | --- | --- | --- | --- |
-| `policy.config_file` | path | — | Absolute under `security.trust_material_dir`, regular file opened through `os.Root`, at most 1 MiB; bootstrap subset with no SDK-local-file references (R3) |
-| `policy.package` | Rego package path | — | Required, identifier segments |
-| `policy.decision` | Rego identifier | `result` | Identifier |
-| `evaluation_timeout` | duration | `100ms` | `10ms`–`5s` |
+| `policy.config_file` | path | — | Managed mode. Exactly one of `config_file` and `path`. Absolute under `security.trust_material_dir`, regular file opened through `os.Root`, at most 1 MiB; bootstrap subset (R3, R16) |
+| `policy.path` | path | — | Local mode (R15). Bundle directory under `security.trust_material_dir`, read once through `os.Root`; at most 16 MiB and 1,000 files |
 | `startup_timeout` | duration | `30s` | `1s`–`5m` |
+
+### OPA Rule Decision (configuration, `rules[].authorization.opa`)
+
+| Field | Type | Default | Validation |
+| --- | --- | --- | --- |
+| `package` | Rego package path | `aib.broker.impersonation` | Identifier segments |
+| `decision` | Rego identifier | `result` | Identifier |
+| `evaluation_timeout` | duration | `100ms` | `10ms`–`5s` |
+
+Any other key fails startup, including the former reserved `policy_url` and `policy_path`.
 
 ### Impersonation Policy Input
 
@@ -50,16 +61,17 @@ logged, or exported. Shared broker/ExtProc vectors verify the common Envoy envel
 
 ### Policy/Data Revision
 
-An immutable snapshot owned by one OPA rule's policy source.
+An immutable snapshot owned by the shared OPA engine. It holds one prepared query and one evidence
+set per OPA rule, all built from the same modules and data.
 
 | Field | Meaning |
 | --- | --- |
-| Prepared query | Compiled from the activation's modules with restricted capabilities |
+| Prepared queries | One per OPA rule, compiled from the activation's modules with restricted capabilities |
 | Data snapshot | Copy of the data document at that activation |
-| Evidence | Role references and `sub`/`email` field bindings from the reachable decision graph |
+| Evidence | Per OPA rule: role references and `sub`/`email` field bindings from that rule's reachable decision graph |
 | Label | `policy_revision`: sorted `<bundle>=<manifest revision>` list; operator label, not snapshot identity |
-| Admission ID | `policy_admission_id`: process-instance UUID and per-rule successful-admission sequence; log/audit only |
-| Bundle completeness | Configured and activated bundle-name sets read with modules/data from the same transaction; every configured bundle required before any admission |
+| Admission ID | `policy_admission_id`: process-instance UUID and the engine's successful-admission sequence; log/audit only |
+| Bundle completeness | Managed mode: configured and activated bundle-name sets read with modules/data from the same transaction; every configured bundle required before any admission. Local mode: the one directory |
 | Admitted at | Time of admission, for the age gauge |
 
 A CEL rule has one static revision built from its compiled predicate. Its evidence uses the existing
@@ -72,17 +84,20 @@ A CEL rule has one static revision built from its compiled predicate. Its eviden
 | References | Set of `client_assertion`, `actor_token`, `subject_token` referenced by the decision |
 | Field bindings | Subset of `subject_token.sub`, `subject_token.email` (other fields are not recorded) |
 
-## State transitions (one OPA rule)
+## State transitions (shared OPA engine)
+
+A candidate is admitted only if every OPA rule's decision is defined and every rule's requirements
+pass; a rejection applies to all rules.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Starting: NewService starts runtime
-    Starting --> Ready: SDK ready and a complete all-bundle snapshot admitted
-    Starting --> Failed: startup_timeout elapsed or bootstrap invalid
-    Failed --> [*]: broker exits, runtimes stopped
+    [*] --> Starting: NewService starts the engine (at least one OPA rule)
+    Starting --> Ready: SDK ready and a complete all-bundle snapshot admitted for every OPA rule
+    Starting --> Failed: startup_timeout elapsed, bootstrap or local bundle invalid
+    Failed --> [*]: broker exits, engine stopped
     Ready --> Ready: activation → candidate admitted → active revision swapped
     Ready --> Ready: activation → candidate rejected → previous revision stays
-    Ready --> Ready: bundle fetch fails → previous revision stays
+    Ready --> Ready: bundle fetch or token read fails → previous revision stays
     Ready --> Stopped: broker shutdown
     Stopped --> [*]
 ```
@@ -98,15 +113,15 @@ completeness of an earlier candidate cannot be combined with historical activati
 sequenceDiagram
     participant H as Token handler
     participant S as impersonation.Service
-    participant R as Rule revision (one read)
+    participant R as Engine revision (one read per request)
     H->>S: Impersonate(request + HTTP attributes, target)
+    S->>R: current()
     loop each rule in order
         S->>S: validate credentials, extract identities
-        S->>R: current()
         S->>S: classify subject with R.evidence (sub binding)
         S->>S: check category eligibility and cross-agent rule
         S->>S: extract email if signed, or if R.evidence binds email
-        S->>R: evaluate(input)
+        S->>R: evaluate(rule, input) (OPA rules; CEL rules use their predicate)
         alt allow
             S->>S: human delegation (human only), mint token
         else deny
@@ -122,9 +137,10 @@ sequenceDiagram
 | Term | Definition |
 | --- | --- |
 | **Impersonation Policy Engine** | The engine one impersonation rule selects for its authorization decision: `cel` or `opa`. |
-| **Policy/Data Revision** | An immutable, all-configured-bundle admitted snapshot of an OPA rule's compiled policy, data, and binding evidence, with a broker admission identifier distinct from operator labels. Each rule evaluation uses one revision. |
+| **Policy/Data Revision** | An immutable, all-configured-bundle admitted snapshot of the shared OPA engine's compiled policy, data, and per-rule binding evidence, with a broker admission identifier distinct from operator labels. Admitted only if every OPA rule passes. Each request uses one revision for all its OPA rules. |
 | **Binding Evidence** | The token-map references and `sub`/`email` field bindings of a rule's authorization, computed from the compiled CEL predicate or the reachable Rego decision graph. Mandatory references gate startup and every OPA activation. |
-| **Policy Bootstrap** | The contained OPA-native configuration file of an OPA rule, limited to `services`, `bundles`, `keys`, and `labels` with no SDK-local-file references. |
+| **Impersonation OPA Engine** | The one OPA runtime (`impersonation.opa`) shared by every OPA rule, loading either managed bundles through a Policy Bootstrap or a local bundle directory read at startup. |
+| **Policy Bootstrap** | The contained OPA-native configuration file of the Impersonation OPA Engine, limited to `services`, `bundles`, `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin, with no OPA-native local-file references. |
 
 Existing glossary entries must also be restated (T007): Impersonation Rule selects exactly one CEL
 or OPA authorization with Binding Evidence; Subject Category uses the captured revision's

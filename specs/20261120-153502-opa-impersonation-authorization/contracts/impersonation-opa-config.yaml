@@ -2,14 +2,62 @@
 #
 # Feature: specs/20261120-153502-opa-impersonation-authorization
 # Sign-off: plan.md Approval Items API-CFG (keys, defaults, validation) and API-BOOT (bootstrap subset).
-# Research: R3, R7, R10.
+# Research: R3, R7, R10, R11, R15, R16.
 #
-# All keys are relative to one entry of oauth2_authorization_server.impersonation.rules[].
-# Rules are a YAML list, so these keys have no environment-variable or CLI-flag form, like every
-# other per-rule impersonation key. Ordinary-exchange CEL remains unchanged; explicit
-# token_exchange.authorization.type opa now fails startup (Proposed: API-CFG).
+# One OPA engine is shared by every OPA rule (R11, "option B" of the 2026-11-24 revision). Engine
+# settings live once under oauth2_authorization_server.impersonation.opa. Each rule that selects OPA
+# names only its decision. Rules are a YAML list, so per-rule keys have no environment-variable or
+# CLI-flag form, like every other per-rule impersonation key. impersonation.opa follows the same
+# rule: it is configured in the file only. Ordinary-exchange CEL remains unchanged; explicit
+# token_exchange.authorization.type opa fails startup (Proposed: API-CFG).
 
-keys:
+engine:                      # oauth2_authorization_server.impersonation.opa
+  presence:
+    - required when at least one rule has authorization.type opa
+    - MUST be absent or empty when no rule selects opa; startup fails, so a CEL-only deployment
+      never opens a bundle connection
+  properties:
+    policy.config_file:
+      type: string
+      default: none
+      description: >-
+        Managed mode. Path of the OPA bootstrap configuration file (YAML or JSON), read once at
+        startup. Only the accepted subset below is allowed. Changing the file requires a restart;
+        bundle contents update without restart.
+      validation:
+        - exactly one of policy.config_file and policy.path is set
+        - security.trust_material_dir is required, resolved to an existing absolute directory other than /
+        - config_file must be absolute and contained under that directory; open through os.Root
+        - regular-file check and bounded read (at most 1 MiB) use the same descriptor
+        - outside paths, escaping or absolute symlinks, oversized or unreadable files fail startup without content
+        - no unrestricted file-opening fallback
+    policy.path:
+      type: string
+      default: none
+      description: >-
+        Local mode (R15). Absolute path of a bundle directory (OPA bundle layout: .rego modules,
+        data.json or data.yaml files, optional .manifest) under security.trust_material_dir, read
+        once at startup through os.Root and admitted like a managed revision. There is no polling:
+        changing the directory takes effect only after a restart. Intended for development,
+        tests, and deployments that ship policy with the release.
+      validation:
+        - exactly one of policy.config_file and policy.path is set
+        - same trust-directory, absolute-path, and containment rules as config_file
+        - regular files and directories only; symlinks are resolved through os.Root and must stay inside it
+        - files other than *.rego, data.json, data.yaml, data.yml, and .manifest fail startup naming the relative path
+        - at most 16 MiB in total and 1,000 files; exceeding either fails startup
+        - a .manifest is optional; its revision becomes the policy_revision label, otherwise the label is "local="
+    startup_timeout:
+      type: duration
+      default: 30s
+      range: [1s, 5m]
+      description: >-
+        Bound for the shared engine to become ready: SDK readiness (managed mode) and one admitted
+        revision whose own committing snapshot contains every configured bundle and satisfies every
+        OPA rule's admission. A historical bundle activation plus an earlier subset candidate cannot
+        satisfy readiness. Otherwise startup fails.
+
+rule:                        # oauth2_authorization_server.impersonation.rules[<i>]
   authorization.type:
     type: string
     enum: [cel, opa]
@@ -20,35 +68,20 @@ keys:
   authorization.cel:
     description: Existing CEL block, unchanged. Required when type is cel; MUST be absent or empty when type is opa.
   authorization.opa:
-    description: Required when type is opa; MUST be absent or empty when type is cel.
+    description: >-
+      The rule's decision in the shared engine. Optional when type is opa (all members have
+      defaults); MUST be absent or empty when type is cel.
     properties:
-      policy.config_file:
+      package:
         type: string
-        required: true
-        default: none
-        description: >-
-          Path of the OPA bootstrap configuration file (YAML or JSON), read once at startup.
-          Only the accepted subset below is allowed. Changing the file requires a restart;
-          bundle contents update without restart.
-        validation:
-          - empty fails startup
-          - security.trust_material_dir is required, resolved to an existing absolute directory other than /
-          - config_file must be absolute and contained under that directory; open through os.Root
-          - regular-file check and bounded read (at most 1 MiB) use the same descriptor
-          - outside paths, escaping or absolute symlinks, oversized or unreadable files fail startup without content
-          - no unrestricted file-opening fallback
-      policy.package:
-        type: string
-        required: true
-        default: none
+        default: aib.broker.impersonation
         description: Rego package of the decision, dot-separated, without the "data." prefix (e.g. company.impersonation).
         validation:
           - each segment is a Rego identifier ([A-Za-z_][A-Za-z0-9_]*); otherwise startup fails
-      policy.decision:
+      decision:
         type: string
-        required: false
         default: result
-        description: Rule name in policy.package whose value is the decision document.
+        description: Rule name in package whose value is the decision document. Same default as ExtProc.
         validation:
           - a single Rego identifier; otherwise startup fails
       evaluation_timeout:
@@ -56,36 +89,67 @@ keys:
         default: 100ms
         range: [10ms, 5s]
         description: Per-request decision deadline. Timeout and cancellation are terminal 500 server_error.
-      startup_timeout:
-        type: duration
-        default: 30s
-        range: [1s, 5m]
-        description: >-
-          Bound for the rule to become ready: SDK readiness and an admitted active revision whose
-          own committing snapshot contains every configured bundle. A historical bundle activation
-          plus an earlier subset candidate cannot satisfy readiness. Otherwise startup fails.
+    rejected_keys:
+      description: >-
+        Every other key fails startup naming it, including the former reserved policy_url and
+        policy_path declarations and the engine settings policy, policy.config_file, policy.path,
+        and startup_timeout, which belong under impersonation.opa (issue 2 of the 2026-11-24 review).
+  sharing:
+    - several rules may name the same package and decision; each rule keeps its own binding requirements
+    - a request reads one revision before the first rule and uses it for every OPA rule it evaluates (R11)
 
-bootstrap_subset:            # API-BOOT
-  accepted_top_level_keys: [services, bundles, keys, labels]
-  rejected_examples: [decision_logs, status, discovery, plugins, server, persistence_directory, caching,
-                      distributed_tracing, nd_builtin_cache, storage, default_decision, default_authorization_decision]
+bootstrap_subset:            # API-BOOT, managed mode only
+  accepted_top_level_keys: [services, bundles, keys, labels, plugins]
+  plugins:
+    accepted: [aib_bearer_token_file]
+    aib_bearer_token_file:   # R16
+      description: >-
+        Broker-registered OPA credential plugin (rest.HTTPAuthPlugin). A service selects it with
+        credentials.plugin: aib_bearer_token_file. Before every bundle request it reads the token
+        through the broker's os.Root over security.trust_material_dir, so a rotated Secret takes
+        effect without a restart.
+      properties:
+        path: {type: string, required: true, rules: absolute, contained under security.trust_material_dir, regular file, at most 64 KiB, surrounding whitespace trimmed, non-empty}
+        scheme: {type: string, default: Bearer}
+      validation:
+        - path is checked at startup; an unreadable or invalid token at startup fails startup naming plugins.aib_bearer_token_file.path
+        - a later read failure fails that bundle request; OPA retries and the last admitted revision stays
+        - one token file per bootstrap; services needing different tokens use inline credentials
+  rejected_examples: [decision_logs, status, discovery, server, persistence_directory, caching,
+                      distributed_tracing, nd_builtin_cache, storage, default_decision, default_authorization_decision,
+                      "plugins.<any other name>"]
   rules:
     - every top-level key outside the accepted list fails startup; the diagnostic names the key, never its value
     - bundles must contain at least one entry
     - bundles.<name>.persist true fails startup
-    - supported service credentials and signing keys are inline in the contained bootstrap
-    - reject every bootstrap-referenced local file read, including bearer token_path, TLS file paths, and file:// bundles
+    - service credentials are inline (bearer token, oauth2 client credentials) or credentials.plugin aib_bearer_token_file
+    - reject every OPA-native local file read, including bearer token_path, TLS file paths, client_tls, and file:// bundles
     - validate nested settings against the pinned OPA types before sdk.New; unchecked local-file references are forbidden
-    - OPA parser errors are not echoed; the diagnostic gives the rule, the field, and a reason class
-  diagnostic_reason_classes: [unreadable, invalid_document, unsupported_key, no_bundles, persist_unsupported, invalid_opa_configuration, trust_directory_invalid, outside_trust_directory, file_too_large, local_file_unsupported]
+    - OPA parser errors are not echoed; the diagnostic gives the field and a reason class
+  reuse_from_extproc: >-
+    An ExtProc bootstrap file is accepted only if it uses the subset above. Files with
+    decision_logs, status, discovery, or other plugins fail startup by design; copy only services,
+    bundles, keys, and labels.
+  diagnostic_reason_classes: [unreadable, invalid_document, unsupported_key, no_bundles, persist_unsupported,
+                              invalid_opa_configuration, trust_directory_invalid, outside_trust_directory,
+                              file_too_large, local_file_unsupported, too_many_files, unsupported_file,
+                              token_invalid]
 
-startup_diagnostics:         # credential-free; prefix "oauth2_authorization_server.impersonation.rules[<i>] (<name>): "
-  - authorization.type: "must be \"cel\" or \"opa\""
-  - authorization.opa: "required when authorization.type is \"opa\""
-  - authorization.cel: "must be empty when authorization.type is \"opa\""
-  - authorization.opa: "must be empty when authorization.type is \"cel\""
-  - authorization.opa.policy.config_file: "<reason class> [key <name>]"
-  - authorization.opa.startup_timeout: "no admissible policy revision within <duration> (last rejection: <reason>)"
+startup_diagnostics:         # credential-free
+  engine_prefix: "oauth2_authorization_server.impersonation.opa: "
+  rule_prefix: "oauth2_authorization_server.impersonation.rules[<i>] (<name>): "
+  messages:
+    - engine policy: "exactly one of policy.config_file and policy.path is required"
+    - engine: "required when a rule selects authorization.type \"opa\""
+    - engine: "must be empty when no rule selects authorization.type \"opa\""
+    - engine policy.config_file: "<reason class> [key <name>]"
+    - engine policy.path: "<reason class> [file <relative path>]"
+    - engine plugins.aib_bearer_token_file.path: "<reason class>"
+    - engine startup_timeout: "no admissible policy revision within <duration> (last rejection: <reason> for rules[<i>] (<name>))"
+    - rule authorization.type: "must be \"cel\" or \"opa\""
+    - rule authorization.cel: "must be empty when authorization.type is \"opa\""
+    - rule authorization.opa: "must be empty when authorization.type is \"cel\""
+    - rule authorization.opa.<key>: "unsupported key; engine settings belong under impersonation.opa"
 
 ordinary_exchange:           # Proposed API-CFG compatibility correction; FR-009
   token_exchange.authorization.type:
@@ -101,6 +165,10 @@ example:
     mode: local
     impersonation:
       audience_prefix: https://broker.example.com/impersonate
+      opa:
+        policy:
+          config_file: /etc/broker/opa/bootstrap.yaml
+        startup_timeout: 30s
       rules:
         - name: governed-inventory
           allowed_subject_categories: [human]
@@ -116,20 +184,19 @@ example:
           authorization:
             type: opa
             opa:
-              policy:
-                config_file: /etc/broker/opa/bootstrap.yaml
-                package: company.impersonation
-                decision: result
+              package: company.impersonation
+              decision: result
               evaluation_timeout: 100ms
-              startup_timeout: 30s
 
 example_bootstrap:
   services:
     governance:
       url: https://policies.example.com
       credentials:
-        bearer:
-          token: "<synthetic bundle-service token; mount the bootstrap as a Secret>"
+        plugin: aib_bearer_token_file
+  plugins:
+    aib_bearer_token_file:
+      path: /etc/broker/opa/bundle-token
   bundles:
     impersonation:
       service: governance
@@ -140,15 +207,23 @@ example_bootstrap:
       algorithm: RS256
       key: "<PEM public key>"
 
+example_local:               # development and tests
+  oauth2_authorization_server:
+    impersonation:
+      opa:
+        policy:
+          path: /etc/broker/opa/impersonation-bundle
+
 helm:                        # charts/agentic-identity-broker
   values: >-
-    broker.oauth2AuthorizationServer.impersonation stays a verbatim snake_case block. The bootstrap
-    file (a Secret when it contains credentials) is mounted under security.trust_material_dir with
-    existing broker extraVolumes and extraVolumeMounts; no new chart value is added. No OPA-internal
-    credential-file mounts are supported; restart to reload inline bootstrap credentials.
+    broker.oauth2AuthorizationServer.impersonation stays a verbatim snake_case block, now including
+    its opa engine block. The bootstrap file, a local bundle directory, and a bundle token file are
+    mounted under security.trust_material_dir with existing broker extraVolumes and
+    extraVolumeMounts; no new chart value is added. A token file mounted from a Secret rotates
+    without a restart; inline bootstrap credentials need a restart.
   values_schema_json: >-
-    Impersonation rule authorization becomes oneOf
-    {type: cel, cel: {...existing}} or
-    {type: opa, opa: {policy: {config_file (minLength 1), package (minLength 1), decision},
-     evaluation_timeout, startup_timeout}}, both with additionalProperties false.
-  readme: document the OPA rule block and the volume-mount pattern.
+    impersonation gains opa {policy: oneOf {config_file (minLength 1)} or {path (minLength 1)},
+    startup_timeout}, additionalProperties false. Rule authorization becomes oneOf
+    {type: cel, cel: {...existing}} or {type: opa, opa: {package, decision, evaluation_timeout}},
+    both with additionalProperties false.
+  readme: document the engine block, the rule block, local mode, and the volume-mount pattern.

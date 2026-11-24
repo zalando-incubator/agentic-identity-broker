@@ -10,8 +10,10 @@ row in [Approval Items](#approval-items). Clarification Q1 is accepted (mjungsbl
 ## Summary
 
 Let each local-mode impersonation rule select `authorization.type: opa` instead of CEL. The broker
-embeds the OPA Go SDK, which OPA already provides to ExtProc, with one runtime per OPA rule. The
-runtime pulls operator-managed policy/data bundles through a restricted OPA bootstrap file.
+embeds the OPA Go SDK, which OPA already provides to ExtProc, as one engine shared by every OPA rule
+and configured once under `impersonation.opa`. The engine pulls operator-managed policy/data bundles
+through a restricted OPA bootstrap file, or loads a local bundle directory once at startup. Each OPA
+rule names only its decision (`package`, `decision`, `evaluation_timeout`).
 
 - **Revisions are broker-owned.** After each OPA activation, a new adapter
   (`internal/adapters/policy/opa/`) builds an immutable candidate from the compiled modules and a data
@@ -21,8 +23,9 @@ runtime pulls operator-managed policy/data bundles through a restricted OPA boot
   last admitted revision (Q1). ([research R2, R4, R5](research.md))
 - **Binding controls are equivalent and live.** The domain derives mandatory references from the
   rule (unsigned subject → `subject_token`; audience-absent role → that role) and applies them to
-  CEL once and to every OPA candidate. Each rule evaluation reads one revision and uses it for
-  `sub`-based agent classification, unverified email minting, and the decision. ([R6](research.md#r6--admission-and-requirements-stay-in-the-domain))
+  CEL once and to every OPA candidate, which is admitted only if every OPA rule passes. Each request
+  reads one revision before the first rule and uses it for every OPA rule's `sub`-based agent
+  classification, unverified email minting, and decision. ([R11](research.md#r11--one-shared-opa-engine-revised-2026-11-24-maintainer-choice-option-b)) ([R6](research.md#r6--admission-and-requirements-stay-in-the-domain))
 - **Input and decision.** The input is the Envoy-compatible request envelope without body or
   credential headers, `type: "impersonation"`, and `context` with CEL-equivalent values and the
   broker-resolved `agent` object (`id`, optional `canonical_id` and `external_id`), aligned with
@@ -30,7 +33,7 @@ runtime pulls operator-managed policy/data bundles through a restricted OPA boot
   reserved and absent. `allow`/`deny` map to match/non-match; failures map internally to terminal
   `server_error` with new diagnostics (HTTP 500 for connected callers).
   ([contracts/policy-input-decision.md](contracts/policy-input-decision.md))
-- **Startup is bounded.** A new `authorization.opa.startup_timeout` (default `30s`) bounds readiness;
+- **Startup is bounded.** A new `impersonation.opa.startup_timeout` (default `30s`) bounds readiness;
   without an admitted snapshot containing every configured bundle the broker does not start.
   Completeness is read from that same snapshot, not combined from historical activations.
 - **Governance.** A Proposed ADR ([draft](adr-20261121-061324-opa-impersonation-authorization.md))
@@ -40,9 +43,13 @@ runtime pulls operator-managed policy/data bundles through a restricted OPA boot
 
 ### Accepted clarification and planning decisions
 
+- 2026-11-24 revision (maintainer): one shared OPA engine (option B, R11); rule keys other than
+  `package`, `decision`, and `evaluation_timeout` rejected, including reserved `policy_url` and
+  `policy_path`; local bundle directory mode (R15); contained, rotating bundle token file (R16);
+  `package` default `aib.broker.impersonation`; ExtProc bootstrap reuse documented.
 - Q1 (managed bundles only, no policy-time networking, last complete revision retained, no maximum
   age) was accepted by mjungsbluth on 2026-11-21 and is recorded in [spec.md](spec.md) Clarifications.
-- Planning added `authorization.opa.startup_timeout` to the spec's configuration table (the spec
+- Planning added the startup bound (now `impersonation.opa.startup_timeout`) to the spec's configuration table (the spec
   left the startup bound to planning) and resolved the spec's planning obligations for SR-005
   (enforcement mechanism and superseding ADR). Both are recorded under the spec's Clarifications
   as a planning session entry.
@@ -53,7 +60,7 @@ runtime pulls operator-managed policy/data bundles through a restricted OPA boot
 **Primary Dependencies**: `github.com/open-policy-agent/opa` v1.21.4 (existing module dependency, newly
 linked into the broker binary: `v1/sdk`, `v1/rego`, `v1/ast`, `v1/storage/inmem`, `v1/plugins`,
 `v1/bundle`); cel-go (unchanged); chi, Viper, OpenTelemetry (unchanged). No new module.
-**Storage**: N/A. No migration; policy state is in memory per OPA rule.
+**Storage**: N/A. No migration; policy state is in memory in the shared OPA engine.
 **Testing**: Go `testing` + testify for units; Ginkgo/Gomega E2E with an in-process `httptest` bundle
 server; `go test -race` for revision swaps.
 **Target Platform**: Linux container (broker), local mode only.
@@ -61,9 +68,9 @@ server; `go test -race` for revision swaps.
 **Performance Goals**: Prepared-query evaluation well below the `100ms` default deadline for
 typical governance policies; no network on the request path; activation work off the request path.
 **Constraints**: Fail closed on every error; no claim data in telemetry; bounded startup; one
-revision per rule evaluation; no `internal/extproc` import.
-**Scale/Scope**: A handful of OPA rules per deployment; governance data held twice in memory per
-rule (OPA store and active snapshot).
+revision per request for all OPA rules; no `internal/extproc` import.
+**Scale/Scope**: A handful of OPA rules per deployment sharing one engine; governance data held
+twice in memory (OPA store and active snapshot), independent of the number of rules.
 
 No NEEDS CLARIFICATION remains; [research.md](research.md) resolves every open design point.
 
@@ -74,11 +81,11 @@ No NEEDS CLARIFICATION remains; [research.md](research.md) resolves every open d
 **Design Preconditions (BLOCKING)**:
 
 - [x] **Domain Model**: Value objects documented in [data-model.md](data-model.md); no persisted entity or aggregate.
-- [x] **Domain Concepts**: Impersonation Policy Engine, Policy/Data Revision, Binding Evidence, and Policy Bootstrap go to the `ARCHITECTURE.md` glossary ([data-model.md](data-model.md#glossary-additions-architecturemd)).
+- [x] **Domain Concepts**: Impersonation Policy Engine, Impersonation OPA Engine, Policy/Data Revision, Binding Evidence, and Policy Bootstrap go to the `ARCHITECTURE.md` glossary ([data-model.md](data-model.md#glossary-additions-architecturemd)).
 - [x] **Entity IDs**: N/A. No new UUID entity.
 - [x] **Configuration Design**: [contracts/impersonation-opa-config.yaml](contracts/impersonation-opa-config.yaml) with YAML examples and validation.
 - [x] **Config Examples**: New `examples/config/impersonation-opa.yaml`, bootstrap and Rego examples under `examples/config/opa/impersonation/`, and an index entry in `examples/config/README.md`.
-- [x] **Helm Deployment Contract**: The broker chart deploys impersonation. `values.schema.json` gains the OPA rule shape; the bootstrap mounts through existing `extraVolumes`/`extraVolumeMounts`; the chart README documents both. ExtProc's chart surface is untouched.
+- [x] **Helm Deployment Contract**: The broker chart deploys impersonation. `values.schema.json` gains the `impersonation.opa` engine block and the OPA rule shape; the bootstrap, local bundle directory, and token file mount through existing `extraVolumes`/`extraVolumeMounts`; the chart README documents both. ExtProc's chart surface is untouched.
 - [x] **API Design First**: [contracts/openapi-token-opa.yaml](contracts/openapi-token-opa.yaml) documents the `POST /oauth2/token` description delta before implementation.
 - [x] **API Documentation**: `api/enduser/openapi.yaml` (description, example, version `1.3.0`) and `docs/api/enduser-api.md`.
 - [x] **API Changes**: Registered as API-INPUT, API-DECISION, API-CFG, API-BOOT, API-DIAG; implementation waits for sign-off.
@@ -161,8 +168,10 @@ internal/domain/impersonation/
 ├── policy_input.go                              # new: input builder
 ├── rule.go, service.go, request.go, errors.go   # engine selection, single-revision use, HTTP attributes
 internal/adapters/policy/opa/                     # new adapter
-├── source.go                                    # SDK runtime, trigger, readiness, stop
+├── source.go                                    # shared engine: SDK runtime, trigger, readiness, stop
 ├── bootstrap.go                                 # bootstrap subset validation
+├── local.go                                     # local bundle directory loading (R15)
+├── tokenplugin.go                               # aib_bearer_token_file credential plugin (R16)
 ├── revision.go                                  # candidate build, evaluation, decision parsing
 ├── capabilities.go                              # restricted built-ins
 ├── evidence.go                                  # dependency-graph reference analysis
@@ -183,7 +192,7 @@ tests/e2e/helpers/opa_bundle_server.go           # in-process bundle server
 ```
 
 **Structure Decision**: Existing single Go module. The domain keeps the impersonation pipeline; one
-new driven adapter owns OPA runtimes; no new bounded context.
+new driven adapter owns the shared OPA engine; no new bounded context.
 
 ## Implementation Phase Overview
 
@@ -312,11 +321,11 @@ alternatives are in the cited authoritative artifacts.
 | ID | Type | Decision | Details |
 | --- | --- | --- | --- |
 | ADR-OPA | ADR | New ADR `20261121-061324-opa-impersonation-authorization`: OPA selectable per impersonation rule; managed bundles only; broker-owned admitted revisions; equivalent, revision-coupled binding controls partly superseding ADRs `009-cel-for-authorization-policies`, `031-unverified-subject-unsigned-jwt` (controls 3–4), `034-audience-absent-impersonation-credentials` (control 3), and `045-agent-subject-impersonation` (decision 2a) for OPA rules only; unsigned-subject exception unchanged. Alternative: signed-only OPA (withdrawn by Q2). | `specs/20261120-153502-opa-impersonation-authorization/adr-20261121-061324-opa-impersonation-authorization.md:1-178` |
-| API-CFG | API | Proposed: per-rule keys `authorization.type: opa`, `authorization.opa.policy.config_file` (required), `.policy.package` (required), `.policy.decision` (default `result`), `.evaluation_timeout` (default `100ms`, `10ms`–`5s`), and new `.startup_timeout` (default `30s`, `1s`–`5m`); exactly one engine block; matching Helm schema; contained bootstrap file with required existing `security.trust_material_dir`; explicit ordinary-exchange `token_exchange.authorization.type: opa` fails startup, valid CEL unchanged. Alternative: fixed startup bound. | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:12-95` |
-| API-BOOT | API | Bootstrap subset: only `services`, `bundles`, `keys`, `labels`; every other key (decision logs, status, discovery, plugins, persistence, …) and `persist: true` fail startup without echoing values; bootstrap is a contained regular file opened through `os.Root`, at most 1 MiB; all SDK-local-file references are rejected, credentials and signing keys inline. Alternative: unrestricted native file reads under a justified exception, or full OPA configuration as in ExtProc (exports claims, runtime reconfiguration). | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:24-89` |
-| API-INPUT | API | Policy input: Envoy-compatible `attributes.request.http` (method, path, host and scheme from `server.enduser.public_url`, protocol, headers without `authorization`, `proxy-authorization`, `cookie`, pseudo-headers), `parsed_path`, `parsed_query`, constant `parsed_body: null`/`truncated_body: false`, constant `type: "impersonation"`, and CEL-equivalent `context` plus the broker-resolved `context.agent` object `{id, canonical_id?, external_id?}`, which reuses ExtProc's Grant Context agent shape (ADR `048-authzen-delegation-pip`) and omits unset IDs; no UUID fallback for governance lookups; ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`, `granted_permission_sets*`, `agent_session_id`) reserved and absent because OPA runs before delegation. Alternative: UUID-only governance maps, a flat `external_id` with `""` for absent (diverges from ExtProc), all headers, or a header allowlist. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:11-83` |
+| API-CFG | API | Proposed (revised 2026-11-24, option B): shared engine block `impersonation.opa` with `policy.config_file` or `policy.path` (exactly one) and `startup_timeout` (default `30s`, `1s`–`5m`), required exactly when a rule selects OPA; per-rule `authorization.type: opa` with `authorization.opa.package` (default `aib.broker.impersonation`), `.decision` (default `result`), and `.evaluation_timeout` (default `100ms`, `10ms`–`5s`); every other rule key fails startup, including reserved `policy_url`/`policy_path`; exactly one engine block per rule; all-or-nothing admission and one revision per request; matching Helm schema; contained files under required `security.trust_material_dir`; explicit ordinary-exchange `token_exchange.authorization.type: opa` fails startup, valid CEL unchanged. Alternatives: one runtime per rule (previous proposal), named policies. | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:14-160` |
+| API-BOOT | API | Bootstrap subset: only `services`, `bundles`, `keys`, `labels`, and `plugins.aib_bearer_token_file`; every other key or plugin (decision logs, status, discovery, persistence, …) and `persist: true` fail startup without echoing values; bootstrap is a contained regular file opened through `os.Root`, at most 1 MiB; all OPA-native local-file references are rejected; credentials inline or through the broker's contained token-file plugin, re-read before every bundle request (R16); local bundle directory mode read once through `os.Root` (R15). Alternative: unrestricted native file reads under a justified exception, full OPA configuration as in ExtProc (exports claims, runtime reconfiguration), or managed bundles with inline credentials only (previous proposal). | `specs/20261120-153502-opa-impersonation-authorization/contracts/impersonation-opa-config.yaml:101-153` |
+| API-INPUT | API | Policy input: Envoy-compatible `attributes.request.http` (method, path, host and scheme from `server.enduser.public_url`, protocol, headers without `authorization`, `proxy-authorization`, `cookie`, pseudo-headers), `parsed_path`, `parsed_query`, constant `parsed_body: null`/`truncated_body: false`, constant `type: "impersonation"`, and CEL-equivalent `context` plus the broker-resolved `context.agent` object `{id, canonical_id?, external_id?}`, which reuses ExtProc's Grant Context agent shape (ADR `048-authzen-delegation-pip`) and omits unset IDs; no UUID fallback for governance lookups; ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`, `granted_permission_sets*`, `agent_session_id`) reserved and absent because OPA runs before delegation. Alternative: UUID-only governance maps, a flat `external_id` with `""` for absent (diverges from ExtProc), all headers, or a header allowlist. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:18-121` |
 | API-DECISION | API | Decision `{"action":"allow"}` matches, `{"action":"deny"}` is a non-match; anything else and every evaluation failure maps internally to terminal `server_error` (`authorization evaluation failed`), with HTTP 500 for connected callers and no disconnected-client response guarantee; `POST /oauth2/token` description delta and 500 example; End-User API version `1.2.0` → `1.3.0`. Alternative: undefined as deny (ExtProc behavior). | `specs/20261120-153502-opa-impersonation-authorization/contracts/openapi-token-opa.yaml:1-83` |
-| API-DIAG | API | New diagnostic details `client_authorization/opa_evaluation_failed` and `opa_decision_invalid`; span `tokenexchange.impersonation.opa.evaluate`; metrics `tokenexchange.impersonation.opa.revisions` and `.revision.age`; lifecycle events `oauth2_server.impersonation_policy.revision_admitted`/`revision_rejected`/`startup_failed`; audit attributes `authorization_engine`, `policy_revision`, and `policy_admission_id` identifying the deciding immutable snapshot independently of empty/reused labels; request-correlated canceled evaluation telemetry without an HTTP response guarantee. Alternative: reuse `cel_evaluation_failed`. | `specs/20261120-153502-opa-impersonation-authorization/contracts/observability.md:1-98` |
-| DEC-BUILTINS | Decision | Policy-time networking prohibition implemented as: every OPA built-in marked nondeterministic is unavailable except `time.now_ns` (removes `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign*`); print disabled. Alternative: deny only network built-ins. | `specs/20261120-153502-opa-impersonation-authorization/research.md:127-146` |
+| API-DIAG | API | New diagnostic details `client_authorization/opa_evaluation_failed` and `opa_decision_invalid`; span `tokenexchange.impersonation.opa.evaluate`; metrics `tokenexchange.impersonation.opa.revisions` and `.revision.age`; lifecycle events `oauth2_server.impersonation_policy.revision_admitted`/`revision_rejected`/`startup_failed`; audit attributes `authorization_engine`, `policy_revision`, and `policy_admission_id` identifying the deciding immutable snapshot independently of empty/reused labels; request-correlated canceled evaluation telemetry without an HTTP response guarantee. Alternative: reuse `cel_evaluation_failed`. | `specs/20261120-153502-opa-impersonation-authorization/contracts/observability.md:1-100` |
+| DEC-BUILTINS | Decision | Policy-time networking prohibition implemented as: every OPA built-in marked nondeterministic is unavailable except `time.now_ns` (removes `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign*`); print disabled. Alternative: deny only network built-ins. | `specs/20261120-153502-opa-impersonation-authorization/research.md:132-151` |
 | DEC-CONST | Decision | Proposed: confirm the superseding ADR provides equivalent controls under the existing Principle I unsigned-subject carve-out, without constitutional amendment or waived controls. Alternative: a separate maintainer-authored amendment naming the superseding ADR; this pipeline cannot amend the constitution. | `specs/20261120-153502-opa-impersonation-authorization/adr-20261121-061324-opa-impersonation-authorization.md:105-116` |
-| DEC-BIND | Decision | Binding evidence is computed conservatively from the reachable decision graph: imports and rule-local aliases count; function arguments, non-ground keys, and unreachable rules do not; any reachable `with` modifier (input, data-rule, or function/built-in replacement) voids all evidence; only subject sub/email field bindings are recorded, independent of all three role references; a missing decision rule rejects the candidate. Missing evidence fails closed (no activation, no unbound email, human classification). Alternative: runtime tracing of read paths. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:122-162` |
+| DEC-BIND | Decision | Binding evidence is computed conservatively from the reachable decision graph: imports and rule-local aliases count; function arguments, non-ground keys, and unreachable rules do not; any reachable `with` modifier (input, data-rule, or function/built-in replacement) voids all evidence; only subject sub/email field bindings are recorded, independent of all three role references; a missing decision rule rejects the candidate. Missing evidence fails closed (no activation, no unbound email, human classification). Alternative: runtime tracing of read paths. | `specs/20261120-153502-opa-impersonation-authorization/contracts/policy-input-decision.md:175-217` |

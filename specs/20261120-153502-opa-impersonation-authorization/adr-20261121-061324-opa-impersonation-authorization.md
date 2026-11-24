@@ -42,22 +42,29 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    mode. Existing valid CEL rules behave as before. Explicit ordinary-exchange
    `token_exchange.authorization.type: opa` fails startup instead of being accepted and ignored;
    reserved OPA declarations are retained but never instantiate a runtime.
-2. **Embedded OPA with managed bundles only.** The broker embeds the OPA Go SDK (already a module
-   dependency for ExtProc) with one runtime per OPA rule. The bootstrap accepts only the OPA
-   configuration keys `services`, `bundles`, `keys`, and `labels`; decision logs, status, discovery,
-   plugins, persistence, and every other key fail startup. Bootstrap is an absolute regular file
-   opened through adapter-owned `os.Root` under `security.trust_material_dir`, bounded to 1 MiB.
-   Reject every SDK-local-file reference (including bearer token paths and TLS files) before SDK
-   startup; supported credentials/signing keys are inline. This adopts, rather than bypasses, the
+2. **One embedded OPA engine, managed or local bundles.** The broker embeds the OPA Go SDK (already
+   a module dependency for ExtProc) as one engine shared by every OPA rule, configured once under
+   `impersonation.opa`. Rules name only their decision (`package`, default
+   `aib.broker.impersonation`; `decision`, default `result`; `evaluation_timeout`); any other rule
+   key fails startup, including the reserved `policy_url` and `policy_path`. The engine loads
+   either managed bundles through a bootstrap file (`policy.config_file`) or one local bundle
+   directory read at startup (`policy.path`). The bootstrap accepts only `services`, `bundles`,
+   `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin; decision logs,
+   status, discovery, other plugins, persistence, and every other key fail startup. Bootstrap,
+   local bundle, and token file are read through adapter-owned `os.Root` under
+   `security.trust_material_dir`; the token file is re-read before every bundle request, so it
+   rotates without a restart. Every OPA-native local-file reference (bearer `token_path`, TLS files,
+   `file://` bundles) is rejected before SDK startup. This adopts, rather than bypasses, the
    containment pattern of `040-trust-anchor-local-key-sets` without changing its key-set scope.
 3. **Broker-owned revisions.** After each OPA activation, the broker builds an immutable candidate
    revision from the compiled modules and a copy of the data. A candidate becomes the active revision
    only if its own transaction includes every configured bundle, it compiles with the restricted
-   capabilities (decision 4), defines the decision rule, and
-   passes binding admission (decision 5). Otherwise the previous active revision stays. Every
-   request reads one revision per rule evaluation and uses it for the decision, subject
-   classification, and email handling. Every admission assigns a process-instance UUID plus
-   per-rule increasing sequence identifier, copied to deciding audits and the admission log;
+   capabilities (decision 4), defines every OPA rule's decision, and passes every OPA rule's
+   binding admission (decision 5). Otherwise the whole candidate is rejected and the previous
+   active revision stays for every rule. Every request reads one revision before the first rule and
+   uses it for every OPA rule's decision, subject classification, and email handling, so
+   first-match fallthrough never mixes policy versions. Every admission assigns a process-instance
+   UUID plus an increasing engine sequence identifier, copied to deciding audits and the admission log;
    empty/reused manifest labels are not identity. Readiness requires SDK readiness and that same
    admitted complete snapshot, never historical bundle activation plus a subset candidate. There
    is no broker-enforced maximum revision age.
@@ -74,7 +81,7 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    - ADR 031 control 3 and ADR 034 control 3: the reachable decision references
      `input.context.subject_token` (unsigned-subject rule) and `input.context.<role>` for each
      audience-absent role. A candidate without them is not admitted. Without an admitted revision
-     within `startup_timeout`, the broker does not start.
+     within `impersonation.opa.startup_timeout`, the broker does not start.
    - ADR 031 control 4: an unverified email is minted only when the evaluated revision binds
      `input.context.subject_token.email`.
    - ADR 045 decision 2a: an unverified exact-target subject is agent category only when the
@@ -124,7 +131,9 @@ both ADR-OPA and DEC-CONST.
 ### Positive
 
 - Operators can enforce governance-system registration and ownership checks with Rego and bundled
-  data, one rule at a time, without broker releases.
+  data, selected rule by rule, without broker releases.
+- All OPA rules of a request see one policy and data version, and shared governance data is
+  downloaded and held once.
 - Binding controls hold across live policy changes, and evidence cannot outlive its revision.
 - No request waits on a bundle server or any policy-time network destination.
 
@@ -139,8 +148,12 @@ both ADR-OPA and DEC-CONST.
   exact-target subjects stay human.
 - Without a maximum revision age, a long bundle outage leaves an old governance snapshot active.
   Operators monitor the revision-age gauge.
-- Bootstrap-contained inline credentials require restart to rotate; native SDK file credentials are
-  deliberately unsupported rather than reopened outside containment.
+- Inline bootstrap credentials require a restart to rotate. The contained token-file plugin covers
+  one bearer token per bootstrap; mTLS client certificates and OPA-native file credentials stay
+  unsupported rather than reopened outside containment.
+- Rules are coupled at admission: a revision that breaks one OPA rule's bindings keeps every OPA
+  rule on the previous revision.
+- A local bundle directory changes only on restart.
 - A policy with any reachable `with` has no binding evidence, even when a replacement is harmless;
   this false negative favors conservative enforcement.
 
@@ -167,13 +180,16 @@ both ADR-OPA and DEC-CONST.
   domain builder without duplicate untested Envoy semantics.
 - **Unrestricted bootstrap/SDK credential reads**: preserves native file rotation but permits
   reading unrelated runtime files; rejected in favor of containment and a smaller bootstrap subset.
+- **One OPA runtime per rule**: isolates rules, but a request falling through rules can see two
+  policy versions, and shared bundles are downloaded and held twice (research R11).
+- **Managed bundles only**: needs a bundle server for development and tests (research R15).
 - **Require nonempty changing manifest labels**: would reject publishers that omit/reuse labels;
   broker admission identifiers identify deciding snapshots without restricting publishers.
 
 ## References
 
 - Spec: `specs/20261120-153502-opa-impersonation-authorization/spec.md` (FR-001–FR-013, SR-001–SR-006)
-- Research: `specs/20261120-153502-opa-impersonation-authorization/research.md` (R2–R9, R13)
+- Research: `specs/20261120-153502-opa-impersonation-authorization/research.md` (R2–R11, R13, R15, R16)
 - Contracts: `specs/20261120-153502-opa-impersonation-authorization/contracts/`
 - ADRs `009-cel-for-authorization-policies`, `011-extproc-standalone-binary`,
   `028-opa-extproc-authorization`, `031-unverified-subject-unsigned-jwt`,

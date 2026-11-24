@@ -49,9 +49,10 @@ semantics: deny on error). Put OPA in `internal/domain/impersonation` (network I
 
 ## R2 — Embedding mode: SDK with broker-owned revision snapshots
 
-**Decision**: Per OPA rule, start `sdk.New` with the rule's bootstrap bytes, `V1Compatible: true`, a
-non-blocking `Ready` channel, a discard `ConsoleLogger`, no extra plugins, and an in-memory `Store`
-created by the adapter. The adapter registers a store `OnCommit` trigger. On each commit that carries
+**Decision**: In managed mode, start one `sdk.New` for the shared engine (R11) with the bootstrap
+bytes, `V1Compatible: true`, a non-blocking `Ready` channel, a discard `ConsoleLogger`, no plugins
+other than the broker's `aib_bearer_token_file` credential plugin when configured (R16), and an
+in-memory `Store` created by the adapter. The adapter registers a store `OnCommit` trigger. On each commit that carries
 a compiler (`plugins.GetCompilerOnContext`), the adapter builds a **candidate revision** inside the
 trigger:
 
@@ -59,10 +60,11 @@ trigger:
    same committing transaction. Record the configured bundle-name set as candidate completeness
    evidence. Reject with `bundles_incomplete` unless every configured bundle is present in this
    snapshot; partial initial candidates never enter admission or become serving revisions.
-2. Prepare a `rego.PreparedEvalQuery` for `data.<package>.<decision>` from those modules, a new
-   in-memory store holding the data copy, the restricted capabilities of R4,
+2. Prepare one `rego.PreparedEvalQuery` per OPA rule for its `data.<package>.<decision>` from those
+   modules, one new in-memory store holding the data copy, the restricted capabilities of R4,
    `StrictBuiltinErrors(true)`, and print statements disabled.
-3. Analyze references (R5) and call the domain admission function (R6).
+3. Analyze references (R5) per OPA rule and call the domain admission function once with all of
+   them (R6, R11).
 4. Only if every step succeeds, atomically replace the active revision (`atomic.Pointer`).
 
 The broker never evaluates through `sdk.OPA.Decision`.
@@ -83,14 +85,15 @@ The data document is held twice in memory (OPA store and active snapshot), plus 
 during a candidate build.
 
 **Alternatives**: Custom `bundle.Activator` registered through the process-global activator
-registry (global mutable state shared by every rule, and the activator API is marked for extension
+registry (process-global mutable state, and the activator API is marked for extension
 use, not a stable contract). The OPA `download` package with a broker-written bundle loader
 (reimplements polling, signing, and multi-bundle roots). Evaluating through `sdk.OPA.Decision`
 (cannot enforce capabilities or couple binding evidence to the evaluated revision).
 
 ## R3 — Bootstrap configuration subset (**Sign-off: API-BOOT**)
 
-**Decision (Proposed: API-BOOT)**: The bootstrap file is OPA-native YAML or JSON, read once at startup.
+**Decision (Proposed: API-BOOT)**: The bootstrap file (`impersonation.opa.policy.config_file`) is
+OPA-native YAML or JSON, read once at startup.
 It must be an absolute path within `security.trust_material_dir`, opened through an adapter-owned
 `os.Root` using the containment and same-descriptor regular-file checks of
 `040-trust-anchor-local-key-sets`. The root must be a resolved existing directory other than `/`;
@@ -99,14 +102,15 @@ directory setting. Bootstrap-referenced local file reads are not supported: reje
 `token_path`, TLS CA/certificate/private-key file paths, bundle `file://` resources, and any other
 OPA configuration field that would cause a local file read. Validate against the pinned OPA
 configuration types before `sdk.New`, failing closed on unsupported nested settings; never pass
-unchecked file references to the SDK. Services use supported inline credentials, and bundle keys
-are inline. There is no fallback to unrestricted opening. Only the
-top-level keys `services`, `bundles`, `keys`, and `labels` are accepted. Every other top-level key
-fails startup, including `decision_logs`, `discovery`, `status`, `plugins`, `server`,
+unchecked file references to the SDK. Services use supported inline credentials or the broker's
+contained token-file plugin (R16), and bundle keys are inline. There is no fallback to unrestricted
+opening. Only the top-level keys `services`, `bundles`, `keys`, `labels`, and `plugins` are accepted,
+and `plugins` may contain only `aib_bearer_token_file`. Every other top-level key or plugin
+fails startup, including `decision_logs`, `discovery`, `status`, other `plugins`, `server`,
 `persistence_directory`, `caching`, `distributed_tracing`, `nd_builtin_cache`, `storage`,
 `default_decision`, and `default_authorization_decision`. `bundles.<name>.persist: true` fails
-startup. At least one bundle is required. Diagnostics name the rule, the field
-`authorization.opa.policy.config_file`, and the offending key name, but never quote values or raw
+startup. At least one bundle is required. Diagnostics name the field
+`impersonation.opa.policy.config_file` and the offending key name, but never quote values or raw
 OPA parser errors, because the file may contain service credentials. Changes to the file need a
 restart; bundle contents update live.
 
@@ -122,7 +126,8 @@ runtime reconfiguration). Accept a broker-specific bundle schema instead of OPA'
 (contradicts the issue's request for an ExtProc-comparable bootstrap). Permit OPA-native file reads
 outside the trust directory under a documented exception (retains file-based rotation, but gives
 bootstrap settings authority to read unrelated runtime credentials). A contained file resolver for
-all SDK credential forms is a larger alternative, not part of this release.
+all SDK credential forms, including mTLS client certificates, is a larger alternative, not part of
+this release; R16 covers bearer tokens only.
 
 ## R4 — Prohibiting policy-time networking (**Sign-off: DEC-BUILTINS**)
 
@@ -192,32 +197,35 @@ SR-005). Whole-bundle reference scanning (unreachable helper code could satisfy 
 `audience_requirement: absent`. For OPA it passes an admission function to the factory; the adapter
 calls it for every candidate (initial and update) and rejects the candidate on error. For CEL it
 applies the same function once to the compiled predicate's evidence, replacing the two existing
-inline checks with identical error text. The service reads one revision per rule evaluation and
-uses that revision for subject classification (`sub` binding), unverified email minting (`email`
-binding), and the decision.
+inline checks with identical error text. The service reads one engine revision per request, before the first rule,
+and uses it for every OPA rule's subject classification (`sub` binding), unverified email minting
+(`email` binding), and decision. For OPA, the admission function receives every OPA rule's evidence
+and fails if any rule fails (R11).
 
 **Rationale**: One rule for both engines keeps CEL behavior unchanged (FR-013, SC-008) and keeps
-security logic out of the adapter (Principle VI). Reading one revision per rule evaluation satisfies
-the concurrent-update requirement of Scenario 3.6 without locks.
+security logic out of the adapter (Principle VI). Reading one revision per request satisfies the
+concurrent-update requirement of Scenario 3.6 without locks, and also keeps first-match fallthrough
+across OPA rules on one policy and data version.
 
 **Alternatives**: Adapter-owned requirement logic (duplicates domain rules). Re-reading the active
 revision for each step (a swap between steps could mix evidence and decision).
 
 ## R7 — Startup readiness bound (**Sign-off: API-CFG**)
 
-**Decision**: Add `authorization.opa.startup_timeout` (duration, default `30s`, range `1s`–`5m`).
-`NewService` starts every OPA rule's runtime, then waits concurrently. A rule is ready when the SDK
-`Ready` channel is closed **and** its active admitted revision carries completeness evidence for
-all configured bundles from that revision's own committing snapshot (R2). Historical activations
-cannot satisfy completeness for a different candidate. If this does not happen within the rule's
-bound, the broker stops all started runtimes and startup fails with a raw-credential-excluded
-diagnostic naming the rule index, rule name, field, and last rejection reason class. In particular,
+**Decision**: Add `impersonation.opa.startup_timeout` (duration, default `30s`, range `1s`–`5m`).
+`NewService` starts the shared engine, then waits. The engine is ready when the SDK `Ready` channel
+is closed (managed mode) **and** its active admitted revision carries completeness evidence for all
+configured bundles from that revision's own committing snapshot (R2) and passed every OPA rule's
+admission. In local mode the one candidate is admitted or rejected immediately. Historical
+activations cannot satisfy completeness for a different candidate. If this does not happen within
+the bound, the broker stops the engine and startup fails with a raw-credential-excluded diagnostic
+naming the field, the last rejection reason class, and the last rejecting rule. In particular,
 a usable first-bundle subset followed by a rejected complete two-bundle candidate never becomes
 ready; there is no partial admitted serving revision to retain.
 
 **Rationale**: FR-003 requires a bounded interval, and the spec left the setting to planning.
 `30s` covers several OPA bundle retry intervals for a slow bundle server; `5m` caps rollout stalls.
-Concurrent waiting keeps total startup time near the largest single bound.
+One shared bound replaces per-rule bounds; with one engine there is nothing to wait for concurrently.
 
 **Alternatives**: A fixed, non-configurable bound (operators with large bundles cannot adapt). Reuse
 `evaluation_timeout` (wrong order of magnitude). Start without a revision and fail requests (the
@@ -308,17 +316,21 @@ detail). Treat undefined as deny like ExtProc (contradicts FR-007).
 
 ## R10 — Configuration schema separation
 
-**Decision**: Give each impersonation rule a dedicated `ImpersonationAuthorizationConfig` with
-`type`, `cel`, and `opa` (`policy.config_file`, `policy.package`, `policy.decision`,
-`evaluation_timeout`, `startup_timeout`). `token_exchange.authorization` keeps its existing
+**Decision**: Add `impersonation.opa` for the shared engine (`policy.config_file` or `policy.path`,
+`startup_timeout`), required exactly when a rule selects OPA. Give each impersonation rule a dedicated
+`ImpersonationAuthorizationConfig` with `type`, `cel`, and `opa` (`package`, default
+`aib.broker.impersonation`; `decision`, default `result`; `evaluation_timeout`). Every other key under
+a rule's `opa` block fails startup, including the reserved `policy_url` and `policy_path` that the
+shared struct declared, so an impersonation rule has exactly one way to name a policy. `token_exchange.authorization` keeps its existing
 `AuthorizationConfig` declarations, including reserved `opa.policy_url` / `opa.policy_path`, but
 explicit `type: opa` fails startup instead of being accepted and ignored (**Proposed: API-CFG**).
 Its CEL defaults and valid CEL behavior remain unchanged; this feature implements no ordinary
 exchange OPA runtime.
 Validation for impersonation rules: `type` is `cel` or `opa`; the selected block is required; the
 other block must be empty; `cel.evaluation_timeout` and `opa.evaluation_timeout` keep the
-`10ms`–`5s` range. `policy.package` must be a dot-separated Rego package path; `policy.decision` a
-single Rego identifier (default `result`).
+`10ms`–`5s` range. `package` must be a dot-separated Rego package path; `decision` a single Rego
+identifier. The `package` default mirrors ExtProc's `aib.extproc.authz` default; a bundle that does
+not define it fails admission (`decision_undefined`), so the default never allows by itself.
 
 **Rationale**: FR-009 keeps OPA out of ordinary third-party exchange. A dedicated type avoids adding
 OPA settings to `token_exchange.authorization`. The reserved fields were never documented, so their
@@ -326,21 +338,35 @@ absence from impersonation rules changes no documented key. The YAML hierarchy o
 is unchanged.
 
 **Alternatives**: Remove the reserved ordinary-exchange OPA struct entirely (unnecessary schema
-removal). Keep accepting `type: opa` while ignoring it (contradicts explicit engine selection and
+removal). Keep `package` required as before (more typing, and differs from ExtProc). Put engine
+settings on each rule (R11 alternative A). Keep accepting `type: opa` while ignoring it (contradicts explicit engine selection and
 FR-009). Extend the shared struct with usable impersonation keys (adds unused keys to a second schema).
 
-## R11 — One runtime per rule
+## R11 — One shared OPA engine (revised 2026-11-24, maintainer choice "option B")
 
-**Decision**: Each OPA rule gets its own SDK instance, store, and revision, even when two rules use
-the same bootstrap file. Runtimes stop on broker shutdown and on startup failure.
+**Decision**: All OPA rules share one engine configured under `impersonation.opa`: one SDK instance
+(or one local bundle), one store, and one active revision. Each rule names only its decision
+(`package`, `decision`, `evaluation_timeout`). A candidate revision is admitted only if every OPA
+rule's decision is defined and every rule's binding requirements pass (all-or-nothing). A request
+reads the active revision once, before the first rule, and uses it for every OPA rule it evaluates.
+The engine stops on broker shutdown and on startup failure.
 
-**Rationale**: Rule-scoped diagnostics, timeouts, and revisions, and no cross-rule coupling of
-admission (a revision admissible for one rule can be inadmissible for another with stricter binding
-requirements). The cost is duplicate downloads for shared bundles, which operators can avoid by
-splitting bundles.
+**Rationale**: With one engine per rule, a request that falls through from one OPA rule to the next
+could be judged by two different policy and data versions, because each engine downloads and
+admits on its own schedule. Journey 3's ordered-rule behavior would then depend on timing.
+All-or-nothing admission plus one read per request removes that. It also removes duplicate bundle
+downloads and in-memory data copies for rules that share governance data, shortens the
+configuration, and matches ExtProc, which runs one OPA engine.
 
-**Alternatives**: Share a runtime per bootstrap file (revision admission would then need per-rule
-fan-out and partial acceptance).
+**Consequence**: Rules are coupled at admission: a candidate that breaks one rule's binding
+requirements keeps every rule on the previous revision. The rejection log names the failing rule.
+Operators who need independent rollout publish separate packages in the same bundle set and update
+them together, or keep a rule on CEL.
+
+**Alternatives**: (A) One runtime per rule, the previous decision (isolation and per-rule timeouts,
+but mixed versions within a request and duplicate downloads). (C) Named policies referenced by rules
+(more indirection, and it changes working CEL configuration). Shared engine with per-rule partial
+admission (brings back mixed versions within a request).
 
 ## R12 — Observability (**Sign-off: API-DIAG**)
 
@@ -348,11 +374,11 @@ fan-out and partial acceptance).
 `tokenexchange.impersonation.opa.evaluate` per OPA evaluation. Counter
 `tokenexchange.impersonation.opa.revisions` (`outcome`: `admitted`, `rejected`; `reason`: closed
 set) and observable gauge `tokenexchange.impersonation.opa.revision.age` (seconds since the active
-revision was admitted), both with attribute `rule` (operator-bounded rule name). Lifecycle log events
+revision was admitted), without a `rule` attribute because the engine is shared (R11). Lifecycle log events
 `oauth2_server.impersonation_policy.revision_admitted` and `...revision_rejected`. The existing
 `impersonation_decision` audit event adds `authorization_engine` (`cel`/`opa`) and, for OPA,
 `policy_revision` (bundle manifest revisions) and `policy_admission_id` (process-instance UUID
-plus monotonic per-rule admission sequence). The latter identifies the exact deciding snapshot
+plus the engine's monotonic admission sequence). The latter identifies the exact deciding snapshot
 when manifest revisions are absent or reused; it is never a metric or span label. Details:
 [contracts/observability.md](contracts/observability.md).
 
@@ -387,10 +413,55 @@ inseparable decision). Amend accepted ADRs in place (forbidden by Principle II).
 
 **Decision**: An in-process `httptest` bundle server serves tarballs built with OPA's `bundle.Write`
 and controllable ETags, with OPA polling at 1-second delays, so update journeys finish in seconds.
-Rego fixtures live under `tests/e2e/fixtures/opa/impersonation/`. Unit tests cover the analysis
+Rego fixtures live under `tests/e2e/fixtures/opa/impersonation/`. Journeys that do not test updates
+may load that directory in local mode (R15). Unit tests cover the analysis
 (table of Rego forms), capability rejection, the input builder, decision parsing, the admission
 function for both engines, and a race test that swaps revisions during concurrent evaluations. No
 container suite is needed.
 
 **Rationale**: Mirrors `tests/e2e/extproc/opa_authorization_test.go` (file and HTTP bundles) and the
 existing impersonation E2E fixtures.
+
+## R15 — Local bundle directory (revised 2026-11-24, issue 3)
+
+**Decision**: `impersonation.opa.policy.path` is an alternative to `config_file`. It names a bundle
+directory (OPA bundle layout) under `security.trust_material_dir`. The adapter walks it through
+`os.Root`, accepts only `*.rego`, `data.json`, `data.yaml`/`data.yml`, and `.manifest` files, caps it
+at 16 MiB and 1,000 files, reads the bytes once, and builds one candidate with OPA's bundle reader.
+That candidate goes through the same capability check, evidence, and admission as a managed
+revision. Nothing is polled; a change needs a restart. A `.manifest` revision becomes the
+`policy_revision` label.
+
+**Rationale**: Managed-only mode needs a bundle server for local development, demos, and the
+E2E fixtures, which ExtProc avoids with its `policy.path`. Reading once at startup keeps Q1's
+"no policy-time networking" and adds no runtime file access. `os.Root` keeps the trust-directory
+containment of ADR `040-trust-anchor-local-key-sets`.
+
+**Alternatives**: Allow `file://` bundle resources in the bootstrap (OPA reads them itself, outside
+`os.Root`). Re-read the directory periodically (adds a second update path to secure and test).
+Accept a single `.rego` file like ExtProc (no data files, so governance examples cannot run).
+
+## R16 — Contained bundle token file (revised 2026-11-24, issue 4)
+
+**Decision**: The broker registers one OPA credential plugin, `aib_bearer_token_file`, through
+`sdk.Options.Plugins`. A bootstrap service selects it with `credentials.plugin`, and its settings
+live under the bootstrap's `plugins.aib_bearer_token_file` (`path`, `scheme`, default `Bearer`). It
+implements `rest.HTTPAuthPlugin`: `NewClient` builds the default client, and `Prepare` reads the
+token through the broker's `os.Root` (regular file, at most 64 KiB, trimmed, non-empty) before every
+bundle request and sets `Authorization: <scheme> <token>`. At startup the path is validated and read
+once; failure stops startup. Later read failures fail that bundle request, OPA retries, the last
+admitted revision stays, and the broker logs `token_unavailable` (rate-limited, without contents).
+
+**Rationale**: Inline credentials need a restart to rotate. OPA's own `bearer.token_path` reads with
+`os.ReadFile` outside `os.Root` on every request, which R3 rejects. OPA v1.21.4 resolves
+`credentials.plugin` through the plugin manager (`rest.Config.AuthPlugin` and
+`plugins.Manager.AuthPlugin`), and `Prepare` runs before every request, so the plugin rotates a
+mounted Secret without a restart and without leaving the trust directory.
+
+**Limitation**: One token file per bootstrap, because OPA passes only the request to `Prepare`.
+Services that need different tokens use inline credentials. mTLS client certificates stay
+unsupported.
+
+**Alternatives**: Keep inline-only credentials (restart to rotate). Accept `token_path` after a
+startup containment check (OPA's later reads are not contained; symlink swaps escape). Per-service
+token maps keyed by request URL (fragile matching).

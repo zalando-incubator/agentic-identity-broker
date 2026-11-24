@@ -4,8 +4,10 @@
 Items API-INPUT (§ 1–2), API-DECISION (§ 3), DEC-BIND (§ 4), DEC-BUILTINS (§ 5) | **Research**: R4,
 R5, R8, R9
 
-The policy is evaluated at `data.<policy.package>.<policy.decision>` with the input below, once per
-evaluated OPA rule, after credential validation, extraction, subject classification, and category
+The policy is evaluated at `data.<package>.<decision>` of the rule's `authorization.opa` block
+(defaults `aib.broker.impersonation` and `result`) with the input below, once per evaluated OPA rule.
+All OPA rules share one engine, and every OPA rule evaluated for one request uses the same admitted
+revision. Evaluation runs after credential validation, extraction, subject classification, and category
 eligibility, and before human delegation (the existing CEL position in the rule pipeline).
 
 The input shares one OPA vocabulary with ExtProc (ADR `028-opa-extproc-authorization`, amended by
@@ -172,7 +174,8 @@ result := {"action": "allow"} if {
 
 ## 4. Binding evidence (DEC-BIND)
 
-Evidence is computed once per candidate revision from the rules reachable from the decision rule.
+Evidence is computed per candidate revision and per OPA rule, from the Rego rules reachable from
+that rule's decision. Rules naming the same decision share evidence but keep their own requirements.
 
 | Rego form in a reachable rule | Role reference | Field binding |
 | --- | --- | --- |
@@ -206,10 +209,11 @@ Admission per rule configuration:
 | `roles.<role>.audience_requirement: absent` | Reference to that role's map | — |
 | Signed subject, expected audiences | Nothing | Signed classification and signed email unchanged |
 
-A candidate without a decision rule, or failing a requirement, is rejected; the previous admitted
-revision stays active. Every admitted snapshot must itself contain all configured bundles. At
+A candidate is admitted only if every OPA rule's decision is defined and every OPA rule's
+requirements pass. Otherwise the whole candidate is rejected for all rules, the rejection names the
+first failing rule, and the previous admitted revision stays active for every rule. Every admitted snapshot must itself contain all configured bundles. At
 startup, a usable subset is not admitted; if the subsequent complete candidate is rejected,
-`startup_timeout` fails startup even if every bundle activated historically.
+`impersonation.opa.startup_timeout` fails startup even if every bundle activated historically.
 
 ## 5. Built-ins (DEC-BUILTINS)
 

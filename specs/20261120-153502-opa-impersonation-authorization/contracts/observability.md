@@ -44,10 +44,11 @@ attributes (`OPENTELEMETRY.md` § 4.2 and § 6). Caller cancellation uses the `c
 
 | Name | Kind | Unit | Attributes | Changes when |
 | --- | --- | --- | --- | --- |
-| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `rule`; `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `binding_missing`, `evidence_voided`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision after an OPA activation |
-| `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | `rule` | Read per export: seconds since the active revision was admitted; no point before the first admission |
+| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `binding_missing`, `evidence_voided`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
+| `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | none | Read per export: seconds since the shared active revision was admitted; no point before the first admission |
 
-`rule` is bounded by the operator's rule list, like `service_id` in the `oauth2_sessions` precedent.
+There is one engine and one active revision, so neither instrument carries `rule`. The rejecting
+rule is a log attribute only.
 Both instruments use scope `tokenexchange` and are created once in the adapter constructor; constructor errors are logged once at
 `Warn`.
 
@@ -55,18 +56,19 @@ Both instruments use scope `tokenexchange` and are created once in the adapter c
 
 | Message | `event` | Level | Attributes |
 | --- | --- | --- | --- |
-| `impersonation policy revision admitted` | `oauth2_server.impersonation_policy.revision_admitted` | Info | `rule`, `policy_revision`, `policy_admission_id`, `bundle_count`, `duration_ms` |
-| `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule`, `policy_revision`, `reason` (closed set above), `error_kind`; for `binding_missing` also `missing_reference` (`subject_token`, `client_assertion`, `actor_token`); for `prohibited_builtin` also `builtin` (built-in name) |
-| `impersonation policy not ready` | `oauth2_server.impersonation_policy.startup_failed` | Error | `rule`, `reason` (`timeout`, `bootstrap_invalid`), `duration_ms` |
+| `impersonation policy revision admitted` | `oauth2_server.impersonation_policy.revision_admitted` | Info | `policy_revision`, `policy_admission_id`, `bundle_count`, `rule_count`, `duration_ms` |
+| `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule` (first failing rule, for `decision_undefined`, `binding_missing`, and `evidence_voided` only), `policy_revision`, `reason` (closed set above), `error_kind`; for `binding_missing` also `missing_reference` (`subject_token`, `client_assertion`, `actor_token`); for `prohibited_builtin` also `builtin` (built-in name) |
+| `impersonation policy not ready` | `oauth2_server.impersonation_policy.startup_failed` | Error | `reason` (`timeout`, `bootstrap_invalid`, `local_bundle_invalid`), `rule` (last rejecting rule, when known), `duration_ms` |
+| `impersonation policy bundle token unavailable` | `oauth2_server.impersonation_policy.token_unavailable` | Warn | `reason` (`unreadable`, `file_too_large`, `empty`), at most once per minute while the condition lasts; never the path's contents |
 
 `policy_revision` is the sorted `<bundle>=<manifest revision>` list joined with `,`; a bundle without a
 revision contributes `<bundle>=`. Raw OPA errors are not logged when they can contain bootstrap
 values; compile errors log only the module path and the error class.
 
 `policy_admission_id` is a broker-generated process-instance UUID joined with the strictly
-increasing per-rule successful-admission sequence. It is allocated only at admission, stored on
+increasing successful-admission sequence of the shared engine. It is allocated only at admission, stored on
 that immutable revision, and copied unchanged to its admission log and deciding audits. It is
-unique within the logged `(rule, process instance)` scope even when bundle manifest labels are
+unique within the process instance even when bundle manifest labels are
 empty or reused; process-instance UUID prevents confusion across restarts. Rejected candidates
 have no admission ID. It is log/audit-only, never a metric or span attribute. The main alternative
 is requiring fresh nonempty manifest labels and rejecting unchanged labels (would reject valid

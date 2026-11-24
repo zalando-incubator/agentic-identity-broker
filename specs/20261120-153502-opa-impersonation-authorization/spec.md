@@ -30,12 +30,31 @@
   - Maintainer direction: mjungsbluth, 2026-11-20: “on Q2, support all modes including unsigned subjects”. This replaces the earlier proposed signed-only restriction; it does not extend impersonation to proxy/hybrid mode or permit unsigned client assertions or actors.
   - Rationale: OPA must be a usable policy-engine alternative for existing impersonation deployments, not remove their supported credential modes. FR-013 and SR-005 preserve the existing compensating controls while requiring startup and managed-update enforcement; planning must propose the necessary superseding ADR before implementation. This records the scope direction, not approval of a future mechanism or ADR.
 
+### Session 2026-11-24 (configuration revision)
+
+The maintainer chose one shared OPA engine and asked for the configuration review's issues to be
+fixed. These are Proposed under approval items API-CFG and API-BOOT; none is an approval.
+
+- Shared engine (R11): engine settings move to `oauth2_authorization_server.impersonation.opa`
+  (`policy.config_file` or `policy.path`, `startup_timeout`). Each OPA rule names only `package`,
+  `decision`, and `evaluation_timeout`. A revision is admitted only if every OPA rule passes, and a
+  request uses one revision for all its OPA rules. Reason: first-match fallthrough must not mix
+  policy versions; shared governance data is downloaded and held once.
+- Reserved fields: every rule `opa` key other than the three above fails startup, including
+  `policy_url` and `policy_path`, so a rule has one way to name a policy.
+- Local bundle directory (R15): `policy.path` loads a bundle directory once at startup through
+  `os.Root`, for development, tests, and release-shipped policy.
+- Token file (R16): the broker's `aib_bearer_token_file` credential plugin re-reads a contained
+  bearer token before every bundle request, so rotation needs no restart.
+- `package` defaults to `aib.broker.impersonation`, mirroring ExtProc's default. An ExtProc bootstrap
+  is reusable only within the accepted subset.
+
 ### Session 2026-11-21 (planning)
 
 Planning resolved the items this specification left to design. Each is pending the maintainer's sign-off as the named approval item in [plan.md](plan.md#approval-items); none is an approval.
 
-- Startup bound: the configuration table adds `authorization.opa.startup_timeout` (default `30s`, range `1s`–`5m`). Reason: FR-003 requires a bounded startup interval and this specification deferred its setting to planning (approval item API-CFG; research R7).
-- Bootstrap scope: FR-003's OPA-native bootstrap accepts only the `services`, `bundles`, `keys`, and `labels` keys. Reason: decision logs, status, and discovery could export claim-bearing input or reconfigure OPA at runtime, contrary to SR-003 and SR-006 (approval item API-BOOT; research R3).
+- Startup bound: the configuration table adds `impersonation.opa.startup_timeout` (default `30s`, range `1s`–`5m`; originally per rule, moved to the shared engine on 2026-11-24). Reason: FR-003 requires a bounded startup interval and this specification deferred its setting to planning (approval item API-CFG; research R7).
+- Bootstrap scope: FR-003's OPA-native bootstrap accepts only the `services`, `bundles`, `keys`, and `labels` keys, plus the broker's `aib_bearer_token_file` credential plugin (added 2026-11-24). Reason: decision logs, status, and discovery could export claim-bearing input or reconfigure OPA at runtime, contrary to SR-003 and SR-006 (approval item API-BOOT; research R3).
 - Input envelope: FR-005's Envoy-compatible fields are fixed in [contracts/policy-input-decision.md](contracts/policy-input-decision.md), including `parsed_path` and `parsed_query`, `host` and `scheme` taken from the configured end-user public URL, and removal of credential headers. Reason: SR-003 and Scenario 2.2 require a raw-credential-excluded but sensitive input that callers cannot shape into identity (approval item API-INPUT; research R8).
 - SR-005 mechanism: binding evidence is computed from the reachable decision graph of each candidate revision, and the proposed ADR [adr-20261121-061324-opa-impersonation-authorization.md](adr-20261121-061324-opa-impersonation-authorization.md) partly supersedes the CEL-specific controls. Network prohibition (FR-012) removes every nondeterministic OPA built-in except `time.now_ns`. Reason: SR-005 and FR-012 require a reviewable mechanism before implementation (approval items ADR-OPA, DEC-BIND, DEC-BUILTINS; research R4–R6, R13).
 
@@ -193,19 +212,28 @@ oauth2_authorization_server:
         authorization:
           type: opa
           opa:
-            policy:
-              config_file: /etc/broker/opa/bootstrap.yaml
-              package: company.impersonation
-              decision: result
+            package: company.impersonation
+            decision: result
             evaluation_timeout: 100ms
+    opa:
+      policy:
+        config_file: /etc/broker/opa/bootstrap.yaml
 ```
 
-The bootstrap uses the same OPA-native configuration vocabulary as ExtProc's managed-policy mode; a minimal illustrative bootstrap is:
+The rule names only its decision. The engine block `impersonation.opa` is shared by every OPA rule;
+a second OPA rule would add only its own `authorization` block. The bootstrap uses the same
+OPA-native configuration vocabulary as ExtProc's managed-policy mode; a minimal illustrative
+bootstrap, whose bundle-service token is a mounted Secret re-read before every download, is:
 
 ```yaml
 services:
   governance:
     url: https://policies.example.com
+    credentials:
+      plugin: aib_bearer_token_file
+plugins:
+  aib_bearer_token_file:
+    path: /etc/broker/opa/bundle-token
 bundles:
   impersonation:
     service: governance
@@ -374,14 +402,14 @@ No category claim, human grant, or human session is created. Q2 also supports th
    request completion there is no issuance audit or later permissive-rule authorization. Domain
    tests separately assert the terminal internal `server_error` mapping.
 
-4. As a startup variant, the operator changes `authorization.opa.policy.config_file` to a nonexistent file, supplies invalid bootstrap content, or provides no usable initial policy within the startup bound. The process exits unsuccessfully with the rule and field identified; there is no token response because this broker does not become ready. Include a two-bundle case: the first subset would allow, but
+4. As a startup variant, the operator changes `impersonation.opa.policy.config_file` to a nonexistent file, supplies invalid bootstrap content, or provides no usable initial policy within the startup bound. The process exits unsuccessfully with the rule and field identified; there is no token response because this broker does not become ready. Include a two-bundle case: the first subset would allow, but
    is not admitted; the complete candidate is rejected. Historical activation of both bundles never
    makes the subset a serving revision or permits readiness.
 
 5. For Scenario 3.4, start separately from active `r1` and make the bundle source unavailable or offer an invalid replacement. The Step 2 request still receives Journey 1's `200` response and decoded claims because `r1` remains active. A fresh request for another registered agent, `660e8400-e29b-41d4-a716-446655440001`, not approved in `r1`, receives Journey 1's `403 access_denied` response. Give the second Agent External ID `other-agent`, absent from governance approval. For that request change the audience suffix to the second UUID and give Alice active delegation and the agent scope `read`, so governance alone explains the denial. The broker supplies no maximum-age cutoff; operators own the acceptable staleness of distributed governance data.
 6. For Scenario 3.5, offer a revision that attempts `http.send` to `https://cmdb.example.com/agents/550e8400-e29b-41d4-a716-446655440000`. That policy is rejected before activation, without contacting the CMDB. As the initial revision, it prevents readiness within the startup bound; as an update to `r1`, it leaves the preceding Step 5 outcomes unchanged. Bundle polling of `https://policies.example.com` remains allowed through the operator-managed bootstrap.
 
-7. For Scenario 3.6, use Journey 4's valid unsigned or audience-absent rule and offer a revision removing the mandatory subject or opted-in role reference. The update is rejected before activation, leaving the last complete revision's outcomes in place. Separately update a valid unsigned rule to remove only `subject_token.email` or `subject_token.sub` field binding while retaining its mandatory subject reference: the new revision must not mint an unbound email or retain unverified-agent classification using the old revision's evidence. Repeat across a concurrent update to verify that each decision and its binding evidence use one revision.
+7. For Scenario 3.6, use Journey 4's valid unsigned or audience-absent rule and offer a revision removing the mandatory subject or opted-in role reference. The update is rejected before activation, leaving the last complete revision's outcomes in place. Separately update a valid unsigned rule to remove only `subject_token.email` or `subject_token.sub` field binding while retaining its mandatory subject reference: the new revision must not mint an unbound email or retain unverified-agent classification using the old revision's evidence. Repeat across a concurrent update to verify that each decision and its binding evidence use one revision. Finally, add Journey 1's signed rule as a second OPA rule on the same engine and offer a revision that breaks only the unsigned rule's mandatory reference: the revision is rejected for both rules, the rejection log names the unsigned rule, and the signed rule keeps the previous revision's outcomes.
 
 **Observable result**: Activated governance updates change issuance decisions. Evaluation failures never become permission; bundle-update failures instead retain the last complete revision and its documented staleness risk. Policies cannot initiate network lookups or discard mandatory credential bindings through an update.
 
@@ -399,7 +427,7 @@ No category claim, human grant, or human session is created. Q2 also supports th
 
 2. The first, OPA-backed rule explicitly denies Journey 1's request. The later CEL rule independently validates and authorizes it. The client receives Journey 1's normal `200` response and token claims. This is intentional ordered-rule behavior: an operator seeking a universal governance restriction must apply it to every rule that could permit the request.
 3. In a separate CEL-only deployment, the operator removes the OPA rule and bootstrap entirely. The existing allowed/denied requests and ordinary third-party exchanges keep their established outcomes; no OPA management connection is made.
-4. As an invalid-configuration variant, the operator populates both `authorization.cel` and `authorization.opa` on one rule or chooses an unknown type. Startup fails naming that rule and field; the operator must select exactly one engine.
+4. As an invalid-configuration variant, the operator populates both `authorization.cel` and `authorization.opa` on one rule, chooses an unknown type, or puts an engine setting such as `startup_timeout` or the reserved `policy_url` on the rule's `opa` block. Startup fails naming that rule and field; the operator must select exactly one engine and keep engine settings under `impersonation.opa`. Removing the last OPA rule while leaving `impersonation.opa` configured also fails startup, naming that block.
 
 5. For Scenario 4.4, use Journey 4's unsigned-subject rule but offer an initial policy whose authorization decision references only the client and actor, not `context.subject_token`. Startup fails within the startup bound because the required subject binding is missing. In a separate variant, select audience-absent actor validation but omit `context.actor_token` from the decision's verified references: startup likewise fails. Restore the required references and each configuration becomes ready. Repeat against equivalent existing CEL-only rules to preserve their established binding checks and outcomes.
 
@@ -481,9 +509,9 @@ If a later valid revision still authorizes the subject but does not bind its ema
 
 ### Functional Requirements
 
-- **FR-001**: Operators MUST be able to select OPA through `oauth2_authorization_server.impersonation.rules[].authorization.type: opa` and configure it under that rule's `authorization.opa`. Existing valid CEL rules MUST continue to work without OPA configuration.
+- **FR-001**: Operators MUST be able to select OPA through `oauth2_authorization_server.impersonation.rules[].authorization.type: opa`, name the rule's decision under that rule's `authorization.opa`, and configure one engine shared by all OPA rules under `oauth2_authorization_server.impersonation.opa`. All OPA rules evaluated for one request MUST use the same admitted revision. Existing valid CEL rules MUST continue to work without OPA configuration.
 - **FR-002**: Exactly one selected authorization engine MUST decide each evaluated rule. Unknown types, conflicting populated engine blocks, and missing selected-engine configuration MUST fail startup with an indexed rule/field diagnostic.
-- **FR-003**: OPA configuration MUST accept an OPA-native bootstrap configuration file comparable to ExtProc's managed-policy configuration, including managed policy/data bundles and a selected decision document. It MUST be an absolute regular file read through `os.Root` under `security.trust_material_dir`, at most 1 MiB; SDK-local-file references are unsupported. Invalid configuration or no admitted snapshot containing every configured bundle within a bounded startup interval MUST prevent readiness; historical activations cannot make an earlier subset usable.
+- **FR-003**: OPA configuration MUST accept an OPA-native bootstrap configuration file comparable to ExtProc's managed-policy configuration, including managed policy/data bundles, or a local bundle directory read once at startup. Each MUST be read through `os.Root` under `security.trust_material_dir` (bootstrap at most 1 MiB); OPA-native local-file references are unsupported, and a bundle-service bearer token MAY be a contained file re-read before every download. Invalid configuration or no admitted snapshot containing every configured bundle within a bounded startup interval MUST prevent readiness; historical activations cannot make an earlier subset usable.
 - **FR-004**: A successfully activated managed policy/data update MUST affect subsequent evaluations without rebuilding or restarting the broker. Updates MUST activate consistently; the broker MUST NOT reuse a previous request's allow decision.
 - **FR-005**: For all existing local-mode impersonation credential modes (FR-013), the input MUST provide the Envoy OPA plugin-compatible `attributes.request.http` envelope for the token endpoint request and the namespaced `context` fields in Journeys 1 and 4. For each existing CEL variable `v` among `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, and `request`, `input.context.v` MUST preserve the same semantics and value types. `subject_unverified` MUST be `true` only for an explicitly unverified subject and `false` for a verified signed subject; unsigned subject claims MUST NOT be presented as verified. This does not promise identical policy syntax between CEL and Rego.
 - **FR-006**: Policy context MUST be derived from the same validated per-rule credentials and resolved target used by CEL, not raw request-supplied identity headers. The `request` extension MUST preserve `resource`, `grant_type`, `scope`, and target UUID `agent_id`; it MUST NOT confuse the routing audience with the minted token audience. `context.agent` MUST use ExtProc's Grant Context agent shape: `id` is the target UUID, and `canonical_id` and `external_id` are the resolved broker Agent's literal values, each omitted when unset (never `null` or `""`). Callers and bundles cannot override the mapping. Governance examples MUST use `external_id` without falling back to UUID. The input MUST carry `type: "impersonation"` and MUST NOT carry ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`, `granted_permission_sets`, `granted_permission_sets_available`, `agent_session_id`).
@@ -532,16 +560,19 @@ The diagram shows the authorized human path; explicit policy denial considers la
 
 The proposed keys below extend the broker's existing singular `oauth2_authorization_server.impersonation.rules[]` hierarchy. They do not configure the standalone ExtProc workload.
 
-| Relative key under one rule | Type | Requirement and proposed default |
+| Key | Type | Requirement and proposed default |
 | --- | --- | --- |
-| `authorization.type` | enum | Existing explicit `cel` selection extended with `opa`; no implicit allow or engine selection |
-| `authorization.opa.policy.config_file` | string | Required bootstrap configuration file when OPA is selected; no default path |
-| `authorization.opa.policy.package` | string | Required policy package, e.g. `company.impersonation`; no implicit allow package |
-| `authorization.opa.policy.decision` | string | Decision document name; proposed default `result` |
-| `authorization.opa.evaluation_timeout` | duration | Proposed default `100ms`, range `10ms`–`5s`; failure is terminal |
-| `authorization.opa.startup_timeout` | duration | Proposed default `30s`, range `1s`–`5m`; no admitted revision within the bound fails startup (planning, 2026-11-21) |
+| `impersonation.opa.policy.config_file` | string | Managed mode: bootstrap configuration file; exactly one of `config_file` and `path`; no default |
+| `impersonation.opa.policy.path` | string | Local mode: bundle directory read once at startup; exactly one of `config_file` and `path`; no default |
+| `impersonation.opa.startup_timeout` | duration | Proposed default `30s`, range `1s`–`5m`; no admitted revision within the bound fails startup |
+| `impersonation.opa` (block) | object | Required when a rule selects `opa`; must be empty when none does |
+| `rules[].authorization.type` | enum | Existing explicit `cel` selection extended with `opa`; no implicit allow or engine selection |
+| `rules[].authorization.opa.package` | string | Policy package, e.g. `company.impersonation`; proposed default `aib.broker.impersonation`; an undefined decision fails admission, never allows |
+| `rules[].authorization.opa.decision` | string | Decision document name; proposed default `result` |
+| `rules[].authorization.opa.evaluation_timeout` | duration | Proposed default `100ms`, range `10ms`–`5s`; failure is terminal |
+| any other `rules[].authorization.opa` key | — | Fails startup, including reserved `policy_url`/`policy_path` and engine settings |
 
-Journey 1 shows the minimal relevant rule and bootstrap configuration. Readiness is bounded by `authorization.opa.startup_timeout`; the input and bootstrap details are fixed in [contracts/policy-input-decision.md](contracts/policy-input-decision.md) and [contracts/impersonation-opa-config.yaml](contracts/impersonation-opa-config.yaml), not inferred from the currently reserved `policy_url`/`policy_path` fields, whose declarations stay on `token_exchange.authorization` but never implement ordinary-exchange OPA; explicit ordinary-exchange `type: opa` now fails startup. Those fields do not establish an implemented remote-server mode. A remote decision-service integration and an additional static policy-file mode are not required by this feature.
+Journey 1 shows the minimal relevant rule, engine, and bootstrap configuration. Readiness is bounded by `impersonation.opa.startup_timeout`; the input and bootstrap details are fixed in [contracts/policy-input-decision.md](contracts/policy-input-decision.md) and [contracts/impersonation-opa-config.yaml](contracts/impersonation-opa-config.yaml), not inferred from the currently reserved `policy_url`/`policy_path` fields, whose declarations stay on `token_exchange.authorization` but never implement ordinary-exchange OPA; explicit ordinary-exchange `type: opa` now fails startup. Those fields do not establish an implemented remote-server mode. A remote decision-service integration is not required by this feature; the local bundle directory is the only non-managed mode.
 
 Approved configuration must be documented in `docs/configuration.md`, illustrated under `examples/config/` and its index, and passed through the broker Helm values/templates/documentation as required by Constitution Principle VII.
 
