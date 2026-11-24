@@ -117,6 +117,12 @@ uses the existing `oauth2.tls` settings. The existing rule for plaintext URLs ap
 client is small and keeps the dependency set stable. A file read for each request lets the
 operator replace a mounted credential without a restart.
 
+**Gateway version**: The repository pins agentgateway `v1.5.0`. The agentgateway documentation
+says that version 1.6 had no route type for Decisions. Thus, the decision endpoint needs a later
+gateway release than the pinned release. The decision endpoint can be a different gateway
+instance than the MCP gateway. The verification task must record the first release that has the
+Decisions route.
+
 **Verification task**: The agentgateway documentation shows message arrays with `input_text`. It
 does not show `input_json` for the translation to System One. A Docker test with agentgateway and
 a System One test double must prove that the context arrives. If the gateway rejects or removes
