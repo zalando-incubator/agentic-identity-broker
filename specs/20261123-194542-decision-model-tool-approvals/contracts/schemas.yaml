@@ -1,0 +1,74 @@
+# OpenAPI schema additions for api/enduser/openapi.yaml.
+# Draft. The stakeholder must approve these schemas before implementation (API-006).
+# See approval-assessment.md for the rules and the examples.
+
+components:
+  schemas:
+    AssessmentFinding:
+      type: object
+      additionalProperties: false
+      required:
+        - question
+        - statement
+        - state
+      properties:
+        question:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{0,63}$"
+          description: Name of the question in the assessment catalog of the operator.
+        statement:
+          type: string
+          minLength: 1
+          maxLength: 120
+          description: Plain text from the assessment catalog. One line. The client shows it as text.
+        state:
+          type: string
+          enum: [indicated, not_indicated, unclear]
+
+    AssessmentSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum: [assessed, not_available]
+          description: >-
+            `assessed`: the policy evaluated a full set of answers.
+            `not_available`: assessment is enabled, but no full set of answers exists.
+        recommendation:
+          type: string
+          enum: [routine, attention]
+          description: Permitted only with the status `assessed`.
+        findings:
+          type: array
+          maxItems: 16
+          description: Permitted only with the status `assessed`. Each `question` value is unique.
+          items:
+            $ref: "#/components/schemas/AssessmentFinding"
+        model:
+          type: string
+          maxLength: 100
+          description: The model that answered.
+        question_set:
+          type: string
+          pattern: "^qs-[0-9a-f]{64}$"
+          description: Fingerprint of the question set.
+
+    # Existing schema. Only the new optional property is shown.
+    CreateApprovalRequest:
+      type: object
+      properties:
+        assessment:
+          $ref: "#/components/schemas/AssessmentSummary"
+
+    # Existing schema. Only the new optional property is shown.
+    ToolApprovalDetail:
+      type: object
+      properties:
+        assessment:
+          allOf:
+            - $ref: "#/components/schemas/AssessmentSummary"
+          nullable: true
+          description: Absent or null for an approval without assessment information.

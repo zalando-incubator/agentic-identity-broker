@@ -206,7 +206,8 @@ the server `google-drive-mcp`. agentgateway also gives access to decision models
 `https://broker.example.com`.
 
 All times are 2026-11-23 UTC. All identifiers, tokens, and probabilities are synthetic. The
-thresholds in the policy are examples. An evaluation must supply the real thresholds (R-16).
+examples show fingerprints with eight characters. Real fingerprints are longer. The thresholds in
+the policy are examples. An evaluation must supply the real thresholds (R-16).
 
 The decision request and its response use the Decisions shape that agentgateway documents. The
 planning phase sets the exact wire encoding of the context. The section structure and the content
@@ -1110,7 +1111,7 @@ Conditions for automatic approval:
 
 **Audit and observability**
 
-- **FR-060**: The system MUST write one audit record for each assessed call. The record MUST contain the outcome, the status, and the applicable rule name. It MUST contain the answering model, the two fingerprints, and the values of each answer. It MUST contain the target server, the tool name, the agent, and the principal. It MUST contain a reference to the arguments that does not reveal them.
+- **FR-060**: The system MUST write one audit record for each assessed call. The record MUST contain the outcome, the status, and the applicable rule name. It MUST contain the answering model, the two fingerprints, and the values of each answer. It MUST contain the target server, the agent, and the principal. It MUST contain the tool name if the logging standard permits it. It MUST contain a reference to the arguments that does not reveal them.
 - **FR-061**: Audit records, other log records, spans, and metrics MUST NOT contain argument values, the context, tool definition text, question text, or credentials.
 - **FR-062**: The operator MUST be able to monitor the number of assessments by outcome and by status. The operator MUST be able to monitor the duration of model requests. A metric MUST NOT contain a principal.
 - **FR-063**: If the definition of a tool changes for a target server, the system MUST report the change to the operator. The report MUST contain the old and the new tool context fingerprint. The report MUST NOT contain the definition text.
@@ -1273,6 +1274,7 @@ in agreement with `adrs/011-extproc-standalone-binary.md`. The Helm chart does n
 - **authorization.assessment.credential_file**: An optional file with the credential for the endpoint. The system never reads the credential from the catalog and never logs it.
 - **authorization.assessment.request_timeout**: A duration. The default is `500ms`, and the maximum is `2s`.
 - **authorization.assessment.max_context_bytes**: An integer. The default is `16384`.
+- **authorization.assessment.max_listing_bytes**: An integer. The default is `1048576`. The system does not learn definitions from a larger tool listing.
 - **authorization.assessment.catalog_file**: The path of the assessment catalog. It is required while the feature is enabled.
 - **authorization.assessment.auto_approval.evaluation_record_file**: The path of the Evaluation Record. It is required in the `auto_approve` mode.
 

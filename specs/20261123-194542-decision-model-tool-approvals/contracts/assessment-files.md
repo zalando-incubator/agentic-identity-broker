@@ -1,0 +1,125 @@
+# Contract: Configuration, Catalog, Evaluation Record, and Evaluation Run
+
+**Feature**: [spec.md](../spec.md) | **Decisions**: [research.md](../research.md) D-08, D-11
+
+**Approval status**: Draft. The stakeholder must approve this contract before implementation
+(API-006).
+
+## 1. ExtProc configuration keys
+
+The keys are in the ExtProc configuration schema (`internal/extproc/config/config.go`,
+`adrs/011-extproc-standalone-binary.md`). The Helm chart does not deploy ExtProc and does not
+change.
+
+| Key | Type | Default | Validation |
+|---|---|---|---|
+| `authorization.assessment.enabled` | boolean | `false` | It requires `authorization.enabled` and `tool_approvals.enabled`. |
+| `authorization.assessment.mode` | string | `recommend` | `recommend` or `auto_approve`. |
+| `authorization.assessment.endpoint` | URL | none | Required while enabled. HTTPS, or HTTP if `oauth2.tls.allow_http` is true. |
+| `authorization.assessment.model` | string | none | Required while enabled. |
+| `authorization.assessment.credential_file` | path | none | Optional. The file has a maximum of 4 KiB. |
+| `authorization.assessment.request_timeout` | duration | `500ms` | More than 0, maximum `2s`. |
+| `authorization.assessment.max_context_bytes` | integer | `16384` | 1,024 to 262,144. |
+| `authorization.assessment.max_listing_bytes` | integer | `1048576` | 1,024 to 8,388,608. ExtProc ignores a larger `tools/list` response. |
+| `authorization.assessment.catalog_file` | path | none | Required while enabled. |
+| `authorization.assessment.auto_approval.evaluation_record_file` | path | none | Required in the `auto_approve` mode. |
+
+Path values obey the existing rule for policy paths: no `..` segment, and the file must exist at
+startup.
+
+The documentation and the examples change in these files: `docs/configuration.md`,
+`examples/config/extproc-tool-assessment.yaml`, `examples/config/assessment-catalog.yaml`,
+`examples/config/README.md`, `configs/config.extproc.docker.yaml`, and the configuration table in
+`internal/extproc/AGENTS.md`.
+
+## 2. Catalog file
+
+The format is YAML. The fields and their rules are in [data-model.md](../data-model.md). The full
+example is in [spec.md](../spec.md), Journey 1, step 2.
+
+ExtProc rejects the file at startup in these cases:
+
+- An unknown key, or a missing required key
+- A file that is larger than 1 MiB
+- A question name that is not unique
+- A placeholder in a question text
+- A `predicate` question without `yes_when` or `no_when`
+- A `score` question with fewer than 2 levels or more than 10 levels.
+
+The error message names the question or the key. At startup, ExtProc writes the question set
+fingerprint to the log.
+
+## 3. Evaluation record file
+
+The format is YAML. Only the evaluation run writes it.
+
+```yaml
+format: 1
+model: "jev-1.14.0"
+question_set: "qs-<64 hexadecimal characters>"
+tool_contexts:
+  google-drive-mcp:
+    drive.share_file: "tc-<64 hexadecimal characters>"
+```
+
+In the `auto_approve` mode, ExtProc rejects a missing or invalid file at startup. If the
+`question_set` value differs from the catalog, ExtProc starts and writes an error record. No call
+then proceeds automatically (User Story 4, scenario 4).
+
+## 4. Case file
+
+The format is JSON Lines. Each line is one case.
+
+| Field | Type | Rules |
+|---|---|---|
+| `id` | string | Required. Unique in the file. |
+| `expect` | `human` or `automatic_ok` | Required. `human`: a person must see the call. |
+| `target_server_name` | string | Required. |
+| `tool_name` | string | Required. |
+| `arguments` | JSON object | Required. It can be empty. |
+| `context` | JSON object | Optional. It supplies `granted_permission_sets` for the policy input. |
+
+## 5. Tool listing file
+
+One file for each target server. The content is the unmodified `result` object of a `tools/list`
+response, or the full JSON-RPC response. A file with two or more pages is a JSON list of such
+objects.
+
+## 6. Command
+
+```text
+extproc-token-exchange assessment evaluate
+    --config <ExtProc configuration file>
+    --cases <case file>
+    --tool-listing <target server name>=<listing file>     (one time for each server)
+    --record-out <evaluation record file>
+    [--report-out <report file>]                           (default: standard output)
+    [--parallel <number>]                                  (default: 4, maximum: 32)
+```
+
+The command uses the catalog, the model settings, and the policy from the configuration file. It
+ignores `mode` and an existing evaluation record. It starts no gRPC server, calls no tool, and
+sends no request to the broker.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | The run completed. False approvals do not change the exit code. |
+| 1 | An input file or the configuration is invalid. |
+| 2 | The run did not write an evaluation record, because the responses named two or more models. |
+
+## 7. Report
+
+The report is plain text. It contains these values (FR-051):
+
+- The question set fingerprint and each answering model
+- Each tool context fingerprint with its number of cases
+- The number of cases for each label
+- The number and the share of cases that skip a person
+- The number and the rate of false approvals, with the exact one-sided 95% upper bound
+- Each false approval with its case identifier, the rule name, and the answers
+- The number and the share of `automatic_ok` cases that wait for a person
+- The number of assessments for each status that is not `complete`.
+
+A false approval is a case with the label `human` that satisfies the conditions of FR-041. The
+run ignores two of these conditions: the mode and the evaluation record. The example is in [spec.md](../spec.md),
+Journey 4, step 3.
