@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ func TestMemoryAdapter_FullLifecycle(t *testing.T) {
 		},
 	}
 
-	adapter, err := storage.NewAdapter(config)
+	adapter, err := storage.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, adapter)
 
@@ -116,7 +117,7 @@ func TestMemoryAdapter_ConcurrentOperations(t *testing.T) {
 		},
 	}
 
-	adapter, err := storage.NewAdapter(config)
+	adapter, err := storage.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	users := adapter.Users()
@@ -176,7 +177,7 @@ func TestMemoryAdapter_TimeoutHandling(t *testing.T) {
 		},
 	}
 
-	adapter, err := storage.NewAdapter(config)
+	adapter, err := storage.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	users := adapter.Users()
@@ -206,7 +207,7 @@ func TestMemoryAdapter_PaginationSupport(t *testing.T) {
 		},
 	}
 
-	adapter, err := storage.NewAdapter(config)
+	adapter, err := storage.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	users := adapter.Users()
@@ -262,7 +263,7 @@ func TestMemoryAdapter_ErrorRecovery(t *testing.T) {
 		},
 	}
 
-	adapter, err := storage.NewAdapter(config)
+	adapter, err := storage.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	users := adapter.Users()

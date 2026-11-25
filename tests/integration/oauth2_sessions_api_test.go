@@ -1736,7 +1736,7 @@ func newSessionDetailIsolationFixture(t *testing.T) sessionDetailIsolationFixtur
 // newTestEncryption creates a real encryption adapter using a deterministic test key.
 func newTestEncryption(t *testing.T) ports.EncryptionPort {
 	t.Helper()
-	adapter, _, err := awsencryption.NewAWSEncryption("ASNFZ4mrze/+3LqYdlQyEAEjRWeJq83v/ty6mHZUMhA=", "", 0)
+	adapter, _, err := awsencryption.NewAWSEncryption("ASNFZ4mrze/+3LqYdlQyEAEjRWeJq83v/ty6mHZUMhA=", "", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	return adapter
 }

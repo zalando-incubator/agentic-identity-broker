@@ -500,7 +500,7 @@ func TestMigration033VerifiesLegacySignature(t *testing.T) {
 	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	require.NoError(t, err)
 	privatePEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER})
-	encryptor, _, err := awsencryption.NewAWSEncryption(base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")), "", 0)
+	encryptor, _, err := awsencryption.NewAWSEncryption(base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef")), "", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	ciphertext, err := encryptor.Encrypt(ctx, privatePEM, map[string]string{"kid": kid})
 	require.NoError(t, err)
@@ -518,7 +518,7 @@ func TestMigration033VerifiesLegacySignature(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, f.Up(t, 34))
-	adapter, err := postgres.NewAdapter(&ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: f.connStr}})
+	adapter, err := postgres.NewAdapter(&ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: f.connStr}}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
 	defer func() { require.NoError(t, adapter.Close(ctx)) }()
@@ -530,7 +530,7 @@ func TestMigration033VerifiesLegacySignature(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, stored.PublicJWK)
 
-	freshEncryptor, _, err := awsencryption.NewAWSEncryption(base64.StdEncoding.EncodeToString([]byte("fedcba9876543210fedcba9876543210")), "", 0)
+	freshEncryptor, _, err := awsencryption.NewAWSEncryption(base64.StdEncoding.EncodeToString([]byte("fedcba9876543210fedcba9876543210")), "", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	freshService := oauth2server.NewSigningKeyService(repo, repo, freshEncryptor, &noop.BranchKeyManager{}, slog.Default())
 	set, err := freshService.BuildJWKS(ctx)

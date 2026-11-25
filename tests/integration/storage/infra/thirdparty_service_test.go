@@ -193,7 +193,7 @@ func TestProtectedResourceUpdatePreservesUnchangedCreatedAt(t *testing.T) {
 // newTestEncryption creates a real memory encryption adapter using the deterministic test KEK.
 func newTestEncryption(t *testing.T) ports.EncryptionPort {
 	t.Helper()
-	enc, _, err := awsencryption.NewAWSEncryption(testKEKForIntegration, "", 0)
+	enc, _, err := awsencryption.NewAWSEncryption(testKEKForIntegration, "", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err, "failed to create test encryption adapter")
 	return enc
 }
@@ -229,7 +229,7 @@ func setupThirdpartyProviderTestHarnessWithDatabase(
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -892,7 +892,8 @@ func TestDCRIssuerScopedCredentialsSurviveNewPostgresAdapter(t *testing.T) {
 	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
 		Backend:  "postgres",
 		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
 	defer func() { require.NoError(t, adapter.Close(ctx)) }()
@@ -956,7 +957,8 @@ func TestPublicDCRPersistsWithoutCredential(t *testing.T) {
 	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
 		Backend:  "postgres",
 		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
 	defer func() { require.NoError(t, adapter.Close(ctx)) }()
@@ -1010,7 +1012,8 @@ func TestDiscoveryFailureAndRecoveryPersistAcrossNewPostgresAdapter(t *testing.T
 	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
 		Backend:  "postgres",
 		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
 	principal := id.Principal("dcr-status-user@example.test")
@@ -1052,7 +1055,8 @@ func TestDiscoveryFailureAndRecoveryPersistAcrossNewPostgresAdapter(t *testing.T
 	restarted, err := postgres.NewAdapter(&ports.StorageConfig{
 		Backend:  "postgres",
 		Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 	require.NoError(t, restarted.Initialize(ctx))
 	defer func() { require.NoError(t, restarted.Close(ctx)) }()
@@ -1223,7 +1227,8 @@ func TestDCRIssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 
 	adapter, err := postgres.NewAdapter(&ports.StorageConfig{
 		Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: sharedPostgres.ConnectionString(dbName)},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
 	defer func() { require.NoError(t, adapter.Close(ctx)) }()

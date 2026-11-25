@@ -4,6 +4,7 @@ package storage_test
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
@@ -114,7 +115,7 @@ func TestServiceIconPostgresReconnectPersistence(t *testing.T) {
 	_, url, cleanup := pg.SetupMigratedDatabase(t)
 	defer cleanup()
 	config := &ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: url}}
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NoError(t, adapter.Initialize(ctx))
 	t.Cleanup(func() { _ = adapter.Close(ctx) })
@@ -128,7 +129,7 @@ func TestServiceIconPostgresReconnectPersistence(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, adapter.Close(ctx))
 
-	reconnected, err := postgres.NewAdapter(config)
+	reconnected, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NoError(t, reconnected.Initialize(ctx))
 	defer func() { require.NoError(t, reconnected.Close(ctx)) }()

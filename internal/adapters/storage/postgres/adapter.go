@@ -27,12 +27,22 @@ type Adapter struct {
 	config             *ports.StorageConfig
 	timeouts           ports.StorageTimeouts
 	lockedSessionSlots chan struct{}
+	logger             *slog.Logger
 }
 
 // NewAdapter creates a new PostgreSQL storage adapter.
 // Does not connect to database - connection happens during Initialize().
 // Returns error if configuration is invalid.
-func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
+func NewAdapter(config *ports.StorageConfig, logger *slog.Logger) (*Adapter, error) {
+	if logger == nil {
+		return nil, storage.NewStorageError(
+			"NewAdapter",
+			storage.ErrorKindValidation,
+			nil,
+			"logger must not be nil",
+		)
+	}
+
 	if config == nil {
 		return nil, storage.NewStorageError(
 			"NewAdapter",
@@ -73,6 +83,7 @@ func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		config:             config,
 		timeouts:           timeouts,
 		lockedSessionSlots: make(chan struct{}, maxLockedSessions),
+		logger:             logger,
 	}, nil
 }
 
@@ -178,12 +189,12 @@ func (a *Adapter) verifySchema(ctx context.Context, db *sqlx.DB) error {
 
 	if err := db.GetContext(schemaCtx, &exists, query); err != nil {
 		// Log warning but don't fail - users table may not be created yet
-		slog.WarnContext(ctx, "failed to query users table existence",
+		a.logger.WarnContext(ctx, "failed to query users table existence",
 			"error", err,
 			"note", "users table may not exist yet, continuing initialization")
 	} else if !exists {
 		// Users table doesn't exist, log warning but continue
-		slog.WarnContext(ctx, "users table not found",
+		a.logger.WarnContext(ctx, "users table not found",
 			"note", "users table from previous feature may not be migrated yet")
 	}
 

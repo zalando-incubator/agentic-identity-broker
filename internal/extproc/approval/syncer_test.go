@@ -46,7 +46,7 @@ func discardLogger() *slog.Logger {
 
 func TestSyncerBootstrapStoresFullSnapshotAndETag(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	cache.Replace([]Pair{{
 		Identity:  Identity{Principal: "stale", AgentID: "agent"},
 		Approvals: []Record{approvedRecord("stale", "tool", map[string]string{}, "permanent", now)},
@@ -72,7 +72,7 @@ func TestSyncerBootstrapStoresFullSnapshotAndETag(t *testing.T) {
 
 func TestSyncerBootstrapHonorsContextAndRetainsCacheOnFailure(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	identity := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: identity, Approvals: []Record{approvedRecord("cached", "tool", map[string]string{}, "permanent", now)}}}, `"v1"`)
 	deadlineObserved := make(chan struct{})
@@ -100,7 +100,7 @@ func TestSyncerBootstrapHonorsContextAndRetainsCacheOnFailure(t *testing.T) {
 
 func TestSyncerRunRepollsAfter304AndReplacesSnapshot(t *testing.T) {
 	now := time.Now().UTC()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	stale := Identity{Principal: "stale", AgentID: "agent"}
 	fresh := Identity{Principal: "alice", AgentID: "agent"}
 	cache.Replace([]Pair{{Identity: stale, Approvals: []Record{approvedRecord("stale", "tool", map[string]string{}, "permanent", now)}}}, `"v1"`)
@@ -139,7 +139,7 @@ func TestSyncerRunRepollsAfter304AndReplacesSnapshot(t *testing.T) {
 }
 
 func TestSyncerRetriesWithBoundedExponentialBackoff(t *testing.T) {
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var starts []time.Time
@@ -169,7 +169,7 @@ func TestSyncerCompletesBackoffWhenEvictionTickerFires(t *testing.T) {
 		observationWindow = backoff / 2
 	)
 
-	cache := NewCache(idleTTL, time.Minute)
+	cache := NewCache(idleTTL, time.Minute, slog.New(slog.DiscardHandler))
 	cache.RecordSession("idle-session")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -226,7 +226,7 @@ func TestSyncerCompletesBackoffWhenEvictionTickerFires(t *testing.T) {
 }
 
 func TestSyncerStopsImmediatelyWhenCancelledDuringBackoff(t *testing.T) {
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	ctx, cancel := context.WithCancel(context.Background())
 	firstAttempt := make(chan struct{})
 	poller := &pollerStub{poll: func(_ context.Context, _ []string, _ string, _ time.Duration) ([]Pair, string, bool, error) {
@@ -261,7 +261,7 @@ func TestSyncerPublishesApprovalSyncAgeGauge(t *testing.T) {
 		_ = meterProvider.Shutdown(context.Background())
 	})
 
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	expectedAge := cache.SyncAgeSeconds()
 	NewSyncer(cache, &pollerStub{}, time.Second, discardLogger())
 

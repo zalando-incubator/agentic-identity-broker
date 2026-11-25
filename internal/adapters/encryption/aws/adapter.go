@@ -53,6 +53,7 @@ type AWSAdapter struct {
 	encryptionClient encryptionSDKClient // AWS Encryption SDK client for encrypt/decrypt operations
 	keyring          mpltypes.IKeyring   // Keyring (AWS KMS hierarchical, KMS, or Raw AES)
 	dynamoDBTimeout  time.Duration       // per-operation context timeout applied to DynamoDB branch key fetches
+	logger           *slog.Logger
 }
 
 // NewAWSEncryption creates an AWS Encryption SDK adapter with automatic fan-out to supported scenarios:
@@ -73,12 +74,16 @@ type AWSAdapter struct {
 //   - keyMaterial: AWS KMS ARN or base64-encoded 32-byte AES-256 key
 //   - dynamoDBTableName: DynamoDB table for branch key caching (uses default if empty, ignored for base64 scenario)
 //   - branchKeyTTL: TTL for cached branch keys (uses default if zero, ignored for base64 scenario)
+//   - logger: required logger for encryption failure and diagnostic records
 //
 // Returns:
 //   - adapter: EncryptionPort implementation for Encrypt/Decrypt operations
 //   - manager: BranchKeyManager implementation for provisioning/managing branch keys (nil for base64 scenario)
 //   - error: If initialization fails
-func NewAWSEncryption(keyMaterial, dynamoDBTableName string, branchKeyTTL time.Duration) (*AWSAdapter, *AWSBranchKeyManager, error) {
+func NewAWSEncryption(keyMaterial, dynamoDBTableName string, branchKeyTTL time.Duration, logger *slog.Logger) (*AWSAdapter, *AWSBranchKeyManager, error) {
+	if logger == nil {
+		return nil, nil, errors.New("aws.NewAWSEncryption: logger must not be nil")
+	}
 	if keyMaterial == "" {
 		return nil, nil, encryption.NewKEKUnavailableError("key encryption key material is required", nil)
 	}
@@ -92,7 +97,7 @@ func NewAWSEncryption(keyMaterial, dynamoDBTableName string, branchKeyTTL time.D
 		awsConfig := &ports.AWSKMSConfig{
 			KeyARN: keyMaterial,
 		}
-		adapter, keyStore, err := newAdapterWithKMSARNAndKeyStore(keyMaterial, dynamoDBTableName, branchKeyTTL, awsConfig)
+		adapter, keyStore, err := newAdapterWithKMSARNAndKeyStore(keyMaterial, dynamoDBTableName, branchKeyTTL, awsConfig, logger)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -103,7 +108,7 @@ func NewAWSEncryption(keyMaterial, dynamoDBTableName string, branchKeyTTL time.D
 	// Scenario A: Base64-encoded AES-256 key for development (raw AES keyring)
 	// Note: Environment variable interpolation (${VAR_NAME}) is handled by the config loader
 	// This function receives the actual base64-encoded key value
-	adapter, err := newAdapterWithBase64KEK(keyMaterial)
+	adapter, err := newAdapterWithBase64KEK(keyMaterial, logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -115,7 +120,7 @@ func NewAWSEncryption(keyMaterial, dynamoDBTableName string, branchKeyTTL time.D
 // The hierarchical keyring uses DynamoDB for caching branch keys, reducing KMS API calls.
 // This variant returns both the adapter and the KeyStore for branch key manager creation.
 // awsCfg provides AWS SDK configuration including region, credentials, and endpoints.
-func newAdapterWithKMSARNAndKeyStore(kmsARN, dynamoDBTableName string, branchKeyTTL time.Duration, awsCfg *ports.AWSKMSConfig) (*AWSAdapter, *KeyStore, error) {
+func newAdapterWithKMSARNAndKeyStore(kmsARN, dynamoDBTableName string, branchKeyTTL time.Duration, awsCfg *ports.AWSKMSConfig, logger *slog.Logger) (*AWSAdapter, *KeyStore, error) {
 	ctx := context.Background()
 
 	// Create KeyStore with configured or default values
@@ -135,7 +140,7 @@ func newAdapterWithKMSARNAndKeyStore(kmsARN, dynamoDBTableName string, branchKey
 		BranchKeyTTL:      ttl,
 	}
 
-	keyStore, err := createKeyStore(ctx, keyStoreCfg, awsCfg, "IdentityBrokerEncryptionVault")
+	keyStore, err := createKeyStore(ctx, keyStoreCfg, awsCfg, "IdentityBrokerEncryptionVault", logger)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -165,6 +170,7 @@ func newAdapterWithKMSARNAndKeyStore(kmsARN, dynamoDBTableName string, branchKey
 		encryptionClient: encryptionClient,
 		keyring:          keyring,
 		dynamoDBTimeout:  keyStore.dynamoDBTimeout,
+		logger:           logger,
 	}
 
 	return adapter, keyStore, nil
@@ -172,7 +178,7 @@ func newAdapterWithKMSARNAndKeyStore(kmsARN, dynamoDBTableName string, branchKey
 
 // newAdapterWithBase64KEK creates an adapter with a base64-encoded AES-256 key.
 // The keyMaterial should be a base64-encoded 32-byte key (already interpolated from environment variables by config loader).
-func newAdapterWithBase64KEK(keyMaterial string) (*AWSAdapter, error) {
+func newAdapterWithBase64KEK(keyMaterial string, logger *slog.Logger) (*AWSAdapter, error) {
 	if keyMaterial == "" {
 		return nil, encryption.NewKEKUnavailableError(
 			"encryption key material is empty; must be AWS KMS ARN or base64-encoded 32-byte key",
@@ -236,6 +242,7 @@ func newAdapterWithBase64KEK(keyMaterial string) (*AWSAdapter, error) {
 	return &AWSAdapter{
 		encryptionClient: encryptionClient,
 		keyring:          keyring,
+		logger:           logger,
 	}, nil
 }
 
@@ -248,12 +255,14 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	span.SetAttributes(attribute.String("encryption.key_type", "aws_kms"))
 
 	if a == nil || a.encryptionClient == nil {
-		slog.ErrorContext(ctx, "token encryption failed",
-			"event", "encryption.token.encrypt_failed",
-			"operation", "encrypt",
-			"error_kind", encryption.ErrorKindKEKUnavailable,
-			"reason", "adapter_not_initialized",
-		)
+		if a != nil && a.logger != nil {
+			a.logger.ErrorContext(ctx, "token encryption failed",
+				"event", "encryption.token.encrypt_failed",
+				"operation", "encrypt",
+				"error_kind", encryption.ErrorKindKEKUnavailable,
+				"reason", "adapter_not_initialized",
+			)
+		}
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
 
@@ -275,7 +284,7 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	// would never fire for them.  The post-call guard below handles contexts that
 	// expire DURING a KMS network call.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		slog.ErrorContext(ctx, "token encryption failed",
+		a.logger.ErrorContext(ctx, "token encryption failed",
 			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
@@ -311,21 +320,20 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		// instead of the correct "transient, retry after backoff" semantics.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-				slog.ErrorContext(ctx, "token encryption failed",
+				a.logger.ErrorContext(ctx, "token encryption failed",
 					"event", "encryption.token.encrypt_failed",
 					"operation", "encrypt",
 					"service_id", serviceID,
 					"error_kind", encryption.ErrorKindKEKUnavailable,
 					"reason", "dynamodb_timeout",
 					"dynamodb_timeout", a.dynamoDBTimeout,
-					"sdk_error", err,
 				)
 				return nil, encryption.NewKEKUnavailableError(
 					fmt.Sprintf("encryption timed out after configured dynamodb_timeout=%s", a.dynamoDBTimeout),
 					err,
 				)
 			}
-			slog.ErrorContext(ctx, "token encryption failed",
+			a.logger.ErrorContext(ctx, "token encryption failed",
 				"event", "encryption.token.encrypt_failed",
 				"operation", "encrypt",
 				"service_id", serviceID,
@@ -347,7 +355,7 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		// Context mismatch errors contain "context" in the error message
 		// This occurs when encryption context AAD verification fails
 		if strings.Contains(errMsg, "context") || strings.Contains(errMsg, "Context") {
-			slog.ErrorContext(ctx, "token encryption failed",
+			a.logger.ErrorContext(ctx, "token encryption failed",
 				"event", "encryption.token.encrypt_failed",
 				"operation", "encrypt",
 				"service_id", serviceID,
@@ -362,7 +370,7 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		// Integrity/authentication errors indicate AEAD tag verification failure
 		if strings.Contains(errMsg, "integrity") || strings.Contains(errMsg, "authentication") ||
 			strings.Contains(errMsg, "Integrity") || strings.Contains(errMsg, "Authentication") {
-			slog.ErrorContext(ctx, "token encryption failed",
+			a.logger.ErrorContext(ctx, "token encryption failed",
 				"event", "encryption.token.encrypt_failed",
 				"operation", "encrypt",
 				"service_id", serviceID,
@@ -375,7 +383,7 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 		}
 
 		// Generic encryption failure
-		slog.ErrorContext(ctx, "token encryption failed",
+		a.logger.ErrorContext(ctx, "token encryption failed",
 			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
@@ -388,7 +396,7 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	}
 
 	if result == nil {
-		slog.ErrorContext(ctx, "token encryption failed",
+		a.logger.ErrorContext(ctx, "token encryption failed",
 			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
@@ -400,7 +408,7 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 
 	// Ensure ciphertext is not empty
 	if len(result.Ciphertext) == 0 {
-		slog.ErrorContext(ctx, "token encryption failed",
+		a.logger.ErrorContext(ctx, "token encryption failed",
 			"event", "encryption.token.encrypt_failed",
 			"operation", "encrypt",
 			"service_id", serviceID,
@@ -411,7 +419,7 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	}
 
 	// Success audit logging
-	slog.DebugContext(ctx, "token encrypted",
+	a.logger.DebugContext(ctx, "token encrypted",
 		"event", "encryption.token.encrypted",
 		"service_id", serviceID,
 		"operation", "encrypt",
@@ -432,12 +440,14 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	span.SetAttributes(attribute.String("encryption.key_type", "aws_kms"))
 
 	if a == nil || a.encryptionClient == nil {
-		slog.ErrorContext(ctx, "token decryption failed",
-			"event", "encryption.token.decrypt_failed",
-			"operation", "decrypt",
-			"error_kind", encryption.ErrorKindKEKUnavailable,
-			"reason", "adapter_not_initialized",
-		)
+		if a != nil && a.logger != nil {
+			a.logger.ErrorContext(ctx, "token decryption failed",
+				"event", "encryption.token.decrypt_failed",
+				"operation", "decrypt",
+				"error_kind", encryption.ErrorKindKEKUnavailable,
+				"reason", "adapter_not_initialized",
+			)
+		}
 		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
 	}
 
@@ -446,7 +456,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 
 	// Validate ciphertext is not empty
 	if len(ciphertext) == 0 {
-		slog.ErrorContext(ctx, "token decryption failed",
+		a.logger.ErrorContext(ctx, "token decryption failed",
 			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
@@ -471,7 +481,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	// would never fire for them.  The post-call guard below handles contexts that
 	// expire DURING a KMS network call.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		slog.ErrorContext(ctx, "token decryption failed",
+		a.logger.ErrorContext(ctx, "token decryption failed",
 			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
@@ -506,21 +516,20 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		// instead of the correct "transient, retry after backoff" semantics.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-				slog.ErrorContext(ctx, "token decryption failed",
+				a.logger.ErrorContext(ctx, "token decryption failed",
 					"event", "encryption.token.decrypt_failed",
 					"operation", "decrypt",
 					"service_id", serviceID,
 					"error_kind", encryption.ErrorKindKEKUnavailable,
 					"reason", "dynamodb_timeout",
 					"dynamodb_timeout", a.dynamoDBTimeout,
-					"sdk_error", err,
 				)
 				return nil, encryption.NewKEKUnavailableError(
 					fmt.Sprintf("decryption timed out after configured dynamodb_timeout=%s", a.dynamoDBTimeout),
 					err,
 				)
 			}
-			slog.ErrorContext(ctx, "token decryption failed",
+			a.logger.ErrorContext(ctx, "token decryption failed",
 				"event", "encryption.token.decrypt_failed",
 				"operation", "decrypt",
 				"service_id", serviceID,
@@ -542,7 +551,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		// Context mismatch errors contain "context" in the error message
 		// This occurs when encryption context AAD verification fails during decryption
 		if strings.Contains(errMsg, "context") || strings.Contains(errMsg, "Context") {
-			slog.ErrorContext(ctx, "token decryption failed",
+			a.logger.ErrorContext(ctx, "token decryption failed",
 				"event", "encryption.token.decrypt_failed",
 				"operation", "decrypt",
 				"service_id", serviceID,
@@ -558,7 +567,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 		// This could indicate tampering or corrupted ciphertext
 		if strings.Contains(errMsg, "integrity") || strings.Contains(errMsg, "authentication") ||
 			strings.Contains(errMsg, "Integrity") || strings.Contains(errMsg, "Authentication") {
-			slog.ErrorContext(ctx, "token decryption failed",
+			a.logger.ErrorContext(ctx, "token decryption failed",
 				"event", "encryption.token.decrypt_failed",
 				"operation", "decrypt",
 				"service_id", serviceID,
@@ -570,7 +579,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 			)
 		}
 
-		slog.ErrorContext(ctx, "token decryption failed",
+		a.logger.ErrorContext(ctx, "token decryption failed",
 			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
@@ -583,7 +592,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	}
 
 	if result == nil {
-		slog.ErrorContext(ctx, "token decryption failed",
+		a.logger.ErrorContext(ctx, "token decryption failed",
 			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
@@ -595,7 +604,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 
 	// Ensure plaintext is not empty
 	if len(result.Plaintext) == 0 {
-		slog.ErrorContext(ctx, "token decryption failed",
+		a.logger.ErrorContext(ctx, "token decryption failed",
 			"event", "encryption.token.decrypt_failed",
 			"operation", "decrypt",
 			"service_id", serviceID,
@@ -606,7 +615,7 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	}
 
 	// Success audit logging
-	slog.DebugContext(ctx, "token decrypted",
+	a.logger.DebugContext(ctx, "token decrypted",
 		"event", "encryption.token.decrypted",
 		"service_id", serviceID,
 		"operation", "decrypt",
@@ -633,7 +642,10 @@ func verifyKMSKeyAccessible(ctx context.Context, client *kms.Client, keyArn stri
 // NewEncryptionAdapter creates an encryption adapter based on the configuration backend.
 // This factory function implements the backend-explicit configuration design.
 // Returns adapter, branch key manager, and error if configuration is invalid or adapter creation fails.
-func NewEncryptionAdapter(config *ports.EncryptionConfig) (*AWSAdapter, ports.BranchKeyManager, error) {
+func NewEncryptionAdapter(config *ports.EncryptionConfig, logger *slog.Logger) (*AWSAdapter, ports.BranchKeyManager, error) {
+	if logger == nil {
+		return nil, nil, errors.New("aws.NewEncryptionAdapter: logger must not be nil")
+	}
 	if config == nil {
 		return nil, nil, encryption.NewKEKUnavailableError("encryption configuration is required", nil)
 	}
@@ -663,11 +675,11 @@ func NewEncryptionAdapter(config *ports.EncryptionConfig) (*AWSAdapter, ports.Br
 
 	// Create adapter based on configured backend
 	if config.AWSKMS != nil {
-		return createAWSKMSAdapter(config.AWSKMS)
+		return createAWSKMSAdapter(config.AWSKMS, logger)
 	}
 
 	if config.Memory != nil {
-		return createMemoryAdapter(config.Memory)
+		return createMemoryAdapter(config.Memory, logger)
 	}
 
 	// Should never reach here due to validation above
@@ -675,7 +687,7 @@ func NewEncryptionAdapter(config *ports.EncryptionConfig) (*AWSAdapter, ports.Br
 }
 
 // createAWSKMSAdapter creates an adapter for AWS KMS backend
-func createAWSKMSAdapter(config *ports.AWSKMSConfig) (*AWSAdapter, ports.BranchKeyManager, error) {
+func createAWSKMSAdapter(config *ports.AWSKMSConfig, logger *slog.Logger) (*AWSAdapter, ports.BranchKeyManager, error) {
 	// Apply defaults for optional fields
 	dynamoDBTableName := config.DynamoDBTableName
 	if dynamoDBTableName == "" {
@@ -706,6 +718,7 @@ func createAWSKMSAdapter(config *ports.AWSKMSConfig) (*AWSAdapter, ports.BranchK
 		dynamoDBTableName,
 		branchKeyTTL,
 		config, // Pass full AWS configuration
+		logger,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -721,9 +734,9 @@ func createAWSKMSAdapter(config *ports.AWSKMSConfig) (*AWSAdapter, ports.BranchK
 }
 
 // createMemoryAdapter creates an adapter for Memory backend
-func createMemoryAdapter(config *ports.MemoryConfig) (*AWSAdapter, ports.BranchKeyManager, error) {
+func createMemoryAdapter(config *ports.MemoryConfig, logger *slog.Logger) (*AWSAdapter, ports.BranchKeyManager, error) {
 	// Create adapter using existing function with base64 key
-	adapter, manager, err := NewAWSEncryption(config.RawKey, "", 0)
+	adapter, manager, err := NewAWSEncryption(config.RawKey, "", 0, logger)
 	if err != nil {
 		return nil, nil, err
 	}

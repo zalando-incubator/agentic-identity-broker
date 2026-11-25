@@ -264,12 +264,15 @@ Location: [internal/adapters/storage/factory.go](../internal/adapters/storage/fa
 Add your backend to the factory:
 
 ```go
-func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
+func NewAdapter(config *ports.StorageConfig, logger *slog.Logger) (*Adapter, error) {
+    if logger == nil {
+        return nil, errors.New("storage.NewAdapter: logger must not be nil")
+    }
     switch config.Backend {
     case "memory":
         return newMemoryAdapter(config)
     case "postgres":
-        return newPostgresAdapter(config)
+        return newPostgresAdapter(config, logger)
     case "mybackend":  // Add this
         return newMyBackendAdapter(config)
     default:

@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"log/slog"
 	"testing"
 
 	awsencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/encryption/aws"
@@ -21,7 +22,7 @@ const TestKEKBase64 = "ASNFZ4mrze/+3LqYdlQyEAEjRWeJq83v/ty6mHZUMhA="
 // Domain-layer tests should use hand-rolled or testify mocks instead.
 func NewTestEncryptionAdapter(t testing.TB) ports.EncryptionPort {
 	t.Helper()
-	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKBase64, "", 0)
+	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKBase64, "", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err, "testutil: failed to initialize test encryption adapter")
 	return adapter
 }
@@ -30,7 +31,7 @@ func NewTestEncryptionAdapter(t testing.TB) ports.EncryptionPort {
 // that cannot accept a testing.TB (e.g. package-level setup functions).
 // Panics on initialization failure — acceptable because the key is a compile-time constant.
 func NewPanicTestEncryptionAdapter() ports.EncryptionPort {
-	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKBase64, "", 0)
+	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKBase64, "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		panic("testutil: failed to initialize test encryption adapter: " + err.Error())
 	}

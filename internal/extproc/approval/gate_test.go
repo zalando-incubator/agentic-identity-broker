@@ -3,6 +3,7 @@ package approval
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sync"
 	"testing"
@@ -114,7 +115,7 @@ func testInvocation() Invocation {
 }
 
 func TestGateServesCachedApprovalWithoutBrokerRoundTrip(t *testing.T) {
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	invocation := testInvocation()
 	cache.Replace([]Pair{{
 		Identity:  invocation.Identity,
@@ -122,7 +123,7 @@ func TestGateServesCachedApprovalWithoutBrokerRoundTrip(t *testing.T) {
 	}}, `"v1"`)
 	broker := &brokerStub{createURL: "https://broker.example/approval"}
 
-	outcome := NewGate(cache, broker).Evaluate(context.Background(), invocation)
+	outcome := NewGate(cache, broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), invocation)
 	assert.True(t, outcome.Proceed)
 	assert.Empty(t, outcome.URL)
 	assert.Empty(t, outcome.Reason)
@@ -152,12 +153,12 @@ func TestGatePermanentDenialBlocksToolUntilRevoked(t *testing.T) {
 				newerApproval := approvedRecord("approved", invocation.ToolName, map[string]string{"repo": "acme/other"}, "once", time.Now().UTC())
 				pairs[0].Approvals = append([]Record{newerApproval}, pairs[0].Approvals...)
 			}
-			cache := NewCache(time.Minute, time.Minute)
+			cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 			if test.cached {
 				cache.Replace(pairs, `"v2"`)
 			}
 			broker := &brokerStub{pairs: pairs, etag: `"v2"`, createURL: "https://broker.example/approval"}
-			gate := NewGate(cache, broker)
+			gate := NewGate(cache, broker, slog.New(slog.DiscardHandler))
 			invocation.Arguments = map[string]any{"repo": "acme/other"}
 			invocation.AgentSessionID = "different-session"
 			outcome := gate.Evaluate(context.Background(), invocation)
@@ -193,12 +194,12 @@ func TestGateDenialDoesNotBlockOtherScopes(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			invocation := testInvocation()
-			cache := NewCache(time.Minute, time.Minute)
+			cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 			pairs := []Pair{{Identity: test.identity, Approvals: []Record{{ID: "denied", ToolName: test.tool,
 				ToolPattern: "create_*", Status: "denied", Persistence: test.persistence}}}}
 			cache.Replace(pairs, `"v2"`)
 			broker := &brokerStub{pairs: pairs, etag: `"v2"`, createURL: "https://broker.example/approval"}
-			outcome := NewGate(cache, broker).Evaluate(context.Background(), invocation)
+			outcome := NewGate(cache, broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), invocation)
 			assert.False(t, outcome.Proceed)
 			assert.Equal(t, broker.createURL, outcome.URL)
 			assert.Empty(t, outcome.Reason)
@@ -208,7 +209,7 @@ func TestGateDenialDoesNotBlockOtherScopes(t *testing.T) {
 
 func TestGateRefreshesAuthoritativelyWhenCacheIsStale(t *testing.T) {
 	invocation := testInvocation()
-	cache := NewCache(time.Minute, 50*time.Millisecond)
+	cache := NewCache(time.Minute, 50*time.Millisecond, slog.New(slog.DiscardHandler))
 	cache.Replace([]Pair{{
 		Identity:  invocation.Identity,
 		Approvals: []Record{approvedRecord("permanent", invocation.ToolName, map[string]string{"repo": "acme/*"}, "permanent", time.Now().UTC())},
@@ -216,7 +217,7 @@ func TestGateRefreshesAuthoritativelyWhenCacheIsStale(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	broker := &brokerStub{readErr: errors.New("unavailable")}
 
-	outcome := NewGate(cache, broker).Evaluate(context.Background(), invocation)
+	outcome := NewGate(cache, broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), invocation)
 
 	assert.False(t, outcome.Proceed)
 	assert.Empty(t, outcome.URL)
@@ -234,7 +235,7 @@ func TestGateRefreshesAuthoritativelyBeforeCreating(t *testing.T) {
 		Approvals: []Record{approvedRecord("refreshed", invocation.ToolName, map[string]string{"repo": "acme/*"}, "permanent", time.Now().UTC())},
 	}}, etag: `"v2"`, createURL: "https://broker.example/approval"}
 
-	outcome := NewGate(NewCache(time.Minute, time.Minute), broker).Evaluate(context.Background(), invocation)
+	outcome := NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), invocation)
 	require.True(t, outcome.Proceed)
 	reads, creates, consumes, _ := broker.calls()
 	require.Len(t, reads, 1)
@@ -254,25 +255,25 @@ func TestGateFailsClosedWhenDependenciesOrRefreshAreUnavailable(t *testing.T) {
 	}{
 		{
 			name:   "missing identity",
-			gate:   NewGate(NewCache(time.Minute, time.Minute), &brokerStub{}),
+			gate:   NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), &brokerStub{}, slog.New(slog.DiscardHandler)),
 			input:  Invocation{ToolName: "tool", Arguments: map[string]any{}, SubjectToken: "subject"},
 			reason: "approval identity unavailable",
 		},
 		{
 			name:   "missing subject token",
-			gate:   NewGate(NewCache(time.Minute, time.Minute), &brokerStub{}),
+			gate:   NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), &brokerStub{}, slog.New(slog.DiscardHandler)),
 			input:  Invocation{Identity: invocation.Identity, ToolName: "tool", Arguments: map[string]any{}},
 			reason: "approval subject token unavailable",
 		},
 		{
 			name:   "broker read fails",
-			gate:   NewGate(NewCache(time.Minute, time.Minute), &brokerStub{readErr: errors.New("unavailable")}),
+			gate:   NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), &brokerStub{readErr: errors.New("unavailable")}, slog.New(slog.DiscardHandler)),
 			input:  invocation,
 			reason: "approval state could not be refreshed",
 		},
 		{
 			name:   "gate is not configured",
-			gate:   NewGate(nil, nil),
+			gate:   NewGate(nil, nil, slog.New(slog.DiscardHandler)),
 			input:  invocation,
 			reason: "approval gate unavailable",
 		},
@@ -290,7 +291,7 @@ func TestGateFailsClosedWhenDependenciesOrRefreshAreUnavailable(t *testing.T) {
 func TestGateMapsRateLimitToRetryReason(t *testing.T) {
 	broker := &brokerStub{createErr: &StatusError{Operation: "create", StatusCode: http.StatusTooManyRequests}}
 
-	outcome := NewGate(NewCache(time.Minute, time.Minute), broker).Evaluate(context.Background(), testInvocation())
+	outcome := NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), testInvocation())
 
 	require.False(t, outcome.Proceed)
 	require.Empty(t, outcome.URL)
@@ -300,7 +301,7 @@ func TestGateMapsRateLimitToRetryReason(t *testing.T) {
 func TestGateCreatesOnlyAfterConfirmedMiss(t *testing.T) {
 	invocation := testInvocation()
 	broker := &brokerStub{etag: `"v2"`, createURL: "https://broker.example/approval"}
-	outcome := NewGate(NewCache(time.Minute, time.Minute), broker).Evaluate(context.Background(), invocation)
+	outcome := NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), invocation)
 
 	require.Equal(t, "https://broker.example/approval", outcome.URL)
 	assert.False(t, outcome.Proceed)
@@ -328,7 +329,7 @@ func TestGateNeverFabricatesElicitation(t *testing.T) {
 		{name: "create returns no URL", broker: &brokerStub{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			outcome := NewGate(NewCache(time.Minute, time.Minute), test.broker).Evaluate(context.Background(), invocation)
+			outcome := NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), test.broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), invocation)
 			assert.False(t, outcome.Proceed)
 			assert.Empty(t, outcome.URL)
 			assert.Equal(t, "approval could not be initiated", outcome.Reason)
@@ -341,7 +342,7 @@ func TestGateNeverFabricatesElicitation(t *testing.T) {
 func TestGateReliesOnBrokerDedupForStaleCacheMisses(t *testing.T) {
 	invocation := testInvocation()
 	broker := &brokerStub{createURL: "https://broker.example/approval"}
-	gate := NewGate(NewCache(time.Minute, time.Minute), broker)
+	gate := NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler))
 
 	first := gate.Evaluate(context.Background(), invocation)
 	second := gate.Evaluate(context.Background(), invocation)
@@ -353,13 +354,13 @@ func TestGateReliesOnBrokerDedupForStaleCacheMisses(t *testing.T) {
 
 func TestGateConsumesOnceApprovalBeforeProceedingAndReleasesOnFailure(t *testing.T) {
 	invocation := testInvocation()
-	cache := NewCache(time.Minute, time.Minute)
+	cache := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	cache.Replace([]Pair{{
 		Identity:  invocation.Identity,
 		Approvals: []Record{approvedRecord("once", invocation.ToolName, map[string]string{}, "once", time.Now().UTC())},
 	}}, `"v1"`)
 	broker := &brokerStub{consumeErr: errors.New("broker unavailable")}
-	gate := NewGate(cache, broker)
+	gate := NewGate(cache, broker, slog.New(slog.DiscardHandler))
 
 	outcome := gate.Evaluate(context.Background(), invocation)
 	assert.False(t, outcome.Proceed)
@@ -384,7 +385,7 @@ func TestGateProcessingExcludesControllableBrokerDuration(t *testing.T) {
 		createDelay: 25 * time.Millisecond,
 	}
 	started := time.Now()
-	outcome := NewGate(NewCache(time.Minute, time.Minute), broker).Evaluate(context.Background(), invocation)
+	outcome := NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)).Evaluate(context.Background(), invocation)
 	elapsed := time.Since(started)
 	_, _, _, clientTime := broker.calls()
 
@@ -413,7 +414,7 @@ func TestGateEvaluateEmitsDecisionTelemetry(t *testing.T) {
 	})
 
 	cachedInvocation := testInvocation()
-	cached := NewCache(time.Minute, time.Minute)
+	cached := NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	cached.Replace([]Pair{{
 		Identity:  cachedInvocation.Identity,
 		Approvals: []Record{approvedRecord("permanent", cachedInvocation.ToolName, map[string]string{"repo": "acme/*"}, "permanent", time.Now().UTC())},
@@ -428,19 +429,19 @@ func TestGateEvaluateEmitsDecisionTelemetry(t *testing.T) {
 		{
 			name:        "proceed",
 			wantOutcome: "proceed",
-			gate:        NewGate(cached, &brokerStub{}),
+			gate:        NewGate(cached, &brokerStub{}, slog.New(slog.DiscardHandler)),
 			invocation:  cachedInvocation,
 		},
 		{
 			name:        "elicit",
 			wantOutcome: "elicit",
-			gate:        NewGate(NewCache(time.Minute, time.Minute), &brokerStub{etag: `"v1"`, createURL: "https://broker.example/approval"}),
+			gate:        NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), &brokerStub{etag: `"v1"`, createURL: "https://broker.example/approval"}, slog.New(slog.DiscardHandler)),
 			invocation:  testInvocation(),
 		},
 		{
 			name:        "deny",
 			wantOutcome: "deny",
-			gate:        NewGate(NewCache(time.Minute, time.Minute), &brokerStub{}),
+			gate:        NewGate(NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), &brokerStub{}, slog.New(slog.DiscardHandler)),
 			invocation:  Invocation{SubjectToken: "subject-token"},
 		},
 	}

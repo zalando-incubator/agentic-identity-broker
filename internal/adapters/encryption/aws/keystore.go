@@ -32,6 +32,7 @@ type KeyStore struct {
 	client          *keystore.Client
 	config          KeyStoreConfig
 	dynamoDBTimeout time.Duration // timeout applied to the full branch-key operation
+	logger          *slog.Logger
 	// getActiveBranchKeyFn overrides client.GetActiveBranchKey when set. Used only in tests
 	// to inject a mock without requiring real DynamoDB infrastructure.
 	getActiveBranchKeyFn func(ctx context.Context, params keystoretypes.GetActiveBranchKeyInput) (*keystoretypes.GetActiveBranchKeyOutput, error)
@@ -54,11 +55,12 @@ type KeyStore struct {
 //   - ksCfg: KeyStore configuration (KMS ARN, DynamoDB table, TTL)
 //   - awsCfg: AWS SDK configuration (region, credentials, endpoints, etc.)
 //   - logicalKeyStoreName: Identifier for this KeyStore instance
+//   - logger: Logger for branch key provisioning failures
 //
 // Returns:
 //   - *KeyStore: The initialized KeyStore (or nil on error)
 //   - error: If KeyStore initialization fails
-func createKeyStore(ctx context.Context, ksCfg KeyStoreConfig, awsCfg *ports.AWSKMSConfig, logicalKeyStoreName string) (*KeyStore, error) {
+func createKeyStore(ctx context.Context, ksCfg KeyStoreConfig, awsCfg *ports.AWSKMSConfig, logicalKeyStoreName string, logger *slog.Logger) (*KeyStore, error) {
 	if ksCfg.KMSKeyARN == "" {
 		return nil, encryption.NewKEKUnavailableError("KMS key ARN is required for KeyStore", nil)
 	}
@@ -147,6 +149,7 @@ func createKeyStore(ctx context.Context, ksCfg KeyStoreConfig, awsCfg *ports.AWS
 		client:          keystoreClient,
 		config:          ksCfg,
 		dynamoDBTimeout: dynamoDBTimeout,
+		logger:          logger,
 	}, nil
 }
 
@@ -197,7 +200,7 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 			return branchKeyID, nil
 		}
 		if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-			slog.ErrorContext(ctx, "branch key creation failed",
+			ks.logger.ErrorContext(ctx, "branch key creation failed",
 				"event", "encryption.branch_key.creation_failed",
 				"operation", "get_active_branch_key",
 				"branch_key_id", branchKeyID,
@@ -207,7 +210,6 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 				"error_kind", encryption.ErrorKindKEKUnavailable,
 				"reason", "dynamodb_timeout",
 				"dynamodb_timeout", ks.dynamoDBTimeout,
-				"sdk_error", getErr,
 			)
 			return "", encryption.NewKEKUnavailableError(
 				fmt.Sprintf("getting active branch key %s timed out after configured dynamodb_timeout=%s", branchKeyID, ks.dynamoDBTimeout),
@@ -231,7 +233,7 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 	})
 	if err != nil {
 		if errors.Is(context.Cause(ctx), errDynamoDBTimeout) {
-			slog.ErrorContext(ctx, "branch key creation failed",
+			ks.logger.ErrorContext(ctx, "branch key creation failed",
 				"event", "encryption.branch_key.creation_failed",
 				"operation", "create_branch_key",
 				"branch_key_id", branchKeyID,
@@ -241,14 +243,13 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 				"error_kind", encryption.ErrorKindKEKUnavailable,
 				"reason", "dynamodb_timeout",
 				"dynamodb_timeout", ks.dynamoDBTimeout,
-				"sdk_error", err,
 			)
 			return "", encryption.NewKEKUnavailableError(
 				fmt.Sprintf("creating branch key %s timed out after configured dynamodb_timeout=%s", branchKeyID, ks.dynamoDBTimeout),
 				err,
 			)
 		}
-		slog.ErrorContext(ctx, "branch key creation failed",
+		ks.logger.ErrorContext(ctx, "branch key creation failed",
 			"event", "encryption.branch_key.creation_failed",
 			"operation", "create_branch_key",
 			"branch_key_id", branchKeyID,
@@ -257,7 +258,6 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 			"subject_identifier", subject.Identifier(),
 			"error_kind", encryption.ErrorKindKEKUnavailable,
 			"reason", "create_key_failed",
-			"sdk_error", err,
 		)
 		return "", encryption.NewKEKUnavailableError(
 			fmt.Sprintf("failed to create branch key %s in DynamoDB: %v", branchKeyID, err),

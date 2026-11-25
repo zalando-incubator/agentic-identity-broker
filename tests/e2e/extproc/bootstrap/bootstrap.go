@@ -132,8 +132,8 @@ func (e *TestEnvironment) newApprovalGate(exchanger *extprocserver.TokenExchange
 		return nil, fmt.Errorf("failed to create approval client: %w", err)
 	}
 	e.approvalClient = client
-	e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness)
-	return approval.NewGate(e.approvalCache, client), nil
+	e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness, e.logger)
+	return approval.NewGate(e.approvalCache, client, e.logger), nil
 }
 
 // newServer selects the server constructor that production startup selects.
