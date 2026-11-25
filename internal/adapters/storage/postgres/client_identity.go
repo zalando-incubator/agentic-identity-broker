@@ -23,8 +23,21 @@ func (r *PostgresThirdpartyOAuth2ProviderRepository) RecordObservedClientIdentit
 		Identity *string `db:"client_identity"`
 		Revision int64   `db:"client_identity_revision"`
 	}
+	// An unchanged observation only share-locks the row: it waits for and rechecks a
+	// concurrent writer like the update below, without creating a row version.
+	lockCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
+	err := r.adapter.db.GetContext(lockCtx, &record, `SELECT client_identity,client_identity_revision FROM thirdparty_oauth2_services
+ WHERE id=$1 AND credential_source='filesystem' AND version=$3 AND canonical_id=$4 AND client_identity_revision=$5 AND client_identity=$2
+ FOR SHARE`, serviceID, observed.String(), expected.ServiceVersion, expected.CanonicalID, expected.Revision)
+	cancel()
+	if err == nil {
+		return ports.ClientIdentityState{Identity: new(id.ClientID(*record.Identity)), Revision: record.Revision}, true, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return ports.ClientIdentityState{}, false, false, providerStorageError(operation, err, "failed to record observed identity")
+	}
 	writeCtx, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Write)
-	err := r.adapter.db.GetContext(writeCtx, &record, `UPDATE thirdparty_oauth2_services
+	err = r.adapter.db.GetContext(writeCtx, &record, `UPDATE thirdparty_oauth2_services
  SET client_identity_revision=client_identity_revision+CASE WHEN client_identity IS NOT NULL AND client_identity<>$2 THEN 1 ELSE 0 END,
      client_identity=$2
  WHERE id=$1 AND credential_source='filesystem' AND version=$3 AND canonical_id=$4 AND client_identity_revision=$5

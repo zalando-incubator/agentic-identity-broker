@@ -23,6 +23,37 @@ func TestPostgresClientIdentityRepository(t *testing.T) {
 	storagecontracts.ClientIdentityRepository(t, repo, repo)
 }
 
+func TestPostgresClientIdentityUnchangedObservationKeepsRowVersion(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+	ctx := context.Background()
+	repo := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	provider := createClientIdentityProvider(t, repo, true)
+	rowVersion := func() string {
+		var version string
+		require.NoError(t, adapter.db.GetContext(ctx, &version, `SELECT ctid::text FROM thirdparty_oauth2_services WHERE id = $1`, provider.ID))
+		return version
+	}
+	_, applied, changed, err := repo.RecordObservedClientIdentity(ctx, provider.ID, "reports-v1", clientIdentityObservation(provider))
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.False(t, changed)
+	initialized := rowVersion()
+
+	state, applied, changed, err := repo.RecordObservedClientIdentity(ctx, provider.ID, "reports-v1", clientIdentityObservation(provider))
+	require.NoError(t, err)
+	assert.True(t, applied)
+	assert.False(t, changed)
+	assert.Equal(t, ports.ClientIdentityState{Identity: new(id.ClientID("reports-v1"))}, state)
+	assert.Equal(t, initialized, rowVersion(), "an unchanged observation must not rewrite the service row")
+
+	state, applied, changed, err = repo.RecordObservedClientIdentity(ctx, provider.ID, "reports-v2", clientIdentityObservation(provider))
+	require.NoError(t, err)
+	assert.True(t, applied)
+	assert.True(t, changed)
+	assert.Equal(t, ports.ClientIdentityState{Identity: new(id.ClientID("reports-v2")), Revision: 1}, state)
+}
+
 func TestPostgresSessionClientRevisionEstablishment(t *testing.T) {
 	adapter, cleanup := setupMigratedAdapter(t)
 	defer cleanup()
