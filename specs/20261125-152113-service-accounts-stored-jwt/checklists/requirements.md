@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,6 +31,6 @@
 
 ## Notes
 
-- Five [NEEDS CLARIFICATION] markers remain (Q1–Q5). Issues #471 and #478 do not decide them; they are listed with recommended answers under "Clarifications → Open questions" in the spec and await the maintainer.
+- No [NEEDS CLARIFICATION] markers remain. The five points that issues #471 and #478 leave open were answered by the maintainer on 2026-11-25 and are recorded under "Clarifications" in the spec.
 - The admin API paths, field names and payload shapes in the spec are taken from the settled design in #478 and from the repository's spec template, which requires API, database and security sections and RFC-style HTTP exchanges (Constitution Principles IV, X, XIV). They are the feature's contract, not implementation detail.
 - User Story 5, Scenario 3 (delete refused while an agent grant binds the account) cannot be exercised until #472 exists; its E2E test is added there.

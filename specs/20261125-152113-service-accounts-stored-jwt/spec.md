@@ -32,15 +32,15 @@ Answered from the settled design. The source issue is named with each answer.
 - Q: Does the broker renew or remind about an expiring stored JWT? → A: No. Renewal is outside the broker; whoever issued the JWT replaces it through the admin API (#471 Assumptions; #478 Trade-offs). Recorded in Assumptions.
 - Q: Do the two automated comments on #471 about a `broker_issued` audience default apply? → A: No. That kind was removed from the design; #478 decides that the broker signs no tokens for downstream services. Recorded in Out of Scope.
 
-### Open questions
+### Session 2026-11-25 (maintainer answers)
 
-Issues #471 and #478 do not decide the following points. Each carries a recommendation, which is not maintainer approval. The matching `[NEEDS CLARIFICATION]` markers stay in the spec until the maintainer answers.
+Issues #471 and #478 do not decide these points. The maintainer answered them on 2026-11-25.
 
-- **Q1 — Is `If-Match` required, optional or unsupported on update and delete of a service account?** #478 says responses carry "a strong ETag" and does not say how it is used. *Recommended*: optional. When supplied and stale the broker answers `412`; without it the last writer wins. This matches how service updates treat `If-Match` outside protected-resource replacement and keeps scripted rotation a single call. Alternative: required (`428` when missing), which protects a rotation from silently overwriting a concurrent ceiling change at the cost of a read before every rotation. Affects the Edge Cases and FR-019.
-- **Q2 — What happens when an administrator deletes a service that still has service accounts?** *Recommended*: refuse with `409` until the accounts are removed, as the broker already does for services that grants reference, so stored machine credentials are never erased as a side effect. Alternative: remove the accounts with the service, as protected resources are. Affects the Edge Cases and DB-002.
-- **Q3 — Is there a read of a single service account (`GET .../service-accounts/{service-account-id}`)?** #478's resource table lists only create, list, update, delete and status, yet its bootstrap section mentions "a `GET` on the service account". *Recommended*: yes, add it, returning the same representation as the list with the ETag header, so a client can fetch the ETag without creating or changing anything. Affects FR-016 and API-001.
-- **Q4 — What is the size limit for a stored JWT?** #471 says "bounded size", #478 "stays under a size limit". *Recommended*: 8192 bytes for the compact serialization, fixed in the API contract and not configurable. The token is later sent as a bearer header, where common proxy limits sit at 8 KiB. Affects FR-009 and User Story 2 Scenario 4.
-- **Q5 — May `canonical_id` change after creation?** #478 calls it a "stable admin-chosen identifier". *Recommended*: fixed at creation; an update that states a different value is refused with `400`, and one that omits it keeps it. A stable name keeps later grant bindings and audit trails readable. Alternative: renamable with a uniqueness check, as for services. Affects FR-005.
+- Q: Is `If-Match` required, optional or unsupported on update and delete of a service account? → A: Optional. When supplied and stale the broker answers `412` and changes nothing; without it the last writer wins. Recorded in FR-019, API-004, User Story 3 Scenario 7, User Story 5 Scenario 4 and Edge Cases.
+- Q: What happens when an administrator deletes a service that still has service accounts? → A: The deletion is refused with `409` until the accounts are removed; stored machine credentials are never erased as a side effect. Recorded in FR-025, DB-002, User Story 5 Scenario 5 and Edge Cases.
+- Q: Is there a read of a single service account? → A: Yes. `GET .../service-accounts/{service-account-id}` returns the same representation as the list, with the ETag header. Recorded in FR-016, API-001, User Story 1 Scenario 7.
+- Q: What is the size limit for a stored JWT? → A: 16 KiB: the compact serialization may be at most 16384 bytes. The limit is fixed in the API contract and is not configurable. Recorded in FR-009, User Story 2 Scenario 4.
+- Q: May `canonical_id` change after creation? → A: Yes. An update that states a different `canonical_id` renames the account, subject to uniqueness within the service (`409` when taken); an update that omits it keeps it. The account's ID never changes, and `kind` stays fixed. Recorded in FR-005, FR-017, User Story 3 Scenarios 8–9 and Edge Cases.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -60,6 +60,7 @@ A platform administrator has a JWT that company infrastructure (the identity pro
 4. **Given** a JWT that states no `exp`, **When** an administrator registers it, **Then** the account is created with `status: ready` and its summary reports no expiry.
 5. **Given** a service that already has an account with `canonical_id` `platform-triage-bot`, **When** an administrator creates another account with the same `canonical_id` on that service, **Then** the broker answers `409` and stores nothing; the same `canonical_id` on a different service is accepted.
 6. **Given** a service identifier that matches no service, **When** an administrator creates or lists service accounts under it, **Then** the broker answers `404`.
+7. **Given** an existing account, **When** an administrator reads it on its own by ID or by `canonical_id`, **Then** the broker answers `200` with the same representation the list shows for it and its strong ETag, and without the JWT.
 
 ---
 
@@ -76,7 +77,7 @@ An administrator pastes the wrong thing: a truncated token, an unsigned token, a
 1. **Given** a credential whose `jwt` is not a compact JWS (not exactly three non-empty base64url segments, or a header or payload that does not decode to a JSON object), **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 2. **Given** a JWT whose header states `alg: none` in any letter case, or no `alg`, **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 3. **Given** a JWT that states an `exp` at or before the time of the request, **When** it is submitted, **Then** the broker answers `400` and stores nothing.
-4. **Given** a JWT longer than the size limit, **When** it is submitted, **Then** the broker answers `400` and stores nothing.
+4. **Given** a JWT whose compact serialization is longer than 16384 bytes (16 KiB), **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 5. **Given** a credential with `use: assertion`, an unknown `use`, an unknown `format`, or an unknown `kind`, **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 6. **Given** a create request with an empty or missing `scopes`, a missing `credential`, or an invalid `canonical_id`, **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 7. **Given** any refused request above, **When** the administrator reads the error, **Then** it names the failed rule and does not contain the submitted JWT or any part of it.
@@ -99,6 +100,9 @@ The token's issuer hands the administrator a replacement before the old token ex
 4. **Given** an existing account, **When** an update carries an invalid credential (any rule of Story 2), **Then** the broker answers `400` and the stored credential, ceiling, summary and ETag are unchanged.
 5. **Given** an existing account, **When** an update repeats the stored JWT and the stored ceiling exactly, **Then** the broker answers `200` with the unchanged representation and the same ETag.
 6. **Given** an account identifier that matches no account of the addressed service, including the ID of an account that belongs to another service, **When** an administrator updates it, **Then** the broker answers `404`.
+7. **Given** an account whose current ETag is `"2"`, **When** an update or a delete carries `If-Match: "1"`, **Then** the broker answers `412` and the account is unchanged; the same request with `If-Match: "2"`, or without `If-Match`, is carried out.
+8. **Given** an account with `canonical_id` `platform-triage-bot`, **When** an administrator updates it with `canonical_id` `platform-triage` and no other change, **Then** the account keeps its ID, credential, summary and ceiling, is addressable as `platform-triage` and no longer as `platform-triage-bot`, and its ETag changes.
+9. **Given** a service with accounts `platform-triage-bot` and `platform-planner-bot`, **When** an administrator updates the first with `canonical_id` `platform-planner-bot`, **Then** the broker answers `409` and neither account changes.
 
 ---
 
@@ -132,6 +136,8 @@ An administrator removes an account that is no longer needed. The stored credent
 1. **Given** an account that no agent grant binds, **When** an administrator deletes it, **Then** the broker answers `204`, the account no longer appears in the service's list, and its stored credential is erased.
 2. **Given** an account identifier that matches no account of the addressed service, **When** an administrator deletes it, **Then** the broker answers `404`.
 3. **Given** an account that an agent grant binds, **When** an administrator deletes it, **Then** the broker answers `409` and the account is unchanged. This scenario becomes testable, and its E2E test is added, with #472; until then no binding can exist.
+4. **Given** an account whose current ETag is `"2"`, **When** a delete carries `If-Match: "1"`, **Then** the broker answers `412` and the account still exists.
+5. **Given** a service that holds at least one service account, **When** an administrator deletes the service, **Then** the broker answers `409`, and the service and its accounts are unchanged; after the last account is removed the service can be deleted as before.
 
 ---
 
@@ -148,8 +154,9 @@ An administrator removes an account that is no longer needed. The stored credent
 - **Two accounts holding the same JWT**: accepted. They show the same fingerprint.
 - **Encryption unavailable**: a create or rotation fails with a server error and stores nothing; there is no plaintext fallback.
 - **Service of any credential source or client registration**: service accounts attach to any existing third-party service; they do not depend on how the service's user-facing OAuth client is configured.
-- **Deleting a service that still has service accounts**: [NEEDS CLARIFICATION: Q2 — refuse with `409`, or remove the accounts with the service?]
-- **Concurrent updates of one account**: [NEEDS CLARIFICATION: Q1 — is `If-Match` required, optional or unsupported on update and delete?]
+- **Deleting a service that still has service accounts**: refused with `409` until the accounts are removed. A stored machine credential is never erased as a side effect of another deletion.
+- **Concurrent updates of one account**: a writer that sends `If-Match` with a stale ETag is refused with `412`; writers that send none overwrite each other, last writer wins. Each write is applied whole or not at all.
+- **Renaming an account**: the old `canonical_id` stops addressing the account at once and becomes free for another account of the same service. The account's ID is the stable reference; records that later point at an account (#472) refer to the ID.
 
 ## Concrete Example Journeys *(mandatory)*
 
@@ -425,14 +432,14 @@ Content-Type: application/json
 - **FR-002**: Each service account MUST have a broker-generated ID, an administrator-chosen `canonical_id` that is unique within its service and follows the validation rules of existing canonical IDs, a `kind`, a non-empty `scopes` ceiling, a write-only `credential`, a `status`, a derived `narrowing`, and creation and last-change times.
 - **FR-003**: `narrowing` MUST be derived from the kind and format and MUST NOT be settable. For `jwt_bearer` with `signed_jwt` it is `none`.
 - **FR-004**: The ceiling MUST be a non-empty list of unique, non-empty scope values in the flat scope vocabulary of the service's identity provider. The broker MUST NOT compare the ceiling with anything inside the stored JWT.
-- **FR-005**: `kind` MUST NOT change after creation. [NEEDS CLARIFICATION: Q5 — may `canonical_id` change on update, or is it fixed at creation?]
+- **FR-005**: `kind` MUST NOT change after creation; an update that states a different kind MUST be refused. `canonical_id` MAY change: an update that states a different value renames the account if that value is free within the service and MUST be refused with a conflict otherwise; an update that omits `canonical_id` keeps it. The account's ID MUST NOT change.
 
 **The `jwt_bearer` kind with the `signed_jwt` format**
 
 - **FR-006**: This feature MUST accept exactly one kind, `jwt_bearer`, and exactly one credential format for it, `signed_jwt`. Any other kind or format MUST be refused. The request shape MUST discriminate the credential by kind and format so that later kinds and formats (#474–#477) add a branch without changing this one.
 - **FR-007**: A `signed_jwt` credential MUST carry `jwt` and MAY carry `use`. `use` MUST accept only `access_token` and MUST default to it. The value `assertion` MUST be refused until a later feature offers it; the model MUST allow that value and an accompanying `token_endpoint` to be added later without a new format.
 - **FR-008**: The broker MUST treat the JWT as opaque: store it exactly as submitted, never verify its signature, never fetch keys for it, never modify or rebuild it.
-- **FR-009**: On every write that carries a `signed_jwt` credential the broker MUST refuse it unless all of these hold: it is a compact JWS of exactly three non-empty base64url segments; its header and payload each decode to a JSON object; its header states an `alg` that is not `none` in any letter case; its length does not exceed the size limit [NEEDS CLARIFICATION: Q4 — the limit's value]; and, when the payload states an `exp`, that `exp` is a number and lies after the time of the request. A JWT without `exp` MUST be accepted.
+- **FR-009**: On every write that carries a `signed_jwt` credential the broker MUST refuse it unless all of these hold: it is a compact JWS of exactly three non-empty base64url segments; its header and payload each decode to a JSON object; its header states an `alg` that is not `none` in any letter case; its compact serialization is at most 16384 bytes (16 KiB), a fixed limit that is not configurable; and, when the payload states an `exp`, that `exp` is a number and lies after the time of the request. A JWT without `exp` MUST be accepted.
 - **FR-010**: A refused write MUST store nothing, MUST leave an existing account unchanged, and MUST answer with the failed rule and without the submitted JWT or any fragment of it.
 
 **What the administrator sees**
@@ -442,20 +449,22 @@ Content-Type: application/json
 - **FR-013**: Values read from the stored JWT MUST be used for display and for the account's status only. They MUST NOT take part in any authorization decision, in this feature or in those that build on it.
 - **FR-014**: Every representation MUST carry the account's `status`. An account MUST be `ready` when created. It MUST be `failed` with failure reason `credential_expired` from the instant its stored JWT's stated `exp` has passed, on every read, until its credential is replaced. An account whose JWT states no `exp` MUST stay `ready`.
 - **FR-015**: Administrators MUST be able to read an account's status on its own: the status, the failure reason when failed, and the expiry the stored credential states, when it states one. The status model MUST leave room for the later values of #478 (waiting for bootstrap, last mint error class, observed ceiling) without changing the meaning of `ready` and `failed`.
-- **FR-016**: Administrators MUST be able to list all service accounts of one service. [NEEDS CLARIFICATION: Q3 — is there also a read of a single account, which #478's resource table does not list?]
+- **FR-016**: Administrators MUST be able to list all service accounts of one service and to read a single account. Both return the same representation of an account; the single read also returns its strong ETag.
 
 **Changing and removing**
 
-- **FR-017**: An update that carries a credential MUST replace the stored credential in place: the account keeps its ID, `canonical_id` and service; the summary, fingerprint and status are recomputed from the new credential; the previous credential MUST no longer be stored.
+- **FR-017**: An update that carries a credential MUST replace the stored credential in place: the account keeps its ID and service, and its `canonical_id` unless the same update renames it (FR-005); the summary, fingerprint and status are recomputed from the new credential; the previous credential MUST no longer be stored.
 - **FR-018**: An update without a credential MUST keep the stored credential and MAY change the ceiling. Changing the ceiling MUST NOT alter the stored credential or its summary.
-- **FR-019**: Every committed change to an account MUST change its strong ETag. An update that changes nothing MUST succeed, MUST keep the ETag and last-change time, and MUST NOT write an audit record.
+- **FR-019**: Every committed change to an account MUST change its strong ETag. Update and delete MUST accept an optional `If-Match`: when it is supplied and does not equal the account's current ETag, the broker MUST answer `412` and change nothing; when it is absent, the request is carried out and the last writer wins. An update that changes nothing MUST succeed, MUST keep the ETag and last-change time, and MUST NOT write an audit record.
 - **FR-020**: Deleting an account MUST erase its stored credential. Deletion MUST be refused with a conflict while any agent grant binds the account; that check is enforced from the delivery of agent grants (#472), and this feature MUST define the conflict response in the API contract now.
 - **FR-021**: Operations on an account MUST address it through its service. An account addressed under a service it does not belong to MUST be reported as not found.
 
 **Audit and observability**
 
-- **FR-022**: The broker MUST write an audit record after each committed creation, credential rotation, ceiling change and deletion of a service account. Each record MUST identify the service, the service account and the acting administrator, and MUST carry the credential summary, with the previous and new summary and ceiling on a change. A refused or failed operation MUST NOT produce a success record.
+- **FR-022**: The broker MUST write an audit record after each committed creation, credential rotation, ceiling change, rename and deletion of a service account. Each record MUST identify the service, the service account and the acting administrator, and MUST carry the credential summary, with the previous and new summary, ceiling and `canonical_id` on a change. A refused or failed operation MUST NOT produce a success record.
 - **FR-023**: The stored JWT is a bearer credential under `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`. Neither it, nor any fragment of it, nor its ciphertext MUST appear in a log record, span, span event, metric, or error message. Only the claim and header metadata those standards permit (`iss`, `kid`, `exp`, `alg`, validation failure reason) and the fingerprint MAY appear; `sub` MAY appear only in API responses and audit summaries.
+
+- **FR-025**: Deleting a service that still holds at least one service account MUST be refused with a conflict and MUST leave the service and its accounts unchanged.
 
 **Scope boundary**
 
@@ -504,7 +513,7 @@ stateDiagram-v2
 ```
 
 **Entities**:
-- **ServiceAccount**: a machine credential at a third-party service, owned and managed by administrators, with a ceiling. Identified by its ID; named by a `canonical_id` unique within its service. Invariants: belongs to exactly one service; ceiling non-empty; always holds exactly one credential of its kind; kind never changes.
+- **ServiceAccount**: a machine credential at a third-party service, owned and managed by administrators, with a ceiling. Identified by its ID; named by a `canonical_id` unique within its service. Invariants: belongs to exactly one service; ceiling non-empty; always holds exactly one credential of its kind; ID and kind never change; `canonical_id` may be renamed within the service.
 
 **Aggregates**:
 - **ServiceAccount** is its own aggregate, referencing its **ThirdpartyOAuth2Service** by ID. Uniqueness of `canonical_id` is scoped to the service.
@@ -522,23 +531,24 @@ stateDiagram-v2
 - **Service account created**: a credential was stored for a service.
 - **Service account credential rotated**: the stored credential was replaced.
 - **Service account ceiling changed**: the ceiling was changed without a rotation.
+- **Service account renamed**: the `canonical_id` was changed.
 - **Service account deleted**: the account and its credential were erased.
 
 The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Credential Summary are added to the `ARCHITECTURE.md` glossary and to the root `AGENTS.md` glossary table with the definitions of #478.
 
 ### API Requirements
 
-- **API-001**: The operations are defined in `api/admin/openapi.yaml` before implementation, on the admin server only: create and list under `/api/services/{service-id}/service-accounts`; update and delete under `/api/services/{service-id}/service-accounts/{service-account-id}`; status under `.../{service-account-id}/status`. No end-user API changes.
+- **API-001**: The operations are defined in `api/admin/openapi.yaml` before implementation, on the admin server only: create and list under `/api/services/{service-id}/service-accounts`; read, update and delete under `/api/services/{service-id}/service-accounts/{service-account-id}`; status under `.../{service-account-id}/status`. No end-user API changes.
 - **API-002**: The create and update request is one schema discriminated by `kind`, with `credential` a `oneOf` keyed by kind and format and marked write-only. The representation schema has no `credential` property and requires `credential_summary`, `status`, `narrowing` and `scopes`.
 - **API-003**: `{service-id}` keeps its existing meaning (UUID or canonical service identifier). `{service-account-id}` accepts the account's UUID or its `canonical_id` within the addressed service.
-- **API-004**: Responses that return one account carry its strong ETag. Errors use the existing error envelope and the existing meanings of `400`, `401`, `404`, `409` and `500`.
-- **API-005**: The contract includes examples that match the journeys of this specification, including the refusals of Journey 3, and documents the delete conflict of FR-020.
+- **API-004**: Responses that return one account carry its strong ETag. Errors use the existing error envelope and the existing meanings of `400`, `401`, `404`, `409`, `412` and `500`. `If-Match` is optional on update and delete (FR-019).
+- **API-005**: The contract includes examples that match the journeys of this specification, including the refusals of Journey 3, and documents the delete conflict of FR-020 and the new conflict on service deletion of FR-025.
 - **API-006**: The change is additive; the Admin API version is raised by a minor step. The contract change is confirmed by the maintainer before implementation begins (Constitution Principle X).
 
 ### Database Requirements
 
 - **DB-001**: Service accounts are persisted through a repository port with both an in-memory and a PostgreSQL implementation that behave identically for every acceptance scenario.
-- **DB-002**: The schema change is one atomic migration pair in `/migrations/` under the next free number, tested in both directions against PostgreSQL. It enforces uniqueness of `canonical_id` within a service and that an account cannot outlive or exist without its service.
+- **DB-002**: The schema change is one atomic migration pair in `/migrations/` under the next free number, tested in both directions against PostgreSQL. It enforces uniqueness of `canonical_id` within a service and that an account cannot exist without its service: a service that holds accounts cannot be removed (FR-025).
 - **DB-003**: The credential is stored only in encrypted form. No column, index or constraint holds the JWT or a reversible derivative of it in plaintext.
 
 ### Security Requirements *(mandatory for security-critical features)*
@@ -577,7 +587,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 - Renewal is outside the broker: whoever issued the JWT replaces it through the admin API before it expires (#471). The broker sends no reminder.
 - One account per agent is the expected setup where the downstream service must see which agent called (#478). The broker does not enforce or record that relation in this feature.
 - The admin UI for service accounts comes later (#478: "mirrored in the admin UI later"); this feature has no frontend change.
-- This feature adds no configuration parameter. Should planning find that the size limit must be tunable, configuration documentation, examples and Helm values follow Constitution Principle VII.
+- This feature adds no configuration parameter. The JWT size limit is a fixed value in the API contract.
 - The fingerprint is a SHA-256 digest of the exact submitted compact serialization. Its textual encoding is fixed in the API contract at planning.
 - The `exp` in the summary is the numeric value the token states; the status additionally reports it as a timestamp.
 - The current time used for validation and status is the broker's clock, without skew allowance.
