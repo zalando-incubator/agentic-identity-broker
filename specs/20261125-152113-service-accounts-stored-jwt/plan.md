@@ -1,0 +1,435 @@
+# Implementation Plan: Service Accounts on Third-Party Services (First Kind: `jwt_bearer` with a Stored JWT)
+
+**Branch**: `speckit/issue-471` | **Date**: 2026-11-25 | **Spec**: [spec.md](./spec.md)
+
+**Input**: Feature specification from `specs/20261125-152113-service-accounts-stored-jwt/spec.md`
+
+**Status**: Planned. Every item in [Approval Items](#approval-items) needs the maintainer's
+sign-off before the implementation of that item starts (Constitution Principle X).
+
+## Summary
+
+Add the `ServiceAccount` entity: a machine credential attached to one third-party service, with a
+scope ceiling, managed through the admin API. The first kind is `jwt_bearer` with the
+`signed_jwt` format: a JWT signed outside the broker, stored encrypted and never returned. No
+agent can use an account yet (#472, #473).
+
+- **Entity in the existing bounded context.** `model.ServiceAccount` and its value objects join
+  `internal/domain/model`; a new `thirdparty.ServiceAccountService` holds the workflow
+  ([research R1](./research.md#r1--where-the-domain-code-lives)).
+- **Opaque credential, checked for form only.** A pure standard-library function applies the
+  FR-009 rules in a fixed order and derives the summary and a `SHA256:<base64>` fingerprint. No
+  signature is verified and nothing is fetched ([R4](./research.md#r4--form-validation-of-the-jwt),
+  [R5](./research.md#r5--credential-summary-and-fingerprint)).
+- **Encrypted under the service.** A format-discriminated credential document is encrypted with
+  the existing `EncryptionPort` under the owning service's `service_id` context; there is no
+  plaintext path ([R3](./research.md#r3--what-is-encrypted-and-under-which-context)).
+- **Status derived on read.** `ready` or `failed` comes from the stored expiry and the request
+  time; nothing is swept or stored ([R6](./research.md#r6--status-is-derived-on-read)).
+- **One focused repository port, two adapters.** `ports.ServiceAccountRepository` (seven
+  service-scoped methods) with memory and PostgreSQL implementations, version preconditions and
+  conflict sentinels; atomic migration `050` ([R2](./research.md#r2--repository-port),
+  [data model](./data-model.md)).
+- **Thin HTTP adapter.** `admin.ServiceAccountsHandler` under
+  `/api/services/{service-id}/service-accounts`; optional `If-Match`; Admin API `3.1.0`
+  ([contract delta](./contracts/admin-service-accounts-openapi.yaml),
+  [R7](./research.md#r7--optimistic-concurrency-and-no-op-updates),
+  [R11](./research.md#r11--http-adapter)).
+- **Service deletion guarded.** A service that holds accounts answers `409`, enforced in the
+  domain and by `ON DELETE RESTRICT`
+  ([R9](./research.md#r9--a-service-that-holds-accounts-cannot-be-deleted)).
+- **Audit without the credential.** One audit record per committed write, carrying the summary;
+  seven storage spans; no metric ([observability contract](./contracts/observability.md)).
+
+## Technical Context
+
+**Language/Version**: Go 1.27.4
+
+**Primary Dependencies**: chi v5 (routing), sqlx and pgx v5 (PostgreSQL adapter), golang-migrate
+(migrations), `log/slog`, OpenTelemetry API, the existing `ports.EncryptionPort` adapters;
+standard library `crypto/sha256`, `encoding/base64`, `encoding/json`. No new dependency.
+
+**Storage**: PostgreSQL (production) and in-memory (development, tests). One new table,
+`service_accounts`, in migration `050_create_service_accounts.{up,down}.sql`.
+
+**Testing**: Go unit tests with testify (domain model, domain service, memory adapter, handler);
+PostgreSQL integration tests under the `integration` build tag (migration, repository contract);
+Ginkgo/Gomega E2E through the production bootstrap, with `Label("docker")` for the scenarios that
+depend on store semantics.
+
+**Target Platform**: Linux broker container; Darwin for development.
+
+**Project Type**: Backend Admin API feature in the Go monorepo. No React UI, ExtProc, end-user
+API, configuration, Helm or CDK change.
+
+**Performance Goals**: A list or status read is one indexed query and no decryption. A create or
+rotation adds one `Encrypt` call. An unchanged update performs reads only.
+
+**Constraints**: The JWT must not appear in any response, log record, span, metric or error
+(FR-011, FR-023, SR-006). Fail closed with no plaintext fallback (SR-002). Memory and PostgreSQL
+behave identically (DB-001, SC-008). The migration is atomic (DB-002). Existing behaviour is
+unchanged (FR-024, SC-007).
+
+**Scale/Scope**: An administrative registry: tens of accounts per service, hundreds in total. The
+unpaginated list and a transactional table creation are adequate. 31 acceptance scenarios are
+tested now; one (User Story 5 Scenario 3) arrives with #472.
+
+## Constitution Check
+
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+
+Verified against [.specify/memory/constitution.md](../../.specify/memory/constitution.md):
+
+**Design Preconditions (BLOCKING)**:
+
+- [x] **Domain Model**: [data-model.md](./data-model.md) documents the `ServiceAccount` aggregate,
+  its value objects, validation rules, derived values, state and update outcomes.
+- [x] **Domain Concepts**: Service Account, Kind, Credential Format, Ceiling, Narrowing and
+  Credential Summary are added to the `ARCHITECTURE.md` glossary and the root `AGENTS.md` glossary
+  table with the definitions of #478.
+- [x] **Entity IDs**: `ServiceAccountID` is added to `uuidTypes` in
+  `internal/domain/id/gen_ids.go`, generated, tested in `id_test.go` and documented in
+  `internal/domain/id/AGENTS.md` (`adrs/013-strongly-typed-entity-ids.md`).
+- [x] **Configuration Design**: No configuration parameter. The 16 KiB limit is a fixed value in
+  the API contract (spec Assumptions).
+- [x] **Config Examples**: Not applicable; no new keys.
+- [x] **Helm Deployment Contract**: No parameter change. The existing migration Job applies `050`.
+- [x] **API Design First**:
+  [contracts/admin-service-accounts-openapi.yaml](./contracts/admin-service-accounts-openapi.yaml)
+  defines the change; it is merged into `api/admin/openapi.yaml` only after approval.
+- [x] **API Documentation**: Admin API only (`api/admin/openapi.yaml`).
+- [ ] **API Changes**: Pending maintainer sign-off on API-SA, API-SHAPE, API-UPDATE,
+  API-SVC-DELETE and API-VERSION. This gate stays open until the approval is recorded on the PR.
+- [x] **Database Design**: `050_create_service_accounts.{up,down}.sql`, go-migrate naming, atomic;
+  schema in [data-model.md](./data-model.md#postgresql-schema--migration-050_create_service_accounts).
+- [x] **E2E Acceptance Tests**: Planned for all scenarios before implementation
+  ([Testing Strategy](#testing-strategy)); User Story 5 Scenario 3 is deferred to #472 by the spec.
+- [x] **E2E Test Mapping**: One `It()` per scenario ([Scenario Mapping](#scenario-mapping)).
+- [x] **E2E Red Phase**: Tests assert concrete status codes, headers, bodies and list contents
+  against handlers that first answer `501`.
+- [x] **Frontend Playwright E2E**: Not applicable; no UI change.
+- [x] **Frontend Screenshots**: Not applicable.
+
+**Implementation Considerations**:
+
+- [x] **Security-First**: Encryption is mandatory with no plaintext fallback (SR-002). `alg: none`
+  is refused. The stored JWT is never accepted as proof of anything, so storing it unverified is
+  not an exception to the signature rule (SR-004); the ADR records this. Operator principal is
+  required before any read (SR-005). Audit records follow LOGGING.md section 8.
+- [x] **Architecture Docs**: `ARCHITECTURE.md` gets the glossary section, the data-store entry,
+  the admin API summary, the Admin API `3.1.0` note and the ADR index entry.
+- [x] **ADRs**: New `adrs/20261125-154231-service-accounts-stored-jwt.md`, introduced and accepted
+  in this PR ([R15](./research.md#r15--adr)). No accepted ADR is superseded.
+- [x] **Library-First Security**: `crypto/sha256` for the fingerprint, the existing encryption
+  adapters for storage. The JWT form check is structural decoding, not cryptography; the broker
+  performs no signature operation (SR-003).
+- [x] **Zalando Guidelines**: Kebab-case path segments, snake_case members, sub-resource under its
+  parent, standard status codes, optional `If-Match` with strong ETags. The unpaginated direct
+  array follows the existing protected-resources list (spec Assumptions).
+- [x] **End-User Docs**: Admin-only change; no `docs/api/` page. `docs/guides/manage-agents-and-services.md`
+  gains a "Add a service account" section and `docs/reference/api.md` the admin API rows.
+- [x] **Migration Testing**: Integration tests cover apply, rollback, reapply, and each constraint.
+- [x] **Hexagonal Architecture**: Rules, no-op detection, status and audit live in
+  `internal/domain`. The handler parses input and maps errors. Adapters implement the port. No
+  cross-adapter import; no handler-to-port shortcut.
+- [x] **Persistence Patterns**: Port in `internal/ports/storage.go` with seven methods; memory and
+  PostgreSQL adapters; sqlx; `StorageError` wrapping; accessor `ServiceAccounts()` on the storage
+  adapter (`adrs/004-storage-layer-architecture.md`).
+- [x] **Coding Standards (Principle XV)**: New log events and spans are listed in
+  [contracts/observability.md](./contracts/observability.md). One scoped amendment to
+  `coding-standards/LOGGING.md` section 6.2 is proposed in the same PR (STD-LOGGING). No lint rule
+  is disabled or suppressed.
+- [x] **Feature Scope**: No hand-out of the credential, no token-exchange change, no agent
+  binding, no UI (FR-024). No metric is added because no requirement asks for one.
+
+**Post-design re-check (after Phase 1)**: All blocking preconditions pass except the API
+confirmation gate, which is the expected sign-off. No violation needs Complexity Tracking.
+
+## Approval Items
+
+| ID | Type | Decision | Details |
+|---|---|---|---|
+| API-SA | API | Add create, list, read, update, delete and status for service accounts under `/api/services/{service-id}/service-accounts`, with the representation, `credential_summary`, error messages, `Location`, strong ETag and optional `If-Match` as in the contract. `failure_reason` appears in the representation only when `status` is `failed`. List ordered by `canonical_id`. `service_id` is always the UUID; `Prefer: reference-id=canonical` is not offered. Unknown request members are refused. | [contracts/admin-service-accounts-openapi.yaml](./contracts/admin-service-accounts-openapi.yaml) |
+| API-SHAPE | API | One `ServiceAccountRequest` schema with `kind` as an enum member and `credential` as a `oneOf` discriminated by `format`, instead of a kind-level discriminator, because the spec's update journeys omit `kind` | [research R12](./research.md#r12--request-schema-shape) |
+| API-UPDATE | API | On `PUT`, `scopes` is required and replaces the ceiling; `canonical_id`, `kind` and `credential` are optional; `null` is refused | [research R8](./research.md#r8--update-request-semantics) |
+| API-SVC-DELETE | API | `DELETE /api/services/{service-id}` answers `409` while the service holds a service account | [research R9](./research.md#r9--a-service-that-holds-accounts-cannot-be-deleted) |
+| API-VERSION | API | Raise the Admin API from `3.0.0` to `3.1.0` (additive) | spec API-006 |
+| DEC-FINGERPRINT | Decision | Fingerprint text: `SHA256:` plus the unpadded standard base64 SHA-256 digest of the submitted JWT | [research R5](./research.md#r5--credential-summary-and-fingerprint) |
+| DEC-EXP-RANGE | Decision | An `exp` outside `[0, 253402300799]` is refused as malformed, like a non-number | [research R4](./research.md#r4--form-validation-of-the-jwt) |
+| STD-LOGGING | Standard | Amend `coding-standards/LOGGING.md` section 6.2: the credential summary of a service account, including `sub`, is permitted in `service.service_account.*` audit records only | [contracts/observability.md](./contracts/observability.md#4-amendment-to-coding-standardsloggingmd-same-pr) |
+| ADR-SA | ADR | New ADR `20261125-154231-service-accounts-stored-jwt`: entity and port, stored-JWT posture, `service_id` encryption of a format-discriminated credential document, derived status, optional `If-Match`, `RESTRICT` on service deletion | [research R15](./research.md#r15--adr) |
+| DB-050 | Decision | Migration `050`: table `service_accounts` with the columns, checks, unique constraint and `ON DELETE RESTRICT` foreign key of the data model; DOWN drops the table and with it the stored credentials | [data-model.md](./data-model.md#postgresql-schema--migration-050_create_service_accounts) |
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/20261125-152113-service-accounts-stored-jwt/
+├── spec.md
+├── plan.md                                   # This file
+├── research.md                               # Phase 0
+├── data-model.md                             # Phase 1
+├── quickstart.md                             # Phase 1
+├── contracts/
+│   ├── admin-service-accounts-openapi.yaml   # Phase 1 — Admin API 3.1.0 delta
+│   └── observability.md                      # Phase 1 — log events, spans, required tests
+├── checklists/requirements.md
+└── tasks.md                                  # Phase 2 (/speckit-tasks)
+```
+
+### Source Code (repository root)
+
+```text
+api/admin/openapi.yaml                                  # merge contract delta; version 3.1.0
+adrs/20261125-154231-service-accounts-stored-jwt.md     # new ADR
+ARCHITECTURE.md                                         # glossary, data store, admin API, ADR index
+AGENTS.md                                               # glossary rows, ADR index row
+coding-standards/LOGGING.md                             # section 6.2 row (STD-LOGGING)
+docs/guides/manage-agents-and-services.md               # "Add a service account" section
+docs/reference/api.md                                   # admin API map rows
+docs/reference/telemetry-descriptions.yaml              # seven span descriptions
+docs/reference/telemetry.md                             # regenerated (just telemetry-doc)
+
+migrations/
+├── 050_create_service_accounts.up.sql
+└── 050_create_service_accounts.down.sql
+
+internal/
+├── domain/id/gen_ids.go, uuid_ids_gen.go, id_test.go, AGENTS.md   # ServiceAccountID
+├── domain/model/service_account.go                     # entity, kind, status, narrowing
+├── domain/model/service_account_credential.go          # form rules, summary, fingerprint
+├── domain/thirdparty/service_account_service.go        # workflow, no-op detection, audit
+├── domain/thirdparty/service.go                        # Delete guard; WithServiceAccounts
+├── ports/storage.go                                    # ServiceAccountRepository, sentinels
+├── ports/AGENTS.md                                     # catalogue entry
+├── adapters/storage/memory/service_account_repository.go
+├── adapters/storage/memory/thirdparty_provider.go      # delete guard via counter
+├── adapters/storage/postgres/service_account_repository.go
+├── adapters/storage/factory.go                         # ServiceAccounts() accessor, wiring
+├── adapters/http/handlers/admin/service_accounts_handler.go
+├── adapters/http/routing/admin.go                      # six routes
+├── app/handlers.go                                     # AdminHandlers.ServiceAccounts
+├── app/builder.go                                      # service and handler wiring
+└── AGENTS.md                                           # handler list, key storage types
+
+tests/
+├── e2e/service_accounts_register_test.go               # User Stories 1 and 2
+├── e2e/service_accounts_lifecycle_test.go              # User Stories 3, 4 and 5
+├── e2e/fixtures/service_account.go                     # signed, unsigned, expiring tokens; requests
+├── e2e/helpers/service_account.go                      # PUT/DELETE with If-Match, credential-absence matcher
+├── integration/migrations/service_accounts_migration_test.go
+├── integration/storage/infra/service_account_test.go   # shared repository contract on PostgreSQL
+└── integration/service_account_encryption_test.go      # service-context isolation (SR-001)
+```
+
+**Structure Decision**: Existing Go monorepo layout. The domain change stays in the third-party
+service bounded context (`internal/domain/model`, `internal/domain/thirdparty`); no new domain
+package. One new port interface, one new handler, one new table.
+
+## Design Notes for Task Generation
+
+**Domain service** (`thirdparty.ServiceAccountService`), constructed in `builder.go` from
+`ports.ServiceAccountRepository`, `ports.EncryptionPort`, a service-existence lookup (the provider
+repository), a `ServiceAccountBindingChecker`, `now func() time.Time` and a logger:
+
+| Method | Behaviour |
+|---|---|
+| `Create` | Validate entity and credential; compute summary; encrypt; `repo.Create`; audit `created` |
+| `List`, `Get`, `Status` | Scoped reads; status and narrowing derived with `now()`; no decryption |
+| `Update` | Load; check a supplied version; validate; detect no-op; encrypt a new credential; `repo.Update`; audit by precedence with `changes` |
+| `Delete` | Load; check a supplied version; refuse when bound; `repo.Delete`; audit `deleted` |
+| `Resolve` | UUID or `canonical_id` within the service |
+
+No method returns the plaintext credential (FR-024). Decryption for hand-out is added by #473.
+
+**Handler order of checks**: operator principal (`401`) → service (`404`) → account (`404`) →
+`If-Match` syntax (`400`) → body and rules (`400`) → precondition (`412`) → name conflict or
+binding (`409`) → write.
+
+**Wiring**: `storage.Adapter.ServiceAccounts()`; memory repositories cross-wired for the two
+existence checks; `ProviderService.WithServiceAccounts(counter)`;
+`AdminHandlers.ServiceAccounts`; routes registered only in `SetupAdminRoutes`.
+
+## Implementation Phase Overview
+
+*Detailed task breakdown is in `tasks.md` (generated by `/speckit-tasks`).*
+
+| Phase | Purpose | Required? |
+|-------|---------|-----------|
+| **Phase 0** | Pre-implementation refactoring | Skipped |
+| **Phase 1** | Setup — record approvals, add the ADR | Required |
+| **Phase 2** | Design Preconditions (domain model and glossary, API, DB, E2E tests, observability) | **MANDATORY** |
+| **Phase 2.7** | Entity Boilerplate — typed ID, entity types, port, empty adapters, `501` handlers, routes | Included |
+| **Phase 2.5** | Foundational Infrastructure — migration, both repositories, credential rules | Required |
+| **Phase 3+** | User Stories — US1 and US2 (P1), US3 and US4 (P2), US5 (P3) | Required |
+| **Phase N** | Constitution Compliance verification | **MANDATORY** |
+
+- [x] Phase 0 (refactoring): skip — no existing code is restructured. The two small additions to
+  existing types (the provider service's delete guard and the memory provider repository's
+  counter) are feature behaviour and belong to User Story 5.
+- [x] Phase 2.7 (entity boilerplate): include — the feature introduces a new entity, port, two
+  repository adapters and a handler. The scaffold (types, interface, empty adapters, handlers
+  answering `501`, routes, builder wiring) lands as its own commit ahead of business logic so
+  the E2E suite compiles and fails semantically. Whether it also becomes its own PR is the
+  maintainer's call; the branch for this issue is `speckit/issue-471`.
+
+Ordering constraints for tasks:
+
+1. Approvals recorded; ADR added; OpenAPI delta merged with version `3.1.0`; LOGGING.md amended.
+2. Glossary and `ARCHITECTURE.md`; typed ID generated.
+3. Scaffold (Phase 2.7), then E2E tests for all scenarios and the migration and repository
+   contract tests, failing on concrete assertions.
+4. Credential rules and summary (pure domain), then migration and both repositories.
+5. Domain service and handler per user story: US1 → US2 → US3 → US4 → US5 (including the
+   service-delete guard).
+6. Guide, API reference, telemetry descriptions and `just telemetry-doc`; compliance gates.
+
+## Testing Strategy
+
+### End-to-End (E2E) Acceptance Tests
+
+**Test Location**: `tests/e2e/service_accounts_register_test.go` (User Stories 1–2) and
+`tests/e2e/service_accounts_lifecycle_test.go` (User Stories 3–5)
+
+**Framework**: Ginkgo/Gomega following [tests/e2e/README.md](../../tests/e2e/README.md)
+
+**Test Organization**:
+
+- **Top-level Describe**: `"Service accounts"` in both files.
+- **Contexts**: one per user story, with nested contexts for shared preconditions (an existing
+  service; a service with one account; a service with two accounts).
+- **It blocks**: one per acceptance scenario, each preceded by
+  `// Scenario N from specs/20261125-152113-service-accounts-stored-jwt/spec.md (User Story M)`.
+
+#### Scenario Mapping
+
+Line numbers are filled during Phase 2f. `R` = `service_accounts_register_test.go`,
+`L` = `service_accounts_lifecycle_test.go`.
+
+| Spec Scenario | File | Test Description |
+|---|---|---|
+| US1.1 | R | `It("should create a ready account with a summary and an ETag and without the JWT")` |
+| US1.2 | R | `It("should list both accounts with summaries and no credential material")` |
+| US1.3 | R | `It("should default use to access_token when the credential omits it")` |
+| US1.4 | R | `It("should accept a JWT without exp and report no expiry")` |
+| US1.5 | R, `Label("docker")`, both stores | `It("should refuse a taken canonical_id on the same service and accept it on another")` |
+| US1.6 | R | `It("should answer 404 for create and list under an unknown service")` |
+| US1.7 | R | `It("should read one account by ID and by canonical_id with its ETag")` |
+| US2.1 | R | `It("should refuse a JWT that is not a compact JWS")` |
+| US2.2 | R | `It("should refuse a JWT with alg none in any letter case or without alg")` |
+| US2.3 | R | `It("should refuse a JWT whose exp is not in the future")` |
+| US2.4 | R | `It("should refuse a JWT longer than 16384 bytes")` |
+| US2.5 | R | `It("should refuse use assertion and unknown use, format and kind")` |
+| US2.6 | R | `It("should refuse empty or missing scopes, a missing credential and an invalid canonical_id")` |
+| US2.7 | R | `It("should name the failed rule without echoing any part of the JWT")` |
+| US3.1 | L | `It("should rotate the credential in place and change summary and ETag")` |
+| US3.2 | L | `It("should change the ceiling and keep credential and summary")` |
+| US3.3 | L | `It("should return a failed account to ready when a valid JWT replaces the expired one")` |
+| US3.4 | L | `It("should leave the account unchanged when an update carries an invalid credential")` |
+| US3.5 | L | `It("should answer 200 with the same ETag when nothing changes")` |
+| US3.6 | L | `It("should answer 404 for an unknown account and for an account of another service")` |
+| US3.7 | L, `Label("docker")`, both stores | `It("should answer 412 for a stale If-Match and carry out a current or absent one")` |
+| US3.8 | L | `It("should rename the account and stop addressing it by the old name")` |
+| US3.9 | L, `Label("docker")`, both stores | `It("should refuse a rename to a name taken on the same service")` |
+| US4.1 | L | `It("should report ready with the stated expiry and no failure reason")` |
+| US4.2 | L | `It("should report failed with credential_expired in status and list once exp has passed")` |
+| US4.3 | L | `It("should keep an account without exp ready")` |
+| US4.4 | L | `It("should answer 404 for the status of an unknown account")` |
+| US5.1 | L | `It("should delete the account and remove it from the list")` |
+| US5.2 | L | `It("should answer 404 when deleting an unknown account")` |
+| US5.3 | — | Added with #472 (spec: "its E2E test is added with #472"). The refusal path is covered now by a domain unit test with a binding checker that answers true. |
+| US5.4 | L | `It("should answer 412 and keep the account when a delete carries a stale If-Match")` |
+| US5.5 | L, `Label("docker")`, both stores | `It("should refuse deleting a service that holds an account and allow it after the last one is removed")` |
+
+US2.1, US2.2, US2.5 and US2.6 each state several variants of one rule. Each keeps one `It()` and
+iterates over a table of inputs inside it, asserting status, message and an unchanged list for
+every variant.
+
+**Red Phase Requirements**: Tests compile against the Phase 2.7 scaffold (handlers answering
+`501`) and fail on concrete assertions: status codes, `Location`, `ETag`, representation members,
+error messages, list contents. No `XIt`, `PIt`, `Skip()` or red-phase comments.
+
+**Test Data Strategy**:
+
+- Existing fixtures: `fixtures.AdminPrincipal()`, `fixtures.ServiceWithID(...)` with a canonical
+  ID for the *Company Platform* service of the spec journeys.
+- New `tests/e2e/fixtures/service_account.go`: builders for token T1 and T2 of the spec (ES256,
+  `kid`, `iss`, `sub`, `exp`), a token without `exp`, a token expiring in a few seconds, an
+  `alg: none` token (letter-case variants), an oversized token, a five-segment token, and the
+  create and update request bodies. Tokens are signed with a key generated per test; none is real.
+
+**Test Execution Flow**:
+
+1. **Phase 2f**: write the E2E tests for all mapped scenarios.
+2. Run `ginkgo -v --label-filter="!performance && !docker" --focus "Service accounts" ./tests/e2e/`;
+   all fail semantically. The `docker` scenarios run with `just test-e2e-docker`, or first in CI
+   where no container runtime is available (Principle VIII).
+3. Implement incrementally; tests turn green per user story with fixture adjustments only.
+
+**Bootstrap Strategy**:
+
+- Fresh admin `bootstrap.TestServer` and storage per test (`BeforeEach` / `AfterEach`).
+- Store-dependent scenarios: one `It()` with a memory case and a `bootstrap.NewPostgresFixture`
+  case inside ([research R16](./research.md#r16--storage-parity-sc-008)).
+- Expiry scenarios (US3.3, US4.2): a token expiring a few seconds ahead and `Eventually` on the
+  status; no sleep and no injected clock
+  ([research R17](./research.md#r17--time-dependent-acceptance-scenarios)).
+
+**Helper Utilities**:
+
+- Existing: `server.AuthenticatedGET`, `AuthenticatedPOST`, `DirectRequest` (for `PUT`, `DELETE`,
+  `If-Match`).
+- New in `tests/e2e/helpers/service_account.go`: a decode helper for the representation and a
+  Gomega matcher that asserts a response contains neither the JWT under test nor any of its three
+  segments. Every scenario that submits a JWT applies it to each response it reads.
+- Mock services: none. The feature makes no outbound call.
+
+### Unit & Integration Tests
+
+**Unit Tests** (TDD, written first):
+
+- `internal/domain/model/service_account_credential_test.go`: table tests for every rule and its
+  order, reason and message; the size boundary (16384 and 16385 bytes); `alg` letter cases;
+  `exp` at, before and after the request time, fractional, non-number and out of range; absent
+  and non-string `iss`, `sub`, `kid`; fingerprint equality for equal tokens and difference for
+  different ones; no error message contains the input.
+- `internal/domain/model/service_account_test.go`: entity validation, ceiling rules,
+  `StatusAt` boundary, `Narrowing`, `CredentialSummary.LogValue` capping.
+- `internal/domain/thirdparty/service_account_service_test.go`: create, rotation, ceiling change,
+  rename, combined change, no-op (no write, no audit), precondition, name conflict, kind change,
+  delete, bound-account refusal, encryption failure stores nothing, encryption context equals the
+  owning service's, audit records and keys per the observability contract, credential and its
+  segments absent from the log buffer.
+- `internal/domain/thirdparty/service_test.go`: service deletion refused while accounts exist.
+- `internal/adapters/storage/memory/service_account_repository_test.go`: the shared repository
+  contract; concurrent creates and updates under `-race`.
+- `internal/adapters/http/handlers/admin/service_accounts_handler_test.go`: operator required
+  before any read; identifier resolution; `If-Match` parsing; body limit and unknown members;
+  status, `Location`, `ETag`; error mapping; credential absent from responses, log buffer and
+  recorded spans for every operation (SR-006).
+- `internal/domain/id/id_test.go`: `ServiceAccountID`.
+
+**Integration Tests**:
+
+- `tests/integration/migrations/service_accounts_migration_test.go` (`integration` tag): apply,
+  rollback, reapply; unique `(service_id, canonical_id)`; each `CHECK`; deleting a service with
+  an account fails with a foreign-key violation; no plaintext column.
+- `tests/integration/storage/infra/service_account_test.go` and
+  `internal/adapters/storage/postgres/service_account_repository_test.go` (`integration` tag): the
+  shared repository contract on PostgreSQL; `23505` and version mismatch mapped to the sentinels;
+  `23503` on service deletion mapped to `conflict`; storage spans and `storage.outcome`.
+- `tests/integration/service_account_encryption_test.go` (self-contained): with the memory
+  encryption backend, a credential stored for one service does not decrypt under another
+  service's context (SR-001), and a failing encryption port leaves the store empty (SR-002).
+
+**Test Coverage Goals**:
+
+- Unit: all branches of the credential rules, the domain service and the handler's error mapping.
+- Integration: migration `050` in both directions; every repository method on PostgreSQL.
+- E2E: 100% of the acceptance scenarios testable in this feature (31 of 32; US5.3 with #472).
+- Frontend E2E: not applicable.
+
+## Complexity Tracking
+
+No constitution violations require justification.
