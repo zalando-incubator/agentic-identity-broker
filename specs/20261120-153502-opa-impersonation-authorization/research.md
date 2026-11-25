@@ -251,9 +251,13 @@ protocol, header map) into `impersonation.Request`. The domain builds the input:
   `server.enduser.public_url`, `protocol` (`HTTP/1.1` or `HTTP/2.0`), and `headers` (lower-case
   names; multiple values joined with `, `; `authorization`, `proxy-authorization`, `cookie`, and
   pseudo-headers removed).
-- `parsed_path` (path segments) and `parsed_query` (query values as string arrays).
-- `parsed_body: null` and `truncated_body: false`. No `body`, `raw_body`, `source`, `destination`,
-  or `id`.
+- `version` (`{"ext_authz": "v3", "encoding": "protojson"}`), `parsed_path` (path segments), and
+  `parsed_query` (query values as string arrays; unvalidated, ignored by the token endpoint).
+- `parsed_body` (revised 2026-11-25): the form body parsed exactly as the Envoy plugin parses
+  `application/x-www-form-urlencoded` (`url.ParseQuery`, object of string arrays; `null` for other
+  content types), with `client_assertion`, `actor_token`, and `subject_token` always removed.
+  `truncated_body: false`, because the handler rejects bodies over 256 KiB. No
+  `attributes.request.http.body`, `raw_body`, `source`, `destination`, or `id`.
 - `context`: `client_assertion`, `actor_token`, `subject_token` (validated claim maps, `{}` when
   empty), `subject_unverified`, and `request` (`resource`, `grant_type`, `scope`, `agent_id`), built
   from the same values as the CEL activation; plus `agent` from the broker-resolved Agent:
@@ -269,9 +273,16 @@ precision, arrays and nested objects unchanged).
 **Rationale**: Envoy-compatible predicates such as `input.attributes.request.http.method == "POST"`
 and `input.parsed_path == ["oauth2","token"]` work unchanged (FR-005). The configured public URL is
 trusted configuration; the request `Host` header and a TLS-terminating ingress would make `host` and
-`scheme` caller- or topology-dependent. The credential-bearing form body never enters the input
-(SR-003). The `context` namespace is built only from validated values, so headers cannot overwrite it
+`scheme` caller- or topology-dependent. Envoy-style body predicates such as
+`input.parsed_body.scope[_] == "read"` work, while the three raw credentials never enter the input
+(SR-003). `parsed_body` duplicates `grant_type` and `scope` from `context.request` as raw arrays;
+that is accepted for Envoy fidelity, and documentation points identity and target decisions at
+`context`. Shared ExtProc bundles separate by package, not by `parsed_body` shape or `input.type`. The `context` namespace is built only from validated values, so headers cannot overwrite it
 (Scenario 2.2).
+
+**Alternatives** (2026-11-25): `parsed_body: null` (the previous proposal; breaks Envoy body
+predicates); the full Envoy body including raw JWTs (would require relaxing SR-003); keeping the
+credential keys with redacted values (exact key set, but placeholder values policies could misread).
 
 **Alternatives**: Synthesize an ext_authz `CheckRequest` and call `envoyauth.RequestToInput` (adds
 the opa-envoy-plugin dependency to the broker binary for a handful of fields, and its body parsing

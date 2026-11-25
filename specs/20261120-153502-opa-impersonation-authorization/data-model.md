@@ -44,7 +44,8 @@ Any other key fails startup, including the former reserved `policy_url` and `pol
 
 Request-local document described in [contracts/policy-input-decision.md § 1](contracts/policy-input-decision.md#1-input-document).
 Built from validated claim maps, `subject_unverified`, the CEL `request` map, the configured public
-URL, filtered transport metadata, the constant `type: "impersonation"`, and the resolved broker
+URL, filtered transport metadata, Envoy's `version`, `parsed_query`, and `parsed_body` (the parsed form
+body without `client_assertion`, `actor_token`, and `subject_token`), the constant `type: "impersonation"`, and the resolved broker
 Agent as `context.agent {id, canonical_id?, external_id?}` (unset IDs omitted). The `agent` shape and
 the reserved members follow ExtProc's Grant Context (contract § 1.1). Raw credentials are excluded, but identity claims remain sensitive. `LogValue`, `String`,
 and `GoString` return only `[REDACTED]`; full data is used only for evaluation. Never persisted,

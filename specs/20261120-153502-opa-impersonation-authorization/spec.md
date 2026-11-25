@@ -30,6 +30,19 @@
   - Maintainer direction: mjungsbluth, 2026-11-20: “on Q2, support all modes including unsigned subjects”. This replaces the earlier proposed signed-only restriction; it does not extend impersonation to proxy/hybrid mode or permit unsigned client assertions or actors.
   - Rationale: OPA must be a usable policy-engine alternative for existing impersonation deployments, not remove their supported credential modes. FR-013 and SR-005 preserve the existing compensating controls while requiring startup and managed-update enforcement; planning must propose the necessary superseding ADR before implementation. This records the scope direction, not approval of a future mechanism or ADR.
 
+### Session 2026-11-25 (input revision)
+
+The maintainer directed that the Envoy envelope follow the Envoy input specification. Proposed under
+approval item API-INPUT; not an approval.
+
+- `parsed_body` is Envoy's parsed form body (object of string arrays) instead of `null`, always
+  without `client_assertion`, `actor_token`, and `subject_token` (maintainer choice: omit the
+  credential fields; SR-003 unchanged). The validated, resolved values stay in `context`.
+- `version` (`{"ext_authz": "v3", "encoding": "protojson"}`) is added, as the Envoy plugin sets it.
+- `parsed_query` is documented as unvalidated caller data the token endpoint ignores.
+- Bundles shared with ExtProc separate impersonation decisions by package (each rule's
+  `authorization.opa.package`), not by `input.type`, which stays in the input.
+
 ### Session 2026-11-24
 
 - Q: May production deployments load policy from a local bundle directory (`impersonation.opa.policy.path`), or should that mode be limited to development and tests? → A: Allowed in any deployment; startup logs once that policy and data change only on restart, and the documentation states that live governance updates need managed mode.
@@ -248,7 +261,7 @@ bundles:
     resource: bundles/impersonation.tar.gz
 ```
 
-The bundle supplies `company.impersonation.result` and governance data. Its business rule requires input type `impersonation`, method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration keyed by `context.agent.external_id` (`inventory-agent`) assigned to
+The bundle supplies `company.impersonation.result` and governance data. Its business rule requires method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration keyed by `context.agent.external_id` (`inventory-agent`) assigned to
 `inventory-api`. The resolved broker Agent supplies this literal External ID; a missing ID is omitted, so the
 lookup is undefined and the example policy denies, without UUID fallback. UUID remains the target and minted identity. The decision is `{"action":"allow"}` only when all checks pass; otherwise it is `{"action":"deny"}`. Bundle authentication, update cadence, and data freshness are operator-owned bootstrap settings, not credentials embedded in this example. Policy-time network access, including `http.send`, is prohibited (Q1). An initial or updated revision using network-capable policy built-ins cannot activate; configured bundle retrieval is not a policy-time lookup.
 
@@ -288,6 +301,7 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=ht
 ```json
 {
   "type": "impersonation",
+  "version": {"ext_authz": "v3", "encoding": "protojson"},
   "attributes": {
     "request": {
       "http": {
@@ -302,7 +316,14 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=ht
   },
   "parsed_path": ["oauth2", "token"],
   "parsed_query": {},
-  "parsed_body": null,
+  "parsed_body": {
+    "grant_type": ["urn:ietf:params:oauth:grant-type:token-exchange"],
+    "audience": ["https://broker.example.com/impersonate/550e8400-e29b-41d4-a716-446655440000"],
+    "scope": ["read"],
+    "client_assertion_type": ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"],
+    "actor_token_type": ["urn:ietf:params:oauth:token-type:jwt"],
+    "subject_token_type": ["urn:ietf:params:oauth:token-type:jwt"]
+  },
   "truncated_body": false,
   "context": {
     "client_assertion": {"sub": "gateway-1"},
@@ -324,7 +345,7 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&audience=ht
 }
 ```
 
-The input has no ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`): OPA runs before Alice's delegation is checked. Envoy compatibility concerns field shapes and meanings, not forwarding credentials. The credential-bearing form body, raw token strings, cookies, and authorization headers are not policy input. The verified claim maps are sensitive policy inputs, not material for decision logs. Caller headers cannot populate or overwrite `context`.
+The input has no ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`): OPA runs before Alice's delegation is checked. `parsed_body` follows Envoy's parsing of the form body but always omits `client_assertion`, `actor_token`, and `subject_token`; it holds unvalidated caller values, while `context` holds the validated and resolved ones. Raw token strings, cookies, and authorization headers are not policy input. The verified claim maps are sensitive policy inputs, not material for decision logs. Caller headers cannot populate or overwrite `context`.
 
 **Step 4 — Client receives the response and normal claims.** The response to Step 2 is:
 
@@ -525,7 +546,7 @@ If a later valid revision still authorizes the subject but does not bind its ema
 - **FR-002**: Exactly one selected authorization engine MUST decide each evaluated rule. Unknown types, conflicting populated engine blocks, unsupported rule `authorization.opa` keys, an OPA rule without `impersonation.opa`, and `impersonation.opa` without an OPA rule MUST fail startup with an indexed rule/field or engine-field diagnostic.
 - **FR-003**: OPA configuration MUST accept an OPA-native bootstrap configuration file comparable to ExtProc's managed-policy configuration, including managed policy/data bundles, or a local bundle directory read once at startup. Local mode is permitted in every deployment; at startup the broker MUST log once, credential-free, that policy and data in that mode change only on restart, and documentation MUST state that live governance updates (FR-004, Scenario 3.1) require managed mode. Each MUST be configured by absolute path and read through an `os.Root` over its own directory, so a symlink cannot lead outside it (bootstrap at most 1 MiB); OPA-native local-file references are unsupported, and a bundle-service bearer token MAY be a file, contained the same way, re-read before every download. Invalid configuration or no admitted snapshot containing every configured bundle within a bounded startup interval MUST prevent readiness; historical activations cannot make an earlier subset usable.
 - **FR-004**: A successfully activated managed policy/data update MUST affect subsequent evaluations without rebuilding or restarting the broker. Updates MUST activate consistently; the broker MUST NOT reuse a previous request's allow decision.
-- **FR-005**: For all existing local-mode impersonation credential modes (FR-013), the input MUST provide the Envoy OPA plugin-compatible `attributes.request.http` envelope for the token endpoint request and the namespaced `context` fields in Journeys 1 and 4. For each existing CEL variable `v` among `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, and `request`, `input.context.v` MUST preserve the same semantics and value types. `subject_unverified` MUST be `true` only for an explicitly unverified subject and `false` for a verified signed subject; unsigned subject claims MUST NOT be presented as verified. This does not promise identical policy syntax between CEL and Rego.
+- **FR-005**: For all existing local-mode impersonation credential modes (FR-013), the input MUST provide the Envoy OPA plugin-compatible `attributes.request.http` envelope for the token endpoint request and the namespaced `context` fields in Journeys 1 and 4. For each existing CEL variable `v` among `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, and `request`, `input.context.v` MUST preserve the same semantics and value types. The input MUST also carry Envoy's `version`, `parsed_query`, and `parsed_body` with the Envoy plugin's semantics, with the three credential form fields omitted from `parsed_body` (SR-003). `subject_unverified` MUST be `true` only for an explicitly unverified subject and `false` for a verified signed subject; unsigned subject claims MUST NOT be presented as verified. This does not promise identical policy syntax between CEL and Rego.
 - **FR-006**: Policy context MUST be derived from the same validated per-rule credentials and resolved target used by CEL, not raw request-supplied identity headers. The `request` extension MUST preserve `resource`, `grant_type`, `scope`, and target UUID `agent_id`; it MUST NOT confuse the routing audience with the minted token audience. `context.agent` MUST use ExtProc's Grant Context agent shape: `id` is the target UUID, and `canonical_id` and `external_id` are the resolved broker Agent's literal values, each omitted when unset (never `null` or `""`). Callers and bundles cannot override the mapping. Governance examples MUST use `external_id` without falling back to UUID. The input MUST carry `type: "impersonation"` and MUST NOT carry ExtProc grant-context members (`principal`, `resource`, `grant`, `permission_sets`, `granted_permission_sets`, `granted_permission_sets_available`, `agent_session_id`).
 - **FR-007**: A well-formed `{"action":"allow"}` decision MUST satisfy only the selected rule's authorization predicate. `{"action":"deny"}` MUST act as an explicit policy non-match. Other action values, missing/undefined decisions, malformed output, evaluation errors, cancellation, and timeouts MUST issue no token and terminate internally with `server_error`, without fallback to another rule or engine. Connected callers receive HTTP 500; disconnected callers have no response guarantee and cancellation acceptance uses request-correlated telemetry and no issuance/fallthrough. ExtProc approval actions and response mutations are outside this decision contract.
 - **FR-008**: Ordered first-match rules, per-rule credential validation and extraction, category eligibility, human delegation, target/scope validation, and local token issuance MUST retain their established behavior. OPA MUST NOT select the minted subject, alter reserved token claims, or bypass a terminal delegation failure.
@@ -599,7 +620,7 @@ Approved configuration must be documented in `docs/configuration.md`, illustrate
 
 - **SR-001**: Existing cryptographic verification, role trust, audience, issuer, algorithm, lifetime, extraction, category, scope, and delegation controls MUST remain active. OPA is a policy alternative within a rule, never an authentication replacement or an optional allow-on-error layer.
 - **SR-002**: No startup or initial policy-loading failure may permit readiness. Evaluation failures, malformed decisions, timeouts, and cancellations MUST issue no token. A background policy/data update failure MUST NOT activate the failed revision; fresh requests may still be authorized by the last complete active revision under FR-012. All cryptographic and policy security primitives MUST use established libraries.
-- **SR-003**: Raw JWT strings, the credential-bearing token form body, cookies, authorization headers, secrets, and unrelated broker state MUST NOT be included in policy input or authorization diagnostics. Verified and explicitly unverified claim maps supplied for policy use MUST NOT be copied into logs, spans, metrics, or OPA decision-log exports. Policy/data fetch credentials MUST NOT appear in error responses or diagnostics.
+- **SR-003**: Raw JWT strings (the `client_assertion`, `actor_token`, and `subject_token` form fields, which `parsed_body` always omits), the raw request body, cookies, authorization headers, secrets, and unrelated broker state MUST NOT be included in policy input or authorization diagnostics. Verified and explicitly unverified claim maps supplied for policy use MUST NOT be copied into logs, spans, metrics, or OPA decision-log exports. Policy/data fetch credentials MUST NOT appear in error responses or diagnostics.
 - **SR-004**: Security decisions MUST retain structured, credential-free auditing consistent with the logging and telemetry coding standards. Each admitted OPA snapshot MUST have a broker-generated admission identifier, copied to its admission log and deciding audits; manifest labels alone are not identity. Policy-produced reasons and external service error bodies MUST NOT be reflected as arbitrary token-endpoint error text.
 - **SR-005**: Binding controls MUST NOT be replaced by an operator assertion that a policy is safe. Any reachable `with` modifier, including data-rule/function replacement, MUST void all revision evidence; only subject `sub` and `email` are recorded field bindings, independently of role references. For OPA, the selected authorization decision MUST have verifiable references equivalent to the existing CEL controls: `context.subject_token` for unsigned-subject rules; the corresponding token map for each audience-absent signed role; `context.subject_token.email` before minting an unverified email; and `context.subject_token.sub` before classifying an unsigned exact-target subject as agent. Missing or unverifiable mandatory subject/role references MUST prevent initial readiness or replacement activation. Missing email or `sub` field binding MUST retain the existing CEL outcome (no unbound email minting; human classification without the unverified-agent binding), not silently waive the control. Verification MUST cover the selected decision and its helper-policy dependencies at startup and every managed activation, and its evidence MUST stay coupled to the same revision used for evaluation, email handling, and category classification. A reference is a necessary guard, not proof that the policy is sufficiently restrictive; operators remain responsible for policy quality. All existing CEL binding controls remain unchanged. Planning MUST specify a reviewable enforcement mechanism (specified in [research.md](research.md) R5–R6 and [contracts/policy-input-decision.md](contracts/policy-input-decision.md) § 4) and propose supersession of the CEL-specific requirements in `031-unverified-subject-unsigned-jwt`, `034-audience-absent-impersonation-credentials`, and `045-agent-subject-impersonation` before implementation; it MUST NOT expand the constitution's unsigned-subject exception to other roles or modes.
 - **SR-006**: Policy/data bundles and bootstrap settings are trusted operator-managed configuration. The broker imposes no transport or signing requirement on bundle services beyond OPA's own behavior; operators choose HTTPS and bundle signing, and documentation MUST recommend both because bundles decide token issuance. Request callers MUST NOT choose policy sources or decision paths. Policy-time network access MUST be prohibited across every activated revision (FR-012), including network built-ins invoked from helper policies. Bundle management may contact its configured sources independently of token requests. Documentation MUST state that failed updates retain the last complete revision without a broker-enforced maximum age, and that a local bundle directory changes only on restart, so operators can assess governance-data staleness.

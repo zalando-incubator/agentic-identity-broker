@@ -98,7 +98,9 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    cross-agent rejection, human delegation, and local minting are unchanged and remain
    authoritative over any allow.
 7. **Raw-credential-excluded sensitive input and credential-free telemetry.** The input carries the Envoy-compatible request envelope
-   without the body, `authorization`, `proxy-authorization`, or `cookie` headers, plus the validated
+   (Envoy's `version`, `parsed_query`, and form `parsed_body`, which always omits `client_assertion`,
+   `actor_token`, and `subject_token`) without the raw body or the `authorization`,
+   `proxy-authorization`, or `cookie` headers, plus the validated
    CEL-equivalent `context`. Claim maps, decision members other than `action`, and bootstrap values
    never appear in logs, spans, metrics, or error responses. The sensitive named input implements
    redacted `LogValue`, `String`, and `GoString` methods.

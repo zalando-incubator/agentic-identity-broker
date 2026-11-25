@@ -146,8 +146,11 @@ type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
   a CEL rule's is static. `evaluateRule` uses that one `authorization` for the `sub` binding
   (`classifySubject`), the `email` binding, and the decision. All OPA rules of one request therefore
   see the same policy and data. The pipeline order is unchanged.
-- `Request` gains `HTTP RequestAttributes{Method, Path, RawQuery, Protocol string; Headers map[string][]string}`
-  set by the handler. The domain builds the input (contract § 1) only for OPA rules, using
+- `Request` gains `HTTP RequestAttributes{Method, Path, RawQuery, Protocol, ContentType string; Headers, Form map[string][]string}`
+  set by the handler. `Form` is the `url.ParseQuery` result of the body the handler already parses.
+  The domain builds `parsed_body` from it and always deletes `client_assertion`, `actor_token`,
+  and `subject_token` itself, so a handler change cannot leak them; `parsed_body` is `null` unless
+  `ContentType` is `application/x-www-form-urlencoded`. The domain builds the input (contract § 1) only for OPA rules, using
   `server.enduser.public_url` passed to `NewService`.
 - Error mapping: `ErrPolicyEvaluationFailed` → `serverError("authorization evaluation failed")` with
   `client_authorization/opa_evaluation_failed`; `ErrPolicyDecisionInvalid` → same response with

@@ -11,8 +11,9 @@ revision. Evaluation runs after credential validation, extraction, subject class
 eligibility, and before human delegation (the existing CEL position in the rule pipeline).
 
 The input shares one OPA vocabulary with ExtProc (ADR `028-opa-extproc-authorization`, amended by
-ADR `048-authzen-delegation-pip`): the same Envoy envelope, an `input.type` discriminator, and the
-same `input.context.agent` object as ExtProc's AuthZEN-fed Grant Context. § 1.1 defines the shared
+ADR `048-authzen-delegation-pip`): the same Envoy envelope (including `version`, `parsed_query`,
+and `parsed_body` with Envoy's parsing rules), an `input.type` value, and the same
+`input.context.agent` object as ExtProc's AuthZEN-fed Grant Context. § 1.1 defines the shared
 and the reserved members.
 
 ## 1. Input document
@@ -20,6 +21,7 @@ and the reserved members.
 ```json
 {
   "type": "impersonation",
+  "version": {"ext_authz": "v3", "encoding": "protojson"},
   "attributes": {
     "request": {
       "http": {
@@ -37,7 +39,14 @@ and the reserved members.
   },
   "parsed_path": ["oauth2", "token"],
   "parsed_query": {},
-  "parsed_body": null,
+  "parsed_body": {
+    "grant_type": ["urn:ietf:params:oauth:grant-type:token-exchange"],
+    "audience": ["https://broker.example.com/impersonate/550e8400-e29b-41d4-a716-446655440000"],
+    "scope": ["read"],
+    "client_assertion_type": ["urn:ietf:params:oauth:client-assertion-type:jwt-bearer"],
+    "actor_token_type": ["urn:ietf:params:oauth:token-type:jwt"],
+    "subject_token_type": ["urn:ietf:params:oauth:token-type:jwt"]
+  },
   "truncated_body": false,
   "context": {
     "client_assertion": {"iss": "https://identity.example.com", "sub": "gateway-1", "aud": "https://broker.example.com/oauth2/token", "iat": 1795165140, "exp": 1795168800},
@@ -62,14 +71,16 @@ and the reserved members.
 | Path | Source | Rules |
 | --- | --- | --- |
 | `type` | Constant | Always `"impersonation"`; ExtProc's values are `mcp_tool_call`, `mcp_method`, `mcp_headers_only`, and `unknown` |
+| `version` | Constant | `{"ext_authz": "v3", "encoding": "protojson"}`, the value the Envoy plugin sets and ExtProc passes through |
 | `attributes.request.http.method` | Request method | Always `POST` on the token endpoint |
 | `attributes.request.http.path` | Request URL path | No query string |
 | `attributes.request.http.host`, `.scheme` | `server.enduser.public_url` | Trusted configuration, not the `Host` header or TLS state |
 | `attributes.request.http.protocol` | Request protocol | `HTTP/1.1` or `HTTP/2.0` |
 | `attributes.request.http.headers` | Request headers | Lower-case names; repeated values joined with `, `; `authorization`, `proxy-authorization`, `cookie`, and pseudo-headers removed |
 | `parsed_path` | Path segments | Envoy plugin semantics |
-| `parsed_query` | Query parameters | Object of string arrays; normally `{}` |
-| `parsed_body`, `truncated_body` | Constants | `null` and `false`; the form body is never input |
+| `parsed_query` | Query parameters | Object of string arrays (Envoy semantics); normally `{}`. Unvalidated caller data the token endpoint ignores; exchange parameters come from the body |
+| `parsed_body` | Form body | Envoy semantics for `application/x-www-form-urlencoded`: `url.ParseQuery` result as an object of string arrays, every form field in caller order, **except `client_assertion`, `actor_token`, and `subject_token`**, which are always omitted. Unvalidated caller data: the validated, resolved values are in `context`. `null` for any other content type, as in Envoy |
+| `truncated_body` | Constant | `false`; the token endpoint rejects bodies over its 256 KiB limit instead of truncating |
 | `context.client_assertion`, `.actor_token` | Validated, signature-verified claims | Same map as the CEL variable |
 | `context.subject_token` | Signed and verified claims, or the caller-asserted claims of an unsigned subject | Same map as the CEL variable |
 | `context.subject_unverified` | Rule's subject `verification` | `true` only for `verification: none` |
@@ -79,13 +90,16 @@ and the reserved members.
 | `context.agent.external_id` | Resolved broker Agent | Literal External ID; **omitted** when unset, never `null` or `""`; broker-owned UUID mapping, never caller- or bundle-supplied; no UUID or Canonical ID fallback. Not yet in ExtProc's Grant Context (§ 1.1) |
 
 Absent optional claims stay absent. Strings, numbers, booleans, arrays, and nested objects keep their
-JSON types. Empty claim maps are `{}`. The input has no other members: no `body`, `raw_body`,
+JSON types. Empty claim maps are `{}`. The input has no other members: no
+`attributes.request.http.body`, `raw_body`,
 `source`, `destination`, `id`, `mcp`, raw JWT strings, or cookies. Caller headers cannot populate or
 overwrite `context`, because `context` is built only from validated values.
 
 Envoy compatibility covers the listed paths and their meanings. It does not guarantee that every
-Envoy policy runs unchanged, for example policies that read bodies, source addresses, or
-`authorization` headers.
+Envoy policy runs unchanged, for example policies that read the raw body, source addresses,
+`authorization` headers, or the three omitted credential fields. Policies that read `parsed_query`
+or `parsed_body` see unvalidated caller values; authorization decisions on identity and target
+belong on `context`.
 
 ### 1.1 Alignment with the ExtProc Grant Context
 
@@ -102,6 +116,11 @@ meaning MUST NOT be reused with another meaning here.
 | `resource`, `grant`, `permission_sets` | Permit members | **Absent** | No Grant Context exists before delegation, and impersonation has no protected resource |
 | `granted_permission_sets`, `granted_permission_sets_available` | Compatibility members | **Absent** | Same as above. An absent member makes ExtProc-style checks undefined, so they fail closed |
 | `agent_session_id` | MCP session header | **Absent** | No MCP session on the token endpoint |
+
+Outside `context`, `parsed_body` keeps Envoy's meaning in both engines but holds different
+documents: ExtProc's is the decoded MCP JSON-RPC message, the broker's is the parsed token form.
+Shared bundles separate the two by package: each impersonation rule names its own
+`authorization.opa.package`, which ExtProc's `authorization.policy.package` does not use.
 | `client_assertion`, `actor_token`, `subject_token`, `subject_unverified`, `request` | Absent | Present | CEL parity (FR-005); ExtProc does not use these names |
 
 The impersonation input never contains a reserved ExtProc member. A later feature that runs OPA
@@ -148,8 +167,9 @@ than `allow` or `deny` is an authoring error and is terminal, not a deny:
 | `ciba_required` | Deny ("not yet supported") | Terminal 500 `opa_decision_invalid` |
 | Undefined, non-object, unknown action | Deny | Terminal 500 `opa_decision_invalid` |
 
-A bundle shared with ExtProc MUST therefore branch on `input.type` and return only `allow` or
-`deny` when `input.type == "impersonation"`.
+A bundle shared with ExtProc MUST therefore put impersonation decisions in a package of their own,
+named by the rule's `authorization.opa.package`, that returns only `allow` or `deny`. `input.type`
+remains available but is not the separation mechanism.
 
 Minimal policy (Journey 1; spec Journey 1 Step 3 shows the matching input):
 
@@ -161,7 +181,6 @@ import rego.v1
 default result := {"action": "deny"}
 
 result := {"action": "allow"} if {
-	input.type == "impersonation"
 	input.attributes.request.http.method == "POST"
 	input.parsed_path == ["oauth2", "token"]
 	input.context.client_assertion.sub == "gateway-1"
