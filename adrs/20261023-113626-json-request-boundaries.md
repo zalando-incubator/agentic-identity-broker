@@ -1,4 +1,4 @@
-# ADR 048: Shared JSON Request Boundaries
+# Shared JSON Request Boundaries
 
 **Status**: Accepted
 **Date**: 2026-10-22
@@ -10,7 +10,7 @@ The admin, approval, and consent HTTP handlers accept JSON requests. Separate de
 A decoder can accept the start of a body without reading the rest. A Content-Length check alone cannot limit the size of chunked requests.
 
 These checks belong at the HTTP adapter boundary, before domain calls.
-Like [ADR 035](035-shared-tool-pattern-matching.md), this decision puts code used by multiple callers in one shared package.
+Like [035-shared-tool-pattern-matching](035-shared-tool-pattern-matching.md), this decision puts code used by multiple callers in one shared package.
 
 ## Decision
 

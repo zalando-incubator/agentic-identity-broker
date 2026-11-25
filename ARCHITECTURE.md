@@ -362,7 +362,7 @@ blocks on duplicate/empty values without changing rows, and preserves UUIDs/gran
 See [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) and the
 [upgrade runbook](docs/operations/agent-external-id-uniqueness.md).
 
-**JSON request boundaries**: [ADR 048](adrs/048-json-request-boundaries.md) records the shared boundary and route-limit policy (Accepted).
+**JSON request boundaries**: [20261023-113626-json-request-boundaries](adrs/20261023-113626-json-request-boundaries.md) records the shared boundary and route-limit policy (Accepted).
 JSON handlers use the shared HTTP `requestbody` reader before domain calls. Each route declares its byte limit.
 Agents, services, permission sets, and consent grants accept at most 64 KiB. Approval creation accepts 7 MiB: sixfold JSON re-encoding expansion of the ExtProc `authorization.max_body_size` default of 1 MiB, plus 1 MiB of envelope headroom. Go's JSON encoder can expand characters such as `<` to six bytes when ExtProc re-marshals the tool arguments.
 Approval decisions that grant access and scope previews accept 512 KiB, which covers the largest stored parameter pattern including six-byte JSON escaping of keys and values and the request envelope. Protected-resource mutations accept 8 KiB.
@@ -1375,6 +1375,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [046-observed-refresh-token-rejection.md](adrs/046-observed-refresh-token-rejection.md) | Accepted | Observed rejection replaces predicted refresh expiry. Partly supersedes ADR 038 |
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
 | [048-authzen-delegation-pip.md](adrs/048-authzen-delegation-pip.md) | Accepted | AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc grant-context resolver, and permit-bound token reuse |
+| [20261023-113626-json-request-boundaries.md](adrs/20261023-113626-json-request-boundaries.md) | Accepted | Shared HTTP `requestbody` reader, per-route byte limits, 413 before 400, strict single-value JSON |
 | [20261119-211813-service-icons-image-mode.md](adrs/20261119-211813-service-icons-image-mode.md) | Accepted | Exact service-owned SVG metadata, authenticated JSON, named upload checks, and browser image-mode isolation |
 
 ## 11. Project Identification

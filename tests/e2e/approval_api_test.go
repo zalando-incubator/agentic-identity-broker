@@ -230,7 +230,7 @@ var _ = Describe("Tool Approval API", func() {
 			Expect(detail.Data.Arguments).To(HaveKeyWithValue("title", "Fix bug"))
 		})
 
-		// US3-S1 from specs/024-approval-api-ui/spec.md, with ADR 048 boundary coverage.
+		// US3-S1 from specs/024-approval-api-ui/spec.md, with 20261023-113626-json-request-boundaries boundary coverage.
 		It("creates an approval at exactly 7 MiB and rejects one extra byte without mutation", func() {
 			const limit = 7 << 20
 			arguments := map[string]any{"repo": "acme/app", "title": "Fix bug"}
