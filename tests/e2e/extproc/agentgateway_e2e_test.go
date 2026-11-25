@@ -65,7 +65,7 @@ type agentgwContextKey string
 const agentgwAuthHeaderKey agentgwContextKey = "authorization"
 
 const (
-	defaultAgentgatewayImage = "cr.agentgateway.dev/agentgateway:v1.5.0"
+	defaultAgentgatewayImage = "cr.agentgateway.dev/agentgateway:v1.7.0"
 
 	agentgwJWTIssuer   = "https://agentgateway.e2e.test"
 	agentgwJWTAudience = "agentgateway-mcp"

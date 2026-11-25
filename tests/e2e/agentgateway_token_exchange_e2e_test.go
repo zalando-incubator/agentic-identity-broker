@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	defaultAgentgatewayImage = "cr.agentgateway.dev/agentgateway:v1.5.0"
+	defaultAgentgatewayImage = "cr.agentgateway.dev/agentgateway:v1.7.0"
 
 	agentgatewayClientID   = "https://gateway.example.com"
 	brokerTokenEndpoint    = "https://broker.example.com/oauth2/token"

@@ -10,7 +10,7 @@ func TestAgentgatewayTestImage(t *testing.T) {
 	}{
 		{
 			name: "uses the pinned image by default",
-			want: "cr.agentgateway.dev/agentgateway:v1.5.0",
+			want: "cr.agentgateway.dev/agentgateway:v1.7.0",
 		},
 		{
 			name:  "uses the configured image",
