@@ -45,10 +45,11 @@ Approval decisions and scope previews allow the largest stored parameter pattern
 Smaller administrative operations use smaller limits instead of the largest approval limit.
 
 Each JSON operation must declare its limit and error responses in the relevant OpenAPI document.
-New JSON handlers must use this boundary rather than introduce independent decoding rules.
+New JSON handlers must use this boundary rather than introduce independent decoding rules, unless an Accepted ADR defines protocol-specific rules for that route.
 
-This decision does not change OAuth2 form parsing, upstream response limits, or ExtProc body handling.
+This decision does not change OAuth2 form parsing, upstream response limits, ExtProc body handling, or AuthZEN Access Evaluation (`POST /access/v1/evaluation`).
 Those boundaries keep their protocol-specific rules.
+AuthZEN Access Evaluation follows [048-authzen-delegation-pip](048-authzen-delegation-pip.md): the AuthZEN 1.0 HTTPS binding requires receivers to ignore unknown request members, so the strict unknown-field rule does not apply there.
 
 ## Rationale
 
@@ -86,3 +87,4 @@ We rejected these alternatives:
 - [Admin API](../api/admin/openapi.yaml)
 - [End-user API](../api/enduser/openapi.yaml)
 - [Constitution, Principle II](../.specify/memory/constitution.md)
+- [048-authzen-delegation-pip](048-authzen-delegation-pip.md)

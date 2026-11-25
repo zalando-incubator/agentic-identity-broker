@@ -371,6 +371,7 @@ The limit includes whitespace and trailing content, including chunked bodies wit
 Malformed JSON, unknown fields in closed request objects, and trailing JSON documents return 400.
 Open map fields retain arbitrary keys. Optional empty bodies retain their existing behavior.
 The OpenAPI documents define the limits and error responses for each operation.
+OAuth2 form parsing and AuthZEN Access Evaluation keep their protocol-specific rules. [048-authzen-delegation-pip](adrs/048-authzen-delegation-pip.md) requires the evaluation endpoint to ignore unknown request members.
 
 **Admin session sweep**: The builder wires `SessionSweepHandler` through `SessionSweepService` and the focused `UserSessionExpiryRepository`. `POST /api/sessions/sweep` runs synchronously on port 14000. The broker has no scheduler or distributed sweep lock. An external schedule calls this route, either the optional chart-managed CronJob (`sessionSweep.*`) or another operator job. The recommended path goes through the authenticated admin proxy, which supplies the operator principal. The chart CronJob only transports the request with operator-supplied headers, header files, or TLS client files; it adds no identity model. The request must carry the configured admin Host and `application/json` content type.
 
