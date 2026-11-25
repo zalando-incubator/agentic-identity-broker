@@ -108,7 +108,7 @@ rule:                        # oauth2_authorization_server.impersonation.rules[<
         policy_path declarations and the engine settings policy, policy.config_file, policy.path,
         and startup_timeout, which belong under impersonation.opa (issue 2 of the 2026-11-24 review).
   sharing:
-    - several rules may name the same package and decision; each rule keeps its own binding requirements
+    - several rules may name the same package and decision
     - a request reads one revision before the first rule and uses it for every OPA rule it evaluates (R11)
 
 bootstrap_subset:            # API-BOOT, managed mode only

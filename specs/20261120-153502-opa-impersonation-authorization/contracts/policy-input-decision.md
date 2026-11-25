@@ -1,8 +1,8 @@
 # Contract: OPA impersonation policy input and decision
 
 **Feature**: `specs/20261120-153502-opa-impersonation-authorization` | **Sign-off**: plan.md Approval
-Items API-INPUT (§ 1–2), API-DECISION (§ 3), DEC-BIND (§ 4), DEC-BUILTINS (§ 5) | **Research**: R4,
-R5, R8, R9
+Items API-INPUT (§ 1–2), API-DECISION (§ 3), ADR-OPA and CONST-AMEND (§ 4), DEC-BUILTINS (§ 5) |
+**Research**: R4, R5 (withdrawn), R8, R9
 
 The policy is evaluated at `data.<package>.<decision>` of the rule's `authorization.opa` block
 (defaults `aib.broker.impersonation` and `result`) with the input below, once per evaluated OPA rule.
@@ -79,7 +79,7 @@ and the reserved members.
 | `attributes.request.http.headers` | Request headers | Lower-case names; repeated values joined with `, `; `authorization`, `proxy-authorization`, `cookie`, and pseudo-headers removed |
 | `parsed_path` | Path segments | Envoy plugin semantics |
 | `parsed_query` | Query parameters | Object of string arrays (Envoy semantics); normally `{}`. Unvalidated caller data the token endpoint ignores; exchange parameters come from the body |
-| `parsed_body` | Form body | Envoy semantics for `application/x-www-form-urlencoded`: `url.ParseQuery` result as an object of string arrays, every form field in caller order, **except `client_assertion`, `actor_token`, and `subject_token`**, which are always omitted. Unvalidated caller data: the validated, resolved values are in `context`. `null` for any other content type, as in Envoy |
+| `parsed_body` | Form body | Envoy semantics for `application/x-www-form-urlencoded`: `url.ParseQuery` result as an object of string arrays, every form field **except the credential-bearing OAuth parameters `client_assertion`, `actor_token`, `subject_token`, `client_secret`, `refresh_token`, `code`, and `code_verifier`**, which are always omitted. Unvalidated caller data: the validated, resolved values are in `context`. `null` for any other content type, as in Envoy |
 | `truncated_body` | Constant | `false`; the token endpoint rejects bodies over its 256 KiB limit instead of truncating |
 | `context.client_assertion`, `.actor_token` | Validated, signature-verified claims | Same map as the CEL variable |
 | `context.subject_token` | Signed and verified claims, or the caller-asserted claims of an unsigned subject | Same map as the CEL variable |
@@ -97,7 +97,7 @@ overwrite `context`, because `context` is built only from validated values.
 
 Envoy compatibility covers the listed paths and their meanings. It does not guarantee that every
 Envoy policy runs unchanged, for example policies that read the raw body, source addresses,
-`authorization` headers, or the three omitted credential fields. Policies that read `parsed_query`
+`authorization` headers, or the omitted credential fields. Policies that read `parsed_query`
 or `parsed_body` see unvalidated caller values; authorization decisions on identity and target
 belong on `context`.
 
@@ -126,8 +126,9 @@ Shared bundles separate the two by package: each impersonation rule names its ow
 The impersonation input never contains a reserved ExtProc member. A later feature that runs OPA
 after delegation and supplies a Grant Context MUST use the ExtProc members and shapes above.
 
-Neither `context.agent.id` nor `context.request.agent_id` is subject binding evidence. Policies
-that admit unverified agent subjects still compare `context.subject_token.sub` (§ 4).
+Comparing `context.subject_token.sub` with `context.agent.id` or `context.request.agent_id`
+restricts nothing. Policies that admit unverified agent subjects must compare
+`context.subject_token.sub` with the intended agents, for example from governance data (§ 4).
 
 ## 2. Sensitivity
 
@@ -191,48 +192,28 @@ result := {"action": "allow"} if {
 }
 ```
 
-## 4. Binding evidence (DEC-BIND)
+## 4. Exceptional credential modes (DEC-BIND withdrawn)
 
-Evidence is computed per candidate revision and per OPA rule, from the Rego rules reachable from
-that rule's decision. Rules naming the same decision share evidence but keep their own requirements.
+The static binding analysis (DEC-BIND) was withdrawn on 2026-11-25. The broker does not analyze
+which token maps an OPA decision references, and there is no `with`-modifier rule. The operator's
+policy is the only control on caller-asserted values in these modes:
 
-| Rego form in a reachable rule | Role reference | Field binding |
+| Rule configuration | Broker behavior for an OPA rule | The policy must constrain |
 | --- | --- | --- |
-| `input.context.subject_token.sub == "x"` | `subject_token` | `subject_token.sub` |
-| `input.context.subject_token["email"] == e` | `subject_token` | `subject_token.email` |
-| `import input.context.subject_token as s` then `s.email == e` | `subject_token` | `subject_token.email` |
-| `s := input.context.subject_token` then `s.sub in approved` (same rule body) | `subject_token` | `subject_token.sub` |
-| `helper` rule in another package that the decision references, containing any form above | Same as the form | Same as the form |
-| `check(input.context.subject_token)` with `check(t) if t.email == e` | `subject_token` | none (not followed through arguments) |
-| `input.context[k].sub` (non-ground key) | none | none |
-| `input.context` or `input` alone | none | none |
-| Any form in a rule the decision does not reach | none | none |
-| Any reachable `with` modifier, including `with input...`, `with data.helper as ...`, or function/built-in replacement | voids all evidence of the revision | voids all evidence |
+| `roles.subject.verification: none` | `subject_unverified: true`; the extracted email is minted when `email_expression` yields a nonempty email and the decision allows; a raw `sub` exactly equal to the target UUID is agent category | `context.subject_token`, including `email` when email is minted and `sub` when the rule allows agents |
+| `roles.<role>.audience_requirement: absent` | The role's signature, issuer, lifetime, and absence of `aud` are still verified | That role's token map (`context.client_assertion`, `context.actor_token`, or `context.subject_token`) |
+| Signed subject, expected audiences | Signed classification and signed email unchanged | Nothing beyond the business rule |
 
-Only `subject_token.sub` and `subject_token.email` are recorded as field bindings. Direct,
-imported, or rule-local-aliased `client_assertion` and `actor_token` paths provide role references,
-not field bindings. Function-argument-derived and dynamic references never create field evidence.
+A raw `sub` or extracted principal equal to another registered agent's UUID stays a rejected
+cross-agent request. CEL rules keep their startup reference and field-binding checks. Documentation
+and examples show a policy constraining each value above.
 
-The reachable `with` rule is deliberately target-independent: it includes rule/function dependency
-replacements and nested comprehensions. Mandatory role requirements then reject the voided
-candidate; with no mandatory roles it may admit but supplies neither unsigned email nor agent
-classification evidence. Tests must override a helper that originally binds subject email/sub,
-replace functions with constants/functions, and compare unreachable modifiers (no invalidation).
-Do not assume the dependency graph drops an overridden rule's original references.
-
-Admission per rule configuration:
-
-| Rule configuration | Required for admission | Used per request (same revision) |
-| --- | --- | --- |
-| `roles.subject.verification: none` | `subject_token` reference | `subject_token.email` binding → mint the extracted email; `subject_token.sub` binding → exact-target subject may be agent |
-| `roles.<role>.audience_requirement: absent` | Reference to that role's map | — |
-| Signed subject, expected audiences | Nothing | Signed classification and signed email unchanged |
-
-A candidate is admitted only if every OPA rule's decision is defined and every OPA rule's
-requirements pass. Otherwise the whole candidate is rejected for all rules, the rejection names the
-first failing rule, and the previous admitted revision stays active for every rule. Every admitted snapshot must itself contain all configured bundles. At
-startup, a usable subset is not admitted; if the subsequent complete candidate is rejected,
-`impersonation.opa.startup_timeout` fails startup even if every bundle activated historically.
+A candidate is admitted only if every OPA rule's decision is defined. Otherwise the whole candidate
+is rejected for all rules, the rejection names the first failing rule, and the previous admitted
+revision stays active for every rule. Every admitted snapshot must itself contain all configured
+bundles. At startup, a usable subset is not admitted; if the subsequent complete candidate is
+rejected, `impersonation.opa.startup_timeout` fails startup even if every bundle activated
+historically.
 
 ## 5. Built-ins (DEC-BUILTINS)
 

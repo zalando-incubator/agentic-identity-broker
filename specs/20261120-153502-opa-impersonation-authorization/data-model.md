@@ -14,7 +14,7 @@ UserGrant are unchanged. All new concepts are configuration or request-local val
 | `authorization.type` | `cel` \| `opa` | Exactly one engine; unknown fails startup |
 | `authorization.cel` | CEL block | Required for `cel`; empty for `opa` |
 | `authorization.opa` | OPA rule decision | Optional for `opa` (defaults apply); empty for `cel` |
-| Binding requirements | derived set of policy roles | `subject_token` if `roles.subject.verification: none`; each role with `audience_requirement: absent` |
+| Binding requirements | derived set of policy roles | CEL rules only, unchanged: `subject_token` if `roles.subject.verification: none`; each role with `audience_requirement: absent`. OPA rules have none (R5 withdrawn) |
 
 Ordering, first-match semantics, roles, trusted issuers, and `allowed_subject_categories` are
 unchanged. Contract: [contracts/impersonation-opa-config.yaml](contracts/impersonation-opa-config.yaml).
@@ -45,7 +45,7 @@ Any other key fails startup, including the former reserved `policy_url` and `pol
 Request-local document described in [contracts/policy-input-decision.md § 1](contracts/policy-input-decision.md#1-input-document).
 Built from validated claim maps, `subject_unverified`, the CEL `request` map, the configured public
 URL, filtered transport metadata, Envoy's `version`, `parsed_query`, and `parsed_body` (the parsed form
-body without `client_assertion`, `actor_token`, and `subject_token`), the constant `type: "impersonation"`, and the resolved broker
+body without the credential-bearing OAuth parameters `client_assertion`, `actor_token`, `subject_token`, `client_secret`, `refresh_token`, `code`, and `code_verifier`), the constant `type: "impersonation"`, and the resolved broker
 Agent as `context.agent {id, canonical_id?, external_id?}` (unset IDs omitted). The `agent` shape and
 the reserved members follow ExtProc's Grant Context (contract § 1.1). Raw credentials are excluded, but identity claims remain sensitive. `LogValue`, `String`,
 and `GoString` return only `[REDACTED]`; full data is used only for evaluation. Never persisted,
@@ -62,33 +62,25 @@ logged, or exported. Shared broker/ExtProc vectors verify the common Envoy envel
 
 ### Policy/Data Revision
 
-An immutable snapshot owned by the shared OPA engine. It holds one prepared query and one evidence
-set per OPA rule, all built from the same modules and data.
+An immutable snapshot owned by the shared OPA engine. It holds one prepared query per OPA rule, all
+built from the same modules and data.
 
 | Field | Meaning |
 | --- | --- |
 | Prepared queries | One per OPA rule, compiled from the activation's modules with restricted capabilities |
 | Data snapshot | Copy of the data document at that activation |
-| Evidence | Per OPA rule: role references and `sub`/`email` field bindings from that rule's reachable decision graph |
 | Label | `policy_revision`: sorted `<bundle>=<manifest revision>` list; operator label, not snapshot identity |
 | Admission ID | `policy_admission_id`: process-instance UUID and the engine's successful-admission sequence; log/audit only |
 | Bundle completeness | Managed mode: configured and activated bundle-name sets read with modules/data from the same transaction; every configured bundle required before any admission. Local mode: the one directory |
 | Admitted at | Time of admission, for the age gauge |
 
-A CEL rule has one static revision built from its compiled predicate. Its evidence uses the existing
-`References` and `Binds` results.
-
-### Binding Evidence
-
-| Field | Meaning |
-| --- | --- |
-| References | Set of `client_assertion`, `actor_token`, `subject_token` referenced by the decision |
-| Field bindings | Subset of `subject_token.sub`, `subject_token.email` (other fields are not recorded) |
+A CEL rule has one static revision built from its compiled predicate. It keeps the existing
+`References` and `Binds` startup checks.
 
 ## State transitions (shared OPA engine)
 
-A candidate is admitted only if every OPA rule's decision is defined and every rule's requirements
-pass; a rejection applies to all rules.
+A candidate is admitted only if every OPA rule's decision is defined; a rejection applies to all
+rules.
 
 ```mermaid
 stateDiagram-v2
@@ -104,8 +96,7 @@ stateDiagram-v2
 ```
 
 Candidate rejection reasons: `compile_failed`, `prohibited_builtin`, `decision_undefined`,
-`binding_missing`, `evidence_voided` (only when a requirement exists), `snapshot_failed`,
-`bundles_incomplete`. No partial initial snapshot is admitted even if it evaluates successfully;
+`snapshot_failed`, `bundles_incomplete`. No partial initial snapshot is admitted even if it evaluates successfully;
 completeness of an earlier candidate cannot be combined with historical activation of other bundles.
 
 ## Per-request use
@@ -119,9 +110,9 @@ sequenceDiagram
     S->>R: current()
     loop each rule in order
         S->>S: validate credentials, extract identities
-        S->>S: classify subject with R.evidence (sub binding)
+        S->>S: classify subject (CEL: sub binding; OPA: exact target UUID)
         S->>S: check category eligibility and cross-agent rule
-        S->>S: extract email if signed, or if R.evidence binds email
+        S->>S: extract email if signed, CEL-bound, or on an OPA rule
         S->>R: evaluate(rule, input) (OPA rules; CEL rules use their predicate)
         alt allow
             S->>S: human delegation (human only), mint token
@@ -138,13 +129,12 @@ sequenceDiagram
 | Term | Definition |
 | --- | --- |
 | **Impersonation Policy Engine** | The engine one impersonation rule selects for its authorization decision: `cel` or `opa`. |
-| **Policy/Data Revision** | An immutable, all-configured-bundle admitted snapshot of the shared OPA engine's compiled policy, data, and per-rule binding evidence, with a broker admission identifier distinct from operator labels. Admitted only if every OPA rule passes. Each request uses one revision for all its OPA rules. |
-| **Binding Evidence** | The token-map references and `sub`/`email` field bindings of a rule's authorization, computed from the compiled CEL predicate or the reachable Rego decision graph. Mandatory references gate startup and every OPA activation. |
+| **Policy/Data Revision** | An immutable, all-configured-bundle admitted snapshot of the shared OPA engine's compiled policy and data, with a broker admission identifier distinct from operator labels. Admitted only if every OPA rule's decision is defined. Each request uses one revision for all its OPA rules. |
 | **Impersonation OPA Engine** | The one OPA runtime (`impersonation.opa`) shared by every OPA rule, loading either managed bundles through a Policy Bootstrap or a local bundle directory read at startup. |
 | **Policy Bootstrap** | The contained OPA-native configuration file of the Impersonation OPA Engine, limited to `services`, `bundles`, `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin, with no OPA-native local-file references. |
 
 Existing glossary entries must also be restated (T007): Impersonation Rule selects exactly one CEL
-or OPA authorization with Binding Evidence; Subject Category uses the captured revision's
-`subject_token.sub` evidence for unverified exact-target classification. Agent-Subject Token keeps
-its CEL third-party detector, but distinguishes that detector from engine-neutral issuance binding
-controls. Update the same terminology in the root `AGENTS.md` Domain Glossary.
+or OPA authorization; Subject Category classifies an unverified exact-target subject as agent on an
+OPA rule, and on a CEL rule only with the predicate's `subject_token.sub` binding. Agent-Subject
+Token keeps its CEL third-party detector, but distinguishes that detector from issuance binding
+controls, which apply to CEL rules only. Update the same terminology in the root `AGENTS.md` Domain Glossary.

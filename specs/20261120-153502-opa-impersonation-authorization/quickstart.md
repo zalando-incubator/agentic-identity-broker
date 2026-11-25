@@ -18,7 +18,7 @@ This guide describes how to validate the feature. It is not a record of any run.
 | --- | --- | --- |
 | Static checks | `just check` | Passes |
 | Unit tests (domain, adapter, config, handler) | `just test` | Passes, including `go test -race` for revision swaps under concurrent evaluation |
-| Acceptance journeys 1–4 | After `just web-build`: `ginkgo -v --label-filter="!performance && !docker" --focus "OPA Impersonation Authorization" ./tests/e2e/` | One passing `It` per scenario 1.1–4.4 (19 in total) |
+| Acceptance journeys 1–4 | After `just web-build`: `ginkgo -v --label-filter="!performance && !docker" --focus "OPA Impersonation Authorization" ./tests/e2e/` | One passing `It` per scenario 1.1–4.3 (17 in total) |
 | Existing impersonation behavior | `just test-e2e-backend` | Existing CEL suites pass unchanged (SC-005) |
 | Container-free ExtProc regression subset | `ginkgo -v --procs=1 --skip='Agentgateway' ./tests/e2e/extproc/` | Runs direct ExtProc scenarios; excludes every Agentgateway container context, including Metadata Input via Agentgateway |
 | Helm contract | `just helm-lint` and `just helm-template` | Schema accepts the `impersonation.opa` engine block and the CEL and OPA rule shapes, and rejects mixed blocks and engine keys on rules |

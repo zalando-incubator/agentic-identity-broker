@@ -54,15 +54,6 @@ the rules of the configuration contract (defense in depth, as today).
 ## 2. Port (`internal/ports/impersonation_policy.go`, new)
 
 ```go
-// ImpersonationPolicyRole names a credential map in the policy context.
-type ImpersonationPolicyRole string // "client_assertion", "actor_token", "subject_token"
-
-// ImpersonationPolicyEvidence is the binding evidence of one policy revision.
-type ImpersonationPolicyEvidence struct {
-	References    map[ImpersonationPolicyRole]bool
-	FieldBindings map[ImpersonationPolicyRole]map[string]bool // subject_token only: "sub", "email"
-}
-
 type ImpersonationPolicyAction string // "allow" or "deny"
 
 // ImpersonationPolicyInput excludes raw credentials but contains sensitive identity claims.
@@ -80,9 +71,8 @@ type ImpersonationPolicyDecisionRef struct {
 }
 
 // ImpersonationPolicyRevision is immutable and safe for concurrent use. It holds one prepared
-// query and one evidence set per decision reference, all built from the same snapshot.
+// query per decision reference, all built from the same snapshot.
 type ImpersonationPolicyRevision interface {
-	Evidence(rule string) ImpersonationPolicyEvidence
 	Label() string       // operator manifest label, log/audit only
 	AdmissionID() string // process-instance UUID plus engine admission sequence, log/audit only
 	// Evaluate runs the rule's decision and returns allow or deny, or an error wrapping
@@ -102,9 +92,9 @@ type ImpersonationPolicySource interface {
 }
 
 // ImpersonationPolicyAdmission is supplied by the domain and called once per candidate revision
-// with the evidence of every decision reference. A non-nil error rejects the whole candidate;
-// ImpersonationPolicyAdmissionError names the first failing rule for diagnostics.
-type ImpersonationPolicyAdmission func(evidence map[string]ImpersonationPolicyEvidence) error
+// with, per rule name, whether that rule's decision is defined. A non-nil error rejects the whole
+// candidate; ImpersonationPolicyAdmissionError names the first failing rule for diagnostics.
+type ImpersonationPolicyAdmission func(decisionDefined map[string]bool) error
 
 type ImpersonationPolicyAdmissionError struct {
 	Rule string
@@ -126,30 +116,31 @@ type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
 	admit ports.ImpersonationPolicyAdmission) (ports.ImpersonationPolicySource, error)
 ```
 
-- `NewService` gains a `PolicySourceFactory` parameter. A nil factory with an OPA rule fails startup.
+- `NewService` appends two trailing parameters, `policySources PolicySourceFactory, publicURL string`;
+  CEL-only callers pass `nil, ""`. A nil factory with an OPA rule fails startup.
   With at least one OPA rule it starts one source with every OPA rule's decision reference, then
   calls `AwaitReady` with `impersonation.opa.startup_timeout`; on failure it stops the source and
   returns the engine error naming the last rejecting rule. With no OPA rule it starts nothing.
 - `Service.Close(ctx)` stops the source. The builder registers it with the existing shutdown path.
-- `bindingRequirements(cfg) []ports.ImpersonationPolicyRole` and `admit(requirements)` implement
-  the per-rule check of [policy-input-decision.md § 4](policy-input-decision.md#4-binding-evidence-dec-bind).
-  The OPA admission function applies it to every OPA rule's evidence in rule order and rejects the
-  candidate at the first rule that fails (all-or-nothing, R11). The CEL
-  compile path applies the same admission to `authorizationProgram` evidence, keeping today's error
-  text (`requires the authorization predicate to reference subject_token (FR-007a)` and the CR-009
+- The OPA admission function checks every OPA rule in rule order and rejects the candidate at the
+  first rule whose decision is undefined (all-or-nothing, R11). OPA rules have no reference or
+  field-binding requirements ([policy-input-decision.md § 4](policy-input-decision.md#4-exceptional-credential-modes-dec-bind-withdrawn)).
+  CEL rules keep their inline startup checks in `cel.go` and today's error text
+  (`requires the authorization predicate to reference subject_token (FR-007a)` and the CR-009
   message).
-- `compiledRule` gets an internal `authorization` (`evidence()`, `label()`, `engine()`,
+- `compiledRule` gets an internal `authorization` (`label()`, `engine()`,
   `evaluate(ctx, inputs)`): CEL rules hold a static one; OPA rules obtain theirs per request from the
   revision read by `Impersonate`.
 - `Impersonate` reads `rev := source.Current()` once, before the first rule, and passes it to every
   `evaluateRule` call of that request. An OPA rule's `authorization` is `rev` bound to the rule name;
-  a CEL rule's is static. `evaluateRule` uses that one `authorization` for the `sub` binding
-  (`classifySubject`), the `email` binding, and the decision. All OPA rules of one request therefore
-  see the same policy and data. The pipeline order is unchanged.
+  a CEL rule's is static. For a CEL rule, `classifySubject` and email minting keep using the
+  predicate's `sub` and `email` bindings. For an OPA rule, an unsigned subject whose raw `sub` equals
+  the target UUID is agent category, and the extracted email is minted when nonempty and the
+  decision allows. All OPA rules of one request see the same policy and data. The pipeline order is unchanged.
 - `Request` gains `HTTP RequestAttributes{Method, Path, RawQuery, Protocol, ContentType string; Headers, Form map[string][]string}`
-  set by the handler. `Form` is the `url.ParseQuery` result of the body the handler already parses.
-  The domain builds `parsed_body` from it and always deletes `client_assertion`, `actor_token`,
-  and `subject_token` itself, so a handler change cannot leak them; `parsed_body` is `null` unless
+  set by the handler. `Form` is a copy of the `url.ParseQuery` result of the body the handler already parses, taken before omitted-value normalization (`dropOmittedValues`).
+  The domain builds `parsed_body` from it and always deletes `client_assertion`, `actor_token`, `subject_token`, `client_secret`, `refresh_token`, `code`, and `code_verifier`
+  itself, so a handler change cannot leak them; `parsed_body` is `null` unless
   `ContentType` is `application/x-www-form-urlencoded`. The domain builds the input (contract § 1) only for OPA rules, using
   `server.enduser.public_url` passed to `NewService`.
 - Error mapping: `ErrPolicyEvaluationFailed` → `serverError("authorization evaluation failed")` with
@@ -190,12 +181,12 @@ type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
     those bytes, and builds one candidate. No SDK runtime and no polling are started.
   - The adapter obtains its tracer and meter from `otel.Tracer("tokenexchange")` and `otel.Meter("tokenexchange")`, never constructor-injected
     providers, as required by `coding-standards/OPENTELEMETRY.md` § 1.
-- One candidate prepares a query and computes evidence for every decision reference from the same
-  modules and data, then calls `admit` once with the evidence map.
+- One candidate prepares a query for every decision reference from the same modules and data, then
+  calls `admit` once with each rule's decision-defined flag.
 - The trigger reads candidate modules, data, and activated bundle names from one transaction.
   A candidate carries its configured/activated bundle sets and must include all configured bundles
   before `admit` or any active-pointer swap, including initial loading. Historical SDK readiness
-  never admits an earlier subset. It then computes capabilities (R4) and evidence (R5), calls
+  never admits an earlier subset. It then compiles with restricted capabilities (R4), calls
   `admit`, assigns a new `AdmissionID` only on successful admission, and swaps an
   `atomic.Pointer[revision]`. Trigger failures reject the candidate, never panic the broker.
 - `revision.Evaluate` converts input with `ast.InterfaceToValue`, applies `context.WithTimeout`

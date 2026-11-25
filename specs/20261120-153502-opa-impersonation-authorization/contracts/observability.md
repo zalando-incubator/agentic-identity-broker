@@ -40,11 +40,16 @@ set. Free-form bundle manifest revisions remain log/audit attributes only, not s
 attributes (`OPENTELEMETRY.md` § 4.2 and § 6). Caller cancellation uses the `canceled` outcome without
 `error.type` or error status; deadline expiration remains an evaluation failure (§ 3.4).
 
+Bundle downloads through the `aib_bearer_token_file` credential plugin use `telemetryhttp.NewTransport`,
+so they produce the repository's standard outbound HTTP client spans and metrics; the bearer token is
+never a span or metric attribute. Services using OPA's inline credential forms use OPA's own HTTP
+client and are not instrumented.
+
 ## Metrics
 
 | Name | Kind | Unit | Attributes | Changes when |
 | --- | --- | --- | --- | --- |
-| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `binding_missing`, `evidence_voided`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
+| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
 | `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | none | Read per export: seconds since the shared active revision was admitted; no point before the first admission |
 
 There is one engine and one active revision, so neither instrument carries `rule`. The rejecting
@@ -57,7 +62,7 @@ Both instruments use scope `tokenexchange` and are created once in the adapter c
 | Message | `event` | Level | Attributes |
 | --- | --- | --- | --- |
 | `impersonation policy revision admitted` | `oauth2_server.impersonation_policy.revision_admitted` | Info | `policy_revision`, `policy_admission_id`, `bundle_count`, `rule_count`, `duration_ms` |
-| `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule` (first failing rule, for `decision_undefined`, `binding_missing`, and `evidence_voided` only), `policy_revision`, `reason` (closed set above), `error_kind`; for `binding_missing` also `missing_reference` (`subject_token`, `client_assertion`, `actor_token`); for `prohibited_builtin` also `builtin` (built-in name) |
+| `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule` (first failing rule, for `decision_undefined` only), `policy_revision`, `reason` (closed set above), `error_kind`; for `prohibited_builtin` also `builtin` (built-in name) |
 | `impersonation policy not ready` | `oauth2_server.impersonation_policy.startup_failed` | Error | `reason` (`timeout`, `bootstrap_invalid`, `local_bundle_invalid`), `rule` (last rejecting rule, when known), `duration_ms` |
 | `impersonation policy loaded from local bundle` | `oauth2_server.impersonation_policy.local_mode` | Info | `policy_revision`, `file_count`; once at startup in local mode. Message states that policy and data change only on restart (spec clarification 2026-11-24) |
 | `impersonation policy bundle token unavailable` | `oauth2_server.impersonation_policy.token_unavailable` | Warn | `reason` (`unreadable`, `file_too_large`, `empty`), at most once per minute while the condition lasts; never the path's contents |

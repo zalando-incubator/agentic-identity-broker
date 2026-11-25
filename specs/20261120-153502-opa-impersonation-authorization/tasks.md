@@ -60,7 +60,7 @@
 
 **Constitution Reference**: Principles IV (API Documentation & OpenAPI Transparency), X (API-First Development).
 
-- [ ] T011 Verify supplied API sign-off and publish the approved token-operation description delta including the full Agent subjects paragraph replacement (signed or revision-bound unsigned exact-target classification, unbound-human fallback and cross-agent rejection), 500 example, and version 1.3.0 in `api/enduser/openapi.yaml` before endpoint implementation; confirm no Admin API, request/response envelope, or token-claim change (`contracts/openapi-token-opa.yaml:1-83`, FR-007–FR-009, Principles IV, X).
+- [ ] T011 Verify supplied API sign-off and publish the approved token-operation description delta including the full Agent subjects paragraph replacement (signed or revision-bound unsigned exact-target classification, unbound-human fallback and cross-agent rejection), 500 example, and version 1.4.0 (from 1.3.0) in `api/enduser/openapi.yaml` before endpoint implementation; confirm no Admin API, request/response envelope, or token-claim change (`contracts/openapi-token-opa.yaml:1-83`, FR-007–FR-009, Principles IV, X).
 
 ### Phase 2d: Database Design [MANDATORY]
 

@@ -28,8 +28,7 @@ entry follows existing repository patterns.
 - OPA v1.21.4 public APIs used below were checked in the module source: `sdk.Options.Store`,
   `sdk.Options.Ready`, `storage.TriggerConfig.OnCommit`, `plugins.GetCompilerOnContext`,
   `bundle.ReadBundleNamesFromStore` / `ReadBundleRevisionFromStore`, `rego.Capabilities`,
-  `rego.StrictBuiltinErrors`, `rego.EnablePrintStatements`, `ast.CapabilitiesForThisVersion`,
-  `ast.Compiler.Graph.Dependencies`. The bundle plugin compiles each activation with a fresh
+  `rego.StrictBuiltinErrors`, `rego.EnablePrintStatements`, `ast.CapabilitiesForThisVersion`. The bundle plugin compiles each activation with a fresh
   `ast.NewCompiler()` that has every built-in, so OPA alone does not prohibit `http.send`.
 
 ## R1 — Policy engine placement and hexagonal boundary
@@ -40,9 +39,8 @@ entry follows existing repository patterns.
 `impersonation.NewService`, like the existing `JWKSProviderFactory`.
 
 **Rationale**: OPA bundle management performs network I/O and owns background goroutines, which is
-adapter work (Principle VI). The binding rules (which references are mandatory, how evidence drives
-classification and email minting) stay in the domain, which passes an admission function to the
-adapter (R6). The broker cannot reuse the ExtProc package without coupling two deployables.
+adapter work (Principle VI). Admission (every OPA rule's decision exists, all-or-nothing) stays in
+the domain, which passes an admission function to the adapter (R6). The broker cannot reuse the ExtProc package without coupling two deployables.
 
 **Alternatives**: Import `internal/extproc/authorization` (cross-binary coupling, wrong failure
 semantics: deny on error). Put OPA in `internal/domain/impersonation` (network I/O in the domain).
@@ -58,13 +56,13 @@ trigger:
 
 1. Copy the compiled modules, complete data document, and activated bundle-name set from the
    same committing transaction. Record the configured bundle-name set as candidate completeness
-   evidence. Reject with `bundles_incomplete` unless every configured bundle is present in this
+   data. Reject with `bundles_incomplete` unless every configured bundle is present in this
    snapshot; partial initial candidates never enter admission or become serving revisions.
 2. Prepare one `rego.PreparedEvalQuery` per OPA rule for its `data.<package>.<decision>` from those
    modules, one new in-memory store holding the data copy, the restricted capabilities of R4,
    `StrictBuiltinErrors(true)`, and print statements disabled.
-3. Analyze references (R5) per OPA rule and call the domain admission function once with all of
-   them (R6, R11).
+3. Check that each OPA rule's decision exists and call the domain admission function once for all
+   rules (R6, R11).
 4. Only if every step succeeds, atomically replace the active revision (`atomic.Pointer`).
 
 The broker never evaluates through `sdk.OPA.Decision`.
@@ -74,8 +72,8 @@ credentials, and atomic per-bundle activation (library-first, Principle III), an
 configuration vocabulary that ExtProc operators know. It cannot reject an activation on the broker's
 behalf: `bundle.Activate` uses the full-capability compiler, and pre-activation hooks do not receive
 the compiled policy. A broker-owned immutable snapshot provides exactly the needed semantics:
-a rejected candidate never becomes active, evaluation and binding evidence come from one object
-(SR-005 revision coupling), and in-flight requests keep their snapshot during a swap.
+a rejected candidate never becomes active, every OPA rule of a request evaluates one object, and
+in-flight requests keep their snapshot during a swap.
 
 **Consequence**: OPA's internal store can hold a revision the broker rejected. The next bundle poll
 does not re-download an unchanged ETag, so the broker stays on the last admitted revision until the
@@ -88,7 +86,7 @@ during a candidate build.
 registry (process-global mutable state, and the activator API is marked for extension
 use, not a stable contract). The OPA `download` package with a broker-written bundle loader
 (reimplements polling, signing, and multi-bundle roots). Evaluating through `sdk.OPA.Decision`
-(cannot enforce capabilities or couple binding evidence to the evaluated revision).
+(cannot enforce capabilities or keep one revision per request).
 
 ## R3 — Bootstrap configuration subset (**Sign-off: API-BOOT**)
 
@@ -154,7 +152,7 @@ are disabled.
 effects or inputs. Deriving the allowlist from it fails closed for built-ins a future OPA upgrade
 adds. `opa.runtime` exposes the runtime configuration, which can include bundle-service credentials.
 `time.now_ns` is needed for time-based governance and has no external effect. Checking whole bundles
-rather than only reachable rules keeps the check independent of R5's graph walk.
+rather than only reachable rules needs no dependency-graph walk.
 
 **Alternatives**: Remove only `http.send` and `net.lookup_ip_addr` (fails open for future network
 built-ins; leaves `opa.runtime`). Also allow `rand.intn` and `uuid.rfc4122` (no governance use
@@ -162,70 +160,42 @@ case; reintroduces nondeterministic decisions).
 
 ## R5 — Binding evidence from the decision's dependency graph (**Sign-off: DEC-BIND**, ADR)
 
-**Decision**: For each candidate, the adapter computes **binding evidence** from the compiled
-modules:
+**Withdrawn 2026-11-25 (maintainer decision).** OPA rules have no static binding analysis: no
+mandatory `subject_token` or audience-absent role reference, no `with`-modifier analysis, and no
+`email` or `sub` field-binding evidence. CEL rules keep their existing startup checks.
 
-1. The roots are the rules for `data.<package>.<decision>`. No such rule rejects the candidate.
-2. Reachable rules are the transitive closure of `compiler.Graph.Dependencies` from the roots,
-   including functions and rules in other packages.
-3. Any `with` modifier in a reachable expression voids all evidence for the candidate (no
-   references and no field bindings), including replacements of `input`, `data` rules, or functions
-   and built-in functions. Do not count dependencies of an overridden rule or function as executed.
-   This deliberately avoids relying on the compiler graph to remove overridden references.
-4. In each reachable rule head and body, including nested comprehensions, every ref is examined.
-   A ref is resolved through local aliases: a variable unified or assigned (`=`, `:=`, compiled
-   `__localN__` rewrites) to a ref or alias that resolves to an input path inherits that path.
-   Aliases are local to one rule body; they do not cross function or rule boundaries.
-5. A resolved ref whose ground string prefix is `input.context.<role>` (role
-   `client_assertion`, `actor_token`, or `subject_token`) is a **reference** to that role. If the
-   role is `subject_token` and the next term is the ground string `email` or `sub`, it is also a
-   **field binding** `subject_token.<field>`. Only those two subject fields are recorded. Client and
-   actor references remain independent mandatory role evidence, never field bindings. Non-ground
-   (variable) keys at those positions, `input`, and `input.context` alone are not evidence.
+**Rationale**: OPA is already a capable policy language. The dependency-graph check was shallow: it
+proved only that a policy mentions a value, which shows intent, not that the policy constrains it.
+It is not a security control; review of the operator's Rego policy is. The withdrawn design also
+needed revision-coupled evidence, `with` voiding, and an analysis of imports and helper rules, which
+added complexity without a matching security benefit.
 
-Evidence is part of the immutable revision (R2). It is equivalent to the CEL checks: CEL
-`References(v)` corresponds to a role reference and CEL `Binds(v, f)` to a field binding.
-
-**Rationale**: The compiled dependency graph already resolves imports
-(`import input.context.subject_token as s`) and cross-package calls, so the analysis uses OPA's
-compiler rather than a broker parser (Principle III). Every imprecision removes evidence and so fails
-closed: a missing reference rejects activation for mandatory references, and a missing field binding
-withholds unverified email or keeps an unverified exact-target subject human. As with CEL, a
-reference is a necessary guard, not proof of a restrictive policy (SR-005).
-
-**Consequence**: Policies that pass identity maps through function arguments and select fields
-inside the function, or that build references dynamically, provide no field-binding evidence. The
-contract documents the supported forms with examples ([contracts/policy-input-decision.md](contracts/policy-input-decision.md) § 4).
-
-**Alternatives**: Runtime tracing of which input paths an evaluation read (per-request overhead,
-evidence varies by request and cannot gate activation). Operator assertion of binding (forbidden by
-SR-005). Whole-bundle reference scanning (unreachable helper code could satisfy the guard).
+**Consequence**: For an OPA rule, an unverified email is minted when the rule's `email_expression`
+yields a nonempty email and the decision allows, and an unsigned subject whose raw `sub` equals the
+audience-selected target UUID is agent-category. Principle I needs the constitution amendment
+CONST-AMEND (R13).
 
 ## R6 — Admission and requirements stay in the domain
 
-**Decision**: `compileRule` derives the rule's **binding requirements** from its configuration:
-`subject_token` when `roles.subject.verification: none`, and the role variable for each role with
-`audience_requirement: absent`. For OPA it passes an admission function to the factory; the adapter
-calls it for every candidate (initial and update) and rejects the candidate on error. For CEL it
-applies the same function once to the compiled predicate's evidence, replacing the two existing
-inline checks with identical error text. The service reads one engine revision per request, before the first rule,
-and uses it for every OPA rule's subject classification (`sub` binding), unverified email minting
-(`email` binding), and decision. For OPA, the admission function receives every OPA rule's evidence
-and fails if any rule fails (R11).
+**Decision** (revised 2026-11-25): For OPA, `NewService` passes an admission function to the
+factory; the adapter calls it for every candidate (initial and update), and it rejects the
+candidate unless every OPA rule's decision exists (R11). CEL rules keep their existing inline
+startup checks in `cel.go` unchanged. The service reads one engine revision per request, before the
+first rule, and uses it for every OPA rule's decision. The binding requirements of the original
+decision are withdrawn with R5.
 
-**Rationale**: One rule for both engines keeps CEL behavior unchanged (FR-013, SC-008) and keeps
-security logic out of the adapter (Principle VI). Reading one revision per request satisfies the
-concurrent-update requirement of Scenario 3.6 without locks, and also keeps first-match fallthrough
-across OPA rules on one policy and data version.
+**Rationale**: Keeping admission in the domain keeps the readiness and all-or-nothing rules out of
+the adapter (Principle VI). Reading one revision per request keeps first-match fallthrough across
+OPA rules on one policy and data version without locks.
 
-**Alternatives**: Adapter-owned requirement logic (duplicates domain rules). Re-reading the active
-revision for each step (a swap between steps could mix evidence and decision).
+**Alternatives**: Adapter-owned admission (duplicates domain rules). Re-reading the active revision
+for each rule (a swap between rules could mix policy versions).
 
 ## R7 — Startup readiness bound (**Sign-off: API-CFG**)
 
 **Decision**: Add `impersonation.opa.startup_timeout` (duration, default `30s`, range `1s`–`5m`).
 `NewService` starts the shared engine, then waits. The engine is ready when the SDK `Ready` channel
-is closed (managed mode) **and** its active admitted revision carries completeness evidence for all
+is closed (managed mode) **and** its active admitted revision carries completeness data for all
 configured bundles from that revision's own committing snapshot (R2) and passed every OPA rule's
 admission. In local mode the one candidate is admitted or rejected immediately. Historical
 activations cannot satisfy completeness for a different candidate. If this does not happen within
@@ -255,7 +225,7 @@ protocol, header map) into `impersonation.Request`. The domain builds the input:
   `parsed_query` (query values as string arrays; unvalidated, ignored by the token endpoint).
 - `parsed_body` (revised 2026-11-25): the form body parsed exactly as the Envoy plugin parses
   `application/x-www-form-urlencoded` (`url.ParseQuery`, object of string arrays; `null` for other
-  content types), with `client_assertion`, `actor_token`, and `subject_token` always removed.
+  content types), with the credential-bearing OAuth parameters `client_assertion`, `actor_token`, `subject_token`, `client_secret`, `refresh_token`, `code`, and `code_verifier` always removed.
   `truncated_body: false`, because the handler rejects bodies over 256 KiB. No
   `attributes.request.http.body`, `raw_body`, `source`, `destination`, or `id`.
 - `context`: `client_assertion`, `actor_token`, `subject_token` (validated claim maps, `{}` when
@@ -274,7 +244,7 @@ precision, arrays and nested objects unchanged).
 and `input.parsed_path == ["oauth2","token"]` work unchanged (FR-005). The configured public URL is
 trusted configuration; the request `Host` header and a TLS-terminating ingress would make `host` and
 `scheme` caller- or topology-dependent. Envoy-style body predicates such as
-`input.parsed_body.scope[_] == "read"` work, while the three raw credentials never enter the input
+`input.parsed_body.scope[_] == "read"` work, while the raw credentials never enter the input
 (SR-003). `parsed_body` duplicates `grant_type` and `scope` from `context.request` as raw arrays;
 that is accepted for Envoy fidelity, and documentation points identity and target decisions at
 `context`. Shared ExtProc bundles separate by package, not by `parsed_body` shape or `input.type`. The `context` namespace is built only from validated values, so headers cannot overwrite it
@@ -300,7 +270,7 @@ Keep grant-context members absent: OPA runs before human delegation, so no permi
 principal, grant, or permission sets exist, and an unsigned extracted principal must not look like
 ExtProc's grant-backed `principal`. Alternatives: (a) keep the flat member with `""` (two `agent`
 shapes; `!= ""` guards versus undefined); (b) add `principal` from extraction (same name, weaker
-meaning, and it bypasses DEC-BIND's `subject_token` evidence); (c) evaluate OPA after delegation
+meaning, and it hides that the subject is caller-asserted for unsigned rules); (c) evaluate OPA after delegation
 and supply a full Grant Context (moves the rule predicate after delegation and changes first-match
 semantics; possible later feature). Follow-up outside this feature: add `external_id` to the
 AuthZEN permit agent and the ExtProc `AgentContext` under a revision of ADR
@@ -369,7 +339,7 @@ FR-009). Extend the shared struct with usable impersonation keys (adds unused ke
 **Decision**: All OPA rules share one engine configured under `impersonation.opa`: one SDK instance
 (or one local bundle), one store, and one active revision. Each rule names only its decision
 (`package`, `decision`, `evaluation_timeout`). A candidate revision is admitted only if every OPA
-rule's decision is defined and every rule's binding requirements pass (all-or-nothing). A request
+rule's decision is defined (all-or-nothing). A request
 reads the active revision once, before the first rule, and uses it for every OPA rule it evaluates.
 The engine stops on broker shutdown and on startup failure.
 
@@ -380,8 +350,8 @@ All-or-nothing admission plus one read per request removes that. It also removes
 downloads and in-memory data copies for rules that share governance data, shortens the
 configuration, and matches ExtProc, which runs one OPA engine.
 
-**Consequence**: Rules are coupled at admission: a candidate that breaks one rule's binding
-requirements keeps every rule on the previous revision. The rejection log names the failing rule.
+**Consequence**: Rules are coupled at admission: a candidate that leaves one rule's decision
+undefined keeps every rule on the previous revision. The rejection log names the failing rule.
 Operators who need independent rollout publish separate packages in the same bundle set and update
 them together, or keep a rule on CEL.
 
@@ -415,21 +385,20 @@ signals to manage staleness. No principal, claim, token, or decision reason is r
 **Decision**: One new ADR, drafted as
 [adr-20261121-061324-opa-impersonation-authorization.md](adr-20261121-061324-opa-impersonation-authorization.md).
 It partly supersedes ADR `009-cel-for-authorization-policies` (OPA is no longer reserved for
-impersonation rules) and supersedes the CEL-specific mechanism wording of ADR
-`031-unverified-subject-unsigned-jwt` controls 3–4, ADR `034-audience-absent-impersonation-credentials`
-control 3, and ADR `045-agent-subject-impersonation` decision 2a, for OPA rules only, with the
-equivalent revision-coupled enforcement of R5–R6. It does not widen the unsigned-subject exception
-(subject role, `verification: none`, local mode). **Proposed: DEC-CONST** asks the maintainer to
-confirm that this superseding ADR supplies equivalent controls under the existing Principle I
-carve-out without a constitution amendment; it is not an agent-granted constitutional exception.
-The carve-out requires "a startup-verified authorization predicate reference to `subject_token`" and
-"an unverified email minted only when the predicate binds `subject_token.email`", which the design
-enforces at startup and additionally at every activation. ADR `028-opa-extproc-authorization` is
-unaffected. The main alternative is a separately maintainer-authored constitution amendment naming
-the superseding ADR explicitly; this worker cannot make that amendment.
+impersonation rules) and, for OPA rules only, supersedes ADR `031-unverified-subject-unsigned-jwt`
+controls 3–4, ADR `034-audience-absent-impersonation-credentials` control 3, and ADR
+`045-agent-subject-impersonation` decision 2a's binding requirement (revised 2026-11-25: no static
+binding checks, R5). It does not widen the unsigned-subject exception (subject role,
+`verification: none`, local mode). Constitution Principle I requires "a startup-verified
+authorization predicate reference to `subject_token`" and "an unverified email minted only when the
+predicate binds `subject_token.email`" for unsigned subjects, so **Proposed: CONST-AMEND** limits
+those two controls to CEL-authorized rules. The maintainer must ratify the amendment, for example
+through `/speckit-constitution`, before implementation; this worker does not edit the constitution.
+ADR `028-opa-extproc-authorization` is unaffected.
 
-**Alternatives**: Separate ADRs for engine selection and binding equivalence (two approvals for one
-inseparable decision). Amend accepted ADRs in place (forbidden by Principle II).
+**Alternatives**: Separate ADRs for engine selection and the OPA control changes (two approvals for
+one inseparable decision). Amend accepted ADRs in place (forbidden by Principle II). Keep Principle I
+unchanged and limit OPA rules to signed roles with an expected audience (narrows Q2).
 
 ## R14 — Test strategy
 
@@ -450,7 +419,7 @@ existing impersonation E2E fixtures.
 directory (OPA bundle layout) by absolute path. The adapter walks it through an `os.Root` over that
 directory, accepts only `*.rego`, `data.json`, `data.yaml`/`data.yml`, and `.manifest` files, caps it
 at 16 MiB and 1,000 files, reads the bytes once, and builds one candidate with OPA's bundle reader.
-That candidate goes through the same capability check, evidence, and admission as a managed
+That candidate goes through the same capability check and admission as a managed
 revision. Nothing is polled; a change needs a restart. A `.manifest` revision becomes the
 `policy_revision` label.
 
@@ -469,7 +438,9 @@ Accept a single `.rego` file like ExtProc (no data files, so governance examples
 **Decision**: The broker registers one OPA credential plugin, `aib_bearer_token_file`, through
 `sdk.Options.Plugins`. A bootstrap service selects it with `credentials.plugin`, and its settings
 live under the bootstrap's `plugins.aib_bearer_token_file` (`path`, `scheme`, default `Bearer`). It
-implements `rest.HTTPAuthPlugin`: `NewClient` builds the default client, and `Prepare` reads the
+implements `rest.HTTPAuthPlugin`: `NewClient` builds the default client with its transport wrapped by
+`telemetryhttp.NewTransport`, so bundle downloads through this plugin are traced (services using OPA's
+inline credential forms use OPA's own client and stay uninstrumented), and `Prepare` reads the
 token through an `os.Root` over the token file's own directory (regular file, at most 64 KiB,
 trimmed, non-empty) before every
 bundle request and sets `Authorization: <scheme> <token>`. At startup the path is validated and read
