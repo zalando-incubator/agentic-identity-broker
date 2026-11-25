@@ -239,7 +239,7 @@ var _ = Describe("OAuth2 Authorization Endpoint", func() {
 			Expect(err).ToNot(HaveOccurred())
 		})
 
-		It("should treat expired grant as non-existent and redirect to consent UI", func() {
+		It("should treat expired grant as non-existent and redirect to consent UI", example("consent-and-delegation.reconsent.expired-grant"), func() {
 			// Given: Expired grant exists
 			// When: Authorization request (authenticated as default user)
 			resp, err := server.AuthenticatedGET(

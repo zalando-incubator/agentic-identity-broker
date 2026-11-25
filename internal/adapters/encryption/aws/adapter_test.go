@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"os"
 	"strings"
 	"testing"
@@ -293,6 +294,7 @@ func TestCancelledContextClassifiedAsKEKUnavailable(t *testing.T) {
 
 // TestUniqueEncryptionPerCall tests that same plaintext produces different ciphertexts
 func TestUniqueEncryptionPerCall(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.key-per-value")
 	// Setup: Create adapter with env var KEK
 	testKEK := "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
 	if err := os.Setenv("TEST_KEK_UNIQUE", testKEK); err != nil {
@@ -1006,6 +1008,7 @@ func TestDecryptContextClassification(t *testing.T) {
 // T045 [US2] Unit test: Plaintext KEK never logged
 // This test verifies that KEK material is never included in error messages or logs
 func TestPlaintextKEKNeverLogged(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.key-not-in-errors")
 	// Test various error scenarios and verify KEK is not in error messages
 	tests := []struct {
 		name        string

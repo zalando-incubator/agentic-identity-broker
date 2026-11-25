@@ -86,7 +86,7 @@ var _ = Describe("CIMD private_key_jwt metadata discovery", func() {
 	})
 
 	// Scenario US5-S3 from specs/051-private-key-jwt-auth/spec.md
-	It("should advertise only authentication methods and algorithms it accepts", func() {
+	It("should advertise only authentication methods and algorithms it accepts", example("client-registration-and-authentication.assertion.discovery"), func() {
 		metadata, err := fetchCIMDPrivateKeyJWTMetadata(fixtures.OAuth2ConfigWithCIMD(""))
 		Expect(err).To(Succeed())
 		methods, ok := metadata["token_endpoint_auth_methods_supported"].([]any)

@@ -64,7 +64,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 	})
 
 	// Scenario 2.4 from specs/025-oauth2-server/spec.md
-	It("auto-generates an initial signing key at startup", func() {
+	It("auto-generates an initial signing key at startup", example("token-issuance-and-refresh.signing-keys.first-key"), func() {
 		config := fixtures.LocalConfig()
 		testStorage, err := storageFactory.NewTestStorage()
 		Expect(err).ToNot(HaveOccurred())
@@ -109,7 +109,7 @@ var _ = Describe("US2: Server Mode Configuration (local mode)", func() {
 	})
 
 	// Scenario 2.4 from specs/025-oauth2-server/spec.md
-	It("issues tokens without manual signing key provisioning", func() {
+	It("issues tokens without manual signing key provisioning", example("token-issuance-and-refresh.client-credentials.issue"), func() {
 		config := fixtures.LocalConfig()
 		testStorage, err := storageFactory.NewTestStorage()
 		Expect(err).ToNot(HaveOccurred())

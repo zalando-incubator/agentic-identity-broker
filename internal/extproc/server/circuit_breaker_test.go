@@ -31,6 +31,7 @@ import (
 
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // eventuallyTimeout is the extra buffer added to resetTimeout when waiting for
@@ -91,6 +92,7 @@ func TestCircuitBreaker_OpensAfterMaxFailures(t *testing.T) {
 
 // Open circuit rejects calls immediately without hitting the backend.
 func TestCircuitBreaker_OpenCircuit_RejectsImmediately(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.circuit-breaker.opens")
 	var backendCalls int64
 
 	exchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -133,6 +135,7 @@ func TestCircuitBreaker_OpenCircuit_RejectsImmediately(t *testing.T) {
 
 // After reset_timeout, a successful probe closes the circuit.
 func TestCircuitBreaker_HalfOpen_SuccessfulProbe_ClosesCircuit(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.circuit-breaker.recovers")
 	mocks := newMockServers()
 	defer mocks.Close()
 
@@ -235,6 +238,7 @@ func TestCircuitBreaker_HalfOpen_FailedProbe_ReopensCircuit(t *testing.T) {
 
 // Cached tokens are returned even when the circuit is open.
 func TestCircuitBreaker_CacheHit_BypassesCircuitBreaker(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.circuit-breaker.cached-token-served")
 	mocks := newMockServers()
 	defer mocks.Close()
 
@@ -390,6 +394,7 @@ func TestCircuitBreaker_ConcurrentAccess_RaceFree(t *testing.T) {
 
 // ErrCircuitOpen from exchanger → 503 ImmediateResponse with appropriate body.
 func TestServer_Process_CircuitOpen_Returns503(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.circuit-breaker.response")
 	exchanger := &mockExchanger{
 		exchangeFunc: func(_ context.Context, _, _ string) (server.ExchangeResult, error) {
 			return server.ExchangeResult{}, server.ErrCircuitOpen
@@ -419,6 +424,7 @@ func TestServer_Process_CircuitOpen_Returns503(t *testing.T) {
 // 4xx broker errors (e.g., invalid subject token → 400/401) are client errors and must
 // NOT count towards the circuit breaker failure threshold. Only 5xx server errors trip it.
 func TestCircuitBreaker_4xxErrors_DoNotTripCircuit(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.circuit-breaker.client-errors-ignored")
 	mocks := newMockServers()
 	defer mocks.Close()
 

@@ -296,7 +296,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		})
 
 		// US4-S1 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should report credential-free ready status without provider traffic", Label("protected-resource-discovery"), func() {
+		It("should report credential-free ready status without provider traffic", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.status-ready"), func() {
 			serviceID := service["id"].(string)
 			callsBefore := len(provider.Calls())
 			unauthenticated, err := admin.DirectRequest(http.MethodGet, "/api/services/"+serviceID+"/discovery-status", "", nil, nil)
@@ -327,7 +327,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		})
 
 		// US4-S2 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should preserve active settings, ETag and sessions after failed refresh", Label("protected-resource-discovery"), func() {
+		It("should preserve active settings, ETag and sessions after failed refresh", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.failed-refresh"), func() {
 			serviceID := service["id"].(string)
 			connect(serviceID, providerClient)
 			beforeService, etag := readService(serviceID)
@@ -662,7 +662,7 @@ var _ = Describe("Protected resource discovery status and refresh", func() {
 		})
 
 		// US4-S3 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should report not applicable without changing manual account connections", Label("protected-resource-discovery"), func() {
+		It("should report not applicable without changing manual account connections", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.status-manual"), func() {
 			fixture := fixtures.PublicClientService()
 			request := map[string]any{
 				"display_name":               fixture.DisplayName,

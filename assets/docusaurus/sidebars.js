@@ -55,6 +55,57 @@ const sidebars = {
     },
     {
       type: 'category',
+      label: 'Specification',
+      items: [
+        {
+          type: 'category',
+          label: 'For administrators',
+          items: [
+            'specification/agent-registration',
+            'specification/third-party-service-registration',
+            'specification/broker-credentials-at-third-party-services',
+            'specification/permission-sets',
+            'specification/resource-identifiers',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'For end users',
+          items: [
+            'specification/consent-and-delegation',
+            'specification/third-party-sessions',
+            'specification/tool-approvals',
+            'specification/end-user-authentication',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'For agents and clients',
+          items: [
+            'specification/authorization-server-modes',
+            'specification/token-issuance-and-refresh',
+            'specification/client-registration-and-authentication',
+            'specification/token-exchange',
+            'specification/impersonation',
+            'specification/trust-anchors',
+          ],
+        },
+        {
+          type: 'category',
+          label: 'For platform operators',
+          items: [
+            'specification/configuration',
+            'specification/deployment',
+            'specification/storage-and-encryption',
+            'specification/observability-and-audit',
+            'specification/gateway-token-exchange',
+            'specification/gateway-policy-authorization',
+          ],
+        },
+      ],
+    },
+    {
+      type: 'category',
       label: 'Reference',
       items: [
         'reference/index',

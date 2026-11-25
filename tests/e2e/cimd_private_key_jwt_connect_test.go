@@ -216,7 +216,7 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	})
 
 	// Scenario US1-S5 from specs/051-private-key-jwt-auth/spec.md
-	It("should keep code exchange and refresh working for none clients", func() {
+	It("should keep code exchange and refresh working for none clients", example("client-registration-and-authentication.public-client.token"), func() {
 		code, verifier := authorizeCode("read offline_access")
 
 		codeForm := url.Values{
@@ -259,7 +259,7 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	})
 
 	// Scenario US1-S1 from specs/051-private-key-jwt-auth/spec.md
-	It("should exchange an authorization code with RS256", func() {
+	It("should exchange an authorization code with RS256", example("client-registration-and-authentication.assertion.code-exchange"), func() {
 		setDocument("private_key_jwt", nil)
 		code, verifier := authorizeCode("read offline_access")
 		assertion, assertionType, err := signAssertion(helpers.ClientAssertionOptions{})
@@ -297,7 +297,7 @@ var _ = Describe("CIMD private_key_jwt client authentication", func() {
 	})
 
 	// Scenario US1-S2 from specs/051-private-key-jwt-auth/spec.md
-	It("should refresh tokens with a fresh assertion and rotate the token", func() {
+	It("should refresh tokens with a fresh assertion and rotate the token", example("client-registration-and-authentication.assertion.refresh"), func() {
 		setDocument("private_key_jwt", nil)
 		code, verifier := authorizeCode("read offline_access")
 		assertion, assertionType, err := signAssertion(helpers.ClientAssertionOptions{})

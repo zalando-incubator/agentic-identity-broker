@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"log/slog"
 	"math/rand/v2"
 	"testing"
@@ -579,6 +580,7 @@ func TestFindByProtectedResource_MixedScenarios(t *testing.T) {
 }
 
 func TestFindByProtectedResource_LeavesSecretEncryptedUntilGet(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.client-secret-round-trip")
 	ctx, _, providerService, cleanup := setupThirdpartyProviderTestHarness(t)
 	defer cleanup()
 
@@ -675,6 +677,7 @@ func TestPublicServicePersistence(t *testing.T) {
 }
 
 func TestPublicToConfidentialUpdateStoresCiphertext(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.encryption.client-secret-stored")
 	ctx, repo, providerService, sharedPostgres, dbName, cleanup := setupThirdpartyProviderTestHarnessWithDatabase(t)
 	defer cleanup()
 

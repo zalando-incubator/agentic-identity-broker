@@ -34,7 +34,7 @@ var _ = Describe("CIMD private_key_jwt key retrieval", func() {
 	})
 
 	// Scenario US4-S1 from specs/051-private-key-jwt-auth/spec.md
-	It("should refetch an unknown kid and accept the rotated key", func() {
+	It("should refetch an unknown kid and accept the rotated key", example("client-registration-and-authentication.assertion.key-rotation"), func() {
 		fixture.Close()
 		var err error
 		fixture, err = newCIMDPrivateKeyJWTFixtureWithKeySetSettings(false, time.Nanosecond, 0, 0)

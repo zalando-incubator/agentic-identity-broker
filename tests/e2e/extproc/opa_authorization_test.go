@@ -129,7 +129,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Given an MCP tools/call request with tool name "create_issue" and arguments,
 		// When OPA evaluates the request,
 		// Then input contains type="mcp_tool_call", mcp.tool_name="create_issue".
-		It("should build OPA input with mcp.tool_name for tools/call", func() {
+		It("should build OPA input with mcp.tool_name for tools/call", example("gateway-policy-authorization.input.tool-call"), func() {
 			headersReq := helpers.NewRequestHeaders().
 				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
@@ -153,7 +153,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Given a request with an unrecognized protocol in metadata,
 		// When OPA evaluates the request,
 		// Then type="unknown" and raw body is available in input.attributes.request.http.body.
-		It("should set type=unknown for unrecognized protocol", func() {
+		It("should set type=unknown for unrecognized protocol", example("gateway-policy-authorization.input.unknown-protocol"), func() {
 			headersReq := helpers.NewRequestHeaders().
 				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithAgentgatewayProtocol("some-unknown-protocol").
@@ -173,7 +173,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Given an MCP initialize request,
 		// When OPA evaluates the request,
 		// Then input contains type="mcp_method", mcp.method="initialize".
-		It("should build OPA input with mcp.method=initialize", func() {
+		It("should build OPA input with mcp.method=initialize", example("gateway-policy-authorization.input.method"), func() {
 			headersReq := helpers.NewRequestHeaders().
 				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				WithHeader(":method", "POST").
@@ -270,7 +270,7 @@ var _ = Describe("OPA Authorization", func() {
 			// Given a header-only MCP request (end_of_stream=true) with agentgateway
 			// mcp_server="github-mcp", When OPA evaluates the mcp_headers_only input,
 			// Then input.mcp.target_server_name == "github-mcp".
-			It("should build OPA input with mcp.target_server_name for headers-only requests", func() {
+			It("should build OPA input with mcp.target_server_name for headers-only requests", example("gateway-policy-authorization.input.headers-only"), func() {
 				headersReq := helpers.NewRequestHeaders().
 					WithHeader(":method", "GET").
 					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
@@ -291,7 +291,7 @@ var _ = Describe("OPA Authorization", func() {
 			// When ExtProc evaluates the request headers,
 			// Then the request is rejected with 403 before OPA is ever invoked (misconfiguration),
 			// mirroring how absent protocol metadata is rejected.
-			It("should reject with 403 when agentgateway sends no mcp_server metadata", func() {
+			It("should reject with 403 when agentgateway sends no mcp_server metadata", example("gateway-policy-authorization.fail-closed.missing-server-name"), func() {
 				headersReq := helpers.NewRequestHeaders().
 					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 					WithHeader(":method", "POST").
@@ -337,7 +337,7 @@ var _ = Describe("OPA Authorization", func() {
 			// Given a policy that allows tool calls only when target_server_name=="github-mcp",
 			// When a tool call arrives with mcp_server="github-mcp",
 			// Then the request is allowed.
-			It("should allow the tool call when target_server_name matches the authorized server", func() {
+			It("should allow the tool call when target_server_name matches the authorized server", example("gateway-policy-authorization.target-server.allowed"), func() {
 				headersReq := helpers.NewRequestHeaders().
 					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 					WithHeader(":method", "POST").
@@ -356,7 +356,7 @@ var _ = Describe("OPA Authorization", func() {
 			// Scenario US1.2 from specs/044-extproc-opa-mcp-target-server/spec.md
 			// Given the same policy, When a tool call arrives with mcp_server="salesforce-mcp"
 			// (a different, unauthorized server), Then the request is denied with 403.
-			It("should deny the tool call when target_server_name targets a different server", func() {
+			It("should deny the tool call when target_server_name targets a different server", example("gateway-policy-authorization.target-server.denied"), func() {
 				headersReq := helpers.NewRequestHeaders().
 					WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 					WithHeader(":method", "POST").
@@ -405,7 +405,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Given a valid Rego file at the configured path,
 		// When ExtProc starts,
 		// Then the policy is compiled and applied to requests.
-		It("should compile and apply local Rego policy at startup", func() {
+		It("should compile and apply local Rego policy at startup", example("gateway-policy-authorization.policy.allow-and-deny"), func() {
 			// US3 Scenario 1 from specs/020-extproc-opa-authorization/spec.md
 
 			cfg := opaEnabledConfig(policyPath("allow_readonly.rego"))
@@ -461,7 +461,7 @@ var _ = Describe("OPA Authorization", func() {
 		// Given a Rego file with syntax errors,
 		// When ExtProc starts,
 		// Then the service fails to start with a clear compilation error.
-		It("should fail startup with clear error for invalid Rego", func() {
+		It("should fail startup with clear error for invalid Rego", example("gateway-policy-authorization.configuration.invalid-policy"), func() {
 			// US3 Scenario 2 from specs/020-extproc-opa-authorization/spec.md
 
 			// Write a temporary Rego file with a syntax error
@@ -489,7 +489,7 @@ this is not valid rego syntax !!!
 		// Given a configured Rego file path that does not exist,
 		// When ExtProc starts,
 		// Then the service fails to start indicating the file was not found.
-		It("should fail startup when Rego file path does not exist", func() {
+		It("should fail startup when Rego file path does not exist", example("gateway-policy-authorization.configuration.missing-policy-file"), func() {
 			// US3 Scenario 3 from specs/020-extproc-opa-authorization/spec.md
 
 			cfg := opaEnabledConfig("/nonexistent/path/policy.rego")
@@ -516,7 +516,7 @@ this is not valid rego syntax !!!
 		// Given a valid OPA config file with bundle server settings,
 		// When ExtProc starts,
 		// Then OPA initializes with the provided config.
-		It("should initialize OPA from config file with bundle settings", func() {
+		It("should initialize OPA from config file with bundle settings", example("gateway-policy-authorization.configuration.opa-config-file"), func() {
 			// US4 Scenario 1 from specs/020-extproc-opa-authorization/spec.md
 
 			// Write a temporary OPA config that loads from a local file bundle directory.
@@ -586,7 +586,7 @@ this is not valid rego syntax !!!
 		// Given an OPA config file with an unreachable bundle server,
 		// When ExtProc starts,
 		// Then startup follows OPA's own retry semantics.
-		It("should follow OPA retry semantics when bundle server is unreachable", func() {
+		It("should follow OPA retry semantics when bundle server is unreachable", example("gateway-policy-authorization.configuration.bundle-unavailable"), func() {
 			// US4 Scenario 2 from specs/020-extproc-opa-authorization/spec.md
 			//
 			// OPA retry semantics: when the bundle server is initially unreachable,
@@ -756,7 +756,7 @@ bundles:
 		// Given OPA is explicitly disabled,
 		// When a request with token-exchange metadata arrives,
 		// Then no body inspection occurs and token exchange proceeds directly.
-		It("should skip body inspection when OPA disabled", func() {
+		It("should skip body inspection when OPA disabled", example("gateway-policy-authorization.configuration.disabled"), func() {
 			headersReq := helpers.NewRequestHeaders().
 				WithTokenExchangeMetadata(fixtures.ValidBearerToken, fixtures.ValidResourceURI).
 				BuildWithMetadata()
@@ -779,7 +779,7 @@ bundles:
 
 		// Edge case: both policy sources specified
 		// specs/020-extproc-opa-authorization/spec.md — Edge Cases
-		It("should reject config with both local file and OPA config", func() {
+		It("should reject config with both local file and OPA config", example("gateway-policy-authorization.configuration.one-source"), func() {
 			// Edge case from specs/020-extproc-opa-authorization/spec.md
 
 			cfg := fixtures.DefaultConfig()
@@ -809,7 +809,7 @@ bundles:
 		})
 
 		// Evaluation-timeout edge case from specs/020-extproc-opa-authorization/spec.md
-		It("should deny a live request when policy evaluation times out", func() {
+		It("should deny a live request when policy evaluation times out", example("gateway-policy-authorization.fail-closed.timeout"), func() {
 			cfg := opaEnabledConfig(policyPath("allow_all.rego"))
 			cfg.Authorization.EvaluationTimeout = time.Nanosecond
 

@@ -91,7 +91,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 	}
 
 	// User Story 1, acceptance scenario 1 from specs/028c-cimd-wildcard-client-uris/spec.md.
-	It("resolves a concrete hosted client URL through a path-segment wildcard", func() {
+	It("resolves a concrete hosted client URL through a path-segment wildcard", example("client-registration-and-authentication.wildcard.match"), func() {
 		clientURL := "https://" + fakeHost + "/oauth/codex/dIwd44EtAHp-/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
 		agent := newAgent("Wildcard Agent", []string{"https://" + fakeHost + "/oauth/codex/*/client.json"})
@@ -109,7 +109,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 	})
 
 	// User Story 1, acceptance scenario 2 from specs/028c-cimd-wildcard-client-uris/spec.md.
-	It("rejects a client URL with an extra path segment", func() {
+	It("rejects a client URL with an extra path segment", example("client-registration-and-authentication.wildcard.extra-segment"), func() {
 		clientURL := "https://" + fakeHost + "/oauth/codex/tenant/nested/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
 		agent := newAgent("Wildcard Agent", []string{"https://" + fakeHost + "/oauth/codex/*/client.json"})
@@ -141,7 +141,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 	})
 
 	// User Story 2, acceptance scenario 1 from specs/028c-cimd-wildcard-client-uris/spec.md.
-	It("uses an exact client URI before a matching pattern", func() {
+	It("uses an exact client URI before a matching pattern", example("client-registration-and-authentication.wildcard.exact-first"), func() {
 		clientURL := "https://" + fakeHost + "/oauth/codex/literal/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
 		patternAgent := newAgent("Pattern Agent", []string{"https://" + fakeHost + "/oauth/codex/*/client.json"})
@@ -159,7 +159,7 @@ var _ = Describe("CIMD wildcard client URI registration", func() {
 	})
 
 	// User Story 3, acceptance scenario 1 from specs/028c-cimd-wildcard-client-uris/spec.md.
-	It("rejects a client URL that matches patterns on different agents", func() {
+	It("rejects a client URL that matches patterns on different agents", example("client-registration-and-authentication.wildcard.ambiguous"), func() {
 		clientURL := "https://" + fakeHost + "/oauth/test/foo/client.json"
 		redirectURI := "https://" + fakeHost + "/callback"
 		first := newAgent("First Pattern Agent", []string{"https://" + fakeHost + "/oauth/*/foo/client.json"})

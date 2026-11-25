@@ -119,7 +119,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 		})
 
 		// Scenario 1.1 from specs/027-extproc-otel/spec.md
-		It("US1-S1: extracts W3C traceparent from agentgateway and creates linked span", func() {
+		It("US1-S1: extracts W3C traceparent from agentgateway and creates linked span", example("observability-and-audit.extproc.trace-joined"), func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
 
@@ -168,7 +168,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 		})
 
 		// Scenario 1.3 from specs/027-extproc-otel/spec.md
-		It("US1-S3: injects trace context into outbound HTTP request to Identity Broker", func() {
+		It("US1-S3: injects trace context into outbound HTTP request to Identity Broker", example("observability-and-audit.extproc.trace-passed-on"), func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
 
@@ -223,7 +223,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 		})
 
 		// Scenario 1.4 from specs/027-extproc-otel/spec.md
-		It("US1-S4: records error outcome on token exchange failure", func() {
+		It("US1-S4: records error outcome on token exchange failure", example("observability-and-audit.extproc.broker-failure"), func() {
 			env.MockTokenExchange.WithError(400, "invalid_grant")
 
 			client, conn := env.NewExtProcClient()
@@ -256,7 +256,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 		})
 
 		// Scenario 1.7 from specs/027-extproc-otel/spec.md
-		It("US1-S7: leaves the status unset when the client receives a 4xx response", func() {
+		It("US1-S7: leaves the status unset when the client receives a 4xx response", example("observability-and-audit.extproc.reauth-challenge"), func() {
 			env.MockTokenExchange.WithError(400, "invalid_grant").
 				WithErrorURI("https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize")
 
@@ -394,7 +394,7 @@ var _ = Describe("ExtProc Telemetry", func() {
 		})
 
 		// Scenario 2.1 from specs/027-extproc-otel/spec.md
-		It("US2-S1: starts normally with telemetry disabled (default config)", func() {
+		It("US2-S1: starts normally with telemetry disabled (default config)", example("observability-and-audit.extproc.off-by-default"), func() {
 			cfg := fixtures.DefaultConfig()
 			// Default config has Telemetry.Enabled = false
 			Expect(cfg.Telemetry.Enabled).To(BeFalse(),
@@ -535,7 +535,7 @@ telemetry:
 		})
 
 		// Scenario 3.1 from specs/027-extproc-otel/spec.md
-		It("US3-S1: exports request counter and latency histogram broken down by outcome", func() {
+		It("US3-S1: exports request counter and latency histogram broken down by outcome", example("observability-and-audit.extproc.metrics"), func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
 
@@ -765,7 +765,7 @@ telemetry:
 		})
 
 		// Scenario 4.2 from specs/027-extproc-otel/spec.md
-		It("US4-S2: token exchange continues normally when collector becomes unreachable during operation", func() {
+		It("US4-S2: token exchange continues normally when collector becomes unreachable during operation", example("observability-and-audit.extproc.collector-unreachable"), func() {
 			client, conn := env.NewExtProcClient()
 			defer conn.Close() //nolint:errcheck
 

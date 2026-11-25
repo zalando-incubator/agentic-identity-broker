@@ -232,7 +232,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 	})
 
 	// State 4: Deny action from list
-	It("should allow denying a pending request from the list", func() {
+	It("should allow denying a pending request from the list", example("tool-approvals.authorizations.deny-from-list"), func() {
 		principal := fixtures.DefaultPrincipal()
 
 		approval := newTestApproval(id.Principal(principal.Email), testAgent.ID, "write_file", "Overwrite system file", "critical")
@@ -280,7 +280,7 @@ var _ = Describe("Tool Authorizations Page", func() {
 	})
 
 	// State 5: Permanent authorizations with revoke
-	It("should display permanent authorizations and allow revoking", func() {
+	It("should display permanent authorizations and allow revoking", example("tool-approvals.authorizations.permanent-list"), func() {
 		principal := fixtures.DefaultPrincipal()
 
 		// Create and approve an approval permanently

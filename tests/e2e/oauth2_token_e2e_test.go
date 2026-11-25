@@ -100,7 +100,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 	})
 
 	// Scenario 3.2 from specs/025-oauth2-server/spec.md
-	It("invalid credentials returns 401", func() {
+	It("invalid credentials returns 401", example("token-issuance-and-refresh.client-credentials.wrong-secret"), func() {
 		form := url.Values{
 			"grant_type":    {"client_credentials"},
 			"client_id":     {agent.ID.String()},
@@ -150,7 +150,7 @@ var _ = Describe("US3: Client Credentials Grant (local mode)", func() {
 	})
 
 	// Scenario 3.4 from specs/025-oauth2-server/spec.md
-	It("invalid_scope for excessive scopes", func() {
+	It("invalid_scope for excessive scopes", example("token-issuance-and-refresh.client-credentials.scope-limit"), func() {
 		// Update agent with restricted scopes
 		agent.AllowedScopes = []string{"read"}
 		Expect(testStorage.Agents().Update(context.Background(), agent)).ToNot(HaveOccurred())

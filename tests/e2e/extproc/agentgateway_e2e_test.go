@@ -745,7 +745,7 @@ var _ = Describe("Agentgateway Re-authentication Challenge", Ordered, func() {
 	BeforeEach(func() { broker.setFailing(false) })
 
 	// Feature 023 User Story 1 Amendment, Scenario 1 (specs/023-extproc-mcp-elicitation/spec.md): Challenge through agentgateway
-	It("returns HTTP 403 with an insufficient_scope challenge and the URL elicitation body when the broker requires re-authentication", NodeTimeout(time.Minute), func(ctx SpecContext) {
+	It("returns HTTP 403 with an insufficient_scope challenge and the URL elicitation body when the broker requires re-authentication", NodeTimeout(time.Minute), example("gateway-token-exchange.reauth.through-gateway"), func(ctx SpecContext) {
 		token, err := jwtFixture.MintToken("agentgateway-reauth-scenario-1", time.Now().Add(10*time.Minute))
 		Expect(err).NotTo(HaveOccurred())
 		broker.setFailing(true)
@@ -782,7 +782,7 @@ var _ = Describe("Agentgateway Re-authentication Challenge", Ordered, func() {
 	})
 
 	// Feature 023 2026-10-26 Amendment, User Story 3 Scenario 1 (specs/023-extproc-mcp-elicitation/spec.md): Step-up authorization and retry
-	It("lets a go-sdk client step up through the advertised authorization server and retry successfully", NodeTimeout(2*time.Minute), func(ctx SpecContext) {
+	It("lets a go-sdk client step up through the advertised authorization server and retry successfully", NodeTimeout(2*time.Minute), example("gateway-token-exchange.reauth.step-up-retry"), func(ctx SpecContext) {
 		initial, err := jwtFixture.MintToken("agentgateway-stepup-user", time.Now().Add(10*time.Minute))
 		Expect(err).NotTo(HaveOccurred())
 		browser := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}

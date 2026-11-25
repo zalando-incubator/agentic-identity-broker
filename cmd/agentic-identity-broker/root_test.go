@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/lestrrat-go/jwx/v4/jwt"
@@ -290,6 +291,7 @@ func setBrokerConfigPath(t *testing.T, path string) {
 }
 
 func TestRunRejectsMalformedConfiguration(t *testing.T) {
+	evidence.ForTest(t, "configuration.startup.malformed-yaml")
 	path := filepath.Join(t.TempDir(), "broker.yaml")
 	if err := os.WriteFile(path, []byte("server: ["), 0o600); err != nil {
 		t.Fatal(err)
@@ -303,6 +305,7 @@ func TestRunRejectsMalformedConfiguration(t *testing.T) {
 }
 
 func TestRunRejectsInvalidServerPort(t *testing.T) {
+	evidence.ForTest(t, "configuration.startup.invalid-value")
 	adminPort := freeBrokerPort(t)
 	setBrokerConfigPath(t, writeBrokerConfig(t, -1, adminPort))
 
@@ -355,6 +358,8 @@ func waitForBrokerHealth(t *testing.T, done <-chan struct{}, runErr *error, clie
 }
 
 func TestRunServesBothPortsAndShutsDownOnSIGTERM(t *testing.T) {
+	evidence.ForTest(t, "deployment.servers.two-ports")
+	evidence.ForTest(t, "deployment.shutdown.sigterm")
 	enduserPort := freeBrokerPort(t)
 	adminPort := freeBrokerPort(t)
 	for adminPort == enduserPort {
@@ -446,6 +451,7 @@ func TestRunServesBothPortsAndShutsDownOnSIGTERM(t *testing.T) {
 }
 
 func TestRunAtomicBindFailure(t *testing.T) {
+	evidence.ForTest(t, "deployment.startup.all-or-nothing")
 	for _, occupiedServer := range []string{"enduser", "admin"} {
 		t.Run(occupiedServer, func(t *testing.T) {
 			occupied, err := net.Listen("tcp", "127.0.0.1:0")

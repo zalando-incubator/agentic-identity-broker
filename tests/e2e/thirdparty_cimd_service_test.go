@@ -114,7 +114,7 @@ var _ = Describe("CIMD client authentication for third-party OAuth2 services", f
 		})
 
 		// US1-S1 from specs/046-cimd-upstream-client/spec.md
-		It("creates a secretless service with broker-hosted identity", Label("cimd-upstream-client"), func() {
+		It("creates a secretless service with broker-hosted identity", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.create"), func() {
 			created := postService(serviceRequest())
 			Expect(created.StatusCode).To(Equal(http.StatusCreated))
 			service := decodeJSON[map[string]any](created)

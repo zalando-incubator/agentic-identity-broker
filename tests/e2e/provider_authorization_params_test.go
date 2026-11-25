@@ -95,7 +95,7 @@ var _ = Describe("Provider authorization parameters", func() {
 	})
 
 	// Scenario 1.1 from specs/034-provider-auth-params/spec.md
-	It("returns configured parameters from create, get, and list", func() {
+	It("returns configured parameters from create, get, and list", example("third-party-service-registration.authorization-params.returned"), func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		Expect(created["authorization_params"]).To(Equal(map[string]interface{}{"business_partner_id": "12345"}))
 		serviceID := created["id"].(string)
@@ -116,7 +116,7 @@ var _ = Describe("Provider authorization parameters", func() {
 	})
 
 	// Scenario 1.2 from specs/034-provider-auth-params/spec.md
-	It("preserves parameters when update omits them", func() {
+	It("preserves parameters when update omits them", example("third-party-service-registration.authorization-params.update-omits"), func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		request := serviceRequest(nil)
 		request["display_name"] = "Updated Zalando"
@@ -132,7 +132,7 @@ var _ = Describe("Provider authorization parameters", func() {
 	})
 
 	// Scenario 1.3 from specs/034-provider-auth-params/spec.md
-	It("allows an empty map to clear parameters", func() {
+	It("allows an empty map to clear parameters", example("third-party-service-registration.authorization-params.clear"), func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		request := serviceRequest(map[string]string{})
 		body, err := json.Marshal(request)
@@ -184,7 +184,7 @@ var _ = Describe("Provider authorization parameters", func() {
 	}
 
 	// Scenario 2.1 from specs/034-provider-auth-params/spec.md
-	It("adds configured parameters to the upstream authorization and code exchange", func() {
+	It("adds configured parameters to the upstream authorization and code exchange", example("third-party-sessions.connect.provider-parameters"), example("third-party-service-registration.authorization-params.sent-to-provider"), func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		Expect(completeAuthorization(created, "")["business_partner_id"]).To(ConsistOf("12345"))
 		Expect(upstream.GetLastRequest().Form.Get("business_partner_id")).To(Equal("12345"))
@@ -202,7 +202,7 @@ var _ = Describe("Provider authorization parameters", func() {
 	})
 
 	// Scenario 2.3 from specs/034-provider-auth-params/spec.md
-	It("ignores conflicting browser parameters", func() {
+	It("ignores conflicting browser parameters", example("third-party-service-registration.authorization-params.browser-ignored"), func() {
 		created := create(serviceRequest(map[string]string{"business_partner_id": "12345"}))
 		Expect(completeAuthorization(created, "&business_partner_id=untrusted")["business_partner_id"]).To(ConsistOf("12345"))
 		Expect(upstream.GetLastRequest().Form.Get("business_partner_id")).To(Equal("12345"))
@@ -222,7 +222,7 @@ var _ = Describe("Provider authorization parameters", func() {
 	})
 
 	// Scenario 3.2 from specs/034-provider-auth-params/spec.md
-	It("rejects broker-owned parameter names", func() {
+	It("rejects broker-owned parameter names", example("third-party-service-registration.authorization-params.broker-owned"), func() {
 		request := serviceRequest(map[string]string{"state": "unsafe"})
 		body, err := json.Marshal(request)
 		Expect(err).NotTo(HaveOccurred())

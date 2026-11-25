@@ -94,7 +94,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 			})
 
 			// US1 Scenario 1 from specs/021-multi-agent-clientid/spec.md
-			It("should append agent ID param to upstream authorize URL", Label("US1"), func() {
+			It("should append agent ID param to upstream authorize URL", Label("US1"), example("authorization-server-modes.proxy.shared-client"), func() {
 				// Given: Feature enabled, agent has active grant
 				grant := fixtures.ActiveGrant(
 					fixtures.DefaultPrincipal().String(),
@@ -121,7 +121,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 			})
 
 			// US1 Scenario 2 from specs/021-multi-agent-clientid/spec.md
-			It("should resolve client_id against agent.id not agent.client_id", Label("US1"), func() {
+			It("should resolve client_id against agent.id not agent.client_id", Label("US1"), example("client-registration-and-authentication.client-id.agent-uuid"), func() {
 				// Given: Agent registered with client_id="shared-upstream" but internal ID is a UUID
 				// Active grant for the default principal
 				grant := fixtures.ActiveGrant(
@@ -182,7 +182,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 
 			// US1 Scenario 3b: Verify upstream receives agent.ClientID, not the broker UUID
 			// (review comment r2995594898)
-			It("should forward the agent upstream client_id to upstream, not the broker agent UUID", Label("US1"), func() {
+			It("should forward the agent upstream client_id to upstream, not the broker agent UUID", Label("US1"), example("authorization-server-modes.proxy.upstream-client-id"), func() {
 				// Given: Mock upstream is configured to return a valid token response with
 				// the x_agent_id claim so the verifier passes.
 				mockUpstream.WithSuccessfulTokenResponse().
@@ -384,7 +384,7 @@ var _ = Describe("Multi-Agent Client Delegation", func() {
 			})
 
 			// US1 Scenario 6 from specs/021-multi-agent-clientid/spec.md
-			It("should not inject param or verify claim when feature is disabled", Label("US1"), func() {
+			It("should not inject param or verify claim when feature is disabled", Label("US1"), example("authorization-server-modes.proxy.forward-authorize"), func() {
 				// Given: Feature disabled; alpha has an active grant
 				grant := fixtures.ActiveGrant(
 					fixtures.DefaultPrincipal().String(),

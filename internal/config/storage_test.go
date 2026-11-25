@@ -1,6 +1,7 @@
 package config
 
 import (
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"testing"
 	"time"
 
@@ -40,6 +41,7 @@ func TestStorageConfigValidation_Postgres(t *testing.T) {
 }
 
 func TestStorageConfigValidation_InvalidBackend(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.backend.unknown")
 	config := &ports.StorageConfig{
 		Backend: "invalid",
 		Timeouts: ports.StorageTimeouts{

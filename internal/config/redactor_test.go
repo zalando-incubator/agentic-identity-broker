@@ -2,9 +2,12 @@ package config
 
 import (
 	"testing"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 func TestRedact(t *testing.T) {
+	evidence.ForTest(t, "configuration.summary.redaction")
 	tests := []struct {
 		name  string
 		key   string

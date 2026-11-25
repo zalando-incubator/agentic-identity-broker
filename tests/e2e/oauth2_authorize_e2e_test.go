@@ -92,7 +92,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 	})
 
 	// Scenario 4.1 and 4.5 from specs/025-oauth2-server/spec.md
-	It("full auth code flow with PKCE", func() {
+	It("full auth code flow with PKCE", example("token-issuance-and-refresh.authorization-code.pkce-flow"), func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
 
@@ -234,14 +234,14 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 				tokenBody = requestToken("read offline_access")
 			})
 
-			It("issues a refresh token alongside the access token", func() {
+			It("issues a refresh token alongside the access token", example("token-issuance-and-refresh.refresh.offline-access"), func() {
 				Expect(tokenBody).To(HaveKey("access_token"))
 				refreshToken, ok := tokenBody["refresh_token"].(string)
 				Expect(ok).To(BeTrue())
 				Expect(refreshToken).ToNot(BeEmpty())
 			})
 
-			It("rotates the refresh token and lets the client use the rotated one", func() {
+			It("rotates the refresh token and lets the client use the rotated one", example("token-issuance-and-refresh.refresh.rotation"), func() {
 				refreshToken := tokenBody["refresh_token"].(string)
 
 				refreshResp := exchangeRefreshToken(refreshToken)
@@ -262,7 +262,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 				Expect(secondResp.StatusCode).To(Equal(http.StatusOK))
 			})
 
-			It("rejects reuse of a rotated refresh token", func() {
+			It("rejects reuse of a rotated refresh token", example("token-issuance-and-refresh.refresh.reuse"), func() {
 				refreshToken := tokenBody["refresh_token"].(string)
 
 				firstResp := exchangeRefreshToken(refreshToken)
@@ -286,7 +286,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 				tokenBody = requestToken("read")
 			})
 
-			It("omits the refresh token", func() {
+			It("omits the refresh token", example("token-issuance-and-refresh.refresh.no-offline-access"), func() {
 				Expect(tokenBody).To(HaveKey("access_token"))
 				Expect(tokenBody).NotTo(HaveKey("refresh_token"))
 			})
@@ -337,7 +337,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 	})
 
 	// Scenario 4.4 from specs/025-oauth2-server/spec.md
-	It("consent redirect for new user", func() {
+	It("consent redirect for new user", example("token-issuance-and-refresh.authorization-code.consent-gate"), func() {
 		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}}
@@ -367,7 +367,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 	})
 
 	// Scenario 4.6 from specs/025-oauth2-server/spec.md
-	It("PKCE mismatch rejected on token exchange", func() {
+	It("PKCE mismatch rejected on token exchange", example("token-issuance-and-refresh.authorization-code.wrong-verifier"), func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
 
@@ -412,7 +412,7 @@ var _ = Describe("US4: Authorization Code Flow with PKCE (local mode)", func() {
 	})
 
 	// Scenario 4.7 from specs/025-oauth2-server/spec.md
-	It("code replay rejected", func() {
+	It("code replay rejected", example("token-issuance-and-refresh.authorization-code.code-replay"), func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
 
@@ -520,7 +520,7 @@ var _ = Describe("US4b: Authorization Code Flow — LocalClient as public client
 	})
 
 	// Scenario 4.5 from specs/025-oauth2-server/spec.md
-	It("full auth code flow without client secret", func() {
+	It("full auth code flow without client secret", example("token-issuance-and-refresh.authorization-code.public-client"), func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
 
@@ -572,7 +572,7 @@ var _ = Describe("US4b: Authorization Code Flow — LocalClient as public client
 	})
 
 	// Scenario 4.3 from specs/025-oauth2-server/spec.md
-	It("authorize without code_challenge rejected", func() {
+	It("authorize without code_challenge rejected", example("token-issuance-and-refresh.authorization-code.pkce-required"), func() {
 		client := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		}}
@@ -655,7 +655,7 @@ var _ = Describe("OAuth2 Token Claims (principal profile)", func() {
 	})
 
 	// Scenario 4.5 from specs/025-oauth2-server/spec.md
-	It("should include the authenticated profile in locally issued token claims", func() {
+	It("should include the authenticated profile in locally issued token claims", example("token-issuance-and-refresh.claims.custom"), func() {
 		verifier := helpers.PKCEVerifier()
 		challenge := helpers.GenerateCodeChallenge(verifier)
 		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.yaml.in/yaml/v3"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 func runHelmTemplate(t *testing.T, extraArgs ...string) (string, error) {
@@ -234,6 +236,7 @@ func TestHelmCredentialFilesPairsAndExistingMounts(t *testing.T) {
 
 // US7-S3 rendering contract; explicit filesystem registration remains in the HTTP E2E journey.
 func TestHelmCredentialFilesTargetDeployment(t *testing.T) {
+	evidence.ForTest(t, "deployment.chart.workload")
 	configuration, pod, secrets := credentialHelmConfiguration(t, renderHelmTemplate(t,
 		"-f", "../e2e/fixtures/oauth2-secret-file-values.yaml",
 		"--set", "storage.type=memory",
@@ -444,6 +447,7 @@ func sessionSweepArgs(extra ...string) []string {
 func TestHelmTemplate_SessionSweep(t *testing.T) {
 	// US1-S1 from specs/053-session-auto-refresh/spec.md
 	t.Run("renders no sweep resources when disabled", func(t *testing.T) {
+		evidence.ForTest(t, "deployment.sweep.disabled")
 		output := renderHelmTemplate(t,
 			"--set-string", "sessionSweep.headers.X-Operator=session-sweep",
 			"--set-string", "sessionSweep.schedule=*/5 * * * *",
@@ -454,6 +458,8 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 
 	// US1-S2 from specs/053-session-auto-refresh/spec.md
 	t.Run("renders an hourly Forbid CronJob targeting the admin Service with the public-URL Host and PT2H", func(t *testing.T) {
+		evidence.ForTest(t, "third-party-sessions.sweep.scheduled")
+		evidence.ForTest(t, "deployment.sweep.cronjob")
 		output := renderHelmTemplate(t, sessionSweepArgs("--show-only", "templates/cronjob-session-sweep.yaml")...)
 		for _, want := range []string{
 			"kind: CronJob",
@@ -495,6 +501,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 
 	// US1-S10 from specs/053-session-auto-refresh/spec.md
 	t.Run("keeps the job pod out of the broker Service and PDB selectors", func(t *testing.T) {
+		evidence.ForTest(t, "deployment.sweep.outside-service")
 		output := renderHelmTemplate(t, sessionSweepArgs(
 			"--show-only", "templates/cronjob-session-sweep.yaml",
 			"--set-string", `commonLabels.app\.kubernetes\.io/name=agentic-identity-broker`,
@@ -510,6 +517,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 
 	// US1-S5 from specs/053-session-auto-refresh/spec.md (render-time part)
 	t.Run("reads file headers through curl config variables and never renders their value", func(t *testing.T) {
+		evidence.ForTest(t, "deployment.sweep.file-headers")
 		output := renderHelmTemplate(t, sessionSweepArgs(
 			"--show-only", "templates/cronjob-session-sweep.yaml",
 			"--set-string", "sessionSweep.headersFromFile.Authorization.path=/var/run/secrets/session-sweep/token",
@@ -540,6 +548,7 @@ func TestHelmTemplate_SessionSweep(t *testing.T) {
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
+				evidence.ForTest(t, "deployment.sweep.identity-required")
 				output, err := runHelmTemplate(t, tt.args...)
 				require.Error(t, err, output)
 				require.Contains(t, output, tt.wantErr)

@@ -15,10 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	httpAdapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // TestHealthEndpoint tests the health endpoint format and responses
 func TestHealthEndpoint(t *testing.T) {
+	evidence.ForTest(t, "deployment.health.response")
 	// Create logger for tests
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 

@@ -70,7 +70,7 @@ var _ = Describe("US1: Client Credential Management (local mode)", func() {
 	})
 
 	// Scenario 1.2 from specs/025-oauth2-server/spec.md: only an accepted rotation invalidates the old credential.
-	It("rejects hostile credential rotations and accepts an operator rotation", func() {
+	It("rejects hostile credential rotations and accepts an operator rotation", example("client-registration-and-authentication.credentials.rotate"), func() {
 		credentialPath := "/api/agents/" + agent.ID.String() + "/client-credentials"
 		adminPrincipal := fixtures.AdminPrincipal().String()
 		resp, err := adminServer.AuthenticatedPOST(credentialPath, adminPrincipal, "application/json", nil)

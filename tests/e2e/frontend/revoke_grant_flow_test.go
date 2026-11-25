@@ -95,7 +95,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 	})
 
 	// Scenario US1-S2 from specs/022-revoke-agent-consent/spec.md
-	It("confirmation dialog shows agent name and OAuth2 services note", func() {
+	It("confirmation dialog shows agent name and OAuth2 services note", example("consent-and-delegation.screen.revoke-dialog"), func() {
 		// Given: User navigates to the agent detail page and clicks Revoke All Access
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to agent detail page")
@@ -126,7 +126,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 	})
 
 	// Scenario Edge from specs/022-revoke-agent-consent/spec.md
-	It("Revoke All Access button absent when user has no active grant", func() {
+	It("Revoke All Access button absent when user has no active grant", example("consent-and-delegation.screen.no-grant-no-revoke"), func() {
 		// Given: A second agent with NO grant for this user
 		agentWithoutGrant := fixtures.AnotherAgent()
 		err := GetTestStorage().Agents().Create(ctx, agentWithoutGrant)
@@ -149,7 +149,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 	})
 
 	// Scenario US2-S1 from specs/022-revoke-agent-consent/spec.md
-	It("Revoke action visible on each overview page agent card", func() {
+	It("Revoke action visible on each overview page agent card", example("consent-and-delegation.screen.overview"), func() {
 		// Given: User has an active grant and views the consent overview page
 		err := consentPage.NavigateToOverview(ctx)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent overview page")
@@ -193,7 +193,7 @@ var _ = Describe("Revoke Grant Flow", func() {
 	})
 
 	// Scenario US1-S5 from specs/022-revoke-agent-consent/spec.md
-	It("cancel dialog from detail page — grant remains active, detail page stays open", func() {
+	It("cancel dialog from detail page — grant remains active, detail page stays open", example("consent-and-delegation.screen.revoke-cancel"), func() {
 		// Given: User navigates to the agent detail page and opens the revoke dialog
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to agent detail page")

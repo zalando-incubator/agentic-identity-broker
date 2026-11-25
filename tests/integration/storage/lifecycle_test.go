@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 // TestMemoryAdapter_FullLifecycle tests complete memory adapter lifecycle
 func TestMemoryAdapter_FullLifecycle(t *testing.T) {
+	evidence.ForTest(t, "storage-and-encryption.backend.memory")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

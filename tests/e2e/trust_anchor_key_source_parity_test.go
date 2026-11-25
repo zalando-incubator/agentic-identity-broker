@@ -68,8 +68,8 @@ var _ = Describe("Key source parity for client assertions", Label(trustAnchorPar
 			Expect(inline).To(Equal(remote), "inline outcome differs from remote")
 			Expect(file).To(Equal(remote), "file outcome differs from remote")
 		},
-		Entry("a valid credential", signed(func(map[string]any) {}), http.StatusOK),
-		Entry("a wrongly signed credential", func(env *trustAnchorEnv) string {
+		Entry("a valid credential", example("trust-anchors.source.parity"), signed(func(map[string]any) {}), http.StatusOK),
+		Entry("a wrongly signed credential", example("trust-anchors.source.parity"), func(env *trustAnchorEnv) string {
 			return env.assertion(helpers.NewLocalES256Key(gatewayKID), env.issuer.URL())
 		}, http.StatusUnauthorized),
 		Entry("an expired credential", signed(func(c map[string]any) {

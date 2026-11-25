@@ -121,7 +121,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 
 	Describe("US1: Configure Third-Party Service with Explicit OAuth2 Flavor", func() {
 		// Spec Reference: US1.S1 from specs/018-oauth2-provider-flavors/spec.md
-		It("[US1.S1] should assign default standard flavor when oauth2_flavor is omitted", func() {
+		It("[US1.S1] should assign default standard flavor when oauth2_flavor is omitted", example("third-party-service-registration.flavor.default-standard"), func() {
 			// Given: A service creation request with no oauth2_flavor field
 			req := standardServiceRequest()
 			delete(req, "oauth2_flavor") // ensure field is absent
@@ -173,7 +173,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 		})
 
 		// Spec Reference: US1.S4 from specs/018-oauth2-provider-flavors/spec.md
-		It("[US1.S4] should reject unrecognized flavor values with HTTP 400 listing valid values", func() {
+		It("[US1.S4] should reject unrecognized flavor values with HTTP 400 listing valid values", example("third-party-service-registration.flavor.unknown"), func() {
 			// Given: A service creation request with an invalid oauth2_flavor
 			req := standardServiceRequest()
 			req["oauth2_flavor"] = "azure"
@@ -191,7 +191,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 		})
 
 		// Spec Reference: US1.S5 from specs/018-oauth2-provider-flavors/spec.md
-		It("[US1.S5] should re-validate credential against new flavor when flavor is updated", func() {
+		It("[US1.S5] should re-validate credential against new flavor when flavor is updated", example("third-party-service-registration.flavor.change-revalidates"), func() {
 			// Given: An existing standard service
 			req := standardServiceRequest()
 			resp := createService(req)
@@ -234,7 +234,7 @@ var _ = Describe("OAuth2 Provider Flavor Support", func() {
 		})
 
 		// Spec Reference: US2.S2 from specs/018-oauth2-provider-flavors/spec.md
-		It("[US2.S2] should return service config with client_id populated and credential redacted", func() {
+		It("[US2.S2] should return service config with client_id populated and credential redacted", example("third-party-service-registration.flavor.google"), func() {
 			// Given: A valid google service created
 			req := fixtures.ValidGoogleServiceRequest()
 			createResp := createService(req)

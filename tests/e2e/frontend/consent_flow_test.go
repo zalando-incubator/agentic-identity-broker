@@ -125,7 +125,7 @@ var _ = Describe("Consent Flow", func() {
 			Expect(err).NotTo(HaveOccurred(), "Failed to create optional-only agent")
 		})
 
-		It("approves consent after selecting optional services", func() {
+		It("approves consent after selecting optional services", example("consent-and-delegation.screen.approve"), func() {
 			err := consentPage.NavigateToAgent(ctx, testAgentID)
 			Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 
@@ -165,7 +165,7 @@ var _ = Describe("Consent Flow", func() {
 	})
 
 	// Scenario 10 from specs/007-consent-frontend/spec.md
-	It("allows a user to set and read a future end date", func() {
+	It("allows a user to set and read a future end date", example("consent-and-delegation.screen.end-date"), func() {
 		err := consentPage.NavigateToAgent(ctx, testAgentID)
 		Expect(err).NotTo(HaveOccurred(), "Failed to navigate to consent page")
 

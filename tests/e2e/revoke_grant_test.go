@@ -134,7 +134,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 	})
 
 	// Scenario SR-001, Edge from specs/022-revoke-agent-consent/spec.md
-	It("returns 404 when grant exists for different principal", func() {
+	It("returns 404 when grant exists for different principal", example("consent-and-delegation.revoke.other-user"), func() {
 		// Given: The grant is owned by DefaultPrincipal
 		// When: AnotherPrincipal sends DELETE for the same agent
 		anotherPrincipal := fixtures.AnotherPrincipal().String()
@@ -174,7 +174,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 	})
 
 	// Scenario US1-S4, US2-S3 from specs/022-revoke-agent-consent/spec.md
-	It("removes grant from list after successful revocation", func() {
+	It("removes grant from list after successful revocation", example("consent-and-delegation.revoke.grant-deleted"), func() {
 		// Given: An active grant exists for (principal, agent)
 
 		// When: Principal revokes the grant
@@ -265,7 +265,7 @@ var _ = Describe("Revoke Agent Grant", func() {
 		})
 
 		// Scenario US3-S2 from specs/022-revoke-agent-consent/spec.md
-		It("immediate token exchange re-attempt is rejected", func() {
+		It("immediate token exchange re-attempt is rejected", example("consent-and-delegation.revoke.token-exchange-refused"), func() {
 			// Given: Token exchange succeeds while grant is active
 			mockUpstream.WithSuccessfulTokenResponse().WithAccessToken("github-token-pre-revoke")
 

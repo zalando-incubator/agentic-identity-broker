@@ -76,7 +76,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 
 	Context("when tracing is enabled", func() {
 		// Scenario US1-S1 from specs/017-opentelemetry-support/spec.md
-		It("should emit a trace span for end-user server requests", func() {
+		It("should emit a trace span for end-user server requests", example("observability-and-audit.traces.request-span"), func() {
 			resp, err := server.PublicGET(metadataPath)
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -88,7 +88,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 		})
 
 		// Scenario US1-S2 from specs/017-opentelemetry-support/spec.md
-		It("should emit a trace span for admin server requests with distinct server identification", func() {
+		It("should emit a trace span for admin server requests with distinct server identification", example("observability-and-audit.traces.admin-server"), func() {
 			resp, err := adminServer.AuthenticatedGET("/api/agents", fixtures.AdminPrincipal().String())
 			Expect(err).ToNot(HaveOccurred())
 			defer func() { _ = resp.Body.Close() }()
@@ -181,7 +181,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 
 	Context("when no telemetry config is present", func() {
 		// Scenario US3-S1 from specs/017-opentelemetry-support/spec.md
-		It("should start normally with telemetry disabled and no overhead", func() {
+		It("should start normally with telemetry disabled and no overhead", example("observability-and-audit.telemetry.off-by-default"), func() {
 			// Build a dedicated server with DefaultOAuth2Config (Telemetry.Enabled=false).
 			// This is distinct from the BeforeEach server which uses TelemetryEnabledConfig.
 			disabledStorage, err := storageFactory.NewTestStorage()
@@ -357,7 +357,7 @@ var _ = Describe("OpenTelemetry Instrumentation", func() {
 		})
 
 		// Scenario US4-S2 from specs/017-opentelemetry-support/spec.md
-		It("should continue serving requests normally with no latency impact", func() {
+		It("should continue serving requests normally with no latency impact", example("observability-and-audit.telemetry.collector-unreachable"), func() {
 			// Send multiple requests to verify continuous availability with an unreachable
 			// OTLP endpoint. The OTel SDK handles buffering and export retries internally.
 			for i := 0; i < 3; i++ {

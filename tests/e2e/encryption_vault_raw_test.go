@@ -66,7 +66,7 @@ var _ = Describe("Encryption Vault for OAuth Tokens - Environment Variable KEK M
 
 	Context("User Story 1: Envelope Encryption", func() {
 		// Scenario 1.1: Encrypt tokens with DEK bound to service context and wrapped KEK
-		It("encrypts OAuth tokens using DEK bound to service context and wrapped KEK", func() {
+		It("encrypts OAuth tokens using DEK bound to service context and wrapped KEK", example("storage-and-encryption.encryption.ciphertext"), func() {
 			// GIVEN a session with OAuth tokens and associated service_id context
 			plainAccessToken := "access_token_abc123"
 			plainRefreshToken := "refresh_token_xyz789"
@@ -86,7 +86,7 @@ var _ = Describe("Encryption Vault for OAuth Tokens - Environment Variable KEK M
 		})
 
 		// Scenario 1.2: Decrypt tokens by unwrapping DEK with KEK and verifying context
-		It("decrypts OAuth tokens by unwrapping DEK with KEK and verifying context", func() {
+		It("decrypts OAuth tokens by unwrapping DEK with KEK and verifying context", example("storage-and-encryption.encryption.round-trip"), func() {
 			// GIVEN tokens encrypted with service_id context
 			plainToken := "test-oauth2-token"
 			encryptionContext := map[string]string{"service_id": "oauth2"}
@@ -121,7 +121,7 @@ var _ = Describe("Encryption Vault for OAuth Tokens - Environment Variable KEK M
 		})
 
 		// Scenario 1.4: Fail securely when context verification fails with no plaintext fallback
-		It("fails securely when context verification fails with no plaintext fallback", func() {
+		It("fails securely when context verification fails with no plaintext fallback", example("storage-and-encryption.encryption.context-mismatch"), func() {
 			// GIVEN an encrypted token with valid context
 			plainToken := "oauth2-token-value"
 			validContext := map[string]string{"service_id": "oauth2"}
@@ -350,7 +350,7 @@ var _ = Describe("Encryption Vault for OAuth Tokens - Environment Variable KEK M
 		})
 
 		// Scenario 4.3: Persist token encryption across application restarts with same environment variable KEK
-		It("persists token encryption across application restarts with same environment variable KEK", func() {
+		It("persists token encryption across application restarts with same environment variable KEK", example("storage-and-encryption.encryption.restart-same-key"), func() {
 			// GIVEN a token is encrypted with environment variable KEK and context
 			plainToken := "persistent-token"
 			encryptionContext := map[string]string{"service_id": "oauth2"}
@@ -478,7 +478,7 @@ var _ = Describe("Encryption Vault for OAuth Tokens - Environment Variable KEK M
 		})
 
 		// Scenario 6.3: Prevent cross-service ciphertext reuse attacks via context verification
-		It("prevents cross-service ciphertext reuse attacks via context verification", func() {
+		It("prevents cross-service ciphertext reuse attacks via context verification", example("storage-and-encryption.encryption.cross-service"), func() {
 			// GIVEN tokens for different services stored in the database
 			oauthToken := "oauth2-token"
 

@@ -241,7 +241,7 @@ var _ = Describe("Local Mode Token Exchange Validation", func() {
 	}
 
 	// Scenario US7-S1 from specs/013-token-exchange/spec.md
-	It("should accept a locally-issued subject token with an external client assertion", func() {
+	It("should accept a locally-issued subject token with an external client assertion", example("token-exchange.subject.locally-issued"), func() {
 		resp := postTokenExchange(mintLocalSubjectToken(), tokenFixtures.ClientAssertion)
 		defer func() { _ = resp.Body.Close() }()
 
@@ -253,7 +253,7 @@ var _ = Describe("Local Mode Token Exchange Validation", func() {
 	})
 
 	// Scenario US7-S2 from specs/013-token-exchange/spec.md
-	It("should reject a locally-issued client assertion", func() {
+	It("should reject a locally-issued client assertion", example("token-exchange.gateway.local-assertion-rejected"), func() {
 		resp := postTokenExchange(mintLocalSubjectToken(), mintLocalSubjectToken())
 		defer func() { _ = resp.Body.Close() }()
 

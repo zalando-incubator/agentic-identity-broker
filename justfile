@@ -107,6 +107,43 @@ test-e2e-performance:
     @echo "Running backend E2E performance measurement..."
     @if command -v ginkgo > /dev/null; then ginkgo -v --procs=1 --label-filter="performance" ./tests/e2e/; else echo "Error: ginkgo is not installed. Install it with: go install github.com/onsi/ginkgo/v2/ginkgo@latest"; exit 1; fi
 
+# Check the living documentation in docs/specification/ against the tests bound to its examples.
+# Flags: "-strict" also requires Docker-backed examples. "-browser" also runs the browser suite (needs Playwright).
+living-docs *flags: web-build
+    #!/usr/bin/env bash
+    set -uo pipefail
+    command -v ginkgo > /dev/null || { echo "Error: ginkgo is not installed. Run: just install-tools" >&2; exit 1; }
+    out="{{justfile_directory()}}/test-results/living-docs"
+    rm -rf "$out" && mkdir -p "$out/evidence"
+    export LIVING_DOCS_EVIDENCE_DIR="$out/evidence"
+    filter='/^example:/' browser=false strict=false checker_flags=()
+    for flag in {{flags}}; do
+        case "$flag" in
+            -browser) browser=true ;;
+            -strict) strict=true; checker_flags+=("$flag") ;;
+            *) checker_flags+=("$flag") ;;
+        esac
+    done
+    # A failing run is not fatal here: a bound test that fails is recorded as failed, and a suite
+    # that cannot start leaves its examples unbound. The checker turns both into a failed check.
+    warn() { echo "living-docs: $1 exited with an error; the checker decides the result" >&2; }
+    ginkgo --succinct --procs={{GINKGO_BACKEND_PROCS}} --label-filter="$filter && !docker" ./tests/e2e/ || warn "backend suite"
+    if [ "$strict" = true ]; then
+        ginkgo --succinct --procs=1 --timeout=20m --label-filter="$filter && docker" ./tests/e2e/ || warn "backend suite, Docker scenarios"
+    fi
+    ginkgo --succinct --procs={{GINKGO_EXTPROC_PROCS}} --timeout=20m --label-filter="$filter" ./tests/e2e/extproc/ || warn "ExtProc suite"
+    if [ "$browser" = true ]; then
+        E2E_FRONTEND_MODE=built ginkgo --succinct --procs={{GINKGO_FRONTEND_PROCS}} --output-interceptor-mode=none --label-filter="$filter" ./tests/e2e/frontend/ || warn "browser suite"
+    else
+        # Select no scenario: the suite starts no browser and records its examples as not run.
+        ginkgo --succinct --procs=1 --output-interceptor-mode=none --label-filter="$filter && browser-suite-not-requested" ./tests/e2e/frontend/ || warn "browser suite"
+    fi
+    packages=$(grep -rl --include='*_test.go' 'evidence\.ForTest(' tests/integration internal cmd 2>/dev/null | xargs -r -n1 dirname | sort -u | sed 's#^#./#')
+    if [ -n "$packages" ]; then
+        go test -count=1 -tags=integration -p {{INTEGRATION_INFRA_PACKAGE_PROCS}} $packages > "$out/go-test.log" 2>&1 || { warn "go test (see $out/go-test.log)"; grep -E '^(--- FAIL|FAIL)' "$out/go-test.log" >&2 || true; }
+    fi
+    go run ./tools/livingdoc -evidence "$out/evidence" -report "$out/report.md" -status "$out/status.json" "${checker_flags[@]}" docs/specification/*.md
+
 # Run the backend E2E acceptance suite with coverage report
 test-e2e-backend-coverage: web-build
     @echo "Running backend E2E suite with coverage..."

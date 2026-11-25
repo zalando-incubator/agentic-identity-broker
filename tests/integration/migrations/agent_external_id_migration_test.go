@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -82,6 +83,7 @@ func externalIDRows(t *testing.T, f *MigrationTestFramework) string {
 func TestMigration046RejectsLegacyValuesAtomically(t *testing.T) {
 	for _, mode := range []string{"duplicates", "empty", "both", "bounded"} {
 		t.Run(mode, func(t *testing.T) {
+			evidence.ForTest(t, "storage-and-encryption.migrations.external-id-atomic")
 			f := externalIDMigrationFixture(t)
 			var ids []string
 			if mode != "empty" {

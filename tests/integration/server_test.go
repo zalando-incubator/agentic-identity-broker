@@ -15,10 +15,12 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	httpAdapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // TestServerStartup tests basic dual-server startup and health endpoints
 func TestServerStartup(t *testing.T) {
+	evidence.ForTest(t, "deployment.health.each-server")
 	// Create logger for tests
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
@@ -143,6 +145,7 @@ func TestServerStartup(t *testing.T) {
 
 // TestPortConnectivity tests IPv4 and IPv6 connectivity
 func TestPortConnectivity(t *testing.T) {
+	evidence.ForTest(t, "deployment.servers.bind-address")
 	// Create logger for tests
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
 

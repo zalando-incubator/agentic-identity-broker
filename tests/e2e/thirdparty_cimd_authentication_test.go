@@ -208,7 +208,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 		})
 
 		// US3-S4 from specs/046-cimd-upstream-client/spec.md
-		It("fails closed when the provider rejects its client assertion", Label("cimd-upstream-client"), func() {
+		It("fails closed when the provider rejects its client assertion", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.assertion-rejected"), func() {
 			upstream.WithTokenError("invalid_client")
 
 			response := completeConnect(enduserServer, principal, service.ID)
@@ -272,7 +272,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 			})
 
 			// US3-S5 from specs/046-cimd-upstream-client/spec.md
-			It("keeps public and static client behavior unchanged", Label("cimd-upstream-client"), func() {
+			It("keeps public and static client behavior unchanged", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.secret.connect-and-refresh"), func() {
 				response := completeConnect(enduserServer, principal, staticService.ID)
 				Expect(response.StatusCode).To(Equal(http.StatusFound))
 				Expect(response.Body.Close()).To(Succeed())
@@ -312,7 +312,7 @@ var _ = Describe("CIMD third-party client authentication", func() {
 		})
 
 		// US3-S6 from specs/046-cimd-upstream-client/spec.md
-		It("sends exactly one valid JWT-bearer assertion pair", Label("cimd-upstream-client"), func() {
+		It("sends exactly one valid JWT-bearer assertion pair", Label("cimd-upstream-client"), example("broker-credentials-at-third-party-services.cimd.assertion"), func() {
 			response := completeConnect(enduserServer, principal, service.ID)
 			Expect(response.StatusCode).To(Equal(http.StatusFound))
 			Expect(response.Body.Close()).To(Succeed())

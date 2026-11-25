@@ -671,7 +671,7 @@ var _ = Describe("Grant Observation Context", func() {
 		Entry("missing grant retains registered agent and service but no grant metadata", func(f *grantDiagnosticsFixture) {
 			Expect(f.Storage.UserGrants().Delete(context.Background(), f.Grant.ID)).To(Succeed())
 		}, http.StatusForbidden, "grant_missing", true, false),
-		Entry("successful exchange retains stored nanosecond timestamps and existing identity/provenance", func(f *grantDiagnosticsFixture) {
+		Entry("successful exchange retains stored nanosecond timestamps and existing identity/provenance", example("token-exchange.exchange.permission-sets"), func(f *grantDiagnosticsFixture) {
 			zone := time.FixedZone("grant-fixture", 2*60*60)
 			f.Grant.UpdatedAt = time.Date(2026, time.October, 7, 11, 12, 13, 123456789, zone)
 			validUntil := f.Grant.ValidUntil.In(zone)

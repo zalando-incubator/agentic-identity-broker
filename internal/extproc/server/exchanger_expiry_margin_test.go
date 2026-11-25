@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // Regression for specs/015-extproc-token-exchange/spec.md FR-011: a cache TTL taken verbatim
@@ -18,6 +19,7 @@ import (
 // started shortly before expiry reach the upstream with a dead token and the agent observes a
 // 401 even though the broker could have refreshed it.
 func TestTokenExchanger_Cache_StopsServingBeforeProviderExpiry(t *testing.T) {
+	evidence.ForTest(t, "gateway-token-exchange.cache.expiry-margin")
 	for _, tc := range []struct {
 		name   string
 		expiry int

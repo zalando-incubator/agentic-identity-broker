@@ -12,6 +12,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/fixtures"
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/e2e/helpers"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -333,6 +334,7 @@ func TestServiceCredentialSourceAPIOmittedFilesystemSelectorStillRejectsInlinePr
 }
 
 func TestServiceCredentialSourceAPITransitionsPreservePUTAndETagContracts(t *testing.T) {
+	evidence.ForTest(t, "third-party-service-registration.protected-resources.replace-needs-if-match")
 	journey, binding := newCredentialAPIJourney(t)
 	schemas := credentialAPISchemas(t)
 	require.NoError(t, os.Remove(binding["client_id_file"]))

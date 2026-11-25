@@ -233,7 +233,7 @@ var _ = Describe("Admin agent list filtered by external ID", func() {
 		})
 
 		// US3-S2 from specs/054-agent-external-id-filter/spec.md
-		It("should apply the canonical permission set reference to filtered results", func() {
+		It("should apply the canonical permission set reference to filtered results", example("resource-identifiers.read.prefer-canonical-list"), func() {
 			resp, err := server.DirectRequest(http.MethodGet, filterPath(missingExternalID), principal,
 				map[string]string{"Prefer": "reference-id=canonical"}, nil)
 			Expect(err).NotTo(HaveOccurred())

@@ -156,7 +156,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 		})
 
 		// US1-S2 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should choose hosted CIMD without registering another client", Label("protected-resource-discovery"), func() {
+		It("should choose hosted CIMD without registering another client", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.client-selection"), func() {
 			service := createService("")
 			Expect(service["discovery"]).To(HaveKeyWithValue("client_method", "cimd"))
 			Expect(service).To(HaveKeyWithValue("token_endpoint_auth_method", "private_key_jwt"))
@@ -369,7 +369,7 @@ var _ = Describe("Protected resource discovery with hosted CIMD", func() {
 
 	Context("when an administrator reads a discovered service", func() {
 		// US1-S10 from specs/050-oauth2-protected-resource-discovery/spec.md
-		It("should show the verified URL as its effective resource", Label("protected-resource-discovery"), func() {
+		It("should show the verified URL as its effective resource", Label("protected-resource-discovery"), example("third-party-service-registration.discovery.create"), func() {
 			created := createService("")
 			response, err := adminServer.AuthenticatedGET("/api/services/"+created["id"].(string), principal)
 			Expect(err).NotTo(HaveOccurred())

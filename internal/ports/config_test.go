@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 // validBaseOAuth2Config returns a minimally valid OAuth2AuthServerConfig for test setup.
@@ -34,6 +35,7 @@ func validLocalOAuth2Config() OAuth2AuthServerConfig {
 // TestOAuth2AuthServerConfig_Validate_OppositeModeRejection verifies that proxy mode rejects
 // local.* settings and local mode rejects proxy.* settings.
 func TestOAuth2AuthServerConfig_Validate_OppositeModeRejection(t *testing.T) {
+	evidence.ForTest(t, "authorization-server-modes.configuration.opposite-mode-fields")
 	t.Run("proxy mode with local.token_ttl set returns error", func(t *testing.T) {
 		cfg := validBaseOAuth2Config()
 		cfg.Local.TokenTTL = time.Hour
@@ -262,6 +264,7 @@ func TestOAuth2AuthServerConfig_Validate_LocalMode(t *testing.T) {
 
 // T035: Hybrid mode config validation.
 func TestOAuth2AuthServerConfig_Validate_HybridMode(t *testing.T) {
+	evidence.ForTest(t, "authorization-server-modes.configuration.hybrid-requires-both")
 	validHybridConfig := func() OAuth2AuthServerConfig {
 		return OAuth2AuthServerConfig{
 			Mode: "hybrid",
@@ -325,6 +328,7 @@ func TestOAuth2AuthServerConfig_Validate_HybridMode(t *testing.T) {
 
 // T036: issue_token deprecation error.
 func TestOAuth2AuthServerConfig_Validate_IssueTokenDeprecation(t *testing.T) {
+	evidence.ForTest(t, "authorization-server-modes.configuration.legacy-mode-name")
 	t.Run("issue_token mode returns deprecation error", func(t *testing.T) {
 		cfg := OAuth2AuthServerConfig{Mode: "issue_token"}
 		err := cfg.Validate()
@@ -336,6 +340,7 @@ func TestOAuth2AuthServerConfig_Validate_IssueTokenDeprecation(t *testing.T) {
 
 // T036a: empty mode defaults to proxy when other proxy fields are provided.
 func TestOAuth2AuthServerConfig_Validate_EmptyModeDefaultsToProxy(t *testing.T) {
+	evidence.ForTest(t, "authorization-server-modes.configuration.mode-required")
 	t.Run("empty mode with proxy fields returns error — mode is required", func(t *testing.T) {
 		cfg := OAuth2AuthServerConfig{
 			Mode: "",
@@ -353,6 +358,7 @@ func TestOAuth2AuthServerConfig_Validate_EmptyModeDefaultsToProxy(t *testing.T) 
 
 // T052-T053: CIMD gating by mode.
 func TestOAuth2AuthServerConfig_Validate_CIMDGating(t *testing.T) {
+	evidence.ForTest(t, "authorization-server-modes.configuration.cimd-gating")
 	t.Run("CIMD enabled in proxy mode — error", func(t *testing.T) {
 		cfg := validBaseOAuth2Config()
 		cfg.CIMD = CIMDConfig{Enabled: true}

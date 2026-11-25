@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/config"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,6 +72,7 @@ func requireYAMLSource(t *testing.T, relativePath string, sources []ports.Config
 // TestConfigurationPrecedence tests that configuration sources are applied in correct precedence order.
 // Order: CLI flags > Environment variables > YAML > Defaults
 func TestConfigurationPrecedence(t *testing.T) {
+	evidence.ForTest(t, "configuration.precedence.layers")
 	tests := []struct {
 		name          string
 		yamlContent   string
@@ -298,6 +300,7 @@ encryption:
 // that directory also contains partial fragments and overlays that are not
 // valid top-level broker configs.
 func TestStandaloneBrokerExamplesLoadWithBrokerLoader(t *testing.T) {
+	evidence.ForTest(t, "configuration.yaml.selected-by-environment")
 	tests := []struct {
 		name         string
 		relativePath string

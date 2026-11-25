@@ -80,7 +80,7 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 		})
 
 		// Scenario US2.7 from specs/030-hybrid-oauth-modes/spec.md
-		It("rejects LocalClient agent with unauthorized_client (FR-006, SR-002)", func() {
+		It("rejects LocalClient agent with unauthorized_client (FR-006, SR-002)", example("authorization-server-modes.proxy.rejects-local-agent"), func() {
 			now := time.Now()
 			localAgent := &storage.Agent{
 				ID:             id.NewAgentID(),
@@ -168,7 +168,7 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 		})
 
 		// Scenario US2.8 from specs/030-hybrid-oauth-modes/spec.md
-		It("rejects ProxyClient agent with unauthorized_client (FR-007, SR-002)", func() {
+		It("rejects ProxyClient agent with unauthorized_client (FR-007, SR-002)", example("authorization-server-modes.local.rejects-proxy-agent"), func() {
 			now := time.Now()
 			proxyAgent := &storage.Agent{
 				ID:             id.NewAgentID(),
@@ -194,7 +194,7 @@ var _ = Describe("SR-002: Mode Boundary Enforcement", func() {
 		})
 
 		// Token endpoint mode boundary enforcement (SR-002).
-		It("rejects ProxyClient agent at token endpoint with unauthorized_client (SR-002)", func() {
+		It("rejects ProxyClient agent at token endpoint with unauthorized_client (SR-002)", example("authorization-server-modes.local.rejects-proxy-agent-token"), func() {
 			now := time.Now()
 			proxyAgent := &storage.Agent{
 				ID:             id.NewAgentID(),
@@ -281,7 +281,7 @@ var _ = Describe("FR-005: CIMD Agent UUID Rejection", func() {
 	})
 
 	// Scenario 4 (US2) from specs/030-hybrid-oauth-modes/spec.md
-	It("rejects UUID-format client_id that resolves to a CIMD agent (FR-005)", func() {
+	It("rejects UUID-format client_id that resolves to a CIMD agent (FR-005)", example("authorization-server-modes.client-id.cimd-agent-by-uuid"), func() {
 		resp, err := server.AuthenticatedGET(
 			fmt.Sprintf("/oauth2/authorize?client_id=%s&redirect_uri=https://cimd-fr005.test.invalid/callback&response_type=code&state=xyz",
 				cimdAgent.ID.String()),

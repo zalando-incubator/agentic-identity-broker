@@ -104,7 +104,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 		// Given a successful token exchange response,
 		// When ExtProc responds to Envoy,
 		// Then the Authorization header is replaced with the exchanged token and the request continues.
-		It("should replace the Authorization header with the exchanged token", func() {
+		It("should replace the Authorization header with the exchanged token", example("gateway-token-exchange.exchange.authorization-replaced"), func() {
 			// Spec: US1 Scenario 2
 
 			// Given: Mock returns a specific exchanged token
@@ -167,7 +167,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 		// Given a valid exchanged token stored in cache,
 		// When a new request arrives with the same subject token and resource,
 		// Then ExtProc uses the cached token without calling token exchange.
-		It("should use cached token for same subject token and resource", func() {
+		It("should use cached token for same subject token and resource", example("gateway-token-exchange.cache.repeat-request"), func() {
 			// Spec: US2 Scenario 1
 
 			// Given: First request populates the cache
@@ -351,7 +351,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 		// Edge Case: no expiry in exchange response
 		// When the exchanged token response lacks an expiration time,
 		// ExtProc should use the default cache TTL (FR-012).
-		It("should use the default cache TTL when exchanged token lacks expiry information", func() {
+		It("should use the default cache TTL when exchanged token lacks expiry information", example("gateway-token-exchange.cache.unknown-expiry"), func() {
 			// Spec: Edge case — no expires_in in token exchange response
 
 			// Given: Token exchange returns a response WITHOUT expires_in
@@ -389,7 +389,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 			// Spec: US3 Scenario 3
 			// Given no client_credentials_scopes are configured, when the ExtProc service
 			// acquires a client assertion, then it sends scope=openid to the client_credentials endpoint.
-			It("should send scope=openid as the default to the client_credentials endpoint", func() {
+			It("should send scope=openid as the default to the client_credentials endpoint", example("gateway-token-exchange.broker-auth.default-scope"), func() {
 				// DefaultConfig has no ClientCredentialsScopes set.
 				// Start() already populated env with DefaultConfig, so just use env directly.
 
@@ -471,7 +471,7 @@ var _ = Describe("ExtProc Token Exchange", func() {
 				client, conn = env.NewExtProcClient()
 			})
 
-			It("should perform only one token exchange via singleflight for concurrent requests", func() {
+			It("should perform only one token exchange via singleflight for concurrent requests", example("gateway-token-exchange.cache.concurrent-requests"), func() {
 				// Spec: Edge case — singleflight refresh deduplication
 
 				// Given: Populate cache first with a short-lived token

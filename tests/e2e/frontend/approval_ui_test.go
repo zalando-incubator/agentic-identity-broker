@@ -78,7 +78,7 @@ var _ = Describe("Approval UI", func() {
 
 	// Scenario US1-S1 from specs/024-approval-api-ui/spec.md
 	// State 1: Pending Review
-	It("should display pending approval with user-facing context, session context, and persistence choices", func() {
+	It("should display pending approval with user-facing context, session context, and persistence choices", example("tool-approvals.page.pending-review"), func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "delete_files", time.Now().Add(10*time.Minute))
 		approval.AgentSessionID = stringPtr("session-ui-123")
@@ -148,7 +148,7 @@ var _ = Describe("Approval UI", func() {
 
 	// FR-016 from specs/024-approval-api-ui/spec.md
 	// State 2: Permanent Warning
-	It("should show permanent warning when Always allow is selected", func() {
+	It("should show permanent warning when Always allow is selected", example("tool-approvals.page.permanent-warning"), func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "send_email", time.Now().Add(10*time.Minute))
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
@@ -268,7 +268,7 @@ var _ = Describe("Approval UI", func() {
 
 	// Scenario US1-S6 from specs/024-approval-api-ui/spec.md
 	// State 6: Expired
-	It("should show expired error when approval has passed its TTL", func() {
+	It("should show expired error when approval has passed its TTL", example("tool-approvals.page.expired"), func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "stale_tool", time.Now().Add(-1*time.Minute))
 		_, err := GetTestStorage().ToolApprovals().Create(ctx, approval)
@@ -402,7 +402,7 @@ var _ = Describe("Approval UI", func() {
 		GetLogger().Info("Test passed: Error banner shown for already-actioned approval")
 	})
 	// US7-S6 from specs/024-approval-api-ui/spec.md
-	It("should edit and persist a permanent parameter scope", func() {
+	It("should edit and persist a permanent parameter scope", example("tool-approvals.page.parameter-scope"), func() {
 		principal := fixtures.DefaultPrincipal()
 		approval := newPendingApproval(id.Principal(principal.Email), testAgent.ID, "create_pull_request", time.Now().Add(10*time.Minute))
 		approval.Arguments = map[string]any{"repo": "acme/app", "title": "Fix bug"}

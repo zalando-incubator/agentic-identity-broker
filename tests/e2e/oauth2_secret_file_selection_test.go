@@ -221,7 +221,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 			})
 
 			// US1-S7 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US1-S7 creates and reads filesystem mode without inline fields or stored file values", func() {
+			It("US1-S7 creates and reads filesystem mode without inline fields or stored file values", example("broker-credentials-at-third-party-services.files.create"), func() {
 				expectRepresentation := func(body map[string]any) {
 					GinkgoHelper()
 					Expect(body).To(HaveKeyWithValue("credential_source", "filesystem"))
@@ -340,7 +340,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 			})
 
 			// US1-S8 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US1-S8 fails initiation and renewal before provider requests for absent and empty mappings", func() {
+			It("US1-S8 fails initiation and renewal before provider requests for absent and empty mappings", example("broker-credentials-at-third-party-services.files.unbound"), func() {
 				for _, fixture := range cases {
 					j, serviceID := fixture.journey, fixture.serviceID
 					before := record(j, serviceID)
@@ -383,7 +383,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 		})
 
 		// US1-S9 from specs/051-oauth2-secret-file-overrides/spec.md
-		It("US1-S9 rejects either supplied inline field, including null and empty values, without mutation", func() {
+		It("US1-S9 rejects either supplied inline field, including null and empty values, without mutation", example("broker-credentials-at-third-party-services.files.inline-rejected"), func() {
 			before := record(journey, serviceID)
 			beforeRepresentation := readService(journey, serviceID)
 			beforeFilesystem := record(journey, filesystemID)

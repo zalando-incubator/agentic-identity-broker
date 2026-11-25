@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	domconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -56,6 +57,7 @@ func TestTrustAnchorKeySourceEnvironmentVariables(t *testing.T) {
 	})
 
 	t.Run("an unresolvable reference in client-assertion jwks is reported without the document", func(t *testing.T) {
+		evidence.ForTest(t, "configuration.substitution.undefined")
 		setMinimalConfigEnv(t)
 		t.Setenv("TRUST_ANCHOR_TEST_UNSET", "")
 		require.NoError(t, os.Unsetenv("TRUST_ANCHOR_TEST_UNSET"))

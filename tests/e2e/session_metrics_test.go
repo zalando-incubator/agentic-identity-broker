@@ -243,7 +243,7 @@ var _ = Describe("Session Metrics", func() {
 
 		Describe("User Story 2: session health per service", func() {
 			// US2-S1 from specs/053-session-auto-refresh/spec.md
-			It("reports one value per service and series that sums to the stored sessions", func() {
+			It("reports one value per service and series that sums to the stored sessions", example("third-party-sessions.metrics.health-per-service"), func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
 				counts, _ := sessionHealthCounts(reader)
@@ -305,7 +305,7 @@ var _ = Describe("Session Metrics", func() {
 			})
 
 			// US2-S9 from specs/053-session-auto-refresh/spec.md
-			It("exports only service_id, expiry, and refreshable attributes", func() {
+			It("exports only service_id, expiry, and refreshable attributes", example("observability-and-audit.metrics.session-health-attributes"), func() {
 				seed(fixtures.HealthJourneySessions(time.Now(), calendar, tickets)...)
 				boot()
 				_, attributes := sessionHealthCounts(reader)
@@ -386,7 +386,7 @@ var _ = Describe("Session Metrics", func() {
 
 		Describe("User Story 4: refresh outcomes per service", func() {
 			// US4-S1 from specs/053-session-auto-refresh/spec.md
-			It("counts sweep refreshes and failures under their service and failure detail", func() {
+			It("counts sweep refreshes and failures under their service and failure detail", example("observability-and-audit.metrics.refresh-outcomes"), func() {
 				now := time.Now()
 				due := fixtures.GitHubSessionForPrincipal(fixtures.DefaultPrincipal().String())
 				soon := now.Add(2 * time.Minute)

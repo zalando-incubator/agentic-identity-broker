@@ -15,9 +15,11 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 func TestOPAAuthorizer_RealPolicyExportsOnlyAuditFields(t *testing.T) {
+	evidence.ForTest(t, "gateway-policy-authorization.audit.no-request-content")
 	{
 		t.Run("deny", func(t *testing.T) {
 			recorder := tracetest.NewSpanRecorder()

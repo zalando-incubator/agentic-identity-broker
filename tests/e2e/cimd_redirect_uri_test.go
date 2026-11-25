@@ -148,7 +148,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		})
 
 		// Scenario US1.4 from specs/028b-portless-registration/spec.md
-		It("should reject request with path mismatch even when host is loopback", func() {
+		It("should reject request with path mismatch even when host is loopback", example("client-registration-and-authentication.redirect.loopback-path"), func() {
 			resp, err := server.AuthenticatedGET(
 				authorizeURL(clientURL, "http://localhost:52341/other"),
 				fixtures.DefaultPrincipal().String(),
@@ -209,7 +209,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		})
 
 		// Scenario US2.1 from specs/028b-portless-registration/spec.md
-		It("should accept a different ephemeral port when explicit port :3000 is registered", func() {
+		It("should accept a different ephemeral port when explicit port :3000 is registered", example("client-registration-and-authentication.redirect.loopback-any-port"), func() {
 			completeAuthorizationCodeFlow(
 				server,
 				testStorage,
@@ -421,7 +421,7 @@ var _ = Describe("CIMD Redirect URI Matching — Portless Registration", func() 
 		})
 
 		// Scenario US3.2 from specs/028b-portless-registration/spec.md
-		It("should reject non-loopback request with a different port when explicit port :443 is registered", func() {
+		It("should reject non-loopback request with a different port when explicit port :443 is registered", example("client-registration-and-authentication.redirect.https-exact-port"), func() {
 			resp, err := server.AuthenticatedGET(
 				authorizeURL(clientURL, "https://"+fakeHost+":9000/callback"),
 				fixtures.DefaultPrincipal().String(),

@@ -10,6 +10,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tools/livingdoc/evidence"
 )
 
 func TestUserSessionRepository_ListByPrincipal(t *testing.T) {
@@ -53,6 +54,7 @@ func TestUserSessionRepository_ListByPrincipal_Empty(t *testing.T) {
 }
 
 func TestUserSessionRepository_ListByPrincipal_MultiplePrincipals(t *testing.T) {
+	evidence.ForTest(t, "third-party-sessions.sessions.per-user")
 	repo := memory.NewInMemoryUserSessionRepository()
 	ctx := context.Background()
 

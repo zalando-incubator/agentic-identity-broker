@@ -79,7 +79,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 
 	Describe("GitHub Flavor Registration", func() {
 		// Scenario 1.2 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
-		It("should accept explicit github flavor and create service successfully", func() {
+		It("should accept explicit github flavor and create service successfully", example("third-party-service-registration.service.create"), func() {
 			req := fixtures.ValidGitHubServiceRequest()
 
 			resp := createService(req)
@@ -129,7 +129,7 @@ var _ = Describe("OAuth2 Provider GitHub Flavor Support", func() {
 
 	Describe("GitHub Flavor Auto-Detection", func() {
 		// Scenario 1.1 from specs/018-oauth2-provider-flavors/spec.md (User Story 1)
-		It("should auto-detect github flavor when token endpoint contains github.com and flavor is omitted", func() {
+		It("should auto-detect github flavor when token endpoint contains github.com and flavor is omitted", example("third-party-service-registration.flavor.github-detected"), func() {
 			req := map[string]interface{}{
 				"display_name":  "Auto GitHub Service",
 				"client_id":     "Iv1.auto1234567890",

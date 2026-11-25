@@ -3,7 +3,14 @@
 // (when paired with `@ts-check`).
 // See: https://docusaurus.io/docs/api/docusaurus-config
 
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+
 import {themes as prismThemes} from 'prism-react-renderer';
+
+import livingDocs from './src/remark/living-docs.mjs';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 const siteUrl = process.env.DOCS_SITE_URL ?? 'https://agenticidentitybroker.dev';
 const baseUrl = process.env.DOCS_BASE_URL ?? '/';
@@ -98,6 +105,17 @@ const config = {
           sidebarPath: './sidebars.js',
           routeBasePath: 'docs',
           editUrl,
+          beforeDefaultRemarkPlugins: [
+            [
+              livingDocs,
+              {
+                repoRoot,
+                // Written by `just living-docs`. Without it, badges link to the scenario but show no verdict.
+                statusFile: path.join(repoRoot, 'test-results/living-docs/status.json'),
+                sourceUrl: (file, line) => `${githubRepoUrl}/blob/${githubBranch}/${file}#L${line}`,
+              },
+            ],
+          ],
           // Repository-internal maintainer references live under docs/ but are
           // not part of the public site. Keep the classic defaults and add them.
           exclude: [

@@ -35,7 +35,7 @@ var _ = Describe("Inline key sets for the client-assertion trust anchor", Label(
 		})
 
 		// US1-S1 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("starts and verifies without any request to the issuer host", func() {
+		It("starts and verifies without any request to the issuer host", example("trust-anchors.inline.no-outbound-request"), func() {
 			Expect(env.issuer.Count()).To(BeZero())
 
 			resp := env.exchange(env.mintLocalSubjectToken(), env.assertion(env.gateway, env.issuer.URL()))
@@ -45,7 +45,7 @@ var _ = Describe("Inline key sets for the client-assertion trust anchor", Label(
 		})
 
 		// US1-S2 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("exchanges a subject token when the client assertion is signed by an inline key", func() {
+		It("exchanges a subject token when the client assertion is signed by an inline key", example("trust-anchors.inline.accept"), func() {
 			resp := env.exchange(env.mintLocalSubjectToken(), env.assertion(env.gateway, env.issuer.URL()))
 
 			Expect(resp).To(matchers.HaveStatusCode(http.StatusOK))
@@ -53,7 +53,7 @@ var _ = Describe("Inline key sets for the client-assertion trust anchor", Label(
 		})
 
 		// US1-S3 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("rejects a client assertion signed by a key outside the inline set", func() {
+		It("rejects a client assertion signed by a key outside the inline set", example("trust-anchors.inline.reject-unknown-key"), func() {
 			rogue := helpers.NewLocalES256Key("rogue-2026-10")
 
 			resp := env.exchange(env.mintLocalSubjectToken(), env.assertion(rogue, env.issuer.URL()))
@@ -73,7 +73,7 @@ var _ = Describe("Inline key sets for the client-assertion trust anchor", Label(
 		})
 
 		// US1-S4 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("authenticates the gateway on POST /api/approvals with an inline-key X-Client-Assertion", func() {
+		It("authenticates the gateway on POST /api/approvals with an inline-key X-Client-Assertion", example("trust-anchors.inline.approval-authentication"), func() {
 			headers := helpers.ApprovalCreateHeaders(
 				env.upstreamSubjectToken(), env.assertion(env.gateway, env.upstream.URL()), env.agent.ID)
 
@@ -96,7 +96,7 @@ var _ = Describe("Inline key sets for the client-assertion trust anchor", Label(
 		})
 
 		// US1-S5 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("expects the upstream issuer, trusts only the inline keys for assertions, and keeps upstream keys for subject tokens", func() {
+		It("expects the upstream issuer, trusts only the inline keys for assertions, and keeps upstream keys for subject tokens", example("trust-anchors.inline.upstream-issuer"), func() {
 			subject := env.upstreamSubjectToken()
 
 			accepted := env.exchange(subject, env.assertion(env.gateway, env.upstream.URL()))
@@ -141,7 +141,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 
 	Context("startup validation", func() {
 		// US3-S1 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("fails when two key sources are set and names the trust anchor and both settings", func() {
+		It("fails when two key sources are set and names the trust anchor and both settings", example("trust-anchors.startup.one-source"), func() {
 			config := env.localConfig(ports.ClientAssertionTrustConfig{
 				IssuerURI: env.issuer.URL(),
 				JWKSURI:   env.issuer.URL() + "/keys",
@@ -154,7 +154,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		})
 
 		// US3-S2 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("fails for a bare JWK, empty or oversized sets, and missing or empty key identifiers", func() {
+		It("fails for a bare JWK, empty or oversized sets, and missing or empty key identifiers", example("trust-anchors.startup.malformed-key-set"), func() {
 			env.expectStartupFailure(inlineConfig(helpers.BareJWK(env.gateway)),
 				clientAssertionPath+".jwks: key set is not a valid JWK Set document")
 			env.expectStartupFailure(inlineConfig(helpers.EmptyKeySet()),
@@ -182,7 +182,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		})
 
 		// US3-S3 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("fails for private key material without echoing any key member", func() {
+		It("fails for private key material without echoing any key member", example("trust-anchors.startup.private-key"), func() {
 			rsaKey := helpers.NewLocalRS256Key("rsa-private")
 
 			ecErr := env.startupFailure(inlineConfig(helpers.PrivateKeySet(env.gateway)),
@@ -195,7 +195,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		})
 
 		// US3-S4 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("fails for a symmetric key and for an algorithm outside the approved asymmetric set", func() {
+		It("fails for a symmetric key and for an algorithm outside the approved asymmetric set", example("trust-anchors.startup.symmetric-key"), func() {
 			env.expectStartupFailure(inlineConfig(helpers.SymmetricKeySet("shared-1")),
 				clientAssertionPath+".jwks: key set contains a symmetric key; only public asymmetric keys are allowed")
 			env.expectStartupFailure(inlineConfig(helpers.UnapprovedAlgorithmKeySet(env.gateway, "HS256")),
@@ -203,7 +203,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		})
 
 		// US3-S5 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("fails for a duplicate key identifier and names it", func() {
+		It("fails for a duplicate key identifier and names it", example("trust-anchors.startup.duplicate-kid"), func() {
 			other := helpers.NewLocalES256Key("other")
 
 			env.expectStartupFailure(inlineConfig(helpers.DuplicateKIDKeySet(env.gateway, other, "dup-1")),
@@ -211,7 +211,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		})
 
 		// US3-S6 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("fails when an inline key set is combined with explicit refresh bounds", func() {
+		It("fails when an inline key set is combined with explicit refresh bounds", example("trust-anchors.startup.inline-refresh-bounds"), func() {
 			config := env.localConfig(ports.ClientAssertionTrustConfig{
 				IssuerURI:      env.issuer.URL(),
 				JWKS:           helpers.PublicKeySet(env.gateway),
@@ -224,7 +224,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 		})
 
 		// US3-S7 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("still rejects the broker's own issuer with an inline source and with a file source", func() {
+		It("still rejects the broker's own issuer with an inline source and with a file source", example("trust-anchors.startup.own-issuer"), func() {
 			const ownIssuerMessage = "must be an external identity provider, not the broker's own issuer"
 
 			env.expectStartupFailure(
@@ -244,7 +244,7 @@ var _ = Describe("Invalid or ambiguous key configuration for the client-assertio
 
 	Context("diagnostics for a valid inline key set", func() {
 		// US3-S8 from specs/052-inline-jwks-trust-anchors/spec.md
-		It("logs the source kind, key count, and key identifiers without key material", func() {
+		It("logs the source kind, key count, and key identifiers without key material", example("trust-anchors.startup.loaded-log"), func() {
 			set := helpers.PublicKeySet(env.gateway)
 			Expect(env.build(inlineConfig(set))).To(Succeed())
 

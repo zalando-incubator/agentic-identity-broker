@@ -52,7 +52,7 @@ var _ = Describe("CIMD Response Caching", func() {
 	// When a second authorization request arrives within the TTL,
 	// Then the CIMD server receives only one HTTP request (cache hit).
 	Describe("when two authorization requests arrive for the same client_id within TTL", func() {
-		It("fetches the CIMD document only once (cache hit on second request)", func() {
+		It("fetches the CIMD document only once (cache hit on second request)", example("client-registration-and-authentication.fetch.cache-hit"), func() {
 			const fakeHost = "cimd-e2e-cache.test.invalid"
 			var fetchCount int64
 
@@ -118,7 +118,7 @@ var _ = Describe("CIMD Response Caching", func() {
 	// When a second authorization request arrives immediately,
 	// Then the CIMD server is called again (failed fetch is not cached).
 	Describe("when the CIMD server returns a non-200 error response", func() {
-		It("does not cache failed fetches and retries on the next request", func() {
+		It("does not cache failed fetches and retries on the next request", example("client-registration-and-authentication.fetch.failure-not-cached"), func() {
 			const fakeHost = "cimd-e2e-cache-error.test.invalid"
 			var fetchCount int64
 

@@ -102,7 +102,7 @@ var _ = Describe("ExtProc Approval Journey", func() {
 	})
 
 	// US1-S2, US1-S5, US4-S2 and SC-002/SC-006 from specs/026-extproc-approval-sync/spec.md
-	It("creates, synchronizes, consumes, and re-elicits a one-time approval", func() {
+	It("creates, synchronizes, consumes, and re-elicits a one-time approval", example("tool-approvals.gateway.one-time-journey"), func() {
 		_, first := approvalJourneyToolCall(grpcClient, subjectToken)
 		approvalURL := approvalJourneyElicitationURL(first)
 		Expect(first).NotTo(extprochelpers.BeForwardedRequestBody())
@@ -137,7 +137,7 @@ var _ = Describe("ExtProc Approval Journey", func() {
 	})
 
 	// US4-S4 and FR-019 from specs/026-extproc-approval-sync/spec.md
-	It("stops forwarding after a permanent approval is revoked", func() {
+	It("stops forwarding after a permanent approval is revoked", example("tool-approvals.gateway.revoke-journey"), func() {
 		_, first := approvalJourneyToolCall(grpcClient, subjectToken)
 		_ = approvalJourneyElicitationURL(first)
 		sync := approvalJourneySync(broker, machineAuth.ClientAssertion)
