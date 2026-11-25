@@ -577,7 +577,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 - **SC-003**: 100% of the invalid credentials enumerated in User Story 2 are refused at write time with a reason, and none leaves a stored record.
 - **SC-004**: From the instant a stored JWT's stated expiry passes, every status read and listing reports the account as failed with the reason, with no operator action and no delay an administrator could observe.
 - **SC-005**: An administrator can tell from the summary alone, without access to the token, whether a rotation took place: every rotation changes the fingerprint, and identical tokens show identical fingerprints.
-- **SC-006**: Every creation, rotation, ceiling change and deletion can be attributed afterwards to the administrator who performed it and to the account and service it affected.
+- **SC-006**: Every creation, rotation, ceiling change, rename and deletion can be attributed afterwards to the administrator who performed it and to the account and service it affected.
 - **SC-007**: Existing behaviour is unchanged: every existing user-facing flow, admin operation and token exchange behaves identically with and without service accounts present.
 - **SC-008**: Both storage back-ends pass the same acceptance scenarios.
 
