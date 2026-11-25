@@ -210,7 +210,6 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 				"error_kind", encryption.ErrorKindKEKUnavailable,
 				"reason", "dynamodb_timeout",
 				"dynamodb_timeout", ks.dynamoDBTimeout,
-				"sdk_error", getErr,
 			)
 			return "", encryption.NewKEKUnavailableError(
 				fmt.Sprintf("getting active branch key %s timed out after configured dynamodb_timeout=%s", branchKeyID, ks.dynamoDBTimeout),
@@ -244,7 +243,6 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 				"error_kind", encryption.ErrorKindKEKUnavailable,
 				"reason", "dynamodb_timeout",
 				"dynamodb_timeout", ks.dynamoDBTimeout,
-				"sdk_error", err,
 			)
 			return "", encryption.NewKEKUnavailableError(
 				fmt.Sprintf("creating branch key %s timed out after configured dynamodb_timeout=%s", branchKeyID, ks.dynamoDBTimeout),
@@ -260,7 +258,6 @@ func (ks *KeyStore) CreateBranchKey(ctx context.Context, subject encryption.Bran
 			"subject_identifier", subject.Identifier(),
 			"error_kind", encryption.ErrorKindKEKUnavailable,
 			"reason", "create_key_failed",
-			"sdk_error", err,
 		)
 		return "", encryption.NewKEKUnavailableError(
 			fmt.Sprintf("failed to create branch key %s in DynamoDB: %v", branchKeyID, err),

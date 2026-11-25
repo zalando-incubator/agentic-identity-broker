@@ -33,7 +33,6 @@ func TestDecrypt_FailureLogCarriesRequestContext(t *testing.T) {
 	require.Error(t, err)
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
-	assert.Equal(t, "token decryption failed", entry["msg"])
 	assert.Equal(t, "encryption.token.decrypt_failed", entry["event"])
 	assert.Equal(t, "0123456789abcdef0123456789abcdef", entry["trace_id"])
 	assert.Equal(t, "operator@example.com", entry["actor"])

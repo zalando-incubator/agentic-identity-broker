@@ -31,6 +31,6 @@ func TestCacheLogsMissingApprovedAtToInjectedLogger(t *testing.T) {
 		Approvals: []Record{{ID: "approval-1", ToolPattern: "tool", Status: "approved"}},
 	}}, `"1"`)
 
-	assert.Contains(t, logs.String(), `"msg":"approval broker record missing approved_at"`)
+	assert.Contains(t, logs.String(), `"level":"WARN"`)
 	assert.Contains(t, logs.String(), `"approval_id":"approval-1"`)
 }

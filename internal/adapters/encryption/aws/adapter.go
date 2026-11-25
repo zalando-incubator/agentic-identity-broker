@@ -254,11 +254,8 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 	defer span.End()
 	span.SetAttributes(attribute.String("encryption.key_type", "aws_kms"))
 
-	if a == nil {
-		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
-	}
-	if a.encryptionClient == nil {
-		if a.logger != nil {
+	if a == nil || a.encryptionClient == nil {
+		if a != nil && a.logger != nil {
 			a.logger.ErrorContext(ctx, "token encryption failed",
 				"event", "encryption.token.encrypt_failed",
 				"operation", "encrypt",
@@ -330,7 +327,6 @@ func (a *AWSAdapter) Encrypt(ctx context.Context, plaintext []byte, encryptionCo
 					"error_kind", encryption.ErrorKindKEKUnavailable,
 					"reason", "dynamodb_timeout",
 					"dynamodb_timeout", a.dynamoDBTimeout,
-					"sdk_error", err,
 				)
 				return nil, encryption.NewKEKUnavailableError(
 					fmt.Sprintf("encryption timed out after configured dynamodb_timeout=%s", a.dynamoDBTimeout),
@@ -443,11 +439,8 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 	defer span.End()
 	span.SetAttributes(attribute.String("encryption.key_type", "aws_kms"))
 
-	if a == nil {
-		return nil, encryption.NewKEKUnavailableError("encryption adapter not properly initialized", nil)
-	}
-	if a.encryptionClient == nil {
-		if a.logger != nil {
+	if a == nil || a.encryptionClient == nil {
+		if a != nil && a.logger != nil {
 			a.logger.ErrorContext(ctx, "token decryption failed",
 				"event", "encryption.token.decrypt_failed",
 				"operation", "decrypt",
@@ -530,7 +523,6 @@ func (a *AWSAdapter) Decrypt(ctx context.Context, ciphertext []byte, encryptionC
 					"error_kind", encryption.ErrorKindKEKUnavailable,
 					"reason", "dynamodb_timeout",
 					"dynamodb_timeout", a.dynamoDBTimeout,
-					"sdk_error", err,
 				)
 				return nil, encryption.NewKEKUnavailableError(
 					fmt.Sprintf("decryption timed out after configured dynamodb_timeout=%s", a.dynamoDBTimeout),

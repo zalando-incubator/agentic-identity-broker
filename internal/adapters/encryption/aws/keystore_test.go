@@ -115,6 +115,7 @@ func TestCreateBranchKeyLogsNonTimeoutFailure(t *testing.T) {
 	assert.Contains(t, logBuf.String(), "\"service_id\":\"550e8400-e29b-41d4-a716-446655440000\"")
 	assert.Contains(t, logBuf.String(), "\"subject_kind\":\"service\"")
 	assert.Contains(t, logBuf.String(), "\"reason\":\"create_key_failed\"")
+	assert.NotContains(t, logBuf.String(), "ProvisionedThroughputExceededException")
 }
 
 func TestCreateBranchKeyAppliesTimeoutToGetActiveBranchKey(t *testing.T) {
