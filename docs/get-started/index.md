@@ -35,6 +35,9 @@ to loopback; Compose resolves it to the frontend. If your host resolver needs
 an explicit mapping, add `127.0.0.1 aib.localhost` to your hosts file
 (`/etc/hosts` on macOS/Linux or `C:\Windows\System32\drivers\etc\hosts` on Windows).
 
+The Compose OAuth2 issuer is `http://localhost:3000`. Its token endpoint uses the same host
+because Claude Code does not send credentials to an HTTP endpoint at `aib.localhost`.
+
 ## Step 1: Start the stack
 
 From the repository root:
@@ -143,7 +146,7 @@ Compare those provider claims with the **Access Token Claims** table on the same
 
 | Claim | Broker token sent by the agent | Provider token received by the MCP server |
 |---|---|---|
-| `iss` | `http://aib.localhost:3000` | `http://third-party-oauth2:9000` |
+| `iss` | `http://localhost:3000` | `http://third-party-oauth2:9000` |
 | `aud` | `token-exchange-broker` | `mcp-server` |
 | `azp` | The Local Research Agent UUID | `mock-oauth2-client-dev` |
 

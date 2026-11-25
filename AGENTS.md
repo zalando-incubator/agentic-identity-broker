@@ -215,6 +215,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
 | 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc grant-context resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
+| 20261125-155107 | `adrs/20261125-155107-compose-local-oauth-issuer.md` | Compose uses a loopback OAuth2 issuer while AuthZEN keeps its container-reachable PDP; partly supersedes `048-authzen-delegation-pip` §1. |
 
 ## Domain Glossary
 

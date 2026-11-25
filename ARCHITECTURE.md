@@ -385,6 +385,8 @@ Only this route clears the admin HTTP write deadline. The external caller contro
 | Local | `local` | Acts as a standalone OAuth2 authorization server, minting its own JWT access tokens signed with managed asymmetric keys. Metadata and JWKS expose only broker-managed local keys. |
 | Hybrid | `hybrid` | Combines proxy and local issuance. The builder wires both strategy sets at startup and dispatches per request based on the resolved agent `ClientType`. Metadata and JWKS expose the broker-hosted verification surface for both local and upstream tokens. |
 
+**Published issuer and PDP**: Local and hybrid modes use the configured local issuer for RFC 8414 endpoints and broker-issued JWTs. AuthZEN uses `server.enduser.public_url` for its PDP, independent of the local issuer. Compose sets the local issuer to `http://localhost:3000` for loopback OAuth2 clients and keeps the container-reachable PDP at `http://aib.localhost:3000` ([20261125-155107-compose-local-oauth-issuer](adrs/20261125-155107-compose-local-oauth-issuer.md)). Production deployments use HTTPS for both identifiers.
+
 **Strategy Pattern**: Handler behavior is fixed at startup by injected strategies rather than runtime mode checks:
 
 - `OAuth2AuthorizeHandler` always exists; the builder injects `proxyProceedStrategy`, `localProceedStrategy`, or `hybridProceedStrategy` based on the selected mode.
@@ -1366,6 +1368,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
 | [048-authzen-delegation-pip.md](adrs/048-authzen-delegation-pip.md) | Accepted | AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc grant-context resolver, and permit-bound token reuse |
 | [20261119-211813-service-icons-image-mode.md](adrs/20261119-211813-service-icons-image-mode.md) | Accepted | Exact service-owned SVG metadata, authenticated JSON, named upload checks, and browser image-mode isolation |
+| [20261125-155107-compose-local-oauth-issuer.md](adrs/20261125-155107-compose-local-oauth-issuer.md) | Accepted | Compose loopback OAuth2 issuer with a separate container-reachable AuthZEN PDP; partly supersedes `048-authzen-delegation-pip` §1 |
 
 ## 11. Project Identification
 
@@ -1760,7 +1763,7 @@ The conditional legacy public-JWK backfill reports whether this call wrote the t
 
 **ProxyModeConfig**: Configuration value object (`internal/ports/config.go`) carrying the upstream OAuth2 server coordinates required when `mode` is `proxy` or `hybrid`: `upstream_issuer_uri`, `upstream_authorize_endpoint`, `upstream_token_endpoint`, `upstream_timeout`, `upstream_jwks_min_refresh`, and `upstream_jwks_max_refresh`. The JWKS refresh bounds apply a floor and ceiling to the upstream JWKS cache cadence. All proxy fields are ignored (and must be empty) in `local` mode.
 
-**LocalModeConfig**: Configuration value object (`internal/ports/config.go`) carrying local token issuance parameters required when `mode` is `local` or `hybrid`: `token_ttl`, `token_claims_expression`, and optional `issuer_uri`. `issuer_uri` overrides the JWT `iss` claim independently of `server.enduser.public_url`, enabling deployments behind CDNs or reverse proxies. Defaults to `server.enduser.public_url` when absent. All fields are ignored (and must be empty) in `proxy` mode.
+**LocalModeConfig**: Configuration value object (`internal/ports/config.go`) carrying local token issuance parameters required when `mode` is `local` or `hybrid`: `token_ttl`, `token_claims_expression`, and optional `issuer_uri`. `issuer_uri` overrides the JWT `iss` claim and the RFC 8414 endpoint base independently of `server.enduser.public_url`, enabling deployments behind CDNs or reverse proxies. Defaults to `server.enduser.public_url` when absent. All fields are ignored (and must be empty) in `proxy` mode.
 
 **TokenGrantResolution**: Port-layer DTO (`internal/ports/oauth2.go`) returned by `OAuth2Service.ResolveForTokenGrant`. Carries `AgentID`, `ClientID` (nil for local/CIMD agents), and `ClientType` — the minimal scalar projection of `storage.Agent` that the token grant adapter layer needs. The domain entity itself (`storage.Agent`) is consumed by the service and never crosses the adapter boundary.
 

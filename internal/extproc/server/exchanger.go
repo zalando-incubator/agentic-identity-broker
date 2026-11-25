@@ -616,7 +616,9 @@ func (te *TokenExchanger) refreshClientAssertion() (resultErr error) {
 		return NewOperationError(NewErrorMetadata(OperationAssertionRefresh, KindConfiguration, DependencyLocal, 0, ""), errors.New("invalid client assertion type"))
 	}
 
-	te.assertion.Store(&assertionState{value: assertion, issuedAt: time.Now(), expiresAt: token.Expiry})
+	// JWT exp uses wall time; monotonic time can pause while a laptop sleeps.
+	expiresAt := token.Expiry.Round(0)
+	te.assertion.Store(&assertionState{value: assertion, issuedAt: time.Now(), expiresAt: expiresAt})
 
 	logDiagnostic(ctx, te.logger, slog.LevelDebug, "client assertion refreshed", SuccessDiagnostic(ExchangeUnknown))
 	return nil

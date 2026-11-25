@@ -9,6 +9,7 @@ Latest approval scope: F1/P1 replaces §10's issue-search link with existing pro
 **Supersedes in part**: ADR 028 (enabled-mode OPA input schema and request ordering only)
 **Extends**: ADR 033 (deferred-finalization seam), ADR 009 (caller CEL reuse), ADR 012 (separate cache; permit-bound token reuse in §10)
 **Feature**: `specs/054-authzen-delegation-pip`
+**Partly superseded by**: [20261125-155107-compose-local-oauth-issuer](20261125-155107-compose-local-oauth-issuer.md). In Compose, the OAuth2 issuer and RFC 8414 endpoint base can differ from the AuthZEN PDP. All other decisions remain.
 
 The maintainer approved all eleven approval items (API-1–API-6, ADR-1, D-1–D-4) with a 👍 on
 the pipeline approval comment for commit `a5042d5`. Under Principle II this ADR may still be
