@@ -241,7 +241,7 @@ and one `It` per scenario.
 | US3 Scenario 3.3 | same file | `It("fails startup for a missing or invalid bootstrap or no ready policy within the bound")` |
 | US3 Scenario 3.4 | same file | `It("keeps the last complete revision after a failed fetch or invalid update")` |
 | US3 Scenario 3.5 | same file | `It("rejects revisions that use http.send without contacting the destination")` |
-| US3 Scenario 3.6 | same file | `It("rejects updates that drop mandatory references and never reuses old field-binding evidence")` |
+| US3 Scenario 3.6 | same file | `It("rejects updates that drop mandatory references for any rule, keeps every rule on the previous revision, and never reuses old field-binding evidence")` |
 | US4 Scenario 4.1 | same file | `It("lets a later CEL rule authorize after an explicit OPA deny")` |
 | US4 Scenario 4.2 | same file | `It("keeps CEL-only deployments unchanged without OPA configuration")` |
 | US4 Scenario 4.3 | same file | `It("fails startup for unknown, conflicting, or missing engine configuration")` |

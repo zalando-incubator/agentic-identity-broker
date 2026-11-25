@@ -119,7 +119,7 @@ A broker operator selects Open Policy Agent (OPA) for an impersonation rule so t
 
 **Acceptance Scenarios**:
 
-1. **Scenario 1.1 — Approved agent**: **Given** a signed human-subject request with active delegation, a registered target agent, and governance data associating that agent with application `inventory-api`, **When** the configured policy allows the request, **Then** the broker issues its normal impersonation token with the existing subject, target agent, actor attribution, and requested permitted scope.
+1. **Scenario 1.1 — Approved agent**: **Given** a signed human-subject request with active delegation, a registered target agent, and governance data associating that agent with application `inventory-api`, **When** the configured policy allows the request, **Then** the broker issues its normal impersonation token with the existing subject, target agent, actor attribution, and requested permitted scope. The same outcome holds when the shared engine loads Journey 1's bundle from a local directory (`impersonation.opa.policy.path`) instead of a bundle server.
 2. **Scenario 1.2 — Governance denial**: **Given** valid credentials and active delegation but governance data marking the target agent unregistered, with no later rule permitting the request, **When** the client requests impersonation, **Then** the broker returns `403 access_denied` and issues no token.
 3. **Scenario 1.3 — Existing controls remain authoritative**: **Given** a policy that would allow the request but an otherwise-valid human request without active delegation, **When** the client requests impersonation, **Then** the broker returns the existing delegation denial and consent recovery URL, with no token.
 4. **Scenario 1.4 — Signed self-agent**: **Given** an OPA rule explicitly allowing agent subjects, a verified signed subject whose raw `sub` exactly equals the audience-selected target UUID, and no human delegation, **When** governance policy permits that agent, **Then** the broker issues its existing agent-subject token with target-derived `sub == agent_id`, preserves actor attribution, and creates no human grant or session.
@@ -150,7 +150,7 @@ An operator uses an OPA bootstrap configuration, comparable to ExtProc's existin
 
 **Acceptance Scenarios**:
 
-1. **Scenario 3.1 — Governance update**: **Given** an active revision allowing the target agent, **When** an updated revision marking it unregistered becomes active through the configured OPA bootstrap, **Then** the next otherwise-identical exchange is denied without a broker restart or rebuild.
+1. **Scenario 3.1 — Governance update**: **Given** an active revision allowing the target agent, **When** an updated revision marking it unregistered becomes active through the configured OPA bootstrap, **Then** the next otherwise-identical exchange is denied without a broker restart or rebuild. When the bundle service requires a bearer token read through `aib_bearer_token_file`, replacing the token file's contents between polls lets the next poll succeed without a restart; an emptied token file keeps the active revision.
 2. **Scenario 3.2 — Runtime failure**: **Given** a selected OPA rule followed by an otherwise-permissive rule, **When** its evaluation errors, times out, is cancelled, or returns an undefined or malformed decision, **Then** the broker maps the failure internally to terminal `server_error`, issues no token, and does not fall through. Connected error, timeout, undefined, and malformed-decision variants receive HTTP `500 server_error`. The client-disconnect cancellation variant observes client cancellation and a request-correlated canceled evaluation span, with no issuance or later-rule authorization; it does not assert receipt of an HTTP response.
 3. **Scenario 3.3 — Unusable startup configuration**: **Given** an OPA rule and a shared engine whose bootstrap file or local bundle is missing or invalid, or whose initial policy cannot become ready within the configured startup bound, **When** the operator starts the broker, **Then** startup fails with a credential-free diagnostic identifying the configuration field and, when a rule's admission failed, that rule; token requests are not served using an implicit allow policy.
 4. **Scenario 3.4 — Failed managed update**: **Given** active revision `r1` permitting Journey 1's approved agent, **When** a later bundle fetch fails or a replacement revision is invalid, **Then** `r1` remains active, the same validated request still succeeds under `r1`, and a fresh request with a different, unapproved agent is denied under `r1`; neither a partial revision nor a cached request decision is used. There is no broker-enforced maximum revision age.
@@ -251,6 +251,8 @@ bundles:
 The bundle supplies `company.impersonation.result` and governance data. Its business rule requires input type `impersonation`, method `POST`, path `/oauth2/token`, verified client `gateway-1`, actor `automation-worker`, and an approved registration keyed by `context.agent.external_id` (`inventory-agent`) assigned to
 `inventory-api`. The resolved broker Agent supplies this literal External ID; a missing ID is omitted, so the
 lookup is undefined and the example policy denies, without UUID fallback. UUID remains the target and minted identity. The decision is `{"action":"allow"}` only when all checks pass; otherwise it is `{"action":"deny"}`. Bundle authentication, update cadence, and data freshness are operator-owned bootstrap settings, not credentials embedded in this example. Policy-time network access, including `http.send`, is prohibited (Q1). An initial or updated revision using network-capable policy built-ins cannot activate; configured bundle retrieval is not a policy-time lookup.
+
+**Local variant (Scenario 1.1).** With `impersonation.opa.policy: {path: /opt/broker/policy/impersonation-bundle}` holding the same modules and `data.json` instead of `config_file`, Steps 2–4 produce the identical `200` response and decoded claims, and startup logs `oauth2_server.impersonation_policy.local_mode` once. Governance changes in this mode take effect only after a restart.
 
 **Step 2 — Client submits the exchange.** `SYNTHETIC_CLIENT_JWT`, `SYNTHETIC_ACTOR_JWT`, and `SYNTHETIC_SUBJECT_JWT` denote test-issued signed JWTs, not literal wire-valid tokens. All use decoded header `{"alg":"RS256","kid":"identity-test-key","typ":"JWT"}` and have these decoded claims:
 
@@ -419,6 +421,8 @@ No category claim, human grant, or human session is created. Q2 also supports th
 
 7. For Scenario 3.6, use Journey 4's valid unsigned or audience-absent rule and offer a revision removing the mandatory subject or opted-in role reference. The update is rejected before activation, leaving the last complete revision's outcomes in place. Separately update a valid unsigned rule to remove only `subject_token.email` or `subject_token.sub` field binding while retaining its mandatory subject reference: the new revision must not mint an unbound email or retain unverified-agent classification using the old revision's evidence. Repeat across a concurrent update to verify that each decision and its binding evidence use one revision. Finally, add Journey 1's signed rule as a second OPA rule on the same engine and offer a revision that breaks only the unsigned rule's mandatory reference: the revision is rejected for both rules, the rejection log names the unsigned rule, and the signed rule keeps the previous revision's outcomes.
 
+8. For the token-rotation variant of Scenario 3.1, the bundle server requires bearer token `T1`, read from `/var/run/secrets/opa-bundle/token`. The operator replaces the file's contents with `T2` and the server stops accepting `T1`; the next poll downloads `r2` without a restart, and the Step 2 request receives Journey 1's `403 access_denied` response. Emptying the file logs `oauth2_server.impersonation_policy.token_unavailable` and keeps `r2` active.
+
 **Observable result**: Activated governance updates change issuance decisions. Evaluation failures never become permission; bundle-update failures instead retain the last complete revision and its documented staleness risk. Policies cannot initiate network lookups or discard mandatory credential bindings through an update.
 
 ### Journey 3 — Migrate a rule while keeping CEL behavior (User Story 4, Scenarios 4.1–4.4)
@@ -543,7 +547,8 @@ No new persisted entity or aggregate is required.
 - **Impersonation Rule**: Existing ordered, self-contained authorization configuration; extended with a choice of policy engine, not a new token-exchange flow.
 - **Impersonation Policy Input**: Request-local, namespaced view of HTTP metadata and the existing credential/exchange context, with verified versus unverified provenance preserved.
 - **Impersonation Policy Decision**: Explicit allow or deny for one rule; a failure is distinct from deny.
-- **Policy/Data Revision**: A consistently activated managed policy and data snapshot; not a new broker database record.
+- **Impersonation OPA Engine**: The one OPA runtime shared by every OPA rule, loading managed bundles or a local bundle directory.
+- **Policy/Data Revision**: A consistently activated policy and data snapshot from managed bundles or a local bundle directory; not a new broker database record.
 
 No new persisted domain events are required. Existing credential-free impersonation decision auditing remains mandatory.
 
@@ -566,7 +571,7 @@ The diagram shows the authorized human path; explicit policy denial considers la
 
 ### Configuration Requirements
 
-The proposed keys below extend the broker's existing singular `oauth2_authorization_server.impersonation.rules[]` hierarchy. They do not configure the standalone ExtProc workload.
+The proposed keys below extend the broker's existing singular `oauth2_authorization_server.impersonation` block: its new `opa` engine block and its `rules[]`. They do not configure the standalone ExtProc workload.
 
 | Key | Type | Requirement and proposed default |
 | --- | --- | --- |
@@ -601,7 +606,7 @@ Approved configuration must be documented in `docs/configuration.md`, illustrate
 
 ### Key Entities
 
-Agent, UserGrant, Impersonation Rule, Impersonation Policy Input, Impersonation Policy Decision, and Policy/Data Revision are defined above. Planning must update the `ARCHITECTURE.md` glossary and authorization-boundary description for approved changes. No database migration or frontend change is expected; no UI wireframes are applicable.
+Agent, UserGrant, Impersonation Rule, Impersonation Policy Input, Impersonation Policy Decision, Impersonation OPA Engine, and Policy/Data Revision are defined above. Planning must update the `ARCHITECTURE.md` glossary and authorization-boundary description for approved changes. No database migration or frontend change is expected; no UI wireframes are applicable.
 
 ## Success Criteria *(mandatory)*
 
