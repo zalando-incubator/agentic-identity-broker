@@ -206,8 +206,9 @@ the server `google-drive-mcp`. agentgateway also gives access to decision models
 `https://broker.example.com`.
 
 All times are 2026-11-23 UTC. All identifiers, tokens, and probabilities are synthetic. The
-examples show fingerprints with eight characters. Real fingerprints are longer. The thresholds in
-the policy are examples. An evaluation must supply the real thresholds (R-16).
+examples show the first eight characters of each fingerprint. Real fingerprints have 64
+hexadecimal characters. In an HTTP body, `...` marks the shortened value. The thresholds in the
+policy are examples. An evaluation must supply the real thresholds (R-16).
 
 The decision request and its response use the Decisions shape that agentgateway documents. The
 wire encoding of the context is in `contracts/decision-request.md`. The section structure and the
@@ -669,7 +670,7 @@ Content-Type: application/json
       {"question": "addresses_assessor", "statement": "Contains text addressed to a reviewer", "state": "not_indicated"}
     ],
     "model": "jev-1.14.0",
-    "question_set": "qs-3f9a1c2e"
+    "question_set": "qs-3f9a1c2e..."
   }
 }
 
@@ -771,7 +772,7 @@ to a party outside the organization. With only the static description, she sees 
 file" at a fixed risk level. Olivia wrote five questions and one disclosure setting. She wrote
 nothing about this server or this tool.
 
-### Journey 2 — An internal reader share proceeds under a named rule (US4.1, US4.5)
+### Journey 2 — An internal reader share proceeds under a named rule (US1.2, US4.1, US4.5)
 
 **Step 1 — Configuration change (other values as in Journey 1)**
 
@@ -860,8 +861,67 @@ The policy returns:
 }
 ```
 
-The call proceeds, thus the system does not use the `approval_context`. In the recommendation
-mode, the call waits for Alice, and the page shows the routine notice with these findings (US1.2).
+The call proceeds, thus the system does not use the `approval_context`.
+
+Variant (US1.2): In the recommendation mode, the call waits for Alice. She opens the approval
+page, and the page shows the routine notice with these findings.
+
+State B — approval page with a routine assessment:
+
+![State B: approval page with a routine assessment](wireframes/journey-2-b-routine.svg)
+
+<details><summary>Wireloom source</summary>
+
+```wireloom
+window "Tool Approval Request":
+  header:
+    row:
+      text "Agentic Identity Broker" bold
+      spacer
+      text "alice@example.com" muted
+  panel:
+    text "Tool Approval Request" bold size=large
+    text "Review what the agent wants to do, then choose how long to allow it." muted
+  section "Request":
+    kv "Requested by" "Research Assistant"
+    row:
+      text "Risk"
+      chip "Medium"
+    kv "Action" "Share a Drive file"
+  section "Automated assessment" id="assessment":
+    text "Automated checks found no risk indicators." id="notice"
+    row:
+      chip "Not indicated"
+      text "Gives access or data to a party outside the organization"
+    row:
+      chip "Indicated"
+      text "Changes who can access a resource"
+    row:
+      chip "Not indicated"
+      text "Has an effect that cannot be undone"
+    row:
+      chip "Not indicated"
+      text "Contains text addressed to a reviewer"
+    text "Automated checks can be wrong. They do not replace your review." muted size=small
+  section "Technical details":
+    kv "Tool" "drive.share_file"
+    kv "file_id" "1Zx9QpL0aB3"
+    kv "role" "reader"
+    kv "grantee_domain" "example.com"
+    kv "transfer_ownership" "false"
+  section "How long should this be allowed?":
+    radio "Just this once" selected label-right group="persistence"
+    radio "For this session" label-right group="persistence"
+    radio "Always" label-right group="persistence"
+  row align=right:
+    button "Deny"
+    button "Approve" primary id="approve"
+
+annotation "Neutral styling.\nNot a success message." target="notice" position=right
+annotation "Alice reviews the details, then decides" target="approve" position=bottom
+```
+
+</details>
 
 The evaluation record contains the answering model, the question set fingerprint, and the tool
 context fingerprint. The system forwards the call to `google-drive-mcp`. The agent receives the
@@ -924,9 +984,9 @@ with this summary:
 
 **Step 3 — 11:30:30: Alice opens the approval page**
 
-State B — approval page without an assessment:
+State C — approval page without an assessment:
 
-![State B: approval page without an assessment](wireframes/journey-3-b-not-available.svg)
+![State C: approval page without an assessment](wireframes/journey-3-c-not-available.svg)
 
 <details><summary>Wireloom source</summary>
 
@@ -1020,8 +1080,18 @@ false approvals:              1 of 410 (0.24%, 95% upper bound 1.15%)
 missed automation:           43 of 230 (18.7%)
 incomplete assessments:       6 of 640
 
+cases:
+  share-external-editor    human         human_review         leaves_organization 0.99  changes_access 0.96  ...
+  share-internal-reader    automatic_ok  automatic_approval   internal_reversible_share  leaves_organization 0.01  ...
+  share-lookalike-domain   human         automatic_approval   internal_reversible_share  leaves_organization 0.02  ...
+  ...
+
 evaluation record written: evaluation-record.yaml
 ```
+
+The report has one line for each case: the identifier, the label, the outcome, the rule name if
+one applies, and each answer. This example shows three of the 640 lines, and `...` marks the
+values that it omits.
 
 **Step 4 — Olivia uses the report**
 
@@ -1044,7 +1114,7 @@ the server, and her model.
 - **FR-002**: The system MUST NOT send a model request for a call that the policy allows or denies without an assessment. The system MUST NOT send a model request for a call to which an existing approval or permanent denial applies.
 - **FR-003**: After an assessment attempt, the system MUST evaluate the policy again with the assessment as additional input. The policy result MUST be the only source of the final action.
 - **FR-004**: After an assessment, a policy result MUST be able to deny the call or keep it for human approval. Under FR-040 to FR-045, the result can also let the call proceed.
-- **FR-005**: The system MUST NOT send a question that asks whether to approve, allow, or deny a call. The system MUST NOT interpret an answer as an action (R-01, R-02).
+- **FR-005**: The system MUST NOT interpret an answer as an action. Only the policy result selects the action. The starter question set MUST NOT contain a question that asks whether to approve, allow, or deny a call. The authoring rules of FR-027 MUST prohibit such a question (R-01, R-02).
 - **FR-006**: Assessment is disabled by default. While assessment is disabled, the system MUST operate as it did before this feature.
 - **FR-007**: The system MUST send a maximum of one model request for each assessed call. A question MUST NOT depend on an earlier answer (R-08).
 - **FR-008**: This requirement applies to an assessed call that waits for human approval. If the same principal and agent send the identical call again, the system MUST give the same outcome. The system MUST NOT send a new model request before the pending approval expires.
@@ -1092,8 +1162,8 @@ The requirements for the context are:
 - **FR-025**: A yes/no question MUST have a question text, a criterion for yes, a criterion for no, and a display statement. An ordered-scale question MUST have a question text, a display statement, and a label and a description for each level (R-05).
 - **FR-026**: The question text, the criteria, and the level descriptions MUST be fixed catalog text. The system MUST NOT put call data, tool definitions, policy output, or other runtime values into them. The system MUST compose the question text for the model from the catalog fields in one fixed, documented sequence (R-13).
 - **FR-027**: The project MUST publish a starter question set and authoring rules. The rules MUST require that a higher value shows more risk: yes shows that the risk property is present, and the first scale level has the least risk. The rules MUST require one observable condition for each question, positive wording, and explicit boundary cases. The rules MUST require that the highest scale level includes "cannot be determined", and MUST prohibit arithmetic, counts, and date comparisons (R-04, R-05, R-07, R-09). The project MUST give one correct question and one incorrect question for each rule. The documentation MUST include an annotated organization description and question set.
-- **FR-028**: If a question lacks a required field or a question name is not unique, the system MUST reject the catalog at startup. The system MUST also reject a catalog in which a set or a scale is larger than its limits. It MUST reject a catalog in which a text contains a placeholder for runtime data, or the deployment-wide argument setting is missing. The error MUST name the question or the setting.
-- **FR-029**: The system MUST calculate a question set fingerprint from the organization section, the questions with their sequence, and the request framing. Each change to this content MUST change the fingerprint (R-06, R-20).
+- **FR-028**: If a question lacks a required field or a question name is not unique, the system MUST reject the catalog at startup. The system MUST also reject a catalog in which a set or a scale is larger than its limits. It MUST reject a catalog in which a question text, a criterion, a level label, or a level description contains a placeholder for runtime data or is longer than its limit. It MUST reject a catalog in which the deployment-wide argument setting is missing. The error MUST name the question or the setting.
+- **FR-029**: The system MUST calculate a question set fingerprint from the organization section, the questions with their sequence, and the request framing. The fingerprint includes each question field that the model receives. It does not include the display statement, because the system never sends the statement to the model. Each change to the included content MUST change the fingerprint (R-06, R-20).
 
 **Answers and policy input**
 
@@ -1107,8 +1177,8 @@ The requirements for the context are:
 
 - **FR-035**: A policy result that keeps the call for human approval MUST be able to contain a risk level, a recommendation, and a list of findings. The recommendation is `routine` or `attention`. A finding names a catalog question and one state: `indicated`, `not_indicated`, or `unclear`.
 - **FR-036**: The system MUST accept a recommendation and findings only if the assessment status is `complete`. For each other status, the pending approval MUST record that no assessment is available.
-- **FR-037**: The pending approval MUST store an assessment summary. The summary has the availability, the recommendation, the findings with the catalog statement of each, the answering model, and the question set fingerprint. The summary MUST NOT change after creation. The summary MUST NOT contain text from a tool definition.
-- **FR-038**: The approval page MUST show the recommendation as a fixed product text and each finding as its catalog statement with its state. The page MUST show the fixed notice "Automated checks can be wrong. They do not replace your review." The text for `attention` is "Automated checks found risk indicators. Review the details." The text for `routine` is "Automated checks found no risk indicators." The page MUST NOT show text from the model, probabilities, or scores.
+- **FR-037**: The pending approval MUST store an assessment summary. The summary has the summary status (`assessed` or `not_available`), the recommendation, the findings with the catalog statement of each, the answering model, and the question set fingerprint. The summary MUST NOT change after creation. The summary MUST NOT contain text from a tool definition.
+- **FR-038**: The approval page MUST show the recommendation as a fixed product text and each finding as its catalog statement with its state. The page MUST show the fixed notice "Automated checks can be wrong. They do not replace your review." The text for `attention` is "Automated checks found risk indicators. Review the details." The text for `routine` is "Automated checks found no risk indicators." If an assessed summary has no recommendation and no finding, the page MUST show "The automated assessment has no details for this request." The page MUST NOT show text from the model, probabilities, or scores.
 - **FR-039**: If assessment is enabled and no assessment is available, the approval page MUST show "No automated assessment was available for this request." All existing content and actions of the approval page MUST stay.
 
 **Automatic approval**
@@ -1126,7 +1196,7 @@ Conditions for automatic approval:
 
 - **FR-040**: Automatic approval MUST be disabled by default. It MUST require an explicit mode setting and an evaluation record. If the evaluation record does not name a tool, the system MUST NOT approve calls to that tool automatically.
 - **FR-041**: The system MUST let a call proceed without human approval only if all conditions in the table "Conditions for automatic approval" are true.
-- **FR-042**: If the policy result is `allow` and one condition of FR-041 is false, the system MUST use `approval_required` as the result.
+- **FR-042**: If the policy result is `allow` and one condition of FR-041 is false, the system MUST use `approval_required` as the result. The condition for a permanent denial is the exception. If a permanent denial applies, the system MUST deny the call (SR-003).
 - **FR-043**: A policy MUST NOT be able to disable a condition of FR-041.
 - **FR-044**: In recommendation mode, the system MUST record each call that satisfies all conditions of FR-041 apart from the mode. The system MUST keep each such call for human approval.
 - **FR-045**: A call that proceeds under FR-041 MUST NOT create an approval record and MUST NOT change an existing approval record.
@@ -1205,7 +1275,7 @@ erDiagram
         string status
     }
     AssessmentSummary {
-        string availability
+        string status
         string recommendation
         string answeringModel
         string questionSetFingerprint
@@ -1280,7 +1350,7 @@ sequenceDiagram
 - **Assessment**: The status and the answers for one call, with the answering model, the two fingerprints, and the context flags. It is evidence for the policy.
 - **Finding**: A question and a state that the policy selected for the approver. The page shows it as the statement of the operator.
 - **Recommendation**: The signal of the policy to the approver: `routine` or `attention`.
-- **Assessment Summary**: The availability, the recommendation, and the findings that a pending approval stores.
+- **Assessment Summary**: The summary status, the recommendation, and the findings that a pending approval stores. The summary status is `assessed` or `not_available`. It is different from the status of an Assessment.
 - **Automatic Approval**: The outcome in which a named policy rule lets a call proceed without a person.
 - **Evaluation Record**: The output of an evaluation run. It names the model, the Question Set Fingerprint, and the measured Tool Context Fingerprints. Automatic approval requires it.
 
@@ -1332,9 +1402,9 @@ servers:
 
 ### API Requirements *(if applicable - design before database)*
 
-- **API-001**: The request that creates a pending approval in `api/enduser/openapi.yaml` MUST accept an optional assessment summary. The summary has the availability, the recommendation, the findings, the answering model, and the question set fingerprint. A finding has a question name, a statement, and a state.
+- **API-001**: The request that creates a pending approval in `api/enduser/openapi.yaml` MUST accept an optional assessment summary. The summary has the summary status, the recommendation, the findings, the answering model, and the question set fingerprint. A finding has a question name, a statement, and a state.
 - **API-002**: The approval detail response MUST return the stored assessment summary.
-- **API-003**: The contract MUST set limits for the summary: a maximum of 16 findings, a maximum statement length, and plain text only. It MUST set fixed value sets for the availability, the recommendation, and the state. The broker MUST reject a summary that does not obey the limits.
+- **API-003**: The contract MUST set limits for the summary: a maximum of 16 findings, a maximum statement length, and plain text only. It MUST set fixed value sets for the summary status, the recommendation, and the state. The broker MUST reject a summary that does not obey the limits.
 - **API-004**: The summary fields MUST be optional. Existing clients and requests without an assessment stay valid.
 - **API-005**: The Admin API does not change. The broker gets no registry of MCP servers or tools.
 - **API-006**: Before implementation, the planning phase MUST define four contracts. These are the assessment input of the policy, the extended policy result, the request to the decision endpoint, and the Evaluation Record. The extended policy result has `auto_approval.rule`, `recommendation`, and `findings`. Stakeholders MUST approve the contracts (Principle X).
@@ -1348,13 +1418,13 @@ servers:
 
 ### Security Requirements *(mandatory for security-critical features)*
 
-- **SR-001**: Assessment and automatic approval MUST be disabled by default. Each one needs explicit configuration.
+- **SR-001**: The defaults of FR-006 and FR-040 are security controls. A release MUST NOT enable assessment or automatic approval without explicit configuration.
 - **SR-002**: For each failure, uncertainty, and inconsistency of an assessment, the system MUST keep the call for human approval or deny it. The system MUST NOT allow the call (Principle I).
 - **SR-003**: A model result MUST NOT change a policy denial into a different action. It MUST NOT override a permanent human denial. It MUST NOT grant an authority that the caller does not have.
 - **SR-004**: Argument names, argument values, and tool definition text are untrusted. The system MUST NOT use them to make questions, criteria, operator sections of the context, statements, or log field names.
 - **SR-005**: A tool definition is a claim of the server. The system MUST send it to the model only in the `tool` section. The system MUST NOT show it to the approver. Only the answers of the model and the policy can use it for a decision.
-- **SR-006**: Disclosure MUST be an explicit deployment-wide setting without a default. The system MUST NOT send a withheld value or an undescribed value to the decision endpoint with each possible setting.
-- **SR-007**: After it processes the call, the system MUST NOT keep the context or the raw model response. The system MUST NOT write them to logs, spans, or metrics.
+- **SR-006**: The disclosure rules of FR-016 to FR-018 are security controls. They MUST apply with each possible setting: the system MUST NOT send a withheld value or an undescribed value to the decision endpoint.
+- **SR-007**: After it processes the call, the system MUST NOT keep the context or the raw model response. FR-061 gives the rule for logs, spans, and metrics.
 - **SR-008**: Each assessment text that the approver sees MUST come from the catalog of the operator or from the product. The broker MUST validate the limits of API-003 and MUST show the text as plain text.
 - **SR-009**: The audit record of FR-060 MUST exist for each assessed call. If the system cannot write the record, the call MUST NOT proceed by automatic approval.
 - **SR-010**: The documentation MUST state the residual risks. A model can be wrong with high confidence. Injected argument text can move probabilities. A server can describe a tool falsely with a description that does not change. Thus, the operator must evaluate only tools of trusted servers and must write automatic approval rules only for these tools. Retention at a remote model provider is a deployment decision of the operator.
@@ -1382,7 +1452,7 @@ servers:
 - **Assessment Catalog**: The organization description, the question set, and the disclosure settings of the operator, with optional exceptions. It has no list of servers or tools.
 - **Tool Definition**: The listing of one tool by its server. The policy decision point knows it while the service operates.
 - **Assessment**: The evidence for one call: the status, the answers, the answering model, and the two fingerprints. It exists only while the system processes the call.
-- **Assessment Summary**: The data that a pending approval keeps for the approver: the availability, the recommendation, and the findings.
+- **Assessment Summary**: The data that a pending approval keeps for the approver: the summary status, the recommendation, and the findings.
 - **Evaluation Record**: The measured model, question set, and tool contexts. Automatic approval requires it.
 - **Evaluation Case**: A labeled tool call for the evaluation run.
 
@@ -1392,7 +1462,7 @@ servers:
 
 ### Measurable Outcomes
 
-- **SC-001**: While assessment is enabled, the approver sees call-specific findings or an explicit "no assessment" notice for 100% of pending approvals.
+- **SC-001**: While assessment is enabled, the approver sees an assessment section for 100% of pending approvals. The section shows call-specific findings, a recommendation notice, the "no details" text of FR-038, or the "no assessment" notice of FR-039.
 - **SC-002**: A test of a minimum of 20 different failure conditions of the model interaction lets 0 calls proceed without a person. The conditions include timeout, refusal, missing answer, malformed answer, out-of-range value, wrong model, changed tool definition, missing definition, undescribed argument, and oversized content.
 - **SC-003**: With the published example rule and thresholds, the external editor share from issue #206 waits for a person. Each adversarial variant in the starter case set also waits for a person.
 - **SC-004**: Calls that the policy allows or denies without an assessment get no delay and cause no model request.

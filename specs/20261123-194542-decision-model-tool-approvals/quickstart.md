@@ -10,7 +10,7 @@ the [plan](plan.md), the [data model](data-model.md), and the [contracts](contra
 - Docker or Podman for the agentgateway cases and the PostgreSQL cases. The agentgateway cases are in the ExtProc suite and use agentgateway `v1.7.0` (D-14).
 - No account at a model provider. All automated checks use test doubles for the decision endpoint.
 
-The verification of D-02, D-03, and D-07 is complete. The section "Verification record" in
+The verification of D-02, D-03, D-07, D-14, and D-15 is complete. The section "Verification record" in
 [research.md](research.md) gives the results. Two gates stay before behavior changes: the
 approved contracts and the Accepted ADR. The first implementation task changes the pinned
 agentgateway release to `v1.7.0` and runs the verification cases again.
@@ -53,6 +53,7 @@ Each journey uses the values of the journeys in [spec.md](spec.md).
 
 - Map each of the 28 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
 - Keep the screenshots of the three page states under `tests/e2e/screenshots/`.
+- The case for SC-003 and the signal test are in their own files. They are not acceptance scenarios.
 - Copy the verification record of [research.md](research.md) into the ADR. The cases in `tests/e2e/extproc/assessment_gateway_verification_test.go`, `tests/e2e/extproc/assessment_decision_endpoint_verification_test.go`, and `tests/e2e/approval_api_test.go` stay in the suites.
 - The automated checks prove the behavior of the system around the model. They do not measure a model. The false-approval rate of a real model comes only from an evaluation run of the operator with real cases.
 - The checks do not prove that a tool description from a server is true. This risk stays, and the documentation must state it (SR-010).

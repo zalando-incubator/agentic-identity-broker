@@ -31,8 +31,8 @@ The source is the catalog file. ExtProc reads it one time at startup (D-11).
 | `name` | string | Required. Pattern `^[a-z][a-z0-9_]{0,63}$`. |
 | `type` | `predicate` or `score` | Required. |
 | `instructions` | string | Required. Maximum 500 characters. No placeholder characters `{{` or `}}`. |
-| `yes_when`, `no_when` | string | Required for `predicate`. Not permitted for `score`. Maximum 500 characters each. |
-| `levels` | list of `label` and `description` | Required for `score`. 2 to 10 entries. Not permitted for `predicate`. |
+| `yes_when`, `no_when` | string | Required for `predicate`. Not permitted for `score`. Maximum 500 characters each. No placeholder characters `{{` or `}}`. |
+| `levels` | list of `label` and `description` | Required for `score`. 2 to 10 entries. Not permitted for `predicate`. Each `label` has 1 to 120 characters. Each `description` has 1 to 500 characters. No placeholder characters `{{` or `}}`. |
 | `statement` | string | Required. Maximum 120 characters. Plain text in one line. |
 
 ### Server Exception
@@ -88,9 +88,9 @@ Rules:
 | Field | Type | Rules |
 |---|---|---|
 | `status` | enumeration | One value of D-04. |
-| `model` | string | The `model` value of the response. Empty if no response arrived. |
-| `question_set` | fingerprint | From the catalog. |
-| `tool.written_by`, `tool.context` | string, fingerprint | Empty for `excluded` and `definition_missing`. |
+| `model` | string | The `model` value of the response. Absent in the policy input if no response arrived. |
+| `question_set` | fingerprint | From the catalog. It does not include `statement` (FR-029). |
+| `tool.written_by`, `tool.context` | string, fingerprint | Absent in the policy input for `excluded` and `definition_missing`. |
 | `evaluated` | boolean | True if the evaluation record contains the model, the question set, and the tool context. |
 | `context` | flags | `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count`. |
 | `answers.<name>.status` | enumeration | `answered`, `refused`, `missing`, or `invalid`. |
@@ -119,7 +119,7 @@ A value object on `ToolApproval`. It is optional and does not change after creat
 | `status` | `assessed` or `not_available` | Required. |
 | `recommendation` | `routine` or `attention` | Optional. Permitted only with `assessed`. |
 | `findings` | list of Finding | Optional. Maximum 16 entries. Permitted only with `assessed`. |
-| `model` | string | Optional. Maximum 100 characters. |
+| `model` | string | Optional. 1 to 100 characters. No control characters. |
 | `question_set` | string | Optional. Pattern `^qs-[0-9a-f]{64}$`. |
 
 ### Finding

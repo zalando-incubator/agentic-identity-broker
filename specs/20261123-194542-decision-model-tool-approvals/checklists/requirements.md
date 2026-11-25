@@ -41,7 +41,7 @@
   in plain language.
 - **Examples.** All YAML and JSON blocks parse. The OPA library of the repository evaluated the
   policy excerpt against the inputs of journeys 1 to 3. The results agree with the journeys. The
-  renderer made the two wireframes from their sources.
+  renderer made the three wireframes from their sources.
 - **No clarification markers.** The assumptions record each decision that has more than one
   possible answer. The section "Decisions to review first" lists the most important decisions.
 - **Revisions.** On 2026-11-23, three revisions changed the first draft. First, the model gets

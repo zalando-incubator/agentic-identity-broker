@@ -81,7 +81,8 @@ shows it between the request summary and the technical details (FE-001). The typ
 | `status: not_available` | "No automated assessment was available for this request." and "Review the technical details before you decide." |
 | `status: assessed`, `recommendation: attention` | "Automated checks found risk indicators. Review the details.", the findings, and the fixed notice |
 | `status: assessed`, `recommendation: routine` | "Automated checks found no risk indicators.", the findings, and the fixed notice |
-| `status: assessed`, no recommendation | The findings and the fixed notice. If the list of findings is empty, the page shows no section. |
+| `status: assessed`, no recommendation, one or more findings | The findings and the fixed notice |
+| `status: assessed`, no recommendation, no finding | "The automated assessment has no details for this request." and "Review the technical details before you decide." |
 
 The section heading is "Automated assessment". The fixed notice is "Automated checks can be
 wrong. They do not replace your review."
@@ -102,4 +103,7 @@ Rules for the component:
 - The section does not change the focus sequence or the sequence of the Approve and Deny actions.
 - The page shows no model name, no fingerprint, and no number from an answer.
 
-The wireframes are in [spec.md](../spec.md), Journey 1, step 9, and Journey 3, step 3.
+The page shows the section for each summary that is not absent or `null` (SC-001).
+
+The wireframes are in [spec.md](../spec.md): Journey 1, step 9, Journey 2, step 4, and Journey 3,
+step 3.

@@ -103,7 +103,11 @@ The canonical document for `question_set` has these values:
 - The format version `1`
 - The framing text and the name of the input encoding (`input_text`)
 - The `organization` section
-- Each question in catalog sequence, with all its fields.
+- Each question in catalog sequence, with each field that the model receives: `name`, `type`, `instructions`, `yes_when`, `no_when`, and `levels`.
+
+The document does not contain `statement`. The system never sends the statement to the model,
+thus a new statement cannot change an answer (FR-029). A change of approver text does not stop
+automatic approval.
 
 The canonical document for `tool_context` has these values:
 

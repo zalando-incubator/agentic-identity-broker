@@ -228,7 +228,11 @@ canonical form is the Go `encoding/json` output of a generic value: sorted keys,
 and numbers as the source wrote them.
 
 The examples in the spec show eight characters to keep them short. Real values have 64
-characters.
+characters. In an HTTP body of the spec, `...` marks the shortened value (Principle XIV).
+
+The canonical document of the question set contains only the fields that the model receives. It
+does not contain `statement`. A change of approver text thus does not stop automatic approval
+(FR-029, [contracts/decision-request.md](contracts/decision-request.md) section 5).
 
 **Rationale**: A short value lets a server search for a second definition with the same
 fingerprint. The standard library supplies the hash (Principle III).
@@ -393,6 +397,14 @@ standard output only. It does not find a failed export or a lost record after th
 `nil` (`internal/adapters/telemetry/slog_handler.go:33-42`). With `log.level: warn`, an INFO
 audit record thus disappears without an error. The level rule above closes this gap.
 
+**Relation to the logging standard**: Section 8 of `coding-standards/LOGGING.md` tells the
+author to write an audit record after the mutation commits. That rule is for a change of stored
+state. An automatic approval changes no stored state (FR-045). It is an authorization decision,
+and ExtProc writes the record at the time of the decision, as it writes the existing record "opa
+authorization decision". The design review of the observability contract must confirm this
+reading. If the reviewer decides that section 8 applies, the same pull request must amend the
+standard with a scoped rule for decision records (Principle XV).
+
 **Alternatives considered**: A durable audit store is not part of this repository. The logging
 standard defines audit records as structured logs.
 
@@ -505,3 +517,22 @@ the corrections.
 | An error in the second evaluation denies the call | A failure removes the decision of a person | D-05 |
 | No check for a permanent denial after the model request | A denial that arrives during the assessment has no priority | D-15 |
 | The evaluation run has no defined value for `evaluated` and needs the record file | A rule that requires `evaluated` is not measured, and the first run cannot start | D-08 |
+
+## Analysis corrections
+
+The cross-artifact analysis of 2026-11-25 found these gaps between the spec, the plan, the tasks,
+and the contracts. The documents contain the corrections.
+
+| Gap | Risk before the correction | Correction |
+|---|---|---|
+| FR-042 gave `approval_required` for each false condition, and the contract denied a call with a permanent denial | Two different results for one case | FR-042 has the exception. The call is denied (D-15). |
+| The report contract listed only the false approvals | US5.1 and FR-051 have no proof | The report has one line for each case ([contracts/assessment-files.md](contracts/assessment-files.md) section 7). |
+| An assessed summary without a recommendation and without a finding showed no section | The approver cannot see that an assessment ran (SC-001) | FR-038 has a fixed text for this state. |
+| The evaluation run needed the conditions of FR-041 before their task | The run cannot classify a false approval | The conditions are part of the foundations. |
+| No task wrote tests for spans, instruments, and the principal attribute before the telemetry | A signal with unsafe data passes review (Principles VIII, XV) | The tasks write the telemetry tests and the signal test first. |
+| SC-002 had no test | The 20 failure conditions are not proven in the `auto_approve` mode | One table-driven test in the US4 phase. |
+| The question set fingerprint included `statement` | A change of approver text stops automatic approval without a reason | D-06 |
+| The placeholder rule applied only to `instructions`, and level texts had no limit | A criterion with a placeholder passes the catalog check | [data-model.md](data-model.md) |
+| The policy input showed "empty" in one document and "absent" in a different document | A policy rule reads the wrong form | [data-model.md](data-model.md) uses "absent". |
+| The attribute `assessment_status` had two value sets | A query joins records of two services with different values | The broker attribute is `assessment_summary_status`. |
+

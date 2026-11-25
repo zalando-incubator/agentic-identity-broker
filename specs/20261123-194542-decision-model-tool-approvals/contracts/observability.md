@@ -105,4 +105,4 @@ Useful signals for an operator:
 ## Broker
 
 The broker adds no event and no instrument. The existing record "approval created" gets one
-attribute: `assessment_status` with the value `assessed`, `not_available`, or `none`.
+attribute: `assessment_summary_status` with the value `assessed`, `not_available`, or `none`.

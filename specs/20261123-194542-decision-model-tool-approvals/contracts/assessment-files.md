@@ -42,7 +42,9 @@ ExtProc rejects the file at startup in these cases:
 - An unknown key, or a missing required key
 - A file that is larger than 1 MiB
 - A question name that is not unique
-- A placeholder in a question text
+- A placeholder in a question text, a criterion, a level label, or a level description
+- A text that is longer than its limit in [data-model.md](../data-model.md)
+- A question set with more than 16 questions
 - A `predicate` question without `yes_when` or `no_when`
 - A `score` question with fewer than 2 levels or more than 10 levels.
 
@@ -120,6 +122,7 @@ The report is plain text. It contains these values (FR-051):
 - The number and the share of cases that skip a person
 - The number and the rate of false approvals, with the exact one-sided 95% upper bound
 - Each false approval with its case identifier, the rule name, and the answers
+- One line for each case with its identifier, its label, the outcome, the rule name if one applies, and the answers
 - The number and the share of `automatic_ok` cases that wait for a person
 - The number of assessments for each status that is not `complete`.
 
