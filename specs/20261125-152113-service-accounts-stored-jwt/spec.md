@@ -14,6 +14,34 @@
 
 This feature lets an administrator register, recognise, rotate, monitor and remove such a credential. It does not yet let any agent use it: agent grants and their bindings come with #472, and the token-exchange path that hands the stored token out comes with #473.
 
+## Clarifications
+
+### Session 2026-11-25
+
+Answered from the settled design. The source issue is named with each answer.
+
+- Q: Does the broker check the stored JWT's signature, issuer or audience when it is registered? → A: No. The JWT is opaque: stored encrypted, never verified, never rebuilt. Only its form is checked on write: compact JWS, `alg` not `none`, bounded size, not expired when it states an `exp` (#471 Requirements; #478 "Create payloads per kind"). Recorded in FR-008, FR-009, SR-004.
+- Q: Is a JWT without an `exp` accepted, and what is its status over time? → A: Accepted; it stays `ready`. Expiry is checked only "when it states an `exp`", and the account fails only "once a stated `exp` has passed" (#471). Recorded in FR-009, FR-014, User Story 1 Scenario 4, User Story 4 Scenario 3.
+- Q: Which values does `use` accept in this feature? → A: Only `access_token`, which is also the default. `assertion` with a `token_endpoint` is prepared in the shape and refused for now (#471; #478 "Decided or deferred": a stored JWT used as an assertion is deferred). Recorded in FR-007, User Story 2 Scenario 5.
+- Q: What does an update without a `credential` do? → A: It keeps the stored credential; the ceiling can be changed. Only "a `PUT` carrying a new `credential` rotates it in place" (#478 "What an administrator does" and "Create payloads per kind"). Recorded in FR-017, FR-018.
+- Q: Is the delete refusal for a bound account part of this feature? → A: The rule and its conflict response are defined here; enforcement starts when agent grants exist (#471: "enforced once the agent-grants issue lands"). Recorded in FR-020, User Story 5 Scenario 3.
+- Q: Can the administrator set whether an account can narrow? → A: No. Narrowing is "a fact about the provider, not a setting" and is derived as none for a stored JWT (#478 "Service accounts belong to services"; #471). Recorded in FR-003.
+- Q: Under which encryption context is the credential stored? → A: The owning service's `service_id` context (#471 Requirements). Recorded in SR-001.
+- Q: May values read from the stored JWT drive any decision? → A: No. They are "for display and status only, never for an authorization decision" (#478; #471). Recorded in FR-013.
+- Q: Which service does an account for internal MCPs attach to, and how many accounts may a service hold? → A: The same service record users hold sessions with; a service may hold several accounts, and one per agent is expected where the downstream service must see which agent called (#478 "Internal MCPs on the company platform"; #471). Recorded in FR-001 and Assumptions.
+- Q: Does the broker renew or remind about an expiring stored JWT? → A: No. Renewal is outside the broker; whoever issued the JWT replaces it through the admin API (#471 Assumptions; #478 Trade-offs). Recorded in Assumptions.
+- Q: Do the two automated comments on #471 about a `broker_issued` audience default apply? → A: No. That kind was removed from the design; #478 decides that the broker signs no tokens for downstream services. Recorded in Out of Scope.
+
+### Open questions
+
+Issues #471 and #478 do not decide the following points. Each carries a recommendation, which is not maintainer approval. The matching `[NEEDS CLARIFICATION]` markers stay in the spec until the maintainer answers.
+
+- **Q1 — Is `If-Match` required, optional or unsupported on update and delete of a service account?** #478 says responses carry "a strong ETag" and does not say how it is used. *Recommended*: optional. When supplied and stale the broker answers `412`; without it the last writer wins. This matches how service updates treat `If-Match` outside protected-resource replacement and keeps scripted rotation a single call. Alternative: required (`428` when missing), which protects a rotation from silently overwriting a concurrent ceiling change at the cost of a read before every rotation. Affects the Edge Cases and FR-019.
+- **Q2 — What happens when an administrator deletes a service that still has service accounts?** *Recommended*: refuse with `409` until the accounts are removed, as the broker already does for services that grants reference, so stored machine credentials are never erased as a side effect. Alternative: remove the accounts with the service, as protected resources are. Affects the Edge Cases and DB-002.
+- **Q3 — Is there a read of a single service account (`GET .../service-accounts/{service-account-id}`)?** #478's resource table lists only create, list, update, delete and status, yet its bootstrap section mentions "a `GET` on the service account". *Recommended*: yes, add it, returning the same representation as the list with the ETag header, so a client can fetch the ETag without creating or changing anything. Affects FR-016 and API-001.
+- **Q4 — What is the size limit for a stored JWT?** #471 says "bounded size", #478 "stays under a size limit". *Recommended*: 8192 bytes for the compact serialization, fixed in the API contract and not configurable. The token is later sent as a bearer header, where common proxy limits sit at 8 KiB. Affects FR-009 and User Story 2 Scenario 4.
+- **Q5 — May `canonical_id` change after creation?** #478 calls it a "stable admin-chosen identifier". *Recommended*: fixed at creation; an update that states a different value is refused with `400`, and one that omits it keeps it. A stable name keeps later grant bindings and audit trails readable. Alternative: renamable with a uniqueness check, as for services. Affects FR-005.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Register a ready-signed JWT as a service account (Priority: P1)
