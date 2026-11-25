@@ -13,7 +13,7 @@ Agentgateway authenticates to the broker with `private_key_jwt`. It signs each c
 assertion with a key that it holds locally. The broker verifies the assertion against an
 inline key set. No service has to publish the gateway's public key.
 
-This guide is tested with agentgateway v1.5.0.
+This guide uses Agentgateway v1.7.0.
 
 ## Choose the policy or the ExtProc sidecar
 

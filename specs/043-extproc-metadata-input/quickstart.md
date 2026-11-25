@@ -91,8 +91,8 @@ just test-e2e-extproc
 ginkgo -v --focus "Metadata Input" ./tests/e2e/extproc/
 ```
 
-Docker-backed scenarios skip automatically when Docker is unavailable. They pin
-`cr.agentgateway.dev/agentgateway:v1.5.0`; override with `AGENTGATEWAY_IMAGE`.
+Docker-backed scenarios skip automatically when Docker is unavailable. The default image is
+`cr.agentgateway.dev/agentgateway:v1.7.0`. To use a different image, set `AGENTGATEWAY_IMAGE`.
 
 ## Key Implementation Files
 

@@ -341,7 +341,7 @@ jobs:
         run: just install-tools
       - name: Pre-pull agentgateway E2E images
         run: |
-          docker pull cr.agentgateway.dev/agentgateway:v1.5.0
+          docker pull cr.agentgateway.dev/agentgateway:v1.7.0
           docker pull testcontainers/sshd:1.4.0
           docker pull testcontainers/ryuk:0.14.0
       - name: ExtProc E2E suite with JUnit
