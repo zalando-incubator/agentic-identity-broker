@@ -36,7 +36,7 @@ The requirements refer to its findings as `R-01` to `R-20`.
 ### User Story 1 - See a Factual Assessment of the Specific Call (Priority: P1)
 
 Alice gets an approval request for a tool call. Today, she sees a description and a risk level.
-These two values are the same for each call of that tool.
+Typical policies set these two values per tool, so they are the same for each call.
 
 With this feature, she sees the effect of this call. The page shows a short list of statements
 that the operator wrote. Each statement has a state: indicated, not indicated, or unclear. The
@@ -100,7 +100,8 @@ received.
 ### User Story 3 - Keep the Human Decision When the Assessment Fails (Priority: P1)
 
 Sometimes the model does not answer in time, refuses a question, returns malformed data, or is
-not available. In each case, the call becomes a pending approval for a person, as it is today.
+not available. In each case, the call gets the outcome it has today: a pending approval, or a
+denial if the broker cannot store the call.
 The approval page states that no automated assessment was available. The words are neutral and do
 not tell the person that the call is safe.
 
@@ -171,7 +172,7 @@ that the report and the evaluation record are correct.
 
 1. **Given** a case file with labeled tool calls and the tool listings of the target servers, **When** Olivia starts the evaluation run, **Then** the run calls no tool and creates no approval. The report gives the outcome and the answers for each case. The report gives the share of calls that skip a person. It gives the number and the rate of false approvals with a 95% upper bound.
 2. **Given** the same run, **When** the run completes, **Then** it writes an evaluation record. The record names the answering model, the question set fingerprint, and the tool context fingerprint of each tool in the cases.
-3. **Given** the starter case set, in which the external editor share and its adversarial variants have the label `human`, **When** the test double of the model answers "harmless" for one of these cases, **Then** the report lists that case as a false approval. The report names the rule that approved the case.
+3. **Given** the starter case set, in which the external shares and their adversarial variants have the label `human`, **When** the test double of the model answers "harmless" for a `human` case with the role `reader`, for example the look-alike domain share, **Then** the report lists that case as a false approval. The report names the rule that approved the case. The external editor share is not a false approval with each answer, because the example rule accepts only the role `reader`.
 
 ---
 
@@ -181,7 +182,10 @@ that the report and the evaluation record are correct.
 - **A server changes a tool definition after the evaluation.** The tool context fingerprint changes. Automatic approval stops for that tool until a new evaluation record names the new fingerprint. Recommendations continue with the new definition.
 - **The instance saw no tool listing after it started.** The instance knows no definition. Calls wait for a person without an assessment until a listing passes through the gateway.
 - **Two listings from one server describe the same tool differently.** The latest listing applies. Automatic approval applies only while the fingerprint is in the evaluation record.
-- **A tool lists no input schema, or a schema without described properties.** All arguments are undescribed, and the call waits for a person.
+- **A tool lists no input schema, or a schema without described properties.** Each argument of a call is undescribed, and a call with one or more arguments waits for a person. A call without arguments has no undescribed argument. The conditions of FR-041 apply to it as to each other call.
+- **A listing does not contain a description, an input schema, or annotations for a tool.** The feature requires only the tool name. The `tool` section does not contain an absent field, and the system adds no default value.
+- **Two target servers on different routes list a tool with the same name.** Approvals identify a call by the tool name without the target server, as before this feature. The second call can thus get the pending approval of the first call with its summary (FR-008, SR-010). Automatic approval is not affected, because the evaluation record names the target server.
+- **The second policy evaluation has an error or a timeout.** The system uses the first result, and the call waits for a person. A denial that the policy returns stays a denial.
 - **A tool definition or the full context is larger than the size limit.** The system sends no model request. The status is `context_too_large`, and the call waits for a person.
 - **The agent sends many calls with different arguments.** Each call is a new assessment. Each call that does not satisfy a rule becomes a pending approval. The existing limits for pending approvals and for the creation rate apply.
 - **An argument value is too large or has too many levels.** The system withholds the value, and the context reports the argument as oversized. Automatic approval is not possible for the call.
@@ -192,9 +196,9 @@ that the report and the evaluation record are correct.
 - **The policy denies the call after the assessment.** The system denies the call, as for each policy denial. A policy can use an answer to add a restriction.
 - **The broker is not available at the time of the pending approval.** The system denies the call, as before this feature.
 - **Batched MCP requests and requests that are not MCP.** The system does not assess them. The current behavior applies.
-- **A decision for the call arrives during the assessment.** If the system knows a permanent denial at the time that it applies the result, the denial has priority.
+- **A decision for the call arrives during the assessment.** If the call can proceed automatically and the system knows a permanent denial at that time, the system denies the call. A call that waits for a person keeps the behavior of today: the approval state of the last read applies, and no call proceeds without that person.
 - **A required catalog or evaluation record is missing, not readable, or invalid.** Startup fails.
-- **The model alias moves to a new release.** The response names a model that is not in the evaluation record. Automatic approval stops until the operator evaluates the new model.
+- **The model alias moves to a new release.** If the response names the new model, that model is not in the evaluation record. Automatic approval stops until the operator evaluates the new model. If the endpoint returns the alias of the request, the system cannot find the change (SR-010).
 
 ## Concrete Example Journeys *(mandatory)*
 
@@ -318,6 +322,21 @@ package aib.extproc.authz
 import rego.v1
 
 default result := {"action": "deny", "reasons": ["tool is not permitted"]}
+
+# The session setup and the tool listing need no approval. Without these rules, the default
+# denies `tools/list`, and the system learns no tool definition (step 4).
+lifecycle if {
+	input.type == "mcp_method"
+	input.mcp.method in {"initialize", "ping", "notifications/initialized", "tools/list"}
+}
+
+lifecycle if {
+	input.type == "mcp_headers_only"
+	input.attributes.request.http.method == "GET"
+	input.attributes.request.http.path == "/mcp"
+}
+
+result := {"action": "allow"} if lifecycle
 
 is_share if {
 	input.type == "mcp_tool_call"
@@ -649,6 +668,7 @@ Content-Type: application/json
 {
   "metadata": {
     "mcp_session_id": "0f8b6c1e-2d4a-4b7e-9c3f-5a6b7c8d9e0f",
+    "agent_session_id": "0f8b6c1e-2d4a-4b7e-9c3f-5a6b7c8d9e0f",
     "tool_invocation_id": "7",
     "description": "Share a Drive file"
   },
@@ -1115,9 +1135,9 @@ the server, and her model.
 - **FR-003**: After an assessment attempt, the system MUST evaluate the policy again with the assessment as additional input. The policy result MUST be the only source of the final action.
 - **FR-004**: After an assessment, a policy result MUST be able to deny the call or keep it for human approval. Under FR-040 to FR-045, the result can also let the call proceed.
 - **FR-005**: The system MUST NOT interpret an answer as an action. Only the policy result selects the action. The starter question set MUST NOT contain a question that asks whether to approve, allow, or deny a call. The authoring rules of FR-027 MUST prohibit such a question (R-01, R-02).
-- **FR-006**: Assessment is disabled by default. While assessment is disabled, the system MUST operate as it did before this feature.
+- **FR-006**: Assessment is disabled by default. While assessment is disabled, the system MUST operate as it did before this feature. One exception applies after an operator disables assessment: an approval that has a stored summary still shows that summary.
 - **FR-007**: The system MUST send a maximum of one model request for each assessed call. A question MUST NOT depend on an earlier answer (R-08).
-- **FR-008**: This requirement applies to an assessed call that waits for human approval. If the same principal and agent send the identical call again, the system MUST give the same outcome. The system MUST NOT send a new model request before the pending approval expires.
+- **FR-008**: This requirement applies to an assessed call that waits for human approval. If the same principal and agent send the identical call again, the system MUST give the same outcome. The system MUST NOT send a new model request before the pending approval expires. Two calls are identical if they have the same principal, agent, and tool name, and the same hash of the canonical arguments. Number spellings such as `1`, `1.0`, and `1e0` give one hash. The target server is not part of the comparison, as for existing approvals.
 
 **Assessment context (the data that the model receives)**
 
@@ -1143,12 +1163,12 @@ The requirements for the context are:
 
 - **FR-010**: The context MUST be a structured document with exactly these sections: `organization`, `server`, `tool`, and `call` (R-12).
 - **FR-011**: The `organization` section MUST contain only text that the operator wrote in the catalog. The `server` section MUST contain the target server name. It can also contain a server description from an optional exception.
-- **FR-012**: The `tool` section MUST contain the tool definition that the target server listed. This definition has the name, the description, the annotations, and the schema entry of each supplied argument. The section MUST name its author. It MUST NOT contain definitions of other tools (R-10, R-11).
+- **FR-012**: The `tool` section MUST contain the tool definition that the target server listed. This definition has the name, the description, the annotations, and the schema entry of each supplied argument. The section MUST name its author. It MUST NOT contain definitions of other tools (R-10, R-11). The feature requires only the tool name from a listing. A field that the listing does not contain MUST be absent in the section, and the system MUST NOT add a default value.
 - **FR-013**: The system MUST learn a tool definition only from a tool listing that the target server returned through the gateway. The system MUST keep the latest definition for each target server and tool name. The system MUST NOT accept a definition from a tool call, from the agent, or from the policy.
 - **FR-014**: An optional exception in the catalog can replace the description of a named tool. The context MUST then contain the description from the operator and MUST name the operator as the author.
 - **FR-015**: The request MUST state that `tool` and `call` are data. Content from the caller MUST be only in the `call` section (R-13).
 - **FR-016**: The system MUST NOT require configuration for an individual target server or tool. One deployment-wide setting MUST state whether the system can send argument values. This setting MUST NOT have a default.
-- **FR-017**: The catalog can name arguments, by name or name pattern, whose values the system never sends. Optional exceptions can exclude a server from assessment or change the disclosure for a server. For a withheld argument that the tool definition describes, the context MUST contain the name as withheld and MUST NOT contain the value.
+- **FR-017**: The catalog can name arguments, by name or name pattern, whose values the system never sends. Optional exceptions can exclude a server from assessment or change the disclosure for a server. An exception can replace the argument setting for its server, and it can add withheld names. It MUST NOT remove a deployment-wide withheld name. For a withheld argument that the tool definition describes, the context MUST contain the name as withheld and MUST NOT contain the value.
 - **FR-018**: For an argument that the tool definition does not describe, the context MUST contain neither the name nor the value. The context MUST contain the number of undescribed arguments.
 - **FR-019**: The context MUST NOT contain an item from the list "The system never sends these items to the model" (R-11, R-14).
 - **FR-020**: The system MUST apply a size limit to each argument value, to the tool definition, and to the full context. The system MUST withhold and report an oversized value. The system MUST NOT send an oversized definition or context (R-11).
@@ -1168,9 +1188,9 @@ The requirements for the context are:
 **Answers and policy input**
 
 - **FR-030**: The system MUST validate each answer. The name and the type MUST agree with a question. A probability MUST be between 0 and 1. A scale MUST have one probability for each level, and the total MUST be 1 in a documented tolerance.
-- **FR-031**: In the policy input, each question MUST have one of these states: answered, refused, missing, or invalid (R-18).
+- **FR-031**: In the policy input, each question MUST have one of these states: answered, refused, missing, or invalid (R-18). If no response arrived, the state of each question is missing.
 - **FR-032**: The assessment MUST have exactly one status: `complete`, `incomplete`, `timeout`, `unavailable`, `context_too_large`, `definition_missing`, or `excluded`. The status is `complete` only if each question has a valid answer.
-- **FR-033**: The policy input MUST contain the status, and the state and the values of each question. It MUST contain the full distribution of each scale. It MUST contain the answering model that the response names, the two fingerprints, and the author of the tool description. It MUST state whether the combination is in the evaluation record. It MUST contain the names of withheld and oversized arguments and the number of undescribed arguments (R-17, R-20).
+- **FR-033**: The policy input MUST contain the status, and the state and the values of each question. It MUST contain the full distribution of each scale. It MUST contain the answering model that the response names, the two fingerprints, and the author of the tool description. It MUST state whether the combination is in the evaluation record. It MUST contain the names of withheld and oversized arguments and the number of undescribed arguments (R-17, R-20). The contract MUST state for each status which keys are present.
 - **FR-034**: The policy input for an assessment MUST NOT contain approval records.
 
 **Human review**
@@ -1179,7 +1199,7 @@ The requirements for the context are:
 - **FR-036**: The system MUST accept a recommendation and findings only if the assessment status is `complete`. For each other status, the pending approval MUST record that no assessment is available.
 - **FR-037**: The pending approval MUST store an assessment summary. The summary has the summary status (`assessed` or `not_available`), the recommendation, the findings with the catalog statement of each, the answering model, and the question set fingerprint. The summary MUST NOT change after creation. The summary MUST NOT contain text from a tool definition.
 - **FR-038**: The approval page MUST show the recommendation as a fixed product text and each finding as its catalog statement with its state. The page MUST show the fixed notice "Automated checks can be wrong. They do not replace your review." The text for `attention` is "Automated checks found risk indicators. Review the details." The text for `routine` is "Automated checks found no risk indicators." If an assessed summary has no recommendation and no finding, the page MUST show "The automated assessment has no details for this request." The page MUST NOT show text from the model, probabilities, or scores.
-- **FR-039**: If assessment is enabled and no assessment is available, the approval page MUST show "No automated assessment was available for this request." All existing content and actions of the approval page MUST stay.
+- **FR-039**: If assessment is enabled and no assessment is available, the system MUST create the pending approval with a summary that states this. The approval page MUST then show "No automated assessment was available for this request." An approval without a summary, for example one from before the feature was enabled, shows no assessment section. All existing content and actions of the approval page MUST stay.
 
 **Automatic approval**
 
@@ -1203,15 +1223,15 @@ Conditions for automatic approval:
 
 **Evaluation**
 
-- **FR-050**: The system MUST supply an evaluation run for labeled tool calls from the operator. The run MUST use the context, the question set, the configured model, and the policy as production uses them. The run MUST NOT call a tool or create an approval. The run MUST take tool definitions from unmodified tool listings, as the client receives them through the gateway.
+- **FR-050**: The system MUST supply an evaluation run for labeled tool calls from the operator. The run MUST use the context, the question set, the configured model, and the policy as production uses them. The run MUST NOT call a tool or create an approval. The run MUST take tool definitions from unmodified tool listings, as the client receives them through the gateway. The run MUST build the policy input with the input builder of production. A case MUST be able to supply each value that production takes from the request: the HTTP request values, the session, and the permission context. The run MUST use documented fixed values for absent values and MUST show their use in the report.
 - **FR-051**: For each case, the evaluation report MUST give the outcome and the answers. The report MUST give the share of cases that skip a person. It MUST give the number and the rate of false approvals with a 95% upper bound. It MUST give the number of incomplete assessments and each answering model that a response named. It MUST give the question set fingerprint and the tool context fingerprints (R-19).
-- **FR-052**: The evaluation run MUST write an evaluation record. The record names the answering model, the question set fingerprint, and the tool context fingerprint of each tool in the cases. If the responses named more than one model, the run MUST NOT write a record.
-- **FR-053**: The project MUST publish a starter case set with a label for each case. The set MUST contain the calls from issue #206, dangerous counterexamples, and adversarial argument variants.
+- **FR-052**: The evaluation run MUST write an evaluation record. The record names the answering model, the question set fingerprint, and the tool context fingerprint of each tool in the cases. If the responses named more than one model, or no response named a model, the run MUST NOT write a record.
+- **FR-053**: The project MUST publish a starter case set with a label for each case. The set MUST contain the calls from issue #206, dangerous counterexamples, and adversarial argument variants. The set MUST have two fixed parts: a tuning part and a validation part. The project MUST publish a false-approval rate and its bound only from the validation part, which is not used to change questions or thresholds (R-16).
 
 **Audit and observability**
 
 - **FR-060**: The system MUST write one audit record for each assessed call. The record MUST contain the outcome, the status, and the applicable rule name. It MUST contain the answering model, the two fingerprints, and the values of each answer. It MUST contain the target server, the agent, and the principal. It MUST contain the tool name if the logging standard permits it. It MUST contain a reference to the arguments that does not reveal them.
-- **FR-061**: Audit records, other log records, spans, and metrics MUST NOT contain argument values, the context, tool definition text, question text, or credentials.
+- **FR-061**: The audit records, other log records, spans, and metrics that the system writes for an assessment MUST NOT contain argument values, the context, tool definition text, question text, or credentials. The decision logs of the policy engine and the reason texts of a policy are outputs that the operator configures. The documentation MUST tell the operator how to keep assessment data out of them (SR-010).
 - **FR-062**: The operator MUST be able to monitor the number of assessments by outcome and by status. The operator MUST be able to monitor the duration of model requests. A metric MUST NOT contain a principal.
 - **FR-063**: If the definition of a tool changes for a target server, the system MUST report the change to the operator. The report MUST contain the old and the new tool context fingerprint. The report MUST NOT contain the definition text.
 
@@ -1366,9 +1386,9 @@ The policy decision point is the standalone ExtProc service. It has its own conf
 in agreement with `adrs/011-extproc-standalone-binary.md`. The Helm chart does not deploy it.
 
 **Configuration Parameters**:
-- **authorization.assessment.enabled**: Boolean. The default is `false`. It enables the feature.
+- **authorization.assessment.enabled**: Boolean. The default is `false`. It enables the feature. While it is `true`, the log level must permit INFO records, because the audit record of FR-060 has that level.
 - **authorization.assessment.mode**: `recommend` (default) or `auto_approve`.
-- **authorization.assessment.endpoint**: The URL of the decision endpoint. It is required while the feature is enabled. The endpoint must use transport protection. The operator can explicitly permit plaintext for a local endpoint.
+- **authorization.assessment.endpoint**: The URL of the decision endpoint. It is required while the feature is enabled. The endpoint must use transport protection. Only the existing development setting `oauth2.tls.allow_http` permits plaintext. That setting applies to each outbound endpoint of the service and to each host. It is not for production.
 - **authorization.assessment.model**: The model name in the request. It is required while the feature is enabled.
 - **authorization.assessment.credential_file**: An optional file with the credential for the endpoint. The system never reads the credential from the catalog and never logs it.
 - **authorization.assessment.request_timeout**: A duration. The default is `500ms`, and the maximum is `2s`.
@@ -1384,7 +1404,8 @@ in agreement with `adrs/011-extproc-standalone-binary.md`. The Helm chart does n
 - **disclosure.withhold**: An optional list of argument names or name patterns. The system never sends the values of these arguments.
 - **servers**: Optional exceptions. A target server without an exception uses the deployment-wide settings.
 - **servers.<target server name>.assess**: Boolean. The value `false` excludes the server from assessment.
-- **servers.<target server name>.arguments** and **.withhold**: These values replace the deployment-wide disclosure for this server.
+- **servers.<target server name>.arguments**: This value replaces the deployment-wide argument setting for this server.
+- **servers.<target server name>.withhold**: These names apply to this server in addition to the deployment-wide names. An exception cannot remove a deployment-wide name.
 - **servers.<target server name>.description**: Operator text about the server for the `server` section.
 - **servers.<target server name>.tools.<tool name>.description**: A replacement for the tool description of a server.
 
@@ -1403,7 +1424,7 @@ servers:
 ### API Requirements *(if applicable - design before database)*
 
 - **API-001**: The request that creates a pending approval in `api/enduser/openapi.yaml` MUST accept an optional assessment summary. The summary has the summary status, the recommendation, the findings, the answering model, and the question set fingerprint. A finding has a question name, a statement, and a state.
-- **API-002**: The approval detail response MUST return the stored assessment summary.
+- **API-002**: The approval detail response MUST return the stored assessment summary. The two approval list responses use the same item schema and return the summary too. The sync response does not change.
 - **API-003**: The contract MUST set limits for the summary: a maximum of 16 findings, a maximum statement length, and plain text only. It MUST set fixed value sets for the summary status, the recommendation, and the state. The broker MUST reject a summary that does not obey the limits.
 - **API-004**: The summary fields MUST be optional. Existing clients and requests without an assessment stay valid.
 - **API-005**: The Admin API does not change. The broker gets no registry of MCP servers or tools.
@@ -1425,9 +1446,13 @@ servers:
 - **SR-005**: A tool definition is a claim of the server. The system MUST send it to the model only in the `tool` section. The system MUST NOT show it to the approver. Only the answers of the model and the policy can use it for a decision.
 - **SR-006**: The disclosure rules of FR-016 to FR-018 are security controls. They MUST apply with each possible setting: the system MUST NOT send a withheld value or an undescribed value to the decision endpoint.
 - **SR-007**: After it processes the call, the system MUST NOT keep the context or the raw model response. FR-061 gives the rule for logs, spans, and metrics.
-- **SR-008**: Each assessment text that the approver sees MUST come from the catalog of the operator or from the product. The broker MUST validate the limits of API-003 and MUST show the text as plain text.
+- **SR-008**: Each assessment text that the approver sees MUST come from the catalog of the operator or from the product. The policy decision point enforces this origin: it adds each statement from the catalog, and a policy cannot supply statement text. The broker has no catalog. It trusts the authenticated gateway client for the origin (`adrs/018-approval-endpoint-auth-boundaries.md`). The broker MUST validate the limits of API-003 and MUST show the text as plain text.
 - **SR-009**: The audit record of FR-060 MUST exist for each assessed call. If the system cannot write the record, the call MUST NOT proceed by automatic approval.
-- **SR-010**: The documentation MUST state the residual risks. A model can be wrong with high confidence. Injected argument text can move probabilities. A server can describe a tool falsely with a description that does not change. Thus, the operator must evaluate only tools of trusted servers and must write automatic approval rules only for these tools. Retention at a remote model provider is a deployment decision of the operator.
+- **SR-010**: The documentation MUST state the residual risks. A model can be wrong with high confidence. Injected argument text can move probabilities. A server can describe a tool falsely with a description that does not change. Thus, the operator must evaluate only tools of trusted servers and must write automatic approval rules only for these tools. Retention at a remote model provider is a deployment decision of the operator. The documentation MUST also state these risks:
+  - The evaluation record does not identify the policy. A new policy bundle can change a rule or a threshold while `evaluated` stays true. The operator must do a new evaluation run before a changed policy goes to production.
+  - An endpoint that returns the model alias of the request hides a new model release from the model condition. For automatic approval, the operator must configure a model name that identifies one release.
+  - The decision logs of the policy engine contain the full policy input, which includes the arguments and the assessment. A policy can also write argument values into its reasons. The operator must mask the assessment and the arguments in decision logs and must not write such values into reasons.
+  - An approval identifies a call by the tool name without the target server. If two servers on different routes list one tool name, a pending approval and its summary can apply to the call of the other server.
 - **SR-011**: The assurance case in `docs/resources/assurance-case.md` MUST get the new trust boundary to the decision endpoint. It MUST describe the tool definition as input that the server controls. It MUST contain the controls of this section.
 
 ### Frontend/Design System Requirements *(if applicable - document before implementation)*
@@ -1462,7 +1487,7 @@ servers:
 
 ### Measurable Outcomes
 
-- **SC-001**: While assessment is enabled, the approver sees an assessment section for 100% of pending approvals. The section shows call-specific findings, a recommendation notice, the "no details" text of FR-038, or the "no assessment" notice of FR-039.
+- **SC-001**: The approver sees an assessment section for 100% of the pending approvals that the system creates while assessment is enabled. The section shows call-specific findings, a recommendation notice, the "no details" text of FR-038, or the "no assessment" notice of FR-039.
 - **SC-002**: A test of a minimum of 20 different failure conditions of the model interaction lets 0 calls proceed without a person. The conditions include timeout, refusal, missing answer, malformed answer, out-of-range value, wrong model, changed tool definition, missing definition, undescribed argument, and oversized content.
 - **SC-003**: With the published example rule and thresholds, the external editor share from issue #206 waits for a person. Each adversarial variant in the starter case set also waits for a person.
 - **SC-004**: Calls that the policy allows or denies without an assessment get no delay and cause no model request.
@@ -1470,8 +1495,8 @@ servers:
 - **SC-006**: For 100% of calls that proceed by automatic approval, one audit record contains the rule name, the answers, the model, and the two fingerprints. No record contains an argument value.
 - **SC-007**: From one evaluation run, an operator can find the share of calls that skip a person. The operator can also find the false-approval rate with its upper bound. The run calls no tool.
 - **SC-008**: An operator can enable assessment for all target servers without configuration for an individual server, tool, or argument. This includes servers that the operator adds later.
-- **SC-009**: A reviewer can find which data leaves the deployment from only the disclosure settings and the exceptions of the catalog.
-- **SC-010**: A change of the model, of operator text that can change an answer, or of a tool definition stops automatic approval for the related tools. This is true for 100% of tested changes. Automatic approval starts again only with a new evaluation record.
+- **SC-009**: A reviewer can find the upper limit of the data that leaves the deployment from only the disclosure settings and the exceptions of the catalog. A tool listing can only decrease the data, because the system sends only described arguments.
+- **SC-010**: A change of the answering model that the response names, of operator text that can change an answer, or of a tool definition stops automatic approval for the related tools. This is true for 100% of tested changes. Automatic approval starts again only with a new evaluation record.
 
 ## Assumptions
 
@@ -1485,11 +1510,11 @@ servers:
 - **The system does not send the static risk level to the model.** The example in the issue includes the policy risk level in the model input. This spec excludes it, because it is not evidence about the call and the policy has it (R-11). The policy can derive the risk level from the answers.
 - **One question set for all tools.** A question set for each tool is out of scope. A single set keeps the evaluation simple.
 - **Two question types.** Choice questions without a sequence are out of scope, because their answers depend on option names and option sequence (R-06).
-- **Automatic approval creates no approval record.** The audit record is a structured log record at the policy decision point, as for existing authorization decisions. A history of automatically approved calls for the user in the broker is out of scope. Thus, the broker is not in the path of calls that need no person. The issue proposes this design.
-- **The Evaluation Record does not include the policy.** A change to an automatic approval rule or threshold needs a new evaluation run. The operator is responsible for that run.
+- **Automatic approval creates no approval record.** The audit record is a structured log record at the policy decision point, as for existing authorization decisions. A history of automatically approved calls for the user in the broker is out of scope. Thus, the broker creates no record for calls that need no person. The read of the approval state before an assessment still applies to these calls. The issue proposes this design.
+- **The Evaluation Record does not include the policy.** A change to an automatic approval rule or threshold needs a new evaluation run. The operator is responsible for that run. This is also true if the policy engine gets policy bundles while the service operates. SR-010 names this risk.
 - **The product does not judge the false-approval rate.** The evaluation run reports the rate. The operator decides whether the rate is permitted for a rule.
 - **The system does not cache positive results.** The system assesses each call that can proceed automatically. It remembers only the outcome "waits for a person" of FR-008.
-- **The product has no default thresholds.** The values in the journeys are examples. The project must publish the example policy with measured results on the starter case set.
+- **The product has no default thresholds.** The values in the journeys are examples. The project must publish the example policy with measured results on the validation part of the starter case set.
 - **Text and structured arguments only.** The system does not interpret image content or file content in arguments. It withholds these values or reports them as oversized.
 - **Existing approval behavior does not change.** Statuses, persistence scopes, pattern matching, rate limits, endpoint authentication, and the elicitation response stay the same. Specs 020, 024, and 026 put automatic approval out of scope. This spec adds it.
 - **A new ADR is necessary.** The planning phase must add an ADR for four subjects. These are the assessment at the policy decision point, the use of tool definitions from servers, the outbound decision request, and the extended policy contract.

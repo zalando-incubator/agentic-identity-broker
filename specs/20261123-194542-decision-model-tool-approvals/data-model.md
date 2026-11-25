@@ -33,14 +33,15 @@ The source is the catalog file. ExtProc reads it one time at startup (D-11).
 | `instructions` | string | Required. Maximum 500 characters. No placeholder characters `{{` or `}}`. |
 | `yes_when`, `no_when` | string | Required for `predicate`. Not permitted for `score`. Maximum 500 characters each. No placeholder characters `{{` or `}}`. |
 | `levels` | list of `label` and `description` | Required for `score`. 2 to 10 entries. Not permitted for `predicate`. Each `label` has 1 to 120 characters. Each `description` has 1 to 500 characters. No placeholder characters `{{` or `}}`. |
-| `statement` | string | Required. Maximum 120 characters. Plain text in one line. |
+| `statement` | string | Required. 1 to 120 characters. Plain text in one line. No control characters. The rule is equal to the rule of `Finding.statement`, so that the broker accepts each catalog statement. |
 
 ### Server Exception
 
 | Field | Type | Rules |
 |---|---|---|
 | `assess` | boolean | Optional. The default is `true`. |
-| `arguments`, `withhold` | as in `disclosure` | Optional. They replace the deployment-wide values for this server. |
+| `arguments` | as in `disclosure` | Optional. It replaces the deployment-wide argument setting for this server. |
+| `withhold` | as in `disclosure` | Optional. Its names apply in addition to the deployment-wide names. An exception cannot remove a deployment-wide name. An empty list changes nothing. |
 | `description` | string | Optional. Maximum 500 characters. |
 | `tools.<tool name>.description` | string | Optional. Maximum 2,000 characters. It replaces the description from the server. |
 
@@ -52,9 +53,9 @@ The source is a `tools/list` result as the client sees it through the gateway (D
 |---|---|---|
 | `target_server_name` | string | From the gateway metadata. Part of the key. |
 | `name` | string | Required. Maximum 255 characters. Part of the key. The name as the client sees it. On a route with two or more MCP targets, the gateway adds the target name as a prefix, for example `drive_drive.share_file` (D-02). |
-| `description` | string | Optional. |
+| `description` | string | Optional. If the listing has none, the `tool` section of the context has no description. |
 | `input_schema` | JSON object | Optional. The system uses only the entries in `properties`. |
-| `annotations` | JSON object | Optional. The system keeps only the four hint values of the MCP specification. |
+| `annotations` | JSON object | Optional. The system keeps only the four hint values of the MCP specification that the listing contains. It adds no default hint value. |
 | `written_by` | `server` or `operator` | `operator` if an exception replaces the description. |
 | `tool_context` | fingerprint | Calculated when the definition or the catalog changes (D-06). |
 
@@ -81,7 +82,7 @@ Rules:
 - One argument value has a maximum of 4 KiB of canonical JSON and a maximum of 8 levels. A larger value is oversized.
 - The full context has a maximum of `max_context_bytes`.
 - The names in `withheld_arguments` and `oversized_arguments` are names that the definition describes.
-- In the model context, an empty `withheld_arguments` or `oversized_arguments` list is absent. `undescribed_argument_count` is always present. In the policy input, each of the three is always present.
+- In the model context, an empty `withheld_arguments` or `oversized_arguments` list is absent. `undescribed_argument_count` is always present. In the policy input, the key `context` is present only for the statuses that [contracts/policy-assessment.md](contracts/policy-assessment.md) section 2 lists. If it is present, each of the three fields is present.
 
 ### Assessment and Answer
 
@@ -90,10 +91,10 @@ Rules:
 | `status` | enumeration | One value of D-04. |
 | `model` | string | The `model` value of the response. Absent in the policy input if no response arrived. |
 | `question_set` | fingerprint | From the catalog. It does not include `statement` (FR-029). |
-| `tool.written_by`, `tool.context` | string, fingerprint | Absent in the policy input for `excluded` and `definition_missing`. |
+| `tool.written_by`, `tool.context` | string, fingerprint | Absent in the policy input for `excluded`, `definition_missing`, and `context_too_large`. |
 | `evaluated` | boolean | True if the evaluation record contains the model, the question set, and the tool context. |
-| `context` | flags | `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count`. |
-| `answers.<name>.status` | enumeration | `answered`, `refused`, `missing`, or `invalid`. |
+| `context` | flags | `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count`. Absent in the policy input for `excluded`, `definition_missing`, and `context_too_large`. |
+| `answers.<name>.status` | enumeration | `answered`, `refused`, `missing`, or `invalid`. Each catalog question has an entry for each assessment status. Without a response, the value is `missing`. |
 | `answers.<name>.probability` | number | Only for an answered `predicate`. |
 | `answers.<name>.probabilities`, `score`, `confidence` | list, number, number | Only for an answered `score`. The list has one value for each level. |
 
@@ -142,7 +143,11 @@ Migration `NNN_add_tool_approval_assessment` adds one column to `tool_approvals`
 |---|---|---|
 | `assessment` | JSONB | Nullable. No default. `NULL` shows "no assessment information". |
 
-The down migration removes the column. The two migrations are atomic. The in-memory repository
+The down migration removes the column only if no row has a summary. If one row has a value that
+is not `NULL`, the down migration stops with an error and changes nothing, as the down migration
+`039_add_protected_resource_discovery` does for its data. Thus, a rollback cannot remove
+summaries without a decision of the operator, who must first set the values to `NULL` (Principle
+IX). The two migrations are atomic. The in-memory repository
 and the PostgreSQL repository store and return the value. The PostgreSQL repository adds the
 column to each explicit column list.
 

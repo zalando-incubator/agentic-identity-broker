@@ -27,8 +27,10 @@ just web-test
 just test-integration-infra
 just test-e2e-extproc
 just test-e2e-docker
-just test-e2e-frontend
+E2E_CAPTURE_SCREENSHOTS=true GINKGO_FRONTEND_PROCS=1 just test-e2e-frontend
 ```
+
+The frontend helpers capture screenshots only with `E2E_CAPTURE_SCREENSHOTS=true`.
 
 Before the pull request, run `just verify`, as `CONTRIBUTING.md` requires. Record the real
 results and each prerequisite that was not available. Do not record a result that you did not
@@ -38,7 +40,7 @@ see.
 
 Each journey uses the values of the journeys in [spec.md](spec.md).
 
-1. **Recommendation (Journey 1).** Start ExtProc in the `recommend` mode with the example catalog and the example policy. Send a `tools/list` exchange for `google-drive-mcp`. Send the external editor share. Make sure that the decision endpoint double received one request with the four context sections. Make sure that the request does not contain the `file_id` value or an identity. Open the approval page. Make sure that the page shows `critical`, the attention text, and four findings.
+1. **Recommendation (Journey 1).** Start ExtProc in the `recommend` mode with the example catalog and the example policy. Send a `tools/list` exchange for `google-drive-mcp`. The example policy allows the session setup and the listing. Send the external editor share. Make sure that the decision endpoint double received one request with the four context sections. Make sure that the request does not contain the `file_id` value or an identity. Open the approval page. Make sure that the page shows `critical`, the attention text, and four findings.
 2. **No model request for other calls.** Send a call that the policy allows, a call that the policy denies, and a call with an existing permanent denial. Make sure that the double received no request.
 3. **Failures (Journey 3).** Set the double to each failure: a late answer, a refusal, a missing answer, an invalid probability, an HTTP error, and a closed connection. For each failure, make sure that a pending approval exists. Make sure that the page shows the "no assessment" text.
 4. **Second identical call.** Send the external editor share two times before the approval expires. Make sure that the double received one request. Make sure that the two responses contain the same approval URL.
@@ -47,7 +49,7 @@ Each journey uses the values of the journeys in [spec.md](spec.md).
 7. **Stops of automatic approval.** Do step 6 again with a different `model` value in the response. Do it again after a new `tools/list` exchange with a changed description. Do it again with a tool that the evaluation record does not name. Do it again with an argument that the definition does not describe. For each change, make sure that the call waits for a person.
 8. **Disabled feature.** Set `authorization.assessment.enabled` to `false`. Send the external editor share. Make sure that the double received no request. Make sure that the create request and the approval page are the same as before this feature.
 9. **Gateway path.** In the ExtProc suite with agentgateway `v1.7.0`, send the `tools/list` exchange and the share through agentgateway. Make sure that ExtProc learned the definition and that the client received the bytes that ExtProc returned. Make sure that the Decisions request with two `input_text` parts gets to the OpenAI-format double and to the System One-format double.
-10. **Storage.** Apply the new migration up, down, and up against PostgreSQL. Make sure that existing approvals stay valid and read as "no assessment information".
+10. **Storage.** Apply the new migration up, down, and up against PostgreSQL. Make sure that existing approvals stay valid and read as "no assessment information". With one approval that has a summary, make sure that the down migration stops with an error and that the summary stays.
 
 ## Evidence and limits
 

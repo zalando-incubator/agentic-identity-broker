@@ -113,7 +113,9 @@ only for fingerprints. The contract is in [contracts/decision-request.md](contra
 ExtProc sends no second attempt after an error. The deadline of the request is `request_timeout`.
 ExtProc reads the credential file for each request and sends the value as a bearer token. TLS
 uses the existing `oauth2.tls` settings. The existing rule for plaintext URLs applies
-(`internal/extproc/config/validate.go:86`).
+(`internal/extproc/config/validate.go:86`). That rule is one development setting for each
+outbound endpoint. It does not examine the host, and the spec does not add a rule for local
+hosts.
 
 **Evidence**: The Docker cases in
 `tests/e2e/extproc/assessment_decision_endpoint_verification_test.go` sent the request of
@@ -211,6 +213,15 @@ If the second evaluation fails, ExtProc uses the result of the first evaluation 
 `not_available` for the summary. The call waits for a person. An error in the second evaluation
 thus never removes the decision of a person, and it never lets a call proceed.
 
+The authorizer of today cannot show this failure. The prepared query, the SDK path, and the
+timeout path each return a `deny` decision with a `nil` error
+(`internal/extproc/authorization/authorizer.go:158`, `:194`, `:231`). The feature adds the
+outcome of the evaluation to the decision: a result, an undefined result, an error, or a timeout.
+The first evaluation ignores the outcome and denies as today. The second evaluation falls back
+only for an error or a timeout. A `deny` result and an undefined result deny the call. Tests use
+the two real backends for each outcome. The log call of the record "opa authorization decision"
+does not change.
+
 **Rationale**: `OPAInput` is a map, thus the added key needs no interface change. The system
 conditions are in Go code, thus a policy cannot disable them (FR-043).
 
@@ -248,17 +259,34 @@ is not necessary, because the same binary calculates all values.
 **Decision**: The gate reads the approval state of the principal from the broker before an
 assessment, as it does today before it creates a pending approval (`gate.go:86-98`). After that
 read, ExtProc looks for a pending approval of the same agent with the same tool name and the same
-`arguments_hash`. ExtProc calculates the hash with the function of the broker
-(`storage.ComputeArgumentsHash`). The sync response already contains `arguments_hash`
-(`sync_handler.go:46`), and the ExtProc `Record` type adds the field. If such an approval exists,
-ExtProc sends no model request. It calls the idempotent create operation without a summary, which
-returns the existing approval URL.
+`arguments_hash`. The sync response already contains `arguments_hash` (`sync_handler.go:46`), and
+the ExtProc `Record` type adds the field. If such an approval exists, ExtProc sends no model
+request. It calls the idempotent create operation with the summary `not_available`, which returns
+the existing approval URL. The stored summary of the existing approval does not change. If that
+approval expired or got a decision after the read, the broker creates a new approval
+(`internal/domain/approval/service.go:558`). The new approval then has the summary
+`not_available` and shows the notice of FR-039.
+
+The hash function moves to the shared leaf package `internal/domain/approval/toolpattern`,
+because `adrs/035-shared-tool-pattern-matching.md` permits ExtProc no other import from
+`internal/domain`. `storage.ComputeArgumentsHash` calls the function of the leaf package. The ADR
+of this feature records that the leaf package also owns the arguments hash.
+
+The function makes one canonical form before it calculates the hash: it encodes the arguments as
+JSON, decodes that JSON without `UseNumber`, and encodes the result. ExtProc decodes MCP bodies
+with `UseNumber` (`server.go:740`), and the broker decodes to `float64`
+(`create_handler.go:72`). Without the canonical form, the argument `1.0` gives two hashes. For
+the values that the broker has today, the canonical form does not change the hash, thus stored
+hashes stay valid.
+
+The match does not use the target server, because the approval key of the broker has no target
+server. Two servers on different routes that list one tool name thus share pending approvals,
+as they share human decisions today. SR-010 names this limit.
 
 ExtProc does not use the patterns of the pending record for this lookup. `toolpattern.Matches`
 checks only the keys of the pattern. A call with an added argument thus matches, but the broker
-creates a new approval for it, because the arguments hash differs. That approval then has no
-summary. If the two hash calculations differ for one call, ExtProc assesses the call again, and
-the broker keeps the first summary. That costs one model request and lets no call proceed.
+creates a new approval for it, because the arguments hash differs. ExtProc and the broker use one
+hash function with one canonical form, thus the two calculations agree for each call.
 
 ExtProc keeps no memory of its own outcomes for this purpose. The broker state is common to all
 instances and is fresh after the read.
@@ -273,6 +301,7 @@ instances and is fresh after the read.
 
 - The ExtProc cache keeps pending records today, but `Record.matchable` (`cache.go:332-344`) accepts only `approved` records. The feature adds a separate lookup for `pending` records. The existing match for human decisions does not change.
 - An idempotent create keeps the summary of the first assessment. The broker needs no change for this rule of FR-037.
+- The sync record has no expiry time. ExtProc thus cannot know that a pending approval is near its end. The summary `not_available` on the create request covers this case.
 - Two instances can assess the same call at the same time. Each sends one model request, and the broker keeps the first summary.
 - A pending record never lets a call proceed. The lookup only selects the path without a model request.
 
@@ -302,6 +331,18 @@ inherit these flags. Thus, the subcommand calls `RegisterFlags` for itself and t
 keys. The run thus uses the configuration file of the service without a change. The subcommand
 does not require that `evaluation_record_file` exists, because the run writes that file.
 
+The run builds the policy input of each case with the production input builder. A case can
+supply the request values and the context values of the production input, and the run uses
+documented defaults for absent values ([contracts/assessment-files.md](contracts/assessment-files.md) section 4).
+
+The subcommand has the flag `--config` and loads the configuration in a mode that does not
+examine `evaluation_record_file`. `Load` reads the configuration path from `config_path` today
+(`internal/extproc/config/loader.go:121`).
+
+The starter case set has a tuning part and a validation part. The project changes questions and
+thresholds only with the tuning part. It publishes the false-approval rate and its bound only
+from the validation part (R-16, FR-053).
+
 The run sets `input.assessment.evaluated` to `true` for each case. Thus, a policy rule that
 requires `evaluated` applies in the run as it will apply in production after the record exists.
 
@@ -313,7 +354,9 @@ helper is not usable by operators.
 **Decision**: A migration pair adds a nullable `assessment` JSONB column to `tool_approvals`. The
 migration uses the next free number on `main` when the implementation starts. On 2026-11-24, the
 last migration on `main` is `048`, and two open branches use `049`. This plan uses the name
-`NNN_add_tool_approval_assessment`. The domain service validates the limits of API-003 before it
+`NNN_add_tool_approval_assessment`. The down migration refuses to run while a row has a summary,
+as `migrations/039_add_protected_resource_discovery.down.sql` does for its data
+([data-model.md](data-model.md)). The domain service validates the limits of API-003 before it
 stores the value. The two storage adapters store and return it with explicit columns. An
 idempotent create request for an existing pending approval does not change the stored summary
 (FR-037).
@@ -379,9 +422,10 @@ precedent, because it is older than the standard.
 call. It writes through the `Handle` method of the logger handler and reads the returned error.
 If the handler returns an error, the call waits for a person.
 
-In the `auto_approve` mode, the configuration validation requires `log.level` `debug` or `info`.
-Before each write, ExtProc also calls `Enabled` for the INFO level. If it returns false, the call
-waits for a person.
+While assessment is enabled, the configuration validation requires `log.level` `debug` or
+`info`. FR-060 requires the record for each assessed call in each mode, and a `warn` level loses
+it. Before each write for an automatic approval, ExtProc also calls `Enabled` for the INFO level.
+If it returns false, the call waits for a person.
 
 **Rationale**: SR-009 requires the record for each call that proceeds. The usual logger methods
 do not return an error.
@@ -397,13 +441,17 @@ standard output only. It does not find a failed export or a lost record after th
 `nil` (`internal/adapters/telemetry/slog_handler.go:33-42`). With `log.level: warn`, an INFO
 audit record thus disappears without an error. The level rule above closes this gap.
 
-**Relation to the logging standard**: Section 8 of `coding-standards/LOGGING.md` tells the
-author to write an audit record after the mutation commits. That rule is for a change of stored
-state. An automatic approval changes no stored state (FR-045). It is an authorization decision,
-and ExtProc writes the record at the time of the decision, as it writes the existing record "opa
-authorization decision". The design review of the observability contract must confirm this
-reading. If the reviewer decides that section 8 applies, the same pull request must amend the
-standard with a scoped rule for decision records (Principle XV).
+**Relation to the logging standard**: The record is an authorization decision record, not a
+mutation record. An automatic approval changes no stored state (FR-045). ExtProc writes the
+record at the time of the decision, as it writes the existing record "opa authorization
+decision". The rule "write the record after the mutation commits" in section 8 of
+`coding-standards/LOGGING.md` thus does not apply.
+
+Two parts of the standard need a scoped rule, and the pull request of the feature amends the
+standard with them (Principle XV). Section 1 requires a `*Context` logger method, and these
+methods return no error. The scoped rule permits a direct call of `Handler.Handle` with the
+request context for an audit record whose write error decides the action. Section 8 gets one
+sentence: a decision record is written at the time of the decision.
 
 **Alternatives considered**: A durable audit store is not part of this repository. The logging
 standard defines audit records as structured logs.
@@ -459,7 +507,11 @@ the verification case "waits for a slow ExtProc answer", ExtProc held the reques
 `tools/call` for 6 s. The call completed with HTTP 200 on the two releases. A manual run of the
 same case with 45 s gave HTTP 200 after 45.0 s on the two releases.
 
-**Consequence**: The gateway does not stop a slow ExtProc. A deadline that ExtProc misses delays
+**Scope of the evidence**: The evidence is for the ExtProc filter only. That filter waits for
+the answer of ExtProc without a timer of its own. A request timeout of a route, of the gateway,
+or of the client can still end the call. The verification did not test such a timeout.
+
+**Consequence**: The ExtProc filter of the gateway does not stop a slow ExtProc. A deadline that ExtProc misses delays
 the call of the agent and does not let it proceed. The MCP client of the agent can have its own
 timeout. With the defaults, the worst case of an assessed call that waits for a person is about
 10.7 s, and 10.2 s of that is the broker path of today.
@@ -500,39 +552,3 @@ These subjects were not tested:
 - MCP servers other than `mcp-go`, listings larger than 70 KB, and event streams with more than one event.
 - The Playwright suite with the assessment. The plan changes the browser cases (see [plan.md](plan.md)).
 - The measured results of the example policy on the starter case set. The spec requires them before publication, and they need a real model.
-
-## Review corrections
-
-A review of all planning documents on 2026-11-24 found these gaps. The decisions above contain
-the corrections.
-
-| Gap | Risk before the correction | Correction |
-|---|---|---|
-| `multiHandler.Handle` drops an INFO record without an error if the level is `warn` | A call proceeds without an audit record (SR-009) | D-13 |
-| A listing that ExtProc cannot read keeps the old definitions | A changed tool keeps automatic approval (FR-023) | D-02 |
-| The sequence of level entries in a `score` answer is not checked | The policy reads the wrong level | D-04 |
-| The `model` value has no limit in ExtProc | The broker rejects the summary, and the call is denied | D-04 |
-| The pending lookup uses patterns that check only their own keys | A different call skips its assessment and gets no summary | D-07 |
-| An `allow` result has no findings | In the recommendation mode, the person sees no findings for the calls that a rule approves | D-05 |
-| An error in the second evaluation denies the call | A failure removes the decision of a person | D-05 |
-| No check for a permanent denial after the model request | A denial that arrives during the assessment has no priority | D-15 |
-| The evaluation run has no defined value for `evaluated` and needs the record file | A rule that requires `evaluated` is not measured, and the first run cannot start | D-08 |
-
-## Analysis corrections
-
-The cross-artifact analysis of 2026-11-25 found these gaps between the spec, the plan, the tasks,
-and the contracts. The documents contain the corrections.
-
-| Gap | Risk before the correction | Correction |
-|---|---|---|
-| FR-042 gave `approval_required` for each false condition, and the contract denied a call with a permanent denial | Two different results for one case | FR-042 has the exception. The call is denied (D-15). |
-| The report contract listed only the false approvals | US5.1 and FR-051 have no proof | The report has one line for each case ([contracts/assessment-files.md](contracts/assessment-files.md) section 7). |
-| An assessed summary without a recommendation and without a finding showed no section | The approver cannot see that an assessment ran (SC-001) | FR-038 has a fixed text for this state. |
-| The evaluation run needed the conditions of FR-041 before their task | The run cannot classify a false approval | The conditions are part of the foundations. |
-| No task wrote tests for spans, instruments, and the principal attribute before the telemetry | A signal with unsafe data passes review (Principles VIII, XV) | The tasks write the telemetry tests and the signal test first. |
-| SC-002 had no test | The 20 failure conditions are not proven in the `auto_approve` mode | One table-driven test in the US4 phase. |
-| The question set fingerprint included `statement` | A change of approver text stops automatic approval without a reason | D-06 |
-| The placeholder rule applied only to `instructions`, and level texts had no limit | A criterion with a placeholder passes the catalog check | [data-model.md](data-model.md) |
-| The policy input showed "empty" in one document and "absent" in a different document | A policy rule reads the wrong form | [data-model.md](data-model.md) uses "absent". |
-| The attribute `assessment_status` had two value sets | A query joins records of two services with different values | The broker attribute is `assessment_summary_status`. |
-

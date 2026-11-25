@@ -13,9 +13,9 @@ change.
 
 | Key | Type | Default | Validation |
 |---|---|---|---|
-| `authorization.assessment.enabled` | boolean | `false` | It requires `authorization.enabled` and `tool_approvals.enabled`. |
-| `authorization.assessment.mode` | string | `recommend` | `recommend` or `auto_approve`. `auto_approve` requires `log.level` `debug` or `info` (D-13). |
-| `authorization.assessment.endpoint` | URL | none | Required while enabled. HTTPS, or HTTP if `oauth2.tls.allow_http` is true. |
+| `authorization.assessment.enabled` | boolean | `false` | It requires `authorization.enabled` and `tool_approvals.enabled`. It requires `log.level` `debug` or `info`, because the audit record has the INFO level (FR-060, D-13). |
+| `authorization.assessment.mode` | string | `recommend` | `recommend` or `auto_approve`. |
+| `authorization.assessment.endpoint` | URL | none | Required while enabled. HTTPS, or HTTP if `oauth2.tls.allow_http` is true. That development setting does not examine the host. With it, the context and the credential can go to each configured host without transport protection. |
 | `authorization.assessment.model` | string | none | Required while enabled. |
 | `authorization.assessment.credential_file` | path | none | Optional. The file has a maximum of 4 KiB. |
 | `authorization.assessment.request_timeout` | duration | `500ms` | More than 0, maximum `2s`. |
@@ -24,8 +24,9 @@ change.
 | `authorization.assessment.catalog_file` | path | none | Required while enabled. |
 | `authorization.assessment.auto_approval.evaluation_record_file` | path | none | Required in the `auto_approve` mode. Optional in the `recommend` mode. In that mode, ExtProc reads it if it is set, and `would_auto_approve` uses it (FR-044). Without it, `would_auto_approve` is always false. |
 
-Path values obey the existing rule for policy paths: no `..` segment, and the file must exist at
-startup.
+Path values obey the existing rule for `authorization.policy.config_file`: no `..` segment, and
+the path must be a file that exists at startup. A directory is not permitted, because each value
+names one file.
 
 The documentation and the examples change in these files: `docs/configuration.md`,
 `examples/config/extproc-tool-assessment.yaml`, `examples/config/assessment-catalog.yaml`,
@@ -80,7 +81,12 @@ The format is JSON Lines. Each line is one case.
 | `target_server_name` | string | Required. |
 | `tool_name` | string | Required. |
 | `arguments` | JSON object | Required. It can be empty. |
-| `context` | JSON object | Optional. It supplies `granted_permission_sets` for the policy input. |
+| `context` | JSON object | Optional. The keys of the production input `context`: `granted_permission_sets`, `granted_permission_sets_available` (default `true`), and `agent_session_id` (default: absent). |
+| `request` | JSON object | Optional. The HTTP values of the production input: `method` (default `POST`), `path` (default `/mcp`), `host` (default: empty), `scheme` (default `https`), `headers` (default: none), and `mcp_session_id` (default: absent). |
+
+The run builds the policy input of each case with the input builder of production (FR-050). It
+rejects a case with an unknown key. A policy that reads a request value gets the default if the
+case does not supply the value. The report gives the number of cases that used a default.
 
 ## 5. Tool listing file
 
@@ -88,6 +94,9 @@ One file for each target server. The content is the unmodified `result` object o
 response, or the full JSON-RPC response. A file with two or more pages is a JSON list of such
 objects. The file must contain the listing as the client sees it through the gateway. On a route
 with two or more MCP targets, the tool names thus have the target prefix of the gateway (D-02).
+
+A listing file must contain all pages of one listing. The run rejects a file in which the last
+page has a `nextCursor` value, because later pages are missing.
 
 ## 6. Command
 
@@ -110,7 +119,7 @@ ignores `mode` and an existing evaluation record. It does not require that
 |---|---|
 | 0 | The run completed. False approvals do not change the exit code. |
 | 1 | An input file or the configuration is invalid. |
-| 2 | The run did not write an evaluation record, because the responses named two or more models. |
+| 2 | The run did not write an evaluation record, because the responses named two or more models, or no response named a model. |
 
 ## 7. Report
 
@@ -124,7 +133,8 @@ The report is plain text. It contains these values (FR-051):
 - Each false approval with its case identifier, the rule name, and the answers
 - One line for each case with its identifier, its label, the outcome, the rule name if one applies, and the answers
 - The number and the share of `automatic_ok` cases that wait for a person
-- The number of assessments for each status that is not `complete`.
+- The number of assessments for each status that is not `complete`
+- The number of cases that used a default for a `context` value or a `request` value.
 
 A false approval is a case with the label `human` that satisfies the conditions of FR-041. The
 run ignores two of these conditions: the mode and the evaluation record. The example is in [spec.md](../spec.md),

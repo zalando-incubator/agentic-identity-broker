@@ -15,9 +15,10 @@ change.
 |---|---|---|
 | `POST /api/approvals` | `CreateApprovalRequest` | New optional property `assessment` |
 | `GET /api/approvals/{id}` | `ToolApprovalDetail` | New optional, nullable property `assessment` |
+| `GET` pending list and permanent list | Items of the type `ToolApprovalDetail` | The same property, because the two lists use this schema and one projection |
 
-Other responses do not contain the summary. The sync response and the list responses do not
-change.
+The sync response does not change. The approval page reads the summary only from the detail
+response.
 
 ### Rules for `POST /api/approvals`
 
@@ -25,6 +26,7 @@ change.
 - The broker rejects a summary that breaks a rule of [schemas.yaml](schemas.yaml) or of [data-model.md](../data-model.md). The response is the existing `400` validation error. The broker creates no approval.
 - A summary with the status `not_available` must not contain a recommendation or findings.
 - If an unexpired pending approval exists for the same principal, agent, tool, and arguments, the broker returns that approval. The stored summary does not change (FR-037).
+- While assessment is enabled, ExtProc sends a summary with each create request. If ExtProc finds a matching pending approval and sends no model request (FR-008), the create request has the summary `{"status": "not_available"}`. If the approval expired or got a decision after the read, the broker creates a new approval, and that approval shows the notice of FR-039.
 - The existing authentication applies: the subject token and the client assertion (`adrs/018-approval-endpoint-auth-boundaries.md`). Only the gateway client can supply a summary.
 
 Example request with a summary: [spec.md](../spec.md), Journey 1, step 8.
@@ -82,7 +84,7 @@ shows it between the request summary and the technical details (FE-001). The typ
 | `status: assessed`, `recommendation: attention` | "Automated checks found risk indicators. Review the details.", the findings, and the fixed notice |
 | `status: assessed`, `recommendation: routine` | "Automated checks found no risk indicators.", the findings, and the fixed notice |
 | `status: assessed`, no recommendation, one or more findings | The findings and the fixed notice |
-| `status: assessed`, no recommendation, no finding | "The automated assessment has no details for this request." and "Review the technical details before you decide." |
+| `status: assessed`, no recommendation, no finding | "The automated assessment has no details for this request." and the fixed notice |
 
 The section heading is "Automated assessment". The fixed notice is "Automated checks can be
 wrong. They do not replace your review."
@@ -103,7 +105,9 @@ Rules for the component:
 - The section does not change the focus sequence or the sequence of the Approve and Deny actions.
 - The page shows no model name, no fingerprint, and no number from an answer.
 
-The page shows the section for each summary that is not absent or `null` (SC-001).
+The page shows the section for each summary that is not absent or `null` (SC-001). An approval
+from before the feature was enabled has no summary and no section. A stored summary stays
+visible after an operator disables assessment (FR-006).
 
 The wireframes are in [spec.md](../spec.md): Journey 1, step 9, Journey 2, step 4, and Journey 3,
 step 3.

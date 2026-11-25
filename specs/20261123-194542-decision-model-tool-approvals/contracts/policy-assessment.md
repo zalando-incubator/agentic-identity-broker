@@ -61,16 +61,29 @@ The input never contains approval records (FR-034).
 | `model` | string | The model that the response names. Absent if no response arrived. |
 | `question_set` | fingerprint | Always present. |
 | `evaluated` | boolean | True only if the evaluation record contains the model, the question set, and the tool context. |
-| `tool.written_by` | `server`, `operator` | Absent for `excluded` and `definition_missing`. |
-| `tool.context` | fingerprint | Absent for `excluded` and `definition_missing`. |
-| `context.*` | lists and a number | Absent if the system built no context. |
-| `answers` | map with the question name as the key | One entry for each question of the catalog. Empty if no response arrived. |
+| `tool.written_by` | `server`, `operator` | See the table of keys for each status. |
+| `tool.context` | fingerprint | See the table of keys for each status. |
+| `context.*` | two lists and a number | See the table of keys for each status. If `context` is present, each of its three fields is present. An empty list is `[]`, and the count is a number. |
+| `answers` | map with the question name as the key | Always present, with one entry for each question of the catalog. If no response arrived, each entry has the status `missing`. |
 | `answers.*.status` | `answered`, `refused`, `missing`, `invalid` | Always present in an entry. |
 | `answers.*.probability` | number from 0 to 1 | Only for an answered `predicate`. |
 | `answers.*.probabilities` | list of numbers | Only for an answered `score`. ExtProc puts each probability at the position of its level `value`. Index 0 is the level with the least risk. |
 | `answers.*.score`, `answers.*.confidence` | number | Only for an answered `score`. Do not use them alone for automatic approval (R-17). |
 
 A higher value always shows more risk (FR-027).
+
+Keys for each status (FR-031, FR-033):
+
+| Status | `model` | `tool` | `context` | `answers` |
+|---|---|---|---|---|
+| `excluded`, `definition_missing`, `context_too_large` | absent | absent | absent | each entry `missing` |
+| `timeout`, `unavailable` | absent | present | present | each entry `missing` |
+| `incomplete` | present if the response has a valid `model` value | present | present | the validated state of each entry |
+| `complete` | present | present | present | each entry `answered` |
+
+`status`, `question_set`, and `evaluated` are present for each status. A policy must read
+`status` first. In Rego, a comparison with an absent key is undefined, and a comparison with `0`
+or `[]` is not.
 
 ## 3. Result fields
 
@@ -96,9 +109,19 @@ The system applies these rules in Go code. A policy cannot change them (FR-043).
 | `approval_required` | The system creates a pending approval. It accepts the recommendation and the findings only if the status is `complete` (FR-036). |
 | `allow`, all conditions of FR-041 are true, and the local cache has no permanent denial of the tool | The call proceeds. The system writes the audit record first (D-13). |
 | `allow`, and the local cache has a permanent denial of the tool | The system denies the call (D-15). |
-| `allow`, and one condition of FR-041 is false | The system uses `approval_required`. The recommendation and the findings come from the `approval_context` of the `allow` result. The description and the risk level come from that `approval_context`, or from the first evaluation if it has none. |
+| `allow`, and one condition of FR-041 is false | The system uses `approval_required`. The recommendation and the findings come from the `approval_context` of the `allow` result. The system accepts them only if the status is `complete` (FR-036). The description and the risk level come from that `approval_context`, or from the first evaluation if it has none. |
 | `ciba_required` or an unknown action | The system denies the call, as before this feature. |
-| An evaluation error | The system uses the result of the first evaluation. The summary has the status `not_available`. The call waits for a person (D-05). |
+| An evaluation error or an evaluation timeout | The system uses the result of the first evaluation. The summary has the status `not_available`. The call waits for a person (D-05). |
+| An undefined result | The system denies the call, as before this feature. |
+
+The authorizer reports the outcome of an evaluation apart from the action: a result, an
+undefined result, an error, or a timeout. Before this feature, an error and a timeout have the
+form of a `deny` action only. The first evaluation keeps that behavior: each of them denies the
+call. The second evaluation reads the outcome, so that an error is not a policy denial and a
+policy denial is not an error (D-05).
+
+The permanent-denial lookup applies only to a result that lets the call proceed. A call that
+waits for a person keeps the approval state of the last read from the broker.
 
 More rules for an `approval_context`:
 

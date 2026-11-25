@@ -12,7 +12,8 @@ implementation adds the namespace `assessment` to the namespace table in section
 
 ## Data that no signal contains
 
-No log record, span, or metric contains these items:
+This contract applies to the signals that ExtProc and the broker write for this feature. No such
+log record, span, or metric contains these items:
 
 - An argument value or an argument name
 - The assessment context or a part of it
@@ -23,6 +24,11 @@ No log record, span, or metric contains these items:
 
 A tool name is in a signal only if the evaluation record names the tool (D-12). A principal is
 never in a metric.
+
+Two outputs are not signals of this contract, because the operator configures them:
+
+- The decision logs of OPA. If the OPA configuration enables them, OPA writes the full input of each evaluation. For the second evaluation, the input contains `assessment` and `mcp.arguments`. The operator must mask `/input/assessment` and `/input/mcp/arguments` with the decision log mask of OPA.
+- The `reasons` of a policy result. The existing record "opa authorization decision" contains them without a change. A policy must not write argument values or assessment data into its reasons.
 
 ## Structured log events
 
@@ -41,7 +47,7 @@ Attributes of `assessment.tool_call.assessed`:
 | `agent_id` | The typed agent identifier |
 | `target_server_name` | From the gateway metadata |
 | `tool_name` | Only under D-12 |
-| `arguments_ref` | `sha256:` and the existing arguments hash (`storage.ComputeArgumentsHash`) |
+| `arguments_ref` | `sha256:` and the arguments hash of the shared leaf package (D-07) |
 | `assessment_status` | A status of D-04 |
 | `outcome` | `automatic_approval`, `human_review`, or `denied` |
 | `auto_approval_rule` | The rule name from the policy, if one applies |
@@ -63,10 +69,14 @@ for each evaluation.
 | Span name | Kind | Parent | Attributes |
 |---|---|---|---|
 | `extproc.assessment` | Internal | The span of the request | `assessment.status`, `assessment.outcome`, `assessment.evaluated` |
-| `extproc.assessment.model_request` | Client | `extproc.assessment` | `http.request.method`, `http.response.status_code`, `server.address`, `error.type` |
 
-A span has the error status only for `unavailable` and `timeout`. The other statuses are not
-errors of the span.
+The feature adds no client span. The outbound client of ExtProc (`internal/telemetryhttp`)
+already starts the client span `http.request` for each request. For the model request, that span
+is a child of `extproc.assessment`. It has the HTTP attributes, and it gets the error status for
+a transport error and for an HTTP error status.
+
+The span `extproc.assessment` has the error status only for `unavailable` and `timeout`. The
+other statuses are not errors of the span.
 
 ## Metrics
 
@@ -104,5 +114,6 @@ Useful signals for an operator:
 
 ## Broker
 
-The broker adds no event and no instrument. The existing record "approval created" gets one
-attribute: `assessment_summary_status` with the value `assessed`, `not_available`, or `none`.
+The broker adds no event, no instrument, and no attribute. The record "approval created" does
+not change. The audit record `assessment.tool_call.assessed` of ExtProc has the assessment status
+of each call that waits for a person.
