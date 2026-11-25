@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API
-  version: 3.0.0
+  version: 3.1.0
   description: |
     Administrative REST APIs for the Agentic Identity Broker running on Port 14000.
 
