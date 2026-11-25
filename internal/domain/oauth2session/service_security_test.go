@@ -96,7 +96,7 @@ func TestHandleCallbackSecurity_DiscoveredIssuerChangeRejectsOldStateBeforeToken
 	principal := id.Principal("owner@example.com")
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, "https://auth.example.test", claims.IssuerURI)
 
@@ -130,7 +130,7 @@ func TestHandleCallbackSecurity_DiscoveredAudienceChangeRejectsOldStateBeforeTok
 	principal := id.Principal("owner@example.com")
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	assert.Equal(t, "https://auth.example.test", claims.IssuerURI)
 	assert.Equal(t, audienceA, claims.Resource)
@@ -170,7 +170,7 @@ func TestHandleCallbackSecurity_RejectsLegacyDiscoveredStateWithoutAudience(t *t
 	principal := id.Principal("owner@example.com")
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.Equal(t, "https://auth.example.test", claims.IssuerURI)
 	claims.Resource = ""
@@ -244,7 +244,7 @@ func TestHandleCallbackSecurity_PublicClientUsesBodyClientIDWithoutCredentialsAc
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
 	require.NotNil(t, flow)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 
@@ -335,7 +335,7 @@ func TestHandleCallbackSecurity_CIMDPublicClientExchangesAndRefreshesWithoutAuth
 
 	flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 	authorizationURL, err := url.Parse(flow.AuthorizationURL)
@@ -424,7 +424,7 @@ func TestHandleCallbackSecurity_CIMDPublicClientInvalidClientDoesNotRetryOrFallb
 			require.NoError(t, providerService.Create(ctx, provider))
 			flow, err := service.InitiateOAuth2Flow(ctx, principal, serviceID, "https://broker.example.com/sessions")
 			require.NoError(t, err)
-			claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+			claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 			require.NoError(t, err)
 			connected, err := service.HandleCallback(ctx, principal, &oauth2session.HandleCallbackRequest{
 				ServiceID: serviceID, Code: "rejected-code", State: flow.StateToken,
@@ -510,7 +510,7 @@ func TestHandleCallbackSecurity_CIMDClientReSignsEachRetryWithoutCredentialDowng
 
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 
 	result, err := service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
@@ -676,7 +676,7 @@ func TestRefreshAccessTokenSecurity_ResponseFailuresAuditOnlyCIMDClients(t *test
 					if client == "CIMD" {
 						assertCIMDTokenAcquisitionAudit(t, logs.String(), serviceID, "refresh", "rejected")
 					} else {
-						assert.NotContains(t, logs.String(), "CIMD client token acquisition")
+						assert.NotContains(t, logs.String(), `"event":"session.oauth2.cimd_`)
 					}
 				})
 			}
@@ -797,7 +797,7 @@ func TestHandleCallbackSecurity_RedactsUpstreamCredentialMaterialFromErrorsAndLo
 	require.NoError(t, err)
 
 	require.NotNil(t, flow)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 
@@ -928,7 +928,7 @@ func TestForceRefreshSessionSecurity_PublicClientOmitsCredentialsAndRedactsFailu
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
 	require.NotNil(t, flow)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 	require.NotEmpty(t, claims.PKCEVerifier)
 
@@ -1025,7 +1025,7 @@ func TestForceRefreshSessionSecurity_PublicClientEmitsRedactedSuccessAudit(t *te
 
 	flow, err := service.InitiateOAuth2Flow(context.Background(), principal, serviceID, "https://example.com/sessions")
 	require.NoError(t, err)
-	claims, err := service.ValidateStateToken(flow.StateToken, principal, serviceID)
+	claims, err := service.ValidateStateToken(t.Context(), flow.StateToken, principal, serviceID)
 	require.NoError(t, err)
 
 	_, err = service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{
@@ -1125,7 +1125,7 @@ func TestRefreshLogsCarryOperationContext(t *testing.T) {
 
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed", "oauth2_refresh_failed"} {
+	for _, message := range []string{"access token refreshed", "oauth2 session refreshed", "oauth2 session refresh failed"} {
 		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
 	}
 }
@@ -1167,7 +1167,7 @@ func TestGetValidAccessTokenRefreshLogsCarryOperationContext(t *testing.T) {
 
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	for _, message := range []string{"access token refreshed", "oauth2_token_refreshed"} {
+	for _, message := range []string{"access token refreshed", "oauth2 session refreshed"} {
 		assert.Equal(t, "request-marker", recorder.messages[message], "%s must be logged with the operation context", message)
 	}
 }
@@ -1567,15 +1567,24 @@ func assertSecurityEventsMarkPublicClient(t *testing.T, logs string, wantedEvent
 	}
 }
 
+var cimdTokenAcquisitionAuditEvents = map[string]string{
+	"code_exchange/success":  "session.oauth2.cimd_code_exchanged",
+	"code_exchange/rejected": "session.oauth2.cimd_code_exchange_rejected",
+	"refresh/success":        "session.oauth2.cimd_token_refreshed",
+	"refresh/rejected":       "session.oauth2.cimd_refresh_rejected",
+}
+
 func assertCIMDTokenAcquisitionAudit(t *testing.T, logs string, serviceID id.ServiceID, operation, outcome string) {
 	t.Helper()
+	wantEvent, ok := cimdTokenAcquisitionAuditEvents[operation+"/"+outcome]
+	require.True(t, ok, "no CIMD token acquisition audit event for %s/%s", operation, outcome)
 	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
 		if line == "" {
 			continue
 		}
 		var record map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &record))
-		if record["msg"] != "CIMD client token acquisition" {
+		if record["event"] != wantEvent {
 			continue
 		}
 		if record["service_id"] != serviceID.String() || record["operation"] != operation || record["outcome"] != outcome {
@@ -1589,7 +1598,7 @@ func assertCIMDTokenAcquisitionAudit(t *testing.T, logs string, serviceID id.Ser
 		}
 		return
 	}
-	assert.Failf(t, "missing CIMD token acquisition audit", "service_id=%q operation=%q outcome=%q", serviceID, operation, outcome)
+	assert.Failf(t, "missing CIMD token acquisition audit", "event=%q service_id=%q operation=%q outcome=%q", wantEvent, serviceID, operation, outcome)
 }
 
 func assertPublicTokenExchangeRequest(
@@ -1774,7 +1783,7 @@ func TestValidateStateTokenSecurity_MalformedClaimsRetainInvalidStateSentinel(t 
 			}
 			state, err := jweService.Encrypt(claims)
 			require.NoError(t, err)
-			validated, err := service.ValidateStateToken(state, principal, serviceID)
+			validated, err := service.ValidateStateToken(t.Context(), state, principal, serviceID)
 			assert.Nil(t, validated)
 			require.ErrorIs(t, err, oauth2session.ErrInvalidStateToken)
 			if malformed == "upstream identity" {

@@ -61,3 +61,11 @@ tool_approvals:
   approval_cache_idle_ttl: 5m
   request_timeout: 5s
   max_staleness: 60s
+
+# Opt in to current broker grant context using the shared browser/container origin.
+# The token exchange endpoint remains the internal broker URL above.
+# grant_context:
+#   enabled: true
+#   policy_decision_point: "http://aib.localhost:3000"
+#   request_timeout: 5s
+#   max_staleness: 60s

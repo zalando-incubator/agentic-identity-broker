@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -985,7 +986,7 @@ func TestResolveEffectiveScopes_ScopeUnion(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 
@@ -1011,7 +1012,7 @@ func TestResolveEffectiveScopes_ScopeLessServiceIsCovered(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
@@ -1050,7 +1051,7 @@ func TestResolveEffectiveScopes_OmitsScopesOutsideSRCeiling(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    permissionSetID,
 			IncludedServiceIDs: []id.ServiceID{serviceID},
@@ -1109,7 +1110,7 @@ func TestResolveEffectiveScopes_SRCeiling(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 
@@ -1135,7 +1136,7 @@ func TestResolveEffectiveScopes_RequireAllScopes(t *testing.T) {
 	defer psService.Close()
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	effectiveScopes, detail, err := svc.resolveEffectiveScopes(context.Background(), &storagedomain.UserGrant{
+	effectiveScopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), &storagedomain.UserGrant{
 		GrantedPermissionSets: []storagedomain.GrantedPermissionSetEntry{{
 			PermissionSetID:    psID,
 			IncludedServiceIDs: []id.ServiceID{svcA},
@@ -1196,7 +1197,7 @@ func TestResolveEffectiveScopes_PerServiceInclusion(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
+	scopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
 	assert.Equal(t, FailureDetail("grant_service_omitted"), detail)
 
@@ -1254,7 +1255,7 @@ func TestResolveEffectiveScopes_MultiPSCrossScopeCeiling(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 
@@ -1304,7 +1305,7 @@ func TestResolveEffectiveScopes_NonSRServiceExcluded(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcB)
+	scopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), grant, agent, svcB)
 	require.NoError(t, err)
 	assert.Equal(t, FailureDetail("grant_service_requirement_excluded"), detail)
 
@@ -1350,7 +1351,7 @@ func TestResolveEffectiveScopes_EmptySRCeiling_UsesPS(t *testing.T) {
 	}
 
 	svc := &TokenExchangeService{permissionSetService: psService}
-	scopes, detail, err := svc.resolveEffectiveScopes(context.Background(), grant, agent, svcA)
+	scopes, _, detail, err := svc.GrantResolver().resolveGrantCoverage(context.Background(), grant, agent, svcA)
 	require.NoError(t, err)
 	assert.Equal(t, DetailNone, detail)
 	assert.Equal(t, []string{"read"}, scopes[svcA],
@@ -1873,6 +1874,7 @@ func TestExchange_UncoveredServiceDeniedBeforeSessionLookup(t *testing.T) {
 			assert.Equal(t, "https://broker.example.com/agents/"+fixture.agentID.String(), tokenErr.ErrorURI())
 			assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
 			assert.Equal(t, AuthorizationRef{
+				Principal:          id.Principal("user@example.com"),
 				AgentID:            fixture.agentID,
 				GrantID:            fixture.grant.ID,
 				GrantUpdatedAt:     fixture.grant.UpdatedAt,
@@ -1961,7 +1963,7 @@ func TestResolveEffectiveScopes_MissingReferenceAndRepositoryError(t *testing.T)
 			if unavailable {
 				fixture.psRepo.getByIDsErr = cause
 			}
-			scopes, detail, err := fixture.svc.resolveEffectiveScopes(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
+			scopes, _, detail, err := fixture.svc.GrantResolver().resolveGrantCoverage(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
 			assert.Nil(t, scopes)
 			assert.Equal(t, DetailNone, detail, "error diagnostics must not compete with the separate coverage detail")
 			var tokenErr *TokenExchangeError
@@ -2012,7 +2014,7 @@ func TestResolveEffectiveScopes_CoverageDetailPreservesOtherServiceScopes(t *tes
 					{ServiceID: otherServiceID, RequiredScopes: []string{"read"}},
 				}
 			}
-			scopes, detail, err := fixture.svc.resolveEffectiveScopes(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
+			scopes, _, detail, err := fixture.svc.GrantResolver().resolveGrantCoverage(context.Background(), fixture.grant, fixture.agent, fixture.serviceID)
 			require.NoError(t, err, "coverage gaps must use the separate detail, not the structural error channel")
 			assert.Equal(t, wantDetail, detail)
 			assert.Equal(t, map[id.ServiceID][]string{otherServiceID: {"read"}}, scopes)
@@ -2041,6 +2043,7 @@ func TestExchange_PermissionSetRepositoryFailureBeforeSessionLookup(t *testing.T
 	assert.Equal(t, DetailGrantRepositoryUnavailable, tokenErr.Diagnostic().Detail())
 	assert.Equal(t, ServiceRef{ID: fixture.serviceID}, tokenErr.Service())
 	assert.Equal(t, AuthorizationRef{
+		Principal:          id.Principal("user@example.com"),
 		AgentID:            fixture.agentID,
 		GrantID:            fixture.grant.ID,
 		GrantUpdatedAt:     fixture.grant.UpdatedAt,
@@ -2167,6 +2170,8 @@ const (
 	grantStalePermissionSet
 )
 
+const exchangeFixtureCaller = "gateway-client"
+
 type exchangeFixtureConfig struct {
 	coverage        grantCoverage
 	callbackBaseURL string
@@ -2278,10 +2283,13 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 
 	jwtValidator, err := NewJWTValidator(&MockJWKSProvider{keySet: keySet}, "https://auth.example.com", "agentic-identity-broker", 60)
 	require.NoError(t, err)
+	// The caller policy requires the client assertion's own subject, so a subject token passed as the
+	// assertion cannot authorize the exchange.
+	const callerPolicy = `client_assertion.sub == "` + exchangeFixtureCaller + `"`
 	celEvaluator, err := NewCELEvaluator(CELEvaluatorConfig{
 		PrincipalExpression:     "subject_token.sub",
 		AgentIDExpression:       "subject_token.azp",
-		AuthorizationExpression: "true",
+		AuthorizationExpression: callerPolicy,
 		EvaluationTimeout:       100 * time.Millisecond,
 	})
 	require.NoError(t, err)
@@ -2296,7 +2304,7 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		agentRepository:      agentRepo,
 		config: &ports.TokenExchangeConfig{
 			ClaimExtraction: ports.ClaimExtractionConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.azp"},
-			Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
+			Authorization:   ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: callerPolicy}},
 		},
 	}
 
@@ -2309,11 +2317,13 @@ func newExchangeFixture(t *testing.T, cfg exchangeFixtureConfig) exchangeFixture
 		"exp": now.Add(time.Hour).Unix(),
 		"iat": now.Unix(),
 	}
+	assertionClaims := maps.Clone(claims)
+	assertionClaims["sub"] = exchangeFixtureCaller
 	req := NewTokenExchangeRequest(
 		TokenExchangeGrantType,
 		signServiceTestJWT(t, privateKey, claims),
 		AccessTokenType,
-		signServiceTestJWT(t, privateKey, claims),
+		signServiceTestJWT(t, privateKey, assertionClaims),
 		JWTBearerType,
 		"https://api.example.com/requested",
 		"",
@@ -2545,7 +2555,7 @@ func TestExchange_AuthorizationContext(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(fixture, sessionRepo)
 			}
-			wantAuthorization := AuthorizationRef{AgentID: fixture.agentID}
+			wantAuthorization := AuthorizationRef{Principal: id.Principal("user@example.com"), AgentID: fixture.agentID}
 			if tc.wantGrant {
 				wantAuthorization.GrantID = fixture.grant.ID
 				wantAuthorization.GrantUpdatedAt = fixture.grant.UpdatedAt
@@ -2636,7 +2646,7 @@ func TestExchange_UnresolvedAgentDoesNotExportCandidateIdentity(t *testing.T) {
 			assert.Equal(t, tc.wantDetail, tokenErr.Diagnostic().Detail())
 			assert.Equal(t, "server_error", tokenErr.Code())
 			assert.Equal(t, http.StatusInternalServerError, tokenErr.HTTPStatus())
-			assert.Equal(t, AuthorizationRef{}, tokenErr.Authorization())
+			assert.Equal(t, AuthorizationRef{Principal: id.Principal("user@example.com")}, tokenErr.Authorization())
 			wantService := ServiceRef{}
 			if tc.wantService {
 				wantService.ID = fixture.serviceID
@@ -2669,6 +2679,7 @@ func TestExchange_CancellationPreservesOnlyResolvedAuthorizationContext(t *testi
 			fixture := newExchangeFixture(t, exchangeFixtureConfig{sessionRepo: sessionRepo, encryption: &MockEncryption{}})
 			wantService := ServiceRef{ID: fixture.serviceID}
 			wantAuthorization := AuthorizationRef{
+				Principal:          id.Principal("user@example.com"),
 				AgentID:            fixture.agentID,
 				GrantID:            fixture.grant.ID,
 				GrantUpdatedAt:     fixture.grant.UpdatedAt,

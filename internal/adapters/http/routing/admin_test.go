@@ -324,7 +324,7 @@ func TestAdminSweepJWTRejectsUnsignedPrincipalHeader(t *testing.T) {
 		ExpectedIssuer: "https://auth.example.com", ExpectedAudience: "agentic-identity-broker",
 		ClaimExtraction: ports.JWTClaimExtractionConfig{PrincipalExpression: "claims.sub"},
 	}
-	store, err := storageadapter.NewAdapter(&cfg.Storage)
+	store, err := storageadapter.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close(context.Background())) })
 	var logs strings.Builder
@@ -370,7 +370,7 @@ func newAdminRouter(t *testing.T, publicURL string) http.Handler {
 	cfg := fixtures.DefaultOAuth2Config()
 	cfg.Server.Admin.PublicURL = publicURL
 	cfg.Server.Admin.CORS.AllowedOrigins = []string{"https://console.example.com"}
-	storage, err := storageadapter.NewAdapter(&cfg.Storage)
+	storage, err := storageadapter.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, storage.Close(context.Background())) })
 	require.NoError(t, storage.PermissionSets().Create(context.Background(), &domainstorage.PermissionSet{

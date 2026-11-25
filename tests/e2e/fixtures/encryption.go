@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -124,7 +125,7 @@ func TestTokenPairs() map[string][2]string {
 // that are stored directly in the storage layer (bypassing the domain service).
 // The serviceID must match the session's ServiceID field.
 func EncryptedToken(serviceID, token string) []byte {
-	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKMaterialDeterministic(), "", 0)
+	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKMaterialDeterministic(), "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		panic("fixtures.EncryptedToken: failed to create encryption adapter: " + err.Error())
 	}
@@ -142,7 +143,7 @@ func EncryptedToken(serviceID, token string) []byte {
 // Use this in fixtures that return entities stored directly in the storage layer (bypassing
 // the domain service Create method). The serviceID must match the entity's ID field.
 func EncryptedSecret(serviceID, plaintext string) model.Secret {
-	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKMaterialDeterministic(), "", 0)
+	adapter, _, err := awsencryption.NewAWSEncryption(TestKEKMaterialDeterministic(), "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		panic("fixtures.EncryptedSecret: failed to create encryption adapter: " + err.Error())
 	}

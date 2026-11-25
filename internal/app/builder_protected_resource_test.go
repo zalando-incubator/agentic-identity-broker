@@ -77,7 +77,7 @@ func builderProtectedResourceConfig() *ports.Config {
 
 func TestBuilder_DiscoveryUsesInjectedClientWithoutChangingManualServices(t *testing.T) {
 	cfg := builderProtectedResourceConfig()
-	adapter, err := storage.NewAdapter(&cfg.Storage)
+	adapter, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, adapter.Close(context.Background())) })
 
@@ -197,7 +197,7 @@ func TestBuilder_ShutdownClosesSharedAndDiscoveryTokenIdleConnections(t *testing
 			UpstreamJWKSMinRefresh: time.Hour, UpstreamJWKSMaxRefresh: time.Hour,
 		},
 	}
-	adapter, err := storage.NewAdapter(&cfg.Storage)
+	adapter, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, adapter.Close(context.Background())) })
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).
@@ -238,7 +238,7 @@ func TestBuilder_ShutdownClosesSharedAndDiscoveryTokenIdleConnections(t *testing
 
 func TestBuilder_ShutdownClosesProductionSharedAndGuardedPools(t *testing.T) {
 	cfg := builderProtectedResourceConfig()
-	adapter, err := storage.NewAdapter(&cfg.Storage)
+	adapter, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, adapter.Close(context.Background())) })
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).
@@ -320,7 +320,7 @@ func TestBuilder_GuardedDiscoveryTracingDoesNotExportURLQueries(t *testing.T) {
 	config.Telemetry.Enabled = true
 	config.Telemetry.Traces.Enabled = true
 	config.OAuth2AuthServer.CIMD.SSRF.ExtraBlockedCIDRs = []string{"8.8.8.8/32"}
-	adapter, err := storage.NewAdapter(&config.Storage)
+	adapter, err := storage.NewAdapter(&config.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, adapter.Close(context.Background())) })
 	application, err := NewBuilder().WithConfig(config).WithStorage(adapter).

@@ -51,8 +51,8 @@ func (e *TestEnvironment) StartWithAuthorizer(auth authorization.Authorizer) {
 		client, err := approval.NewClient(e.Config.ToolApprovals.URL, e.Config.ToolApprovals.RequestTimeout, exchanger, approvalHTTPClient)
 		Expect(err).NotTo(HaveOccurred(), "failed to create approval client")
 		e.approvalClient = client
-		e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness)
-		approvalGate = approval.NewGate(e.approvalCache, client)
+		e.approvalCache = approval.NewCache(e.Config.ToolApprovals.ApprovalCacheIdleTTL, e.Config.ToolApprovals.MaxStaleness, e.logger)
+		approvalGate = approval.NewGate(e.approvalCache, client, e.logger)
 	}
 
 	var svc *extprocserver.Server
@@ -61,6 +61,6 @@ func (e *TestEnvironment) StartWithAuthorizer(auth authorization.Authorizer) {
 	} else {
 		svc = extprocserver.NewServerWithAuthorizer(e.Config, exchanger, auth, e.logger)
 	}
-	e.startGRPCServer(svc)
+	Expect(e.startGRPCServer(svc)).To(Succeed())
 	e.startApprovalSync()
 }

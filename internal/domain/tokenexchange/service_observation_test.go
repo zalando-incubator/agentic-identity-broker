@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -138,7 +140,14 @@ func TestExchangeHumanStateObservation(t *testing.T) {
 			}
 			grantSpan := seen["tokenexchange.verify_agent_access"]
 			require.NotNil(t, grantSpan)
-			require.Empty(t, grantSpan.Attributes())
+			require.Equal(t, trace.SpanKindInternal, grantSpan.SpanKind())
+			if tc.grantError {
+				require.Equal(t, codes.Error, grantSpan.Status().Code, "a repository failure is an error")
+				require.Equal(t, []attribute.KeyValue{attribute.String("error.type", "grant_repository_unavailable")}, grantSpan.Attributes())
+			} else {
+				require.Equal(t, codes.Unset, grantSpan.Status().Code, "a grant denial is not an error")
+				require.Empty(t, grantSpan.Attributes())
+			}
 			require.Empty(t, grantSpan.Events())
 			require.Equal(t, grantSpan.SpanContext(), trace.SpanContextFromContext(grants.context))
 			require.Equal(t, parent.SpanContext().SpanID(), grantSpan.Parent().SpanID())

@@ -20,6 +20,7 @@ import (
 	"github.com/lestrrat-go/jwx/v4/jwt"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/security"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
@@ -159,7 +160,7 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 
 	// Reject empty tokens early
 	if strings.TrimSpace(tokenStr) == "" {
-		a.logger.WarnContext(ctx, "JWT authentication failed: malformed token",
+		a.logger.WarnContext(ctx, "jwt authentication failed: malformed token",
 			"reason", "empty_token",
 			"jwt_header", a.config.HeaderName,
 		)
@@ -182,22 +183,22 @@ func (a *JWXAuthenticator) Authenticate(ctx context.Context, rawJWT string) (*jw
 	// Extract claims map for CEL evaluation
 	claimsMap, err := a.extractClaimsMap(token)
 	if err != nil {
-		a.logger.WarnContext(ctx, "JWT authentication failed: claim extraction error",
+		a.logger.WarnContext(ctx, "jwt authentication failed: claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, fmt.Errorf("%w: %v", jwtauth.ErrClaimExtraction, err)
 	}
 
 	// Use CEL evaluator to extract principal and profile attributes
-	result, err := a.celEvaluator.ExtractClaims(claimsMap)
+	result, err := a.celEvaluator.ExtractClaims(ctx, claimsMap)
 	if err != nil {
-		a.logger.WarnContext(ctx, "JWT authentication failed: CEL claim extraction error",
+		a.logger.WarnContext(ctx, "jwt authentication failed: cel claim extraction error",
 			"error", err.Error(),
 		)
 		return nil, err
 	}
 
-	a.logger.InfoContext(ctx, "JWT authentication successful",
+	a.logger.InfoContext(ctx, "jwt authentication successful",
 		"principal", result.Principal,
 		"has_display_name", result.DisplayName != nil,
 		"has_email", result.Email != nil,
@@ -221,12 +222,20 @@ func (a *JWXAuthenticator) stripBearerPrefix(rawJWT string) string {
 	return rawJWT
 }
 
+// logJWKSFetchFailure logs the fetch failure once. The jwx cause names the full JWKS URL,
+// so it is neither logged nor returned.
+func (a *JWXAuthenticator) logJWKSFetchFailure(ctx context.Context, err error) {
+	a.logger.ErrorContext(ctx, "failed to fetch jwks",
+		"url", security.RedactURL(a.jwksURL),
+		"error_kind", security.ClassifyOutboundError(err))
+}
+
 // parseAndVerify parses the JWT and verifies its signature using JWKS.
 func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) (jwt.Token, error) {
 	if a.keySet != nil {
 		keySet, err := a.keySet.GetKeySet(ctx)
 		if err != nil {
-			a.logger.ErrorContext(ctx, "local JWT pre-authentication key set unavailable", "error", err)
+			a.logger.ErrorContext(ctx, "local jwt pre-authentication key set unavailable", "error", err)
 			return nil, fmt.Errorf("%w: %v", jwtauth.ErrJWKSUnavailable, err)
 		}
 		return a.verifyWithKeySet(tokenStr, keySet)
@@ -236,15 +245,15 @@ func (a *JWXAuthenticator) parseAndVerify(ctx context.Context, tokenStr string) 
 		// JWKS verification mode: ensure cache is ready, then fetch keyset
 		if !a.jwksCache.Ready(ctx, a.jwksURL) {
 			if _, err := a.jwksCache.Refresh(ctx, a.jwksURL); err != nil {
-				a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
-				return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
+				a.logJWKSFetchFailure(ctx, err)
+				return nil, fmt.Errorf("%w: JWKS fetch failed", jwtauth.ErrJWKSUnavailable)
 			}
 		}
 
 		keySet, err := a.jwksCache.Lookup(ctx, a.jwksURL)
 		if err != nil {
-			a.logger.ErrorContext(ctx, "failed to fetch JWKS", "url", a.jwksURL, "error", err)
-			return nil, fmt.Errorf("%w: JWKS fetch failed: %v", jwtauth.ErrJWKSUnavailable, err)
+			a.logJWKSFetchFailure(ctx, err)
+			return nil, fmt.Errorf("%w: JWKS fetch failed", jwtauth.ErrJWKSUnavailable)
 		}
 
 		return a.verifyWithKeySet(tokenStr, keySet)
@@ -388,7 +397,7 @@ func (a *JWXAuthenticator) logValidationFailure(ctx context.Context, err error) 
 		reason = "claim_extraction"
 	}
 
-	a.logger.WarnContext(ctx, "JWT authentication failed",
+	a.logger.WarnContext(ctx, "jwt authentication failed",
 		"reason", reason,
 		"error", err.Error(),
 		"jwt_header", a.config.HeaderName,

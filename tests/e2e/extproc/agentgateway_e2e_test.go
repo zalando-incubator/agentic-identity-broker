@@ -314,7 +314,7 @@ func startAgentgwMCPServer() (net.Listener, *http.Server) {
 	httpServer := &http.Server{Handler: httpSrv}
 	go func() {
 		if serveErr := httpServer.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			agentgwLogger.Error("MCP server error", "err", serveErr)
+			agentgwLogger.Error("MCP server error", "error", serveErr)
 		}
 	}()
 
@@ -372,7 +372,7 @@ func startAgentgwExtProc(
 
 	go func() {
 		if serveErr := grpcSrv.Serve(listener); serveErr != nil {
-			agentgwLogger.Error("ExtProc gRPC server error", "err", serveErr)
+			agentgwLogger.Error("ExtProc gRPC server error", "error", serveErr)
 		}
 	}()
 
@@ -649,7 +649,7 @@ func newAgentgwStepUpAuthServer(broker *agentgwReAuthBroker, fixture *fixtures.R
 	a.server = &http.Server{Handler: mux}
 	go func() {
 		if serveErr := a.server.Serve(a.listener); serveErr != nil && serveErr != http.ErrServerClosed {
-			agentgwLogger.Error("step-up authorization server error", "err", serveErr)
+			agentgwLogger.Error("step-up authorization server error", "error", serveErr)
 		}
 	}()
 	return a

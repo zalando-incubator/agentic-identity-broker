@@ -94,6 +94,7 @@ type ServiceScopeInfo struct {
 type ServiceRequirementStatus struct {
 	ServiceID       id.ServiceID
 	DisplayName     string
+	IconSVG         *string
 	RequirementType storage.RequirementType
 	RequiredScopes  []ServiceScopeInfo
 	IsConnected     bool
@@ -231,6 +232,7 @@ func (s *Service) resolveServiceRequirements(ctx context.Context, agent *storage
 		requirements = append(requirements, ServiceRequirementStatus{
 			ServiceID:       req.ServiceID,
 			DisplayName:     svc.DisplayName,
+			IconSVG:         svc.IconSVG,
 			RequirementType: req.RequirementType,
 			RequiredScopes:  scopes,
 			IsConnected:     connected[req.ServiceID],
@@ -354,7 +356,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 
 	var grant *storage.UserGrant
 	var previousFields []any
-	action, message := "grant_created", "grant created"
+	event := "consent.grant.created"
 	if existingGrant != nil {
 		if grantMatchesRequest(existingGrant, req) {
 			return existingGrant.Copy(), nil
@@ -384,7 +386,7 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("failed to update grant: %w", err)
 		}
 		grant = existingGrant
-		action, message = "grant_updated", "grant updated"
+		event = "consent.grant.updated"
 	} else {
 		// Create new grant (FR-011)
 		grant = &storage.UserGrant{
@@ -406,12 +408,12 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 			return nil, fmt.Errorf("failed to create grant: %w", err)
 		}
 		if grant.ID != candidateID {
-			action, message = "grant_updated", "grant updated"
+			event = "consent.grant.updated"
 		}
 	}
 
 	fields := []any{
-		"action", action,
+		"event", event,
 		"principal", grant.Principal,
 		"agent_id", grant.AgentID,
 		"grant_id", grant.ID,
@@ -421,7 +423,11 @@ func (s *Service) GrantConsent(ctx context.Context, req *GrantRequest) (*storage
 		"granted_permission_sets", (&storage.UserGrant{GrantedPermissionSets: grant.GrantedPermissionSets}).Copy().GrantedPermissionSets,
 	}
 	fields = append(fields, previousFields...)
-	s.logger.InfoContext(ctx, message, fields...)
+	if event == "consent.grant.updated" {
+		s.logger.InfoContext(ctx, "grant updated", fields...)
+	} else {
+		s.logger.InfoContext(ctx, "grant created", fields...)
+	}
 
 	return grant.Copy(), nil
 }
@@ -644,7 +650,7 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 	}
 	if err := s.revokeRefreshSessions(ctx, principal, agentID, "consent_revoked"); err != nil {
 		s.logger.InfoContext(ctx, "grant deleted but refresh cleanup failed",
-			"action", "grant_deleted",
+			"event", "consent.grant.deleted",
 			"principal", grant.Principal,
 			"agent_id", grant.AgentID,
 			"grant_id", grant.ID,
@@ -653,7 +659,7 @@ func (s *Service) RevokeConsentForPrincipal(ctx context.Context, principal id.Pr
 	}
 
 	s.logger.InfoContext(ctx, "grant revoked",
-		"action", "grant_revoked",
+		"event", "consent.grant.revoked",
 		"principal", grant.Principal,
 		"agent_id", grant.AgentID,
 		"grant_id", grant.ID,
@@ -703,22 +709,22 @@ func (s *Service) VerifyAgentAccess(ctx context.Context, principal id.Principal,
 	if err != nil {
 		// Check if it's a NotFound error
 		if errors.Is(err, ports.ErrNotFound) {
-			return nil, fmt.Errorf("%w: user has not granted permission for agent (principal: %s, agent: %s)",
-				ErrAgentAccessDenied, principal, agentID)
+			return nil, fmt.Errorf("%w: user has not granted permission for agent (agent: %s)",
+				ErrAgentAccessDenied, agentID)
 		}
 		return nil, fmt.Errorf("failed to verify user grant: %w", err)
 	}
 
 	// Defensive check: ensure grant is not nil
 	if grant == nil {
-		return nil, fmt.Errorf("%w: user has not granted permission for agent (principal: %s, agent: %s)",
-			ErrAgentAccessDenied, principal, agentID)
+		return nil, fmt.Errorf("%w: user has not granted permission for agent (agent: %s)",
+			ErrAgentAccessDenied, agentID)
 	}
 
 	// Check grant is active (not expired)
 	if grant.ValidUntil != nil && !grant.ValidUntil.UTC().After(s.now().UTC()) {
-		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (principal: %s, agent: %s)",
-			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), principal, agentID)
+		return grant.Copy(), fmt.Errorf("%w: user grant expired at %s (agent: %s)",
+			ErrGrantExpired, grant.ValidUntil.Format(time.RFC3339), agentID)
 	}
 
 	// Hard deletion is the revocation mechanism: a missing grant (ports.ErrNotFound) is treated

@@ -221,8 +221,8 @@ func TestLogImpersonationDecision_WhitelistAndCorrelation(t *testing.T) {
 
 	var event map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &event))
-	assert.Equal(t, "impersonation_decision", event["msg"])
-	assert.Equal(t, "impersonation_decision", event["event"])
+	assert.Equal(t, "impersonation decision recorded", event["msg"])
+	assert.Equal(t, "impersonation.decision.recorded", event["event"])
 	assert.Equal(t, "success", event["outcome"])
 	assert.Equal(t, "internal-gateway", event["rule"])
 	assert.Equal(t, "gateway-prod", event["privileged_client_identity"])

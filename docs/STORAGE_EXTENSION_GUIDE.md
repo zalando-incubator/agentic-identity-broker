@@ -264,12 +264,15 @@ Location: [internal/adapters/storage/factory.go](../internal/adapters/storage/fa
 Add your backend to the factory:
 
 ```go
-func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
+func NewAdapter(config *ports.StorageConfig, logger *slog.Logger) (*Adapter, error) {
+    if logger == nil {
+        return nil, errors.New("storage.NewAdapter: logger must not be nil")
+    }
     switch config.Backend {
     case "memory":
         return newMemoryAdapter(config)
     case "postgres":
-        return newPostgresAdapter(config)
+        return newPostgresAdapter(config, logger)
     case "mybackend":  // Add this
         return newMyBackendAdapter(config)
     default:
@@ -415,8 +418,8 @@ Before you submit a PR, run:
 # Format code
 gofmt -s -w internal/adapters/storage/mybackend/
 
-# Run linter
-golangci-lint run internal/adapters/storage/mybackend/
+# Run linter (the repository configuration needs the custom binary with the telemetrylint plugin)
+"$(bash scripts/golangci-lint-custom.sh)" run ./internal/adapters/storage/mybackend/...
 
 # Run tests with race detection
 go test -race ./internal/adapters/storage/mybackend/...

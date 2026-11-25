@@ -633,11 +633,26 @@ func (unavailableCIMDKeyReadiness) RequireUsablePublishedKey(context.Context) er
 }
 
 func assertCIMDProviderAuditRecord(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome string, sentinels ...string) {
-	assertCIMDProviderAuditMessage(t, logs, serviceID, operation, wantOutcome, "CIMD confidential service", sentinels...)
+	t.Helper()
+	assertCIMDProviderAuditEvent(t, logs, serviceID, operation, wantOutcome, "confidential", sentinels...)
 }
 
-func assertCIMDProviderAuditMessage(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome, wantMessage string, sentinels ...string) {
+var cimdProviderAuditEvents = map[string]string{
+	"confidential/create/success":  "service.thirdparty.cimd_confidential_service_created",
+	"confidential/create/rejected": "service.thirdparty.cimd_confidential_service_create_rejected",
+	"confidential/update/success":  "service.thirdparty.cimd_confidential_service_updated",
+	"confidential/update/rejected": "service.thirdparty.cimd_confidential_service_update_rejected",
+	"public/create/success":        "service.thirdparty.cimd_public_service_created",
+	"public/create/rejected":       "service.thirdparty.cimd_public_service_create_rejected",
+	"public/update/success":        "service.thirdparty.cimd_public_service_updated",
+	"public/update/rejected":       "service.thirdparty.cimd_public_service_update_rejected",
+}
+
+func assertCIMDProviderAuditEvent(t *testing.T, logs *bytes.Buffer, serviceID id.ServiceID, operation, wantOutcome, client string, sentinels ...string) {
 	t.Helper()
+
+	wantEvent, ok := cimdProviderAuditEvents[client+"/"+operation+"/"+wantOutcome]
+	require.True(t, ok, "no CIMD provider audit event for %s/%s/%s", client, operation, wantOutcome)
 
 	var auditRecord map[string]any
 	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
@@ -647,14 +662,13 @@ func assertCIMDProviderAuditMessage(t *testing.T, logs *bytes.Buffer, serviceID 
 
 		var entry map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &entry))
-		if entry["service_id"] == serviceID.String() && entry["operation"] == operation && entry["outcome"] == wantOutcome {
+		if entry["event"] == wantEvent && entry["service_id"] == serviceID.String() && entry["operation"] == operation && entry["outcome"] == wantOutcome {
 			auditRecord = entry
 			break
 		}
 	}
 
-	require.NotNil(t, auditRecord, "expected %s/%s audit record for service %s", operation, wantOutcome, serviceID)
-	assert.Equal(t, wantMessage, auditRecord["msg"])
+	require.NotNil(t, auditRecord, "expected %s audit record for service %s", wantEvent, serviceID)
 	for _, field := range []string{
 		"client_secret",
 		"secret",
@@ -1028,7 +1042,7 @@ func TestThirdpartyOAuth2ProviderService_CIMDPublicCreateAndUpdateWithoutKey(t *
 				if counter, ok := readiness.check.(*countingCIMDKeyReadiness); ok {
 					assert.Zero(t, counter.calls)
 				}
-				assertCIMDProviderAuditMessage(t, logs, serviceID, operation, "success", "CIMD public service", "previous-ciphertext")
+				assertCIMDProviderAuditEvent(t, logs, serviceID, operation, "success", "public", "previous-ciphertext")
 			})
 		}
 	}
@@ -1092,7 +1106,7 @@ func TestThirdpartyOAuth2ProviderService_CIMDPublicRejectionAuditDoesNotExposeCr
 			repo.AssertNotCalled(t, "Create")
 			repo.AssertNotCalled(t, "Get")
 			repo.AssertNotCalled(t, "Update")
-			assertCIMDProviderAuditMessage(t, logs, serviceID, operation, "rejected", "CIMD public service", "sentinel-secret-value")
+			assertCIMDProviderAuditEvent(t, logs, serviceID, operation, "rejected", "public", "sentinel-secret-value")
 		})
 	}
 }
@@ -1391,7 +1405,7 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDPublicModeTransitions(t *tes
 	assert.Equal(t, model.ClientRegistrationCIMD, stored.ClientRegistration)
 	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod)
 	assert.Zero(t, readiness.calls)
-	assertCIMDProviderAuditMessage(t, logs, serviceID, "update", "success", "CIMD public service")
+	assertCIMDProviderAuditEvent(t, logs, serviceID, "update", "success", "public")
 
 	require.ErrorIs(t, service.Update(ctx, confidential(), nil), ports.ErrCIMDPublicKeyUnavailable)
 	assert.Equal(t, model.TokenEndpointAuthMethodNone, stored.TokenEndpointAuthMethod, "failed confidential replacement must not change stored mode")
@@ -1403,7 +1417,7 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDPublicModeTransitions(t *tes
 	assert.Equal(t, hostedID, stored.ClientID)
 	assert.Equal(t, model.TokenEndpointAuthMethodPrivateKeyJWT, stored.TokenEndpointAuthMethod)
 	assert.Equal(t, 2, readiness.calls)
-	assertCIMDProviderAuditMessage(t, logs, serviceID, "update", "success", "CIMD confidential service")
+	assertCIMDProviderAuditEvent(t, logs, serviceID, "update", "success", "confidential")
 }
 
 func TestThirdpartyOAuth2ProviderService_Update_StaticAndCIMDPublicIdentitySwitch(t *testing.T) {
@@ -1909,7 +1923,7 @@ func TestThirdpartyOAuth2ProviderService_List_DecryptsAll(t *testing.T) {
 	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
 		var event map[string]any
 		require.NoError(t, json.Unmarshal([]byte(line), &event))
-		if event["msg"] != "service_secret_decrypted" {
+		if event["event"] != "service.thirdparty.secret_decrypted" {
 			continue
 		}
 		assert.Equal(t, "INFO", event["level"])
@@ -2969,6 +2983,7 @@ func TestThirdpartyOAuth2ProviderService_Create_DuplicateDCRIdentityPreservesExi
 		}
 	}
 	require.NotNil(t, rejectedAudit)
+	assert.Equal(t, "service.thirdparty.discovered_service_create_rejected", rejectedAudit["event"])
 	assert.Equal(t, "create", rejectedAudit["operation"])
 	assert.Equal(t, discoveryIssuer, rejectedAudit["issuer"])
 	assert.Equal(t, "dcr", rejectedAudit["client_method"])
@@ -3269,6 +3284,7 @@ func TestThirdpartyOAuth2ProviderService_Update_IssuerChangeRequiresZeroSessions
 	assert.Equal(t, "failed", repo.stored.DiscoveryStatus.Status(repo.stored.Discovery.ResourceURL))
 	var audit map[string]any
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &audit))
+	assert.Equal(t, "service.thirdparty.discovered_service_update_rejected", audit["event"])
 	assert.Equal(t, stored.IssuerURI, audit["issuer"])
 	assert.Equal(t, string(stored.Discovery.ClientMethod), audit["client_method"])
 	assert.Equal(t, "issuer_change_requires_no_sessions", audit["failure_code"])
@@ -3754,10 +3770,37 @@ func TestThirdpartyOAuth2ProviderService_AuditFinalIssuerConflictUsesSafeCode(t 
 	service.auditDiscovery(t.Context(), provider, "update", err, provider)
 	var entry map[string]any
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
+	assert.Equal(t, "service.thirdparty.discovered_service_update_rejected", entry["event"])
 	assert.Equal(t, "rejected", entry["outcome"])
 	assert.Equal(t, "issuer_change_requires_no_sessions", entry["failure_code"])
 	assert.Equal(t, provider.IssuerURI, entry["issuer"])
 	assert.NotContains(t, logs.String(), "original-sealed-secret")
+}
+
+func TestThirdpartyOAuth2ProviderService_AuditDiscoveryEvents(t *testing.T) {
+	provider := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
+	failure := &DiscoveryError{Code: "timeout"}
+	for _, tc := range []struct {
+		operation, wantOutcome, wantEvent string
+		result                            error
+	}{
+		{"create", "success", "service.thirdparty.discovered_service_created", nil},
+		{"create", "rejected", "service.thirdparty.discovered_service_create_rejected", failure},
+		{"update", "success", "service.thirdparty.discovered_service_updated", nil},
+		{"update", "rejected", "service.thirdparty.discovered_service_update_rejected", failure},
+	} {
+		t.Run(tc.operation+" "+tc.wantOutcome, func(t *testing.T) {
+			var logs bytes.Buffer
+			service := &ThirdpartyOAuth2ProviderService{logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+			service.auditDiscovery(t.Context(), provider, tc.operation, tc.result, provider)
+			var entry map[string]any
+			require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
+			assert.Equal(t, tc.wantEvent, entry["event"])
+			assert.Equal(t, provider.ID.String(), entry["service_id"])
+			assert.Equal(t, tc.operation, entry["operation"])
+			assert.Equal(t, tc.wantOutcome, entry["outcome"])
+		})
+	}
 }
 
 func TestThirdpartyOAuth2ProviderService_AuditLocalFailureUsesSafeCode(t *testing.T) {
@@ -3777,6 +3820,7 @@ func TestThirdpartyOAuth2ProviderService_AuditLocalFailureUsesSafeCode(t *testin
 			service.auditDiscovery(t.Context(), provider, "update", tc.failure, provider)
 			var entry map[string]any
 			require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
+			assert.Equal(t, "service.thirdparty.discovered_service_update_rejected", entry["event"])
 			assert.Equal(t, "rejected", entry["outcome"])
 			if tc.wantCode == "" {
 				assert.NotContains(t, entry, "failure_code")

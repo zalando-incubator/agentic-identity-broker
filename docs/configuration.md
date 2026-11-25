@@ -180,6 +180,30 @@ Set `tool_approvals.enabled: true` only with `authorization.enabled: true`. Set 
 
 `sessions.extraction.http_header` defaults to `Mcp-Session-Id`. ExtProc uses this value to scope session approvals.
 
+## ExtProc grant context configuration
+
+The standalone ExtProc service can supply a fresh broker delegation permit to OPA before every policy decision ([ADR 048](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/048-authzen-delegation-pip.md)). These keys belong to ExtProc's `EXTPROC_` namespace (ADR 011). The broker has no new keys: its AuthZEN endpoints exist whenever token exchange is configured. The broker Helm chart does not deploy ExtProc and is unchanged.
+
+| Key | Environment variable | Flag | Default |
+|---|---|---|---|
+| `grant_context.enabled` | `EXTPROC_GRANT_CONTEXT_ENABLED` | `--grant_context.enabled` | `false` |
+| `grant_context.policy_decision_point` | `EXTPROC_GRANT_CONTEXT_POLICY_DECISION_POINT` | `--grant_context.policy_decision_point` | `""` (origin of `oauth2.token_endpoint`) |
+| `grant_context.request_timeout` | `EXTPROC_GRANT_CONTEXT_REQUEST_TIMEOUT` | `--grant_context.request_timeout` | `5s` |
+| `grant_context.max_staleness` | `EXTPROC_GRANT_CONTEXT_MAX_STALENESS` | `--grant_context.max_staleness` | `60s` |
+
+Precedence is flags, then environment variables, then YAML, then defaults. ExtProc validates the keys only when `grant_context.enabled` is `true`:
+
+- `grant_context.enabled requires authorization.enabled`.
+- `grant_context.policy_decision_point must be an absolute URL with a host and no userinfo, query, or fragment`.
+- `grant_context.policy_decision_point must use https://` unless `oauth2.tls.allow_http` is true for development.
+- `grant_context.request_timeout must be positive` and `grant_context.max_staleness must be positive`.
+
+An empty `policy_decision_point` defaults to the scheme, host and port of `oauth2.token_endpoint`; for `https://broker.example.com:8443/oauth2/token` the identifier is `https://broker.example.com:8443`. The value must equal the broker's `server.enduser.public_url` without a trailing slash. When the broker's public URL has a path prefix, for example `https://example.com/broker`, set the identifier explicitly. ExtProc then discovers `https://example.com/.well-known/authzen-configuration/broker` (the AuthZEN well-known string goes between the host and the path), so the reverse proxy must route that URL to the broker's `/.well-known/authzen-configuration`.
+
+At startup ExtProc fetches the metadata without credentials, requires the advertised `policy_decision_point` to equal the expected identifier exactly, and validates the advertised `access_evaluation_endpoint`. ExtProc never guesses an endpoint or silently disables the feature. A failed discovery (transport error, non-200, invalid or incomplete metadata) is retried with a backoff that starts at 1 s and doubles to a 10 s cap, logging Warn `event=extproc.grant_context.discovery_failed` each time; the gRPC port stays closed until discovery succeeds. A `policy_decision_point` mismatch or an invalid advertised endpoint stops startup. Give the ExtProc container a `tcpSocket` readiness probe on its gRPC port, so a rollout during a broker outage keeps the existing ready pods instead of replacing them with pods that cannot serve. A permit is reused for at most `min(max-age, max_staleness)` from the moment the evaluation request was sent; the broker caps `max-age` at 60 seconds and at the grant expiry. A delegation denial returns 403 with the consent URL, and a broker failure or an expired permit returns 503; a cached exchanged token is never a fallback.
+
+See [`examples/config/extproc-grant-context.yaml`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/extproc-grant-context.yaml).
+
 
 ## Environment-Specific Configuration
 
@@ -300,7 +324,7 @@ This section lists all configuration options. See [Available Settings](#availabl
 | `log.level` | enum | `info` | `debug`, `info`, `warn`, `error` | No | `IDENTITY_BROKER_LOG_LEVEL` | `--log-level` | Sets logging verbosity. Use `info` to retain security audit events; `warn` and `error` suppress Info-level success records. |
 | `log.format` | enum | `text` | `text`, `json` | No | `IDENTITY_BROKER_LOG_FORMAT` | `--log-format` | Sets log output format. Use `json` for production and log aggregation systems. |
 
-Each successful confidential-provider secret decryption emits `service_secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
+Each successful confidential-provider secret decryption emits `event` `service.thirdparty.secret_decrypted` at Info with the provider's `service_id`, including when listing services. The event does not include the secret.
 
 #### Token Refresh Configuration
 
@@ -347,7 +371,7 @@ The Identity Broker runs two independent HTTP servers on separate ports:
 |--------|------|---------------|--------------|-----------|----------------------|----------|-------------|
 | `server.enduser.port` | integer | `8000` | 1-65535 | No | `IDENTITY_BROKER_SERVER_ENDUSER_PORT` | `--server.enduser.port` | Port for end-user server. Must differ from admin port. |
 | `server.enduser.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ENDUSER_BIND` | `--server.enduser.bind` | Bind address for end-user server. Use `::` for dual-stack (IPv6+IPv4), `0.0.0.0` for IPv4 only, or `127.0.0.1` for localhost only. |
-| `server.enduser.public_url` | URL | `http://localhost:8000` | HTTP or HTTPS URL | Yes | `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL` | N/A | Public URL for callbacks and broker metadata. Hosted CIMD and DCR require a stable, public HTTPS URL. |
+| `server.enduser.public_url` | URL | `http://localhost:8000` | HTTP or HTTPS URL; no userinfo, query or fragment when token exchange is configured | Yes | `IDENTITY_BROKER_SERVER_ENDUSER_PUBLIC_URL` | N/A | Public URL for callbacks and broker metadata. Hosted CIMD and DCR require a stable, public HTTPS URL. With token exchange configured, it is also the AuthZEN policy decision point; HTTP is for local development only, and production requires HTTPS because evaluation requests carry credentials (ADR 048 §1). |
 | `server.admin.port` | integer | `14000` | 1-65535 | No | `IDENTITY_BROKER_SERVER_ADMIN_PORT` | `--server.admin.port` | Port for admin server. Must differ from end-user port. |
 | `server.admin.bind` | string | `::` | IPv4/IPv6 address or hostname | No | `IDENTITY_BROKER_SERVER_ADMIN_BIND` | `--server.admin.bind` | Bind address for admin server. In production, restrict to private network (for example `10.0.1.0`) or use firewall rules. |
 | `server.admin.public_url` | URL | `http://localhost:14000` | HTTP or HTTPS URL with a hostname, no userinfo, and no empty explicit port | Yes | `IDENTITY_BROKER_SERVER_ADMIN_PUBLIC_URL` | N/A | Public admin URL. All admin `/api` requests must match its Host authority. Reverse proxies must preserve this Host. |
@@ -1589,7 +1613,7 @@ Grant deletion, expiration, or replacement ends refresh authority. Renewal of ex
 Consent denial returns the existing `invalid_grant` response without tokens. Verifier or storage errors return `server_error` without rotating the token.
 Grant and credential deletion precede session revocation because these repositories do not share the refresh transaction. A revocation error does not undo deletion.
 
-If deletion commits but refresh cleanup fails, the audit event uses `action=grant_deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
+If deletion commits but refresh cleanup fails, the audit event uses `event=consent.grant.deleted` and `refresh_cleanup=failed`. The request still returns an error. Retrying DELETE returns 404 because the grant is already absent. The event does not report successful session cleanup.
 
 Memory storage rejects a late successor after lifecycle revocation, including renewal that retains the grant ID. Revocation also marks consumed predecessors. Successor insertion and its predecessor check share one lock. PostgreSQL retains the rotation transaction and agent lock through insertion. Neither backend retracts access tokens from a refresh that completed before revocation.
 
@@ -1896,19 +1920,34 @@ ExtProc replaces both `::` and literal dots with underscores for environment loo
 
 ### What is Instrumented
 
-When tracing is enabled, the following operations emit child spans:
+The [telemetry reference](/docs/reference/telemetry) lists each span, metric and attribute
+that the broker and ExtProc emit. It is generated from the source code.
 
-| Span Name | Operation | Key Attributes |
-|---|---|---|
-| HTTP span (per route) | All inbound HTTP requests (via otelchi) | `http.method`, `http.route`, `http.status_code` |
-| `storage.get.agent` | PostgreSQL `AgentRepository.Get` | `db.system=postgresql`, `db.operation=GetAgent` |
-| `storage.list.user_grants_by_principal` | PostgreSQL `UserGrantRepository.ListByPrincipal` | `db.system=postgresql`, `db.operation=ListByPrincipal` |
-| `storage.create.user_grant` | PostgreSQL `UserGrantRepository.Create` (upsert) | `db.system=postgresql`, `db.operation=CreateUserGrant` |
-| `storage.*.tool_approval`, `storage.*.approval_sync` | PostgreSQL tool approval and approval sync repositories | `db.system=postgresql`, `db.operation` |
-| `encryption.encrypt` | AWS KMS envelope encryption | `encryption.key_type=aws_kms` |
-| `encryption.decrypt` | AWS KMS envelope decryption | `encryption.key_type=aws_kms` |
-| `jwks.fetch` | JWKS key set fetch/cache lookup | `error.type` on failure |
-| `oauth2.token_proxy` | Upstream OAuth2 token proxy | `http.request.method=POST`, `http.response.status_code` |
+The spans are in these groups:
+
+| Spans | Operation |
+|---|---|
+| HTTP server span | Each inbound HTTP request, except `/health`. The `otelchi` middleware creates it and names it by method and route pattern. It sets `http.method`, `http.route`, and `http.status_code`. The reference does not list it. |
+| `storage.*` | PostgreSQL repository calls |
+| `encryption.*` | AWS KMS envelope encryption and decryption |
+| `jwks.fetch` | JWKS key set fetch or cache lookup |
+| `oauth2.token_proxy` | Upstream OAuth2 token proxy |
+| `http.request` | Outbound HTTP calls |
+| `tokenexchange.*` | RFC 8693 token exchange and AuthZEN access evaluation in the broker |
+| `approval.*` | Tool approval operations |
+| `oauth2session.*` | Third-party session refresh in the background |
+| `extproc.*` | ExtProc token exchange, OPA evaluation, grant context, and the approval gate |
+
+`http.request` spans have span kind `Client`. A failed call sets the error status and `error.type`:
+
+| `error.type` | Meaning |
+|---|---|
+| `network_error` | No response was received, including a timeout |
+| `400` to `599` | The status code of a 4xx or 5xx response |
+| `_OTHER` | A status code above 599 |
+| `response_read_failed`, `response_close_failed` | The response body failed, including a timeout |
+
+If the caller cancels the request, the status stays unset and `error.type` is not set. A 4xx or 5xx response received before the cancellation stays an error.
 
 `storage.*` spans have span kind `Client`. A failed database call, or a stored value that cannot be decoded, sets the error status and `error.type`, with the value `connection`, `timeout`, or `unknown`.
 

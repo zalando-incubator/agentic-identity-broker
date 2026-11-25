@@ -32,7 +32,7 @@ Reuse `ServiceRequest.UnmarshalJSON`'s existing presence-check convention. Prese
 
 ## Persistence design
 
-Extend the current service table with a nullable text column and a check for nonempty sources within 65,536 UTF-8 bytes. Use an atomic `NNN_service_icon_svg.up.sql`/`.down.sql` pair; the inspected migration sequence ends at `048`, so `049` is the candidate only if still unused at implementation time. The up migration adds no backfill, timestamp update, identifier change, or default icon. The down migration drops only the new check and column. Losing configured icons on rollback is intentional; credentials and all other service data must survive.
+Extend the current service table with nullable `icon_svg text`. Enforce “NULL means absent; decoded UTF-8 source is 1–65,536 bytes” with `CHECK (icon_svg IS NULL OR octet_length(icon_svg) BETWEEN 1 AND 65536)`. Inspection on 2026-11-19 found the sequence ends at `048`, with no occupied `049` slot. Use `049_service_icon_svg.up.sql` and `049_service_icon_svg.down.sql`. The atomic up migration adds no backfill, default, timestamp update, or identifier change. The atomic down migration removes only the icon check and column. Rollback intentionally loses icon metadata but preserves credentials and all other service data.
 
 Update both storage adapter record conversions, all explicit service INSERT/UPDATE/SELECT/RETURNING column lists, and any bulk/list projection that constructs service metadata. Keep repository interfaces unchanged unless a demonstrated existing operation cannot express the update. Session projections obtain the source through their current service join/lookup; no session schema migration is needed. Avoid adding one database query per session or consent occurrence.
 

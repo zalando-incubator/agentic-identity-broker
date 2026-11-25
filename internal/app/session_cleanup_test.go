@@ -52,7 +52,7 @@ func TestBuilder_SessionCleanupLifecycle(t *testing.T) {
 						UpstreamTokenEndpoint:     "https://issuer.example.com/token",
 					}
 				}
-				adapter, err := storage.NewAdapter(&cfg.Storage)
+				adapter, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 				require.NoError(t, err)
 				seed := func(signature string, expiresAt time.Time) {
 					t.Helper()
@@ -136,7 +136,7 @@ func TestBuilder_ShutdownDrainsTokenCommitAndRejectsBackgroundWork(t *testing.T)
 			Encryption:       ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
 			OAuth2AuthServer: ports.OAuth2AuthServerConfig{Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour}},
 		}
-		adapter, err := storage.NewAdapter(&cfg.Storage)
+		adapter, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
 		logger := slog.New(slog.DiscardHandler)
 		application, err := NewBuilder().WithConfig(cfg).WithStorage(adapter).WithLogger(logger).Build()

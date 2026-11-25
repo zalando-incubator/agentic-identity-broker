@@ -26,7 +26,7 @@ type OAuth2AuthorizeHandler struct {
 func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.Service == nil {
 		if h.Logger != nil {
-			h.Logger.ErrorContext(r.Context(), "OAuth2 authorization handler invoked with nil Service — check builder wiring")
+			h.Logger.ErrorContext(r.Context(), "oauth2 authorize handler has no service")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -75,7 +75,7 @@ func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	decision, err := h.Service.HandleAuthorization(r.Context(), authReq, principalValue)
 	if err != nil {
 		if h.Logger != nil {
-			h.Logger.ErrorContext(r.Context(), "authorization_request_failed", "error", err)
+			h.Logger.ErrorContext(r.Context(), "authorization request failed", "event", "oauth2.authorization_request.failed", "error", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)

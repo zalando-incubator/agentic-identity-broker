@@ -53,7 +53,7 @@ var _ = Describe("Encryption Vault for OAuth Tokens - Environment Variable KEK M
 
 		// Create encryption adapter directly from production code
 		// This tests the actual aws.NewAWSEncryption implementation
-		adapter, _, err = awsadapter.NewAWSEncryption(testKEK, "", 0)
+		adapter, _, err = awsadapter.NewAWSEncryption(testKEK, "", 0, slog.New(slog.DiscardHandler))
 		Expect(err).ToNot(HaveOccurred(), "encryption adapter should initialize with base64-encoded KEK")
 	})
 
@@ -365,7 +365,7 @@ var _ = Describe("Encryption Vault for OAuth Tokens - Environment Variable KEK M
 			// Create a new adapter instance (simulating application restart)
 			// Use the same base64-encoded key that was used in BeforeEach
 			sameKEK := "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
-			newAdapter, _, err := awsadapter.NewAWSEncryption(sameKEK, "", 0)
+			newAdapter, _, err := awsadapter.NewAWSEncryption(sameKEK, "", 0, slog.New(slog.DiscardHandler))
 			Expect(err).ToNot(HaveOccurred(), "new adapter should initialize with same KEK")
 
 			// THEN the same KEK can still decrypt previously encrypted tokens

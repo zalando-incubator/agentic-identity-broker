@@ -51,8 +51,31 @@ func (sp *SessionsPage) ClickRefreshButton(ctx context.Context) error {
 	return nil
 }
 
+func (sp *SessionsPage) RefreshSession(ctx context.Context, serviceName string) error {
+	return sp.refreshButtonLocator().And(sp.sessionCard(serviceName).Locator("button")).Click()
+}
+
+func (sp *SessionsPage) OpenSessionDetails(ctx context.Context, serviceName string) error {
+	if err := sp.terminateButtonLocator().And(sp.sessionCard(serviceName).Locator("button")).Click(); err != nil {
+		return err
+	}
+	return sp.sessionDetails().WaitFor()
+}
+
+func (sp *SessionsPage) CancelSessionDetails(ctx context.Context) error {
+	return sp.sessionDetailsAction("Cancel session termination").Click()
+}
+
+func (sp *SessionsPage) ConfirmTermination(ctx context.Context, serviceName string) error {
+	return sp.sessionDetailsAction("Terminate session with " + serviceName).Click()
+}
+
+func (sp *SessionsPage) TakeDetailScreenshot(ctx context.Context, name string) error {
+	return sp.TakeLocatorScreenshot(ctx, name, sp.sessionDetails())
+}
+
 func (sp *SessionsPage) WaitForSuccessMessage(ctx context.Context, message string) error {
-	status := sp.page().GetByRole("status").Filter(playwright.LocatorFilterOptions{HasText: message})
+	status := sp.page().GetByRole("status").Filter(playwright.LocatorFilterOptions{HasText: message}).Last()
 	if err := status.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
 		Timeout: playwright.Float(float64(sp.timeout.Milliseconds())),
@@ -169,4 +192,16 @@ func (sp *SessionsPage) refreshButtonLocator() playwright.Locator {
 		Name:  "Refresh",
 		Exact: playwright.Bool(true),
 	})
+}
+
+func (sp *SessionsPage) sessionCard(serviceName string) playwright.Locator {
+	return sp.page().GetByRole("heading", playwright.PageGetByRoleOptions{Name: serviceName, Exact: playwright.Bool(true)}).Locator("xpath=ancestor::div[.//button[normalize-space()='Terminate']][1]")
+}
+
+func (sp *SessionsPage) sessionDetails() playwright.Locator {
+	return sp.page().GetByRole("dialog")
+}
+
+func (sp *SessionsPage) sessionDetailsAction(name string) playwright.Locator {
+	return sp.sessionDetails().GetByRole("button", playwright.LocatorGetByRoleOptions{Name: name, Exact: playwright.Bool(true)})
 }

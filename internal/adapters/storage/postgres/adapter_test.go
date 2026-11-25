@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"log/slog"
 	"testing"
 	"time"
 
@@ -21,14 +22,14 @@ func TestNewAdapter(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	assert.NoError(t, err)
 	assert.NotNil(t, adapter)
 }
 
 func TestNewAdapter_NilConfig(t *testing.T) {
-	adapter, err := NewAdapter(nil)
+	adapter, err := NewAdapter(nil, slog.New(slog.DiscardHandler))
 
 	assert.Error(t, err)
 	assert.Nil(t, adapter)
@@ -49,7 +50,7 @@ func TestNewAdapter_WrongBackend(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	assert.Error(t, err)
 	assert.Nil(t, adapter)
@@ -70,7 +71,7 @@ func TestNewAdapter_EmptyConnectionURL(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	assert.Error(t, err)
 	assert.Nil(t, adapter)
@@ -91,7 +92,7 @@ func TestNewAdapter_DefaultTimeouts(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	assert.NoError(t, err)
 	assert.NotNil(t, adapter)

@@ -44,6 +44,6 @@
 
 **Source evidence:** ServiceRequest.UnmarshalJSON retains request presence; provider prepareUpdate reads persisted state and applies existing field merges. SPA currently sets frame-ancestors only. Extend these paths, preserve row versions and add no icon-only mandatory If-Match. Permission-set rows derive names from existing data.services; carry iconSvg through that mapping without adding a catalog. AppLayout uses userInfo.pictureUrl, so a new same-origin-only img-src policy would break remote avatars.
 
-**Rationale:** Session source must reflect the current service, never a session-creation snapshot. Key only image failure state by source so recovery does not remount actions. Existing consent/session caches remain authoritative; fresh-response observation is required.
+**Rationale:** Session source must reflect the current service, never a session-creation snapshot. Key only image state by source, and keep existing data refresh and cache behavior. Observe a fresh response to verify recovery.
 
 **Remaining work:** Canonical API publication, security analysis and resolution of blocking findings, a timestamp-named ADR recording the approved design with status Accepted, glossary/architecture updates and test-first implementation. All stakeholder approvals are complete. No further sign-off is required; approval does not claim this work is complete.

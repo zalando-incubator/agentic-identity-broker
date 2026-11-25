@@ -13,7 +13,7 @@
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Card } from '@design-system/components/data-display/Card';
-import { PermissionSetCard, ServiceRequirementEntry } from './PermissionSetCard';
+import { PermissionSetCard, type PermissionSetCardProps, type ServiceRequirementEntry } from './PermissionSetCard';
 
 export interface PermissionSetsListProps {
   /** Array of permission sets with their requirement types */
@@ -31,7 +31,7 @@ export interface PermissionSetsListProps {
   }>;
 
   /** Available services for display name lookup */
-  availableServices?: Array<{ id: string; display_name: string }>;
+  availableServices?: PermissionSetCardProps['availableServices'];
 
   /** Agent's service requirements — used for per-service toggle classification (FR-008) */
   serviceRequirements?: ServiceRequirementEntry[];

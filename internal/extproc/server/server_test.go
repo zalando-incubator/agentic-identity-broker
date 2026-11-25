@@ -97,6 +97,13 @@ func (m *mockExchanger) Exchange(ctx context.Context, subjectToken, resourceURI 
 	return m.exchangeFunc(ctx, subjectToken, resourceURI)
 }
 
+func (m *mockExchanger) ExchangeBound(ctx context.Context, subject, resource string, observed *server.ExchangeResult, _ server.ExchangeResultBinding) (server.ExchangeResult, error) {
+	if observed != nil {
+		return *observed, nil
+	}
+	return m.Exchange(ctx, subject, resource)
+}
+
 func (m *mockExchanger) Shutdown() {
 	m.shutdownCalled = true
 }
@@ -2306,7 +2313,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			}
 			cfg := testConfig()
 			cfg.Sessions.Extraction.HTTPHeader = "X-Agent-Session"
-			gate := approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker)
+			gate := approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler))
 			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, gate)
 			defer cleanup()
 
@@ -2371,7 +2378,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(t *testing.T) {
 	permanent := "permanent"
 	approvedAt := time.Now()
-	cache := approval.NewCache(time.Minute, time.Minute)
+	cache := approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	cache.Replace([]approval.Pair{{
 		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
 		Approvals: []approval.Record{{
@@ -2412,7 +2419,7 @@ func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(
 	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 		return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 	}}
-	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker))
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker, slog.New(slog.DiscardHandler)))
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
@@ -2433,7 +2440,7 @@ func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(
 func TestServer_OPA_AmbiguousArgumentsCannotUseCachedApproval(t *testing.T) {
 	permanent := "permanent"
 	approvedAt := time.Now()
-	cache := approval.NewCache(time.Minute, time.Minute)
+	cache := approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	cache.Replace([]approval.Pair{{
 		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
 		Approvals: []approval.Record{{
@@ -2460,7 +2467,7 @@ func TestServer_OPA_AmbiguousArgumentsCannotUseCachedApproval(t *testing.T) {
 			return errors.New("ambiguous request must not consume approval")
 		},
 	}
-	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker))
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker, slog.New(slog.DiscardHandler)))
 	defer cleanup()
 
 	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`)
@@ -2541,7 +2548,7 @@ func TestServer_OPA_ApprovalGateIsolatedFromNonApprovalActionsAndBatches(t *test
 			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 			}}
-			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)))
 			defer cleanup()
 
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
@@ -2598,7 +2605,7 @@ func TestServer_OPA_ApprovalGateOnlyHandlesStandaloneMCPToolCalls(t *testing.T) 
 			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 			}}
-			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)))
 			defer cleanup()
 
 			_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
@@ -2643,7 +2650,7 @@ func TestServer_OPA_ApprovalGateDoesNotHandleHeaderOnlyRequests(t *testing.T) {
 	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 		return server.ExchangeResult{Token: "exchanged-token"}, nil
 	}}
-	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)))
 	defer cleanup()
 
 	response, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{
@@ -3581,7 +3588,7 @@ func TestServer_RequestContext_OPABodyBearingPath_LogsGeneratedTraceIDAndAnonymo
 	require.NotNil(t, headersResp)
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA: token exchanged in headers phase, buffering body for OPA evaluation")
+	record := requireLogRecord(t, capture, "opa: token exchanged in headers phase, buffering body for opa evaluation")
 	traceID, ok := record["trace_id"].(string)
 	require.True(t, ok, "expected trace_id field in log record: %#v", record)
 	assert.Regexp(t, regexp.MustCompile("^[0-9a-f]{32}$"), traceID)
@@ -3621,7 +3628,7 @@ func TestServer_RequestContext_OPAHeadersOnlyPath_LogsPropagatedTraceIDAndAnonym
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	record := requireLogRecord(t, capture, "OPA allowed header-only request, token exchanged successfully")
+	record := requireLogRecord(t, capture, "opa allowed header-only request, token exchanged successfully")
 	traceID, ok := record["trace_id"].(string)
 	require.True(t, ok, "expected trace_id field in log record: %#v", record)
 	assert.Equal(t, expectedTraceID, traceID)
@@ -3692,7 +3699,7 @@ func TestServer_RequestContext_OPADeny_LogsTraceID(t *testing.T) {
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA denied request")
+	record := requireLogRecord(t, capture, "opa denied request")
 	assert.Equal(t, expectedTraceID, record["trace_id"], "OPA-deny log must retain the propagated trace_id")
 	assert.Equal(t, "anonymous", record["actor"])
 }
@@ -3726,7 +3733,7 @@ func TestServer_RequestContext_OPAEvaluationError_LogsTraceID(t *testing.T) {
 	}, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_files"}}`), "mcp")
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA evaluation error — denying")
+	record := requireLogRecord(t, capture, "opa evaluation error — denying")
 	assert.Equal(t, expectedTraceID, record["trace_id"], "OPA-evaluation-error log must retain the propagated trace_id")
 	assert.Equal(t, "anonymous", record["actor"])
 }
@@ -3760,7 +3767,7 @@ func TestServer_RequestContext_OPAInvalidInput_LogsTraceID(t *testing.T) {
 	}, []byte(`this is not valid json-rpc`), "mcp")
 	require.NotNil(t, bodyResp)
 
-	record := requireLogRecord(t, capture, "OPA: failed to parse request body — denying")
+	record := requireLogRecord(t, capture, "opa: failed to parse request body — denying")
 	assert.Equal(t, expectedTraceID, record["trace_id"], "invalid-input deny log must retain the propagated trace_id")
 	assert.Equal(t, "anonymous", record["actor"])
 }

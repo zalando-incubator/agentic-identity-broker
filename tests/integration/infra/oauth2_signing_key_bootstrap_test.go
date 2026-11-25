@@ -242,7 +242,8 @@ func newPostgresStorageAdapter(t *testing.T, connStr string) (*storageadapter.Ad
 			Read:  5 * time.Second,
 			Write: 10 * time.Second,
 		},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 
 	return adapter, func() {

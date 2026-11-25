@@ -184,7 +184,8 @@ func TestBuilderMinimalConfiguration(t *testing.T) {
 			Read:  5 * time.Second,
 			Write: 5 * time.Second,
 		},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	if err != nil {
 		t.Fatalf("failed to create storage adapter: %v", err)
 	}
@@ -309,7 +310,7 @@ func TestBuilderAdminJWTAuthentication(t *testing.T) {
 	build := func(t *testing.T, adminConfig *ports.JWTConfig) *App {
 		t.Helper()
 		cfg := newConfig(adminConfig)
-		store, err := storage.NewAdapter(&cfg.Storage)
+		store, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
 		app, err := NewBuilder().WithConfig(cfg).WithStorage(store).
 			WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))).Build()
@@ -406,7 +407,7 @@ func TestBuilderUpstreamClientReusesConcurrentConnections(t *testing.T) {
 		Encryption:       ports.EncryptionConfig{Memory: &ports.MemoryConfig{RawKey: testutil.TestKEKBase64}},
 		OAuth2AuthServer: ports.OAuth2AuthServerConfig{Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour}},
 	}
-	store, err := storage.NewAdapter(&cfg.Storage)
+	store, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(store).
 		WithLogger(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))).Build()
@@ -511,7 +512,8 @@ func TestBuilderMissingRequiredDependency(t *testing.T) {
 				Read:  5 * time.Second,
 				Write: 5 * time.Second,
 			},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("failed to create storage adapter: %v", err)
 		}
@@ -585,7 +587,8 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 				Read:  5 * time.Second,
 				Write: 5 * time.Second,
 			},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("failed to create storage adapter: %v", err)
 		}
@@ -696,6 +699,8 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.NotNil(t, app.TokenExchangeService)
+		require.NotNil(t, app.EnduserHandlers.AuthZENConfiguration, "AuthZEN discovery exists whenever token exchange is configured")
+		require.NotNil(t, app.EnduserHandlers.AuthZENEvaluation, "AuthZEN evaluation exists whenever token exchange is configured")
 
 		request := httptest.NewRequest(http.MethodGet, "/api/approvals", nil)
 		request.Header.Set("Authorization", "Bearer invalid")
@@ -725,6 +730,8 @@ func TestBuilderTokenExchangeExpectedAudience(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Nil(t, app.TokenExchangeService)
+		require.Nil(t, app.EnduserHandlers.AuthZENConfiguration)
+		require.Nil(t, app.EnduserHandlers.AuthZENEvaluation)
 
 		handler := httpmiddleware.RequireApprovalClientAssertion(app.ApprovalRequestAuthenticator)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusNoContent)
@@ -773,7 +780,8 @@ func TestBuilder_ModeStrategyWiring(t *testing.T) {
 		a, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("storage.NewAdapter: %v", err)
 		}
@@ -1095,7 +1103,8 @@ func TestBuilder_ProxyJWKSFailsWhenStartupMetadataDiscoveryFails(t *testing.T) {
 		a, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("storage.NewAdapter: %v", err)
 		}
@@ -1172,7 +1181,8 @@ func TestBuilder_HybridJWKSWarnsWhenStartupProbeFails(t *testing.T) {
 		a, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("storage.NewAdapter: %v", err)
 		}
@@ -1259,7 +1269,7 @@ func TestBuilder_HybridJWKSWarnsWhenStartupProbeFails(t *testing.T) {
 		_ = app.Shutdown(shutdownCtx)
 	}()
 
-	if !strings.Contains(logs.String(), "startup upstream JWKS probe failed") {
+	if !strings.Contains(logs.String(), "startup upstream jwks probe failed") {
 		t.Fatalf("expected startup JWKS probe warning, got logs: %s", logs.String())
 	}
 }
@@ -1270,7 +1280,8 @@ func TestBuilder_ShutdownStopsUpstreamJWKSAdapterWorkers(t *testing.T) {
 		a, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("storage.NewAdapter: %v", err)
 		}
@@ -1430,7 +1441,7 @@ func TestBuilderJWTPreauthClosesBothJWKSWorkers(t *testing.T) {
 			Mode: "local", Local: ports.LocalModeConfig{TokenTTL: time.Hour},
 		},
 	}
-	adapter, err := storage.NewAdapter(&config.Storage)
+	adapter, err := storage.NewAdapter(&config.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, adapter.Close(context.Background())) })
 
@@ -1493,7 +1504,8 @@ func TestBuilder_LocalModeSigningKeyReadiness(t *testing.T) {
 		a, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("storage.NewAdapter: %v", err)
 		}
@@ -1665,7 +1677,8 @@ func TestBuilder_HybridModeSigningKeyReadiness(t *testing.T) {
 		a, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("storage.NewAdapter: %v", err)
 		}
@@ -1738,7 +1751,8 @@ func TestBuilder_MissingOAuth2AuthServerConfig(t *testing.T) {
 	adapter, err := storage.NewAdapter(&ports.StorageConfig{
 		Backend:  "memory",
 		Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	if err != nil {
 		t.Fatalf("failed to create storage adapter: %v", err)
 	}
@@ -1820,7 +1834,8 @@ func TestBuilder_SharedUpstreamJWKSAdapter(t *testing.T) {
 		a, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		if err != nil {
 			t.Fatalf("storage.NewAdapter: %v", err)
 		}
@@ -2021,7 +2036,8 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 		adapter, err := storage.NewAdapter(&ports.StorageConfig{
 			Backend:  "memory",
 			Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 5 * time.Second},
-		})
+		}, slog.New(slog.DiscardHandler))
+
 		require.NoError(t, err)
 		return adapter
 	}

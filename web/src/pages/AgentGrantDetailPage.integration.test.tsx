@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AgentGrantDetailPage } from './AgentGrantDetailPage';
 import { consentApi } from '@services/api/consent';
 import { ToastProvider } from '../components/ui/Toast';
@@ -87,6 +87,7 @@ describe('AgentGrantDetailPage - Integration', () => {
     return render(
       <ToastProvider>
         <MemoryRouter initialEntries={['/agents/test-agent']}>
+          <Link to="/agents/next-agent">Next agent</Link>
           <Routes>
             <Route path="/agents/:agentId" element={<AgentGrantDetailPage />} />
           </Routes>
@@ -94,6 +95,47 @@ describe('AgentGrantDetailPage - Integration', () => {
       </ToastProvider>,
     );
   };
+
+  it('hides the previous agent and resets unsaved selections on navigation', async () => {
+    const agent: AgentDetail = {
+      ...mockAgent,
+      active_session_service_ids: ['github'],
+      permission_sets: [{
+        requirement_type: 'mandatory',
+        permission_set: {
+          id: 'files', name: 'Files access', description: 'Project files',
+          service_scopes: [{ service_id: 'github', requirement_type: 'optional' }],
+        },
+      }],
+    };
+    const previousGrant = { ...mockGrant, granted_permission_sets: { files: ['github'] } };
+    const nextAgent = {
+      agent: { ...agent, agentId: 'next-agent', displayName: 'Next Agent' },
+      services: mockServices,
+    };
+    const { promise: nextDetail, resolve: finishLoad } = Promise.withResolvers<typeof nextAgent>();
+    vi.mocked(consentApi.getAgentDetail)
+      .mockResolvedValueOnce({ agent, services: mockServices })
+      .mockReturnValueOnce(nextDetail);
+    vi.mocked(consentApi.getAgentGrants)
+      .mockResolvedValueOnce(previousGrant)
+      .mockResolvedValueOnce(null);
+
+    renderPage();
+    expect(await screen.findByRole('button', { name: /revoke all access/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('switch', { name: 'Exclude GitHub' }));
+    expect(screen.getByRole('switch', { name: 'Include GitHub' })).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Next agent' }));
+    expect(screen.queryByRole('heading', { name: 'Test Agent' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /revoke all access|save|approve & delegate/i })).not.toBeInTheDocument();
+
+    finishLoad(nextAgent);
+    expect(await screen.findByRole('heading', { name: 'Next Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Exclude GitHub' })).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Approve & Delegate' })).toBeEnabled();
+  });
 
   it('should load and display agent information', async () => {
     renderPage();
@@ -222,5 +264,62 @@ describe('AgentGrantDetailPage - Integration', () => {
       },
       { timeout: 5000 },
     );
+  });
+  it('recovers failed service images from fresh data after Save', async () => {
+    const source = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="3"/></svg>';
+    const replacement = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>';
+    const agent: AgentDetail = {
+      ...mockAgent,
+      active_session_service_ids: ['atlas', 'birch'],
+      service_requirements: [
+        { service_id: 'atlas', requirement_type: 'mandatory' },
+        { service_id: 'birch', requirement_type: 'optional' },
+      ],
+      permission_sets: [{
+        requirement_type: 'mandatory',
+        permission_set: {
+          id: 'files', name: 'Files access', description: 'Project files',
+          service_scopes: [
+            { service_id: 'atlas', requirement_type: 'mandatory' },
+            { service_id: 'birch', requirement_type: 'optional' },
+          ],
+        },
+      }],
+    };
+    const services = [
+      { kind: 'requirement' as const, serviceId: 'atlas', serviceName: 'Atlas Files', requirementType: 'mandatory' as const,
+        requiredScopes: [], connectionStatus: 'connected' as const, iconSvg: source },
+      { kind: 'requirement' as const, serviceId: 'birch', serviceName: 'Birch Files', requirementType: 'optional' as const,
+        requiredScopes: [], connectionStatus: 'connected' as const, iconSvg: source },
+    ];
+    const grant = { ...mockGrant, granted_permission_sets: { files: ['atlas', 'birch'] } };
+    vi.mocked(consentApi.getAgentDetail).mockResolvedValueOnce({ agent, services });
+    vi.mocked(consentApi.getAgentGrants).mockResolvedValue(grant);
+    vi.mocked(consentApi.createOrUpdateGrant).mockResolvedValue({ kind: 'created', grant });
+    const { container } = renderPage();
+    const save = await screen.findByRole('button', { name: 'Save' });
+    expect(container.querySelectorAll('img[src^="data:image/svg+xml"]')).toHaveLength(2);
+    container.querySelectorAll('img[src^="data:image/svg+xml"]').forEach((icon) => fireEvent.error(icon));
+    expect(container.querySelectorAll('img[src^="data:image/svg+xml"]')).toHaveLength(0);
+    const pending = Promise.withResolvers<{ agent: AgentDetail; services: typeof services }>();
+    vi.mocked(consentApi.getAgentDetail).mockReturnValueOnce(pending.promise);
+    fireEvent.click(save);
+    await waitFor(() => expect(consentApi.getAgentDetail).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Exclude Birch Files' })).not.toBeInTheDocument();
+    expect(consentApi.createOrUpdateGrant).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      pending.resolve({ agent, services: services.map((service) => ({ ...service, iconSvg: replacement })) });
+    });
+    const images = container.querySelectorAll('img[src^="data:image/svg+xml"]');
+    expect(images).toHaveLength(2);
+    images.forEach((icon) => {
+      expect(icon).toHaveAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(replacement)}`);
+      fireEvent.load(icon);
+    });
+    await waitFor(() => images.forEach((icon) => expect(icon).toBeVisible()));
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(screen.getByRole('switch', { name: 'Exclude Birch Files' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Specific end date' })).toBeEnabled();
   });
 });

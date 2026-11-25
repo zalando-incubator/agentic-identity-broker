@@ -60,6 +60,18 @@ info:
     - **OAuth2 responses**: Follow RFC 6749 format (no data envelope)
     - **Date/Time format**: ISO 8601 (RFC3339) format, e.g., `2025-12-19T10:30:00Z`
 
+    ## Service Icons
+
+    Existing consent `data.services` entries can include `iconSvg`.
+    Session summaries can include `service_icon_svg`, including inherited detail fields and summary-returning refresh responses.
+    Each field contains the current service's exact accepted SVG source, not a URL or session snapshot.
+    The server omits absent source. Clients accept omission or null and replace stale icon metadata after a fresh response.
+    Existing authentication, ownership, filtering, error envelopes, and JSON cache rules remain unchanged. No shared/public caching is introduced.
+    Unauthenticated requests to these routes return the existing `401` error without SVG bytes. No separate image endpoint exists.
+    Use only URI-encoded source in `<img src="data:image/svg+xml;charset=utf-8,...">` with empty alt text.
+    Accepted source is not safe for inline SVG or active document embedding, including object, embed, or iframe.
+    Visible service names, original fallbacks, and controls remain available if an image is absent or fails.
+
     ## API Guidelines
 
     This API follows the Zalando RESTful API Guidelines with emphasis on:
@@ -89,7 +101,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.2.0
+  version: 1.3.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -117,6 +129,11 @@ tags:
     description: Server metadata discovery endpoint for OIDC compatibility (RFC 8414)
   - name: Third-Party Sessions
     description: OAuth2 session management with third-party services
+  - name: AuthZEN
+    description: |
+      AuthZEN 1.0 Policy Decision Point for delegation (ADR 048). Available whenever token
+      exchange is configured. The path names and snake_case members are defined by the AuthZEN
+      Authorization API 1.0 standard.
 paths:
   /health:
     get:
@@ -335,7 +352,7 @@ paths:
 
         - Service ID (UUID)
         - Service name (e.g., "Google Drive", "GitHub")
-        - Service logo URL
+        - Optional exact SVG source in `ServiceRequirementForUser.iconSvg`, not a logo URL
         - The OAuth2 permissions the agent can receive for the service, with human-readable descriptions. For a `require_all_scopes` requirement, this is the sorted, deduplicated union from this agent's assigned Permission Sets that cover that service.
 
         **Use Cases**:
@@ -344,6 +361,11 @@ paths:
         - Show available services and permissions
         - Help users make informed consent decisions
         - Link to governance and documentation
+
+        Icon source appears only on existing `data.services` entries and follows the same service filtering.
+        Permission-set service rows reuse this metadata. No extra icon catalog or SVG copies on permission-set scope records are added.
+        The server omits absent icons. Clients accept omitted or null values and discard stale source on fresh data.
+        Existing principal authentication applies. An unauthenticated request returns `401` without SVG bytes.
       operationId: getAgentDetail
       tags:
         - Consent
@@ -386,6 +408,7 @@ paths:
                       services:
                         - serviceId: 11111111-1111-1111-1111-111111111111
                           serviceName: Google Drive
+                          iconSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                           requirementType: mandatory
                           requiredScopes:
                             - name: read:files
@@ -710,6 +733,10 @@ paths:
         - Reauthentication status and access-token expiry status
         - Number of agents depending on this session, derived only from grants owned by the authenticated session principal
         - Encryption status indicator
+        - Optional `service_icon_svg` with the current service's exact accepted source, not a session snapshot
+
+        Replacement or clearing appears after fresh service data. Absent source is omitted, not retained from an earlier response.
+        Existing principal authentication and ownership apply. An unauthenticated request returns `401` without SVG bytes.
 
       tags:
         - Third-Party Sessions
@@ -740,6 +767,7 @@ paths:
                     - id: 660e8400-e29b-41d4-a716-446655440001
                       service_id: 550e8400-e29b-41d4-a716-446655440000
                       service_display_name: GitHub
+                      service_icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                       token_type: Bearer
                       scope:
                         - repo
@@ -1010,6 +1038,8 @@ paths:
       description: |
         Returns detailed information about the user's session with a third-party service, including only agents with grants owned by the authenticated session principal that depend on this session.
         Used to populate the session card and termination warning dialog.
+        Inherited `service_icon_svg` is the current service's exact accepted source, not the source at session creation.
+        The server omits absent source. Existing principal authentication, ownership, and errors remain unchanged, including `401` without SVG bytes.
       tags:
         - Third-Party Sessions
       security:
@@ -1051,6 +1081,7 @@ paths:
                     principal: user@example.com
                     service_id: 550e8400-e29b-41d4-a716-446655440000
                     service_display_name: GitHub
+                    service_icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                     token_type: Bearer
                     initiated_at: "2025-12-20T10:30:00Z"
                     access_token_expires_at: "2025-12-20T11:30:00Z"
@@ -1156,6 +1187,8 @@ paths:
         grant. Unlike the transparent refresh performed during token exchange, this refreshes
         even when the current access token has not yet expired. Requires a stored refresh
         token that the provider has not rejected.
+        The returned summary uses current service metadata, including optional `service_icon_svg`, not a session snapshot.
+        Clearing the icon omits the property. Existing principal authentication and ownership apply, including `401` without SVG bytes.
       tags:
         - Third-Party Sessions
       security:
@@ -1180,6 +1213,21 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/UserSessionSummary"
+              example:
+                data:
+                  id: 660e8400-e29b-41d4-a716-446655440001
+                  service_id: 550e8400-e29b-41d4-a716-446655440000
+                  service_display_name: GitHub
+                  service_icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle fill="currentColor" cx="12" cy="12" r="8"/></svg>'
+                  token_type: Bearer
+                  scope: [repo, 'user:email']
+                  initiated_at: '2025-12-20T10:30:00Z'
+                  requires_reauthentication: false
+                  is_expired: false
+                  access_token_expired: false
+                  has_refresh_token: true
+                  dependent_agent_count: 3
+                  is_encrypted: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -2714,6 +2762,280 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OAuth2Error"
+  /.well-known/authzen-configuration:
+    get:
+      summary: AuthZEN Policy Decision Point metadata
+      description: |
+        Returns the AuthZEN 1.0 PDP metadata. `policy_decision_point` is
+        `server.enduser.public_url` without a trailing slash; consumers must compare it exactly
+        with their expected identifier before sending credentials. Batch and search endpoints
+        are not supported and are therefore omitted. Available only when token exchange is
+        configured; otherwise this path returns 404. A supplied `X-Request-ID` is echoed on the
+        200 response; the routing 404 does not echo it.
+      operationId: getAuthZENConfiguration
+      tags:
+        - AuthZEN
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/AuthZENRequestIdHeader"
+      responses:
+        "200":
+          description: PDP metadata
+          headers:
+            Cache-Control:
+              description: |
+                `max-age=3600`, or `no-store` when the response carries a request-specific
+                `traceresponse` header.
+              schema:
+                type: string
+                example: "max-age=3600"
+            Vary:
+              description: Always `X-Request-ID`, because the response echoes the supplied request identifier.
+              schema:
+                type: string
+                example: X-Request-ID
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthZENConfiguration"
+              example:
+                policy_decision_point: https://broker.example.com
+                access_evaluation_endpoint: https://broker.example.com/access/v1/evaluation
+        "404":
+          description: Token exchange is not configured.
+  /access/v1/evaluation:
+    post:
+      summary: AuthZEN Access Evaluation for a user delegation
+      description: |
+        Evaluates whether the verified user's delegation to the agent identified by the subject
+        token covers one protected resource. The evaluation uses the same authoritative resolution
+        as RFC 8693 token exchange (subject and caller validation, the unchanged
+        `token_exchange.authorization.cel.expression` with
+        `request.grant_type = urn:ietf:params:oauth:grant-type:token-exchange` and an empty
+        `request.scope`, resource normalization and grant authorization) but never reads or
+        refreshes a provider session and never returns a credential. The caller-policy result
+        therefore equals that of an exchange without `scope`; a policy that conditions on
+        `request.scope` must treat the empty scope deliberately (ADR 048 §2).
+
+        - A permit returns `decision: true` with a Grant Context and
+          `Cache-Control: private, max-age=<0..60>`, bounded by the grant expiry.
+        - A grant denial returns `decision: false` with the diagnostic code and the consent URL.
+        - Request, authentication, caller-policy and dependency failures return an
+          `ErrorResponse` and never a decision.
+
+        Unknown request members, including AuthZEN `properties` and other `context` members, are
+        ignored as required by the AuthZEN 1.0 HTTPS binding; the supported values below are
+        required exactly. The body is limited to 64 KiB. Every non-permit response from the
+        evaluation handler is `Cache-Control: no-store`, and a supplied `X-Request-ID` is echoed
+        on every handler response. The 404 returned when token exchange is not configured comes
+        from routing and carries neither header.
+      operationId: evaluateAccess
+      tags:
+        - AuthZEN
+      security:
+        - ClientAssertion: []
+      parameters:
+        - $ref: "#/components/parameters/AuthZENRequestIdHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessEvaluationRequest"
+            examples:
+              permitRequest:
+                summary: Evaluate Alice's delegation to the repository API
+                value:
+                  subject:
+                    type: urn:ietf:params:oauth:token-type:jwt
+                    id: eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhbGljZUBleGFtcGxlLmNvbSJ9.c2lnbmF0dXJl
+                  action:
+                    name: urn:ietf:params:oauth:grant-type:token-exchange
+                  resource:
+                    type: protected_resource
+                    id: https://api.example.com/repos
+                  context:
+                    agent: 550e8400-e29b-41d4-a716-446655440000
+      responses:
+        "200":
+          description: A permit or a delegation denial
+          headers:
+            Cache-Control:
+              description: "`private, max-age=<0..60>` for a permit, `no-store` for a denial"
+              schema:
+                type: string
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AccessEvaluationPermit"
+                  - $ref: "#/components/schemas/AccessEvaluationDenial"
+              examples:
+                permit:
+                  summary: Permit with canonical IDs
+                  value:
+                    decision: true
+                    context:
+                      subject:
+                        id: alice@example.com
+                      agent:
+                        id: 550e8400-e29b-41d4-a716-446655440000
+                        canonical_id: data-assistant
+                      resource:
+                        service_id: 880e8400-e29b-41d4-a716-446655440010
+                        canonical_id: repo-api
+                        resource_uri: https://api.example.com/repos
+                        scopes: ["read:repo"]
+                      grant:
+                        id: 990e8400-e29b-41d4-a716-446655440020
+                        updated_at: "2026-10-26T09:59:00Z"
+                        valid_until: "2026-10-26T10:30:00Z"
+                      permission_sets:
+                        - id: 770e8400-e29b-41d4-a716-446655440001
+                          canonical_id: repo-reader
+                          services:
+                            - id: 880e8400-e29b-41d4-a716-446655440010
+                              canonical_id: repo-api
+                              scopes: ["read:repo"]
+                permitWithoutCanonicalIds:
+                  summary: Permit where no canonical IDs are configured (members omitted)
+                  value:
+                    decision: true
+                    context:
+                      subject:
+                        id: alice@example.com
+                      agent:
+                        id: 550e8400-e29b-41d4-a716-446655440000
+                      resource:
+                        service_id: 880e8400-e29b-41d4-a716-446655440010
+                        resource_uri: https://api.example.com/repos
+                        scopes: ["read:repo"]
+                      grant:
+                        id: 990e8400-e29b-41d4-a716-446655440020
+                        updated_at: "2026-10-26T09:59:00Z"
+                      permission_sets:
+                        - id: 770e8400-e29b-41d4-a716-446655440001
+                          services:
+                            - id: 880e8400-e29b-41d4-a716-446655440010
+                              scopes: ["read:repo"]
+                permitExpiringSoon:
+                  summary: >-
+                    Permit whose grant expires in 15 seconds; the response carries
+                    `Cache-Control: private, max-age=15` instead of the 60-second cap
+                  value:
+                    decision: true
+                    context:
+                      subject:
+                        id: alice@example.com
+                      agent:
+                        id: 550e8400-e29b-41d4-a716-446655440000
+                      resource:
+                        service_id: 880e8400-e29b-41d4-a716-446655440010
+                        resource_uri: https://api.example.com/repos
+                        scopes: ["read:repo"]
+                      grant:
+                        id: 990e8400-e29b-41d4-a716-446655440020
+                        updated_at: "2026-10-26T09:59:00Z"
+                        valid_until: "2026-10-26T10:00:15Z"
+                      permission_sets:
+                        - id: 770e8400-e29b-41d4-a716-446655440001
+                          services:
+                            - id: 880e8400-e29b-41d4-a716-446655440010
+                              scopes: ["read:repo"]
+                denyGrantMissing:
+                  summary: No active grant; the user can consent at the URL
+                  value:
+                    decision: false
+                    context:
+                      reason_admin:
+                        code: grant_missing
+                      reason_user:
+                        consent_url: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000
+        "400":
+          description: |
+            Malformed or oversized body, missing or unsupported member, invalid or expired
+            subject token, an agent-subject token (ADR 045), `context.agent` mismatch, or
+            unregistered resource.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                badRequestIdentitySubject:
+                  value:
+                    error: invalid_request
+                    message: invalid access evaluation request
+                badRequestAgentMismatch:
+                  value:
+                    error: invalid_request
+                    message: invalid access evaluation request
+        "401":
+          description: |
+            Missing, invalid or expired client assertion. `WWW-Authenticate: Bearer`, with
+            `error="invalid_token"` for an invalid credential.
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+                example: 'Bearer error="invalid_token"'
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                unauthorizedMissingAssertion:
+                  value:
+                    error: unauthorized
+                    message: client authentication required
+        "403":
+          description: The token-exchange caller policy rejects the gateway or resource.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                forbiddenCallerPolicy:
+                  value:
+                    error: forbidden
+                    message: caller is not authorized for access evaluation
+        "404":
+          description: |
+            Token exchange is not configured. Returned by routing, so it carries neither
+            `Cache-Control: no-store` nor the echoed `X-Request-ID`.
+        "500":
+          description: Configuration or dependency failure. Never a decision.
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/AuthZENNoStore"
+            X-Request-ID:
+              $ref: "#/components/headers/AuthZENRequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                serverError:
+                  value:
+                    error: server_error
+                    message: access evaluation failed
 components:
   securitySchemes:
     SessionAuth:
@@ -2732,7 +3054,9 @@ components:
       type: http
       scheme: bearer
       description: |
-        Gateway client assertion validated via CEL expression for machine-facing approval endpoints.
+        Gateway client assertion validated via CEL expression for machine-facing approval endpoints
+        and for AuthZEN Access Evaluation (the token-exchange client-assertion trust anchor and the
+        unchanged token-exchange caller policy).
     PrincipalHeader:
       type: apiKey
       in: header
@@ -2771,6 +3095,13 @@ components:
         type: string
         format: uuid
       example: 550e8400-e29b-41d4-a716-446655440000
+    AuthZENRequestIdHeader:
+      name: X-Request-ID
+      in: header
+      required: false
+      description: AuthZEN request identifier. Echoed unchanged on every response.
+      schema:
+        type: string
     TraceparentHeader:
       name: traceparent
       in: header
@@ -2778,7 +3109,213 @@ components:
       description: W3C Trace Context propagation header.
       schema:
         type: string
+  headers:
+    AuthZENRequestId:
+      description: The supplied request identifier, echoed. Absent when none was supplied.
+      schema:
+        type: string
+    AuthZENNoStore:
+      description: Every non-permit evaluation response is `no-store`; it is never cached.
+      schema:
+        type: string
+        enum: [no-store]
   schemas:
+    AuthZENConfiguration:
+      type: object
+      required: [policy_decision_point, access_evaluation_endpoint]
+      additionalProperties: false
+      properties:
+        policy_decision_point:
+          type: string
+          format: uri
+          example: https://broker.example.com
+        access_evaluation_endpoint:
+          type: string
+          format: uri
+          example: https://broker.example.com/access/v1/evaluation
+    AccessEvaluationRequest:
+      type: object
+      required: [subject, action, resource]
+      description: Unknown members are ignored (AuthZEN 1.0 HTTPS binding).
+      properties:
+        subject:
+          type: object
+          required: [type, id]
+          properties:
+            type:
+              type: string
+              enum: ["urn:ietf:params:oauth:token-type:jwt"]
+            id:
+              type: string
+              minLength: 1
+              description: Signed subject JWT. Never echoed or logged.
+        action:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              enum: ["urn:ietf:params:oauth:grant-type:token-exchange"]
+        resource:
+          type: object
+          required: [type, id]
+          properties:
+            type:
+              type: string
+              enum: [protected_resource]
+            id:
+              type: string
+              format: uri
+              description: Protected-resource URI, normalized as in token exchange.
+        context:
+          type: object
+          properties:
+            agent:
+              type: string
+              format: uuid
+              description: |
+                Optional consistency anchor. Must equal the agent resolved from the verified subject
+                token; a mismatch returns 400 before any grant is read.
+    AccessEvaluationPermit:
+      type: object
+      required: [decision, context]
+      properties:
+        decision:
+          type: boolean
+          enum: [true]
+        context:
+          $ref: "#/components/schemas/GrantContext"
+    AccessEvaluationDenial:
+      type: object
+      required: [decision, context]
+      properties:
+        decision:
+          type: boolean
+          enum: [false]
+        context:
+          type: object
+          required: [reason_admin, reason_user]
+          properties:
+            reason_admin:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  enum:
+                    - grant_missing
+                    - grant_expired
+                    - grant_empty
+                    - grant_permission_set_undeclared
+                    - grant_permission_set_missing
+                    - grant_service_omitted
+                    - grant_service_definition_missing
+                    - grant_service_requirement_excluded
+                    - grant_scope_intersection_empty
+            reason_user:
+              type: object
+              required: [consent_url]
+              properties:
+                consent_url:
+                  type: string
+                  format: uri
+                  example: https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000
+    GrantEntityRef:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        canonical_id:
+          type: string
+          minLength: 1
+          description: Omitted when unset; never null.
+    GrantContext:
+      type: object
+      description: Credential-free grant context. Optional members are omitted when unset, never null.
+      required: [subject, agent, resource, grant, permission_sets]
+      properties:
+        subject:
+          type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              minLength: 1
+              description: Verified principal
+        agent:
+          $ref: "#/components/schemas/GrantEntityRef"
+        resource:
+          type: object
+          required: [service_id, resource_uri, scopes]
+          properties:
+            service_id:
+              type: string
+              format: uuid
+              description: Resolved service UUID
+            canonical_id:
+              type: string
+              minLength: 1
+              description: Omitted when unset
+            resource_uri:
+              type: string
+              format: uri
+              description: Normalized URI
+            scopes:
+              type: array
+              items:
+                type: string
+              description: Effective scopes after the agent's scope ceiling, sorted
+        grant:
+          type: object
+          required: [id, updated_at]
+          properties:
+            id:
+              type: string
+              format: uuid
+            updated_at:
+              type: string
+              format: date-time
+            valid_until:
+              type: string
+              format: date-time
+              description: Omitted when the grant does not expire
+        permission_sets:
+          type: array
+          minItems: 1
+          description: Grant order
+          items:
+            type: object
+            required: [id, services]
+            properties:
+              id:
+                type: string
+                format: uuid
+              canonical_id:
+                type: string
+                minLength: 1
+                description: Omitted when unset
+              services:
+                type: array
+                description: |
+                  Grant-included services, in grant order. Scopes are this permission set's
+                  contributions, not the effective ceiling; `[]` when it defines none.
+                items:
+                  type: object
+                  required: [id, scopes]
+                  properties:
+                    id:
+                      type: string
+                      format: uuid
+                    canonical_id:
+                      type: string
+                      minLength: 1
+                      description: Omitted when unset
+                    scopes:
+                      type: array
+                      items:
+                        type: string
     HealthResponse:
       type: object
       required:
@@ -3019,12 +3556,6 @@ components:
           type: string
           description: Human-readable service name
           example: Google Drive
-        logoUrl:
-          type: string
-          format: uri
-          nullable: true
-          description: Optional URL to service's logo or icon
-          example: https://cdn.example.com/services/google-drive.png
         scopes:
           type: array
           items:
@@ -3047,8 +3578,31 @@ components:
           nullable: true
           description: Human-readable description of scope permissions
           example: Read user profile information
+    ServiceIconSvg:
+      type: string
+      nullable: true
+      minLength: 1
+      description: |
+        Current service's exact accepted SVG source, not a URL, path, or data URI.
+        Non-null source is valid UTF-8 and contains 1–65536 bytes after JSON decoding.
+        The server omits absent source. Clients accept omission or null and replace previous metadata on fresh responses.
+        OpenAPI character-length keywords do not enforce the byte bound or the Admin API's semantic XML validation.
+        Accepted source preserves ordinary visual SVG features and can contain inactive external references.
+        Named upload rejections do not certify complete CSS, reference, animation, or arbitrary document safety.
+
+        Render only as URI-encoded exact source in `<img src="data:image/svg+xml;charset=utf-8,...">` with empty alt text.
+        SVG image mode prevents referenced external loads. The broker never fetches icon references.
+        Never insert the source into the page DOM or use object, embed, iframe, or SVG document delivery.
+        Keep the visible service name, original fallback, and usable controls if the image is absent or fails.
+        A changed source retries the image without a full page reload. Clearing source restores the original fallback.
+        No image endpoint, revision token, new cache lifetime, or public/shared cache is added.
+        Existing authenticated JSON controls receipt of bytes, not reuse by an authorized client who copies them.
+        The byte bound is an input limit, not a browser rendering-resource budget.
+      example: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
+
     ServiceRequirementForUser:
       type: object
+      description: Existing consent data.services entry. Optional iconSvg uses current service metadata and the same response filtering.
       required:
         - serviceId
         - serviceName
@@ -3065,6 +3619,11 @@ components:
           type: string
           description: Human-readable service name for display
           example: GitHub
+        iconSvg:
+          allOf:
+            - $ref: "#/components/schemas/ServiceIconSvg"
+          readOnly: true
+          description: Exact current service source, omitted when absent. Permission-set service rows reuse this data.services metadata, not a separate catalog.
         requirementType:
           type: string
           enum:
@@ -3873,6 +4432,8 @@ components:
       description: |
         Flat session summary as returned by the session endpoints. Mirrors the
         storage.UserSessionSummary domain read model.
+        Optional service_icon_svg comes from the current referenced service, not a session snapshot.
+        List, detail, and summary-returning refresh responses use the same projection and omit absent source.
       required:
         - id
         - service_id
@@ -3895,6 +4456,11 @@ components:
           format: uuid
         service_display_name:
           type: string
+        service_icon_svg:
+          allOf:
+            - $ref: "#/components/schemas/ServiceIconSvg"
+          readOnly: true
+          description: Exact current service SVG source, omitted when absent. Replacement or clearing appears in fresh summaries without changing session state.
         token_type:
           type: string
         scope:
@@ -3934,6 +4500,7 @@ components:
         Session details: the UserSessionSummary fields plus ownership and lifecycle
         metadata. Mirrors the storage.UserSessionDetails domain read model. Token
         material and the rejection timestamp are never exposed.
+        Inherits the current service_icon_svg projection, including source replacement and omission after clearing.
       allOf:
         - $ref: "#/components/schemas/UserSessionSummary"
         - type: object
@@ -4189,10 +4756,15 @@ components:
             items:
               type: string
               format: uuid
+          deprecated: true
           description: |
             Map of granted permission sets associated with the token exchange.
             Keys are permission set UUIDs, values are arrays of service UUIDs.
             Only present when the token exchange is scoped to specific permission sets.
+
+            Deprecated: superseded by the AuthZEN Grant Context from
+            `POST /access/v1/evaluation`. Removal is scheduled for one release after the ExtProc
+            grant-context resolver ships and requires end-user API 2.0.0.
         principal:
           type: string
           description: Verified subject-token principal; omitted when unresolved.

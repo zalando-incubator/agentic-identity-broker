@@ -50,7 +50,7 @@ func NewSessionSweepHandler(sweeper sessionSweeper, logger *slog.Logger) *Sessio
 func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
 	operator, ok := operatorPrincipalFromContext(r.Context(), h.logger)
 	if !ok {
-		h.writeError(w, http.StatusInternalServerError, "server_misconfiguration", "operator principal required for session sweep")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "server_misconfiguration", "operator principal required for session sweep")
 		return
 	}
 
@@ -84,7 +84,7 @@ func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
 	var err error
 	request, err = parseSessionSweepRequest(w, r)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
 		} else {
 			outcome = "aborted"
 			h.logger.ErrorContext(r.Context(), "session sweep write deadline could not be cleared")
-			h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+			h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 			return
 		}
 	}
@@ -106,16 +106,16 @@ func (h *SessionSweepHandler) Sweep(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if errors.Is(err, oauth2session.ErrInvalidSweepRequest) {
-			h.writeError(w, http.StatusBadRequest, "invalid request body", err.Error())
+			h.writeError(r.Context(), w, http.StatusBadRequest, "invalid request body", err.Error())
 			return
 		}
 		outcome = "aborted"
-		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
+		h.writeError(r.Context(), w, http.StatusInternalServerError, "internal server error", "")
 		return
 	}
 
 	outcome = "completed"
-	h.writeJSON(w, http.StatusOK, sessionSweepResponse{
+	h.writeJSON(r.Context(), w, http.StatusOK, sessionSweepResponse{
 		Refreshed:      result.Refreshed,
 		Skipped:        result.Skipped,
 		Failed:         result.Failed,
@@ -173,14 +173,14 @@ func parseSessionSweepRequest(w http.ResponseWriter, r *http.Request) (oauth2ses
 	return request, nil
 }
 
-func (h *SessionSweepHandler) writeJSON(w http.ResponseWriter, status int, value any) {
+func (h *SessionSweepHandler) writeJSON(ctx context.Context, w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(value); err != nil {
-		h.logger.Warn("failed to encode session sweep response")
+		h.logger.WarnContext(ctx, "failed to encode session sweep response")
 	}
 }
 
-func (h *SessionSweepHandler) writeError(w http.ResponseWriter, status int, code, message string) {
-	h.writeJSON(w, status, ErrorResponse{Error: code, Message: message})
+func (h *SessionSweepHandler) writeError(ctx context.Context, w http.ResponseWriter, status int, code, message string) {
+	h.writeJSON(ctx, w, status, ErrorResponse{Error: code, Message: message})
 }

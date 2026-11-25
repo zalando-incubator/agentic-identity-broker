@@ -141,7 +141,7 @@ func withClientAssertion(cfg *ports.Config, trust ports.ClientAssertionTrustConf
 
 func buildTrustAnchorApp(t *testing.T, cfg *ports.Config) (*App, *logBuffer, error) {
 	t.Helper()
-	store, err := storage.NewAdapter(&cfg.Storage)
+	store, err := storage.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	logs := &logBuffer{}
 	app, err := NewBuilder().WithConfig(cfg).WithStorage(store).

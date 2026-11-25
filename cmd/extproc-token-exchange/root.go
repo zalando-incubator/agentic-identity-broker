@@ -25,6 +25,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/approval"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	extprocconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/httpclient"
 	extprocserver "github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/server"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
@@ -98,7 +99,7 @@ func stopGRPCServerWithTimeout(grpcSrv grpcServerStopper, timeout time.Duration,
 		return
 	case <-timer.C:
 		if logger != nil {
-			logger.Warn("gRPC graceful shutdown timed out, forcing stop", "timeout", timeout)
+			logger.Warn("grpc graceful shutdown timed out, forcing stop", "timeout", timeout)
 		}
 		grpcSrv.Stop()
 	}
@@ -115,7 +116,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// 2. Initialize logger.
 	stdoutHandler := newStdoutLogHandler(cfg)
 	logger := slog.New(telemetry.NewPrincipalPolicyHandler(stdoutHandler))
-	logger.Info("ExtProc Token Exchange Service starting",
+	logger.Info("extproc token exchange service starting",
 		"grpc_bind", cfg.GRPC.Bind,
 		"grpc_port", cfg.GRPC.Port)
 
@@ -128,7 +129,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	if cfg.Telemetry.Enabled {
 		// SR-003: Log a warning if TLS is disabled (insecure mode)
 		if cfg.Telemetry.Exporter.Insecure {
-			logger.Warn("telemetry OTLP exporter running without TLS", "insecure", true)
+			logger.Warn("telemetry otlp exporter running without tls", "insecure", true)
 		}
 		telemetryCfg := mapTelemetryConfig(cfg.Telemetry)
 		// initCtx bounds the exporter connection handshake; initCancel is intentional
@@ -142,7 +143,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		initCancel()
 		if err != nil {
 			if isSignalCancellation(sigCtx, err) {
-				logger.Info("Telemetry initialization interrupted by signal, shutting down")
+				logger.Info("telemetry initialization interrupted by signal, shutting down")
 				return nil
 			}
 			return fmt.Errorf("failed to initialize telemetry: %w", err)
@@ -151,7 +152,7 @@ func run(cmd *cobra.Command, _ []string) error {
 		defer func() {
 			shutdownTelemetry(logger, telemetryShutdown)
 		}()
-		logger.Info("Telemetry initialized")
+		logger.Info("telemetry initialized")
 
 		// T047: Wire slog-to-OTel bridge when telemetry AND logs are both enabled.
 		// This enables log-trace correlation (US5): structured log entries will carry
@@ -177,7 +178,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// 6. Optionally initialise OPA authorizer when authorization is enabled.
 	var authorizer authorization.Authorizer
 	if cfg.Authorization.Enabled {
-		logger.Info("OPA authorization enabled")
+		logger.Info("opa authorization enabled")
 		authorizer, err = authorization.NewOPAAuthorizer(&cfg.Authorization, logger)
 		if err != nil {
 			return fmt.Errorf("failed to initialize OPA authorizer: %w", err)
@@ -199,8 +200,8 @@ func run(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to initialize approval client: %w", err)
 		}
-		cache := approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness)
-		approvalGate = approval.NewGate(cache, client)
+		cache := approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness, logger)
+		approvalGate = approval.NewGate(cache, client, logger)
 		approvalSync = approval.NewSyncer(cache, client, time.Duration(cfg.ToolApprovals.LongPollTimeoutSeconds)*time.Second, logger)
 	}
 
@@ -213,6 +214,22 @@ func run(cmd *cobra.Command, _ []string) error {
 		svc = extprocserver.NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)
 	default:
 		svc = extprocserver.NewServer(cfg, exchanger, logger)
+	}
+	// 8a. Opt-in grant context: discover and verify the PDP before listening (ADR 048). A failed
+	// discovery retries, so the gRPC port stays closed and the pod unready during a broker outage.
+	if cfg.GrantContext.Enabled {
+		resolver, err := grantcontext.NewPermitResolverFromConfig(sigCtx, cfg, exchanger, logger)
+		if err != nil {
+			if isSignalCancellation(sigCtx, err) {
+				logger.InfoContext(sigCtx, "grant context discovery interrupted by signal, shutting down",
+					"event", "extproc.grant_context.discovery_interrupted")
+				return nil
+			}
+			return err
+		}
+		defer resolver.Shutdown()
+		svc.WithPermitResolver(resolver)
+		logger.InfoContext(sigCtx, "grant context enabled", "event", "extproc.grant_context.enabled", "policy_decision_point", cfg.GrantContext.PolicyDecisionPoint)
 	}
 	var stopApprovalSyncer func()
 	if approvalSync != nil {
@@ -230,7 +247,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
-	logger.Info("gRPC server listening", "addr", addr)
+	logger.Info("grpc server listening", "addr", addr)
 
 	// 11. Serve in background goroutine.
 	serveErr := make(chan error, 1)
@@ -243,7 +260,7 @@ func run(cmd *cobra.Command, _ []string) error {
 	// 12. Wait for shutdown signal or serve error.
 	select {
 	case <-sigCtx.Done():
-		logger.Info("Shutdown signal received, stopping gRPC server")
+		logger.Info("shutdown signal received, stopping grpc server")
 	case err := <-serveErr:
 		return fmt.Errorf("gRPC server error: %w", err)
 	}
@@ -253,9 +270,9 @@ func run(cmd *cobra.Command, _ []string) error {
 	if stopApprovalSyncer != nil {
 		stopApprovalSyncer()
 	}
-	logger.Info("gRPC server stopped")
+	logger.Info("grpc server stopped")
 
-	logger.Info("ExtProc Token Exchange Service stopped")
+	logger.Info("extproc token exchange service stopped")
 	return nil
 }
 

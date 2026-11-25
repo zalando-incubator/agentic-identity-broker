@@ -52,7 +52,7 @@ func TestReconcileLifecycle(t *testing.T) {
 	assert.False(t, created.CreatedAt.Before(started))
 	assert.False(t, created.CreatedAt.After(finished))
 	assert.Equal(t, original, desired)
-	require.Contains(t, logs.String(), "agent_created")
+	require.Contains(t, logs.String(), `"event":"agents.agent.created"`)
 	logs.Reset()
 	writes := 0
 	repo.updateFn = func(_ context.Context, a *storage.Agent) error { writes++; repo.agents[a.ID] = a.Copy(); return nil }
@@ -78,7 +78,7 @@ func TestReconcileLifecycle(t *testing.T) {
 	assert.False(t, changed.UpdatedAt.Before(started))
 	assert.False(t, changed.UpdatedAt.After(finished))
 	assert.Equal(t, 1, writes)
-	assert.Contains(t, logs.String(), "agent_updated")
+	assert.Contains(t, logs.String(), `"event":"agents.agent.updated"`)
 }
 
 func TestReconcileFieldPolicy(t *testing.T) {

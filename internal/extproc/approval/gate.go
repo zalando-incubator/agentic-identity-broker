@@ -43,10 +43,13 @@ type Gate struct {
 	decisionCounter metric.Int64Counter
 }
 
-func NewGate(cache *Cache, broker Broker) *Gate {
+func NewGate(cache *Cache, broker Broker, logger *slog.Logger) *Gate {
+	if logger == nil {
+		panic("approval.NewGate: logger must not be nil")
+	}
 	decisionCounter, err := otel.GetMeterProvider().Meter("extproc").Int64Counter("extproc.approval.gate.decisions")
 	if err != nil {
-		slog.Warn("failed to create approval gate decision counter instrument", "error", err)
+		logger.Warn("failed to create approval gate decision counter instrument", "error", err)
 	}
 	return &Gate{cache: cache, broker: broker, decisionCounter: decisionCounter}
 }

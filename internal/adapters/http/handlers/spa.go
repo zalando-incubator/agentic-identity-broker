@@ -30,7 +30,7 @@ func NewSPAHandler(staticPath string, logger *slog.Logger) *SPAHandler {
 func (h *SPAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'")
 
 	// API routes should not be handled by SPA
 	if strings.HasPrefix(r.URL.Path, "/api/") {
@@ -57,7 +57,7 @@ func (h *SPAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 		// Check if index.html exists
 		if _, err := os.Stat(indexPath); err != nil {
-			h.logger.ErrorContext(r.Context(), "SPA index.html not found",
+			h.logger.ErrorContext(r.Context(), "spa index.html not found",
 				"path", indexPath,
 				"error", err)
 			http.Error(w, "SPA not configured", http.StatusNotFound)

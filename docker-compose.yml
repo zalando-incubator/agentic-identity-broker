@@ -282,7 +282,7 @@ services:
       - VITE_LOG_LEVEL=debug
       # Enable polling and HMR for Docker hot-reload
       - VITE_USE_POLLING=true
-      - VITE_HMR_HOST=localhost
+      - VITE_HMR_HOST=aib.localhost
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:3000/"]
       interval: 5s
@@ -290,7 +290,9 @@ services:
       retries: 3
       start_period: 5m
     networks:
-      - aib-network
+      aib-network:
+        aliases:
+          - aib.localhost
     depends_on:
       identity-broker:
         condition: service_healthy

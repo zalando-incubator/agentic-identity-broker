@@ -32,6 +32,14 @@ internal/extproc/
     syncer.go        ETag long-poll synchronization
     precedence.go    ExtProc candidate ranking and selection
 
+  grantcontext/
+    discovery.go     AuthZEN PDP metadata discovery and exact identifier verification
+    client.go        Access Evaluation client: typed permit decoding, max-age, deadline
+    context.go       Typed permit context validation (unknown members dropped)
+    resolver.go      Permit-only cache with singleflight, no stale fallback
+    telemetry.go     Bounded resolution outcomes; no credentials, context, URLs or causes
+    setup.go         NewPermitResolverFromConfig: production composition shared by root.go and E2E
+
   httpclient/
     httpclient.go    Traced outbound HTTP client construction
 
@@ -100,20 +108,24 @@ Some agentgateway scenarios use Docker and `Ordered` to share the expensive cont
 | `NewOPAAuthorizer(cfg, logger)` | Path mode compiles Rego at startup. Config-file mode denies access until the bundle is ready. |
 | `OPAInput` map alias | OPA document from the opa-envoy-plugin-compatible base, with top-level `type`, `mcp`, and `context` keys |
 | `mcp` input object | Map of decoded MCP fields and agentgateway target-server metadata. Omit fields irrelevant to the request type |
-| `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and token-bound `granted_permission_sets` when present |
+| `ContextInput` struct | Authorization context fields, including `granted_permission_sets_available` and `granted_permission_sets` (token-bound in disabled mode, permit-derived in enabled mode) |
 | `OPADecision` struct | Policy output: `Action string` (`"allow"`, `"deny"`, or `"approval_required"`), `Reasons []string`, optional `ApprovalContext` |
 | `ParseDecision(map[string]any)` | Fail-closed extraction. `ciba_required` remains deny |
 | `NewInputBuilder(protocol, headers, targetServerName, contextInput)` | Converts Envoy-compatible headers once. `Build(body, parsed)` derives independent policy inputs for standalone and batch elements |
 | `ParseMCPMessage(value)` | Validates one decoded JSON-RPC 2.0 message → `*MCPMessage` |
 | `BuildOPAInputHeadersOnly(protocol, headers, targetServerName)` | Constructs the separate header-only policy input |
+| `BuildOPAInputHeadersOnlyWithContext(..., ContextInput)` | Header-only input with a supplied (enabled delegation) context |
+| `AgentContext`, `ResourceContext`, `GrantContext`, `PermissionSetContext`, `ServiceContext` | Enabled-mode `input.context` members `agent`, `resource`, `grant`, `permission_sets`; `principal` is a string. All `omitempty`; nested `canonical_id`/`valid_until` omitted when unset; scope and service arrays always arrays |
 
 ### `internal/extproc/server`
 
 | Type/Symbol | Purpose |
 |---|---|
-| `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)` + `Shutdown()` |
+| `Exchanger` interface | Port: `Exchange(ctx, subjectToken, resourceURI string) (ExchangeResult, error)`, `ExchangeBound(ctx, subjectToken, resourceURI, observed *ExchangeResult, ExchangeResultBinding)` + `Shutdown()` |
+| `ExchangeResultBinding` | Permit principal/agent UUID, sorted, de-duplicated resource scopes and parsed grant-update instant; exchange identities must match; never broker grant-version provenance |
 | `ApprovalGate` interface | Port: `Evaluate(context.Context, approval.Invocation) approval.Outcome` |
-| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, `logger` |
+| `PermitResolver` interface | Port: `Resolve(ctx, subjectToken, resourceURI) (grantcontext.Result, hit bool, error)` + `Shutdown()` (ADR 048) |
+| `Server` struct | Implements `ExternalProcessorServer`. Fields: `cfg`, `exchanger`, `authorizer`, `approvalGate`, optional `grantContextResolver`, `logger` |
 | `NewServer(cfg, exchanger, logger)` | Constructor with OPA and approval handling disabled |
 | `NewServerWithAuthorizer(cfg, exchanger, authorizer, logger)` | Constructor with OPA enabled |
 | `NewServerWithApprovalGate(cfg, exchanger, authorizer, gate, logger)` | Constructor with OPA and approval handling enabled |
@@ -144,8 +156,12 @@ It does not permit these imports inside `internal/extproc/`.
 
 `Exchanger` and `ApprovalGate` live in `internal/extproc/server/server.go`.
 `Authorizer` lives in `internal/extproc/authorization/authorizer.go`.
+`PermitResolver` lives in `internal/extproc/server/grant_context.go`.
 
 - Inject `TokenExchanger`, `OPAAuthorizer`, and `approval.Gate` through these interfaces.
+- Set `PermitResolver` (ADR 048) with `Server.WithPermitResolver` only when `grant_context.enabled`.
+  Its production implementation is `grantcontext.PermitResolver` from `grantcontext.NewPermitResolverFromConfig`.
+  With it disabled, the request paths and OPA input are unchanged byte for byte.
 - Keep the typed interface fields on `Server`. Do not add an adapter layer or map-based indirection.
 - Use mock or stub implementations for these interfaces in tests.
 - Use `tests/e2e/extproc/bootstrap/` for startup and readiness coverage.
@@ -204,13 +220,38 @@ It produces `mcp_tool_call` for `tools/call`, or `mcp_method` for other methods.
 Other protocols produce `type="unknown"` with the raw body in `input.attributes.request.http.body`.
 Local policy paths use `rego.PreparedEvalQuery`. OPA configuration files use the bundle-aware SDK.
 
+### Grant context
+
+With `grant_context.enabled`, `adrs/048-authzen-delegation-pip.md` supersedes ADR 028's ordering and input.
+
+```text
+Body-bearing:  RequestHeaders → metadata/protocol/transport checks
+               → Exchanger.Exchange ∥ PermitResolver.Resolve (wait for both)
+               → denial 403 (error_uri) > resolution error 503 > exchange error > buffer body
+RequestBody    → now < Deadline? else 503 → OPA with permit-derived context (each batch element re-checks)
+Header-only:   → PermitResolver.Resolve → denial 403 / error 503
+               → now < Deadline? else 503 → OPA → allow: Exchange
+```
+
+- Map the permit through the pure `contextInputFromGrantContext` into `principal`, `agent`, `resource`, `grant`, `permission_sets`, permit-derived `granted_permission_sets`, and `granted_permission_sets_available: true`.
+- Use `input.context.permission_sets` as canonical for new enabled policies, and `input.context.resource.scopes` for the effective ceiling. Both compatibility field names remain supported, with permit-derived values in enabled mode; no OPA removal or deprecation is authorized. Issue #441 tracks future separately approved, versioned removal, availability replacement and migration (ADR 048 §5).
+- Leave `agent_session_id` unchanged. The approval gate uses exchange response identity under ADR 036 in both modes. Enabled mode requires exchange principal/agent UUID to match the permit; mismatch or absence returns terminal API-7 503 before approval or forwarding, without an identity-repair retry.
+- After body-path precedence and before buffering/mutation, call `ExchangeBound` with the observed exchange result. Header-only passes no observed result and uses the evaluated permit after allow.
+- Enabled mode only: every successful result has an opaque handle and shared binding cell. The claim, compare, mismatch retry and conflict sequence is canonical in `adrs/048-authzen-delegation-pip.md` §10 and `specs/054-authzen-delegation-pip/contracts/extproc-grant-context.md` §3.1. Never rebind or compare credential bytes.
+- Disabled mode, cache key/TTL and five-second cooldown remain unchanged.
+- Keep the permit cache independent of the token cache. Never cache denials or errors, and never fall back to a stale permit.
+- Retain the original permit in header-only request state. The deadline re-check points and the approval-gate exception are canonical in the same contract §3.1 and ADR 048 §10.
+- Permit scope arrays may be empty, but each element must be a JSON string.
+  Preserve null detection in the wire decoder: Go's `encoding/json` otherwise turns a null `[]string` element into an empty string.
+  Reject malformed permits as `invalid_response` before policy or caching.
+
 ### Approval gate and cache
 
 Read `adrs/036-extproc-approval-cache-and-gate.md` and the Feature 026 contracts before approval changes.
 
 - Gate only standalone MCP tool calls after `approval_required`. Deny approval-required batches and `ciba_required`.
-- Scope approval records with broker-provided `principal` and `agent_id`. Do not parse tokens for identity.
-- Keep approvals outside OPA. Permission sets come from the exchange snapshot.
+- Scope approval records only with broker exchange `principal` and `agent_id`. Enabled grant context checks their equality with permit identities; it never overrides them. Do not parse tokens for identity.
+- Keep approvals outside OPA. In disabled mode, OPA permission sets come from the exchange snapshot; enabled mode derives them from the permit.
 - Keep configured `context.agent_session_id` separate from fixed MCP `mcp.session_id`.
 - Replace full snapshots on `200`. Refresh confirmation time on `304`.
 - Keep one long-poll loop per instance, with active session IDs.
@@ -337,6 +378,10 @@ Read `internal/extproc/config/config.go` and `internal/extproc/config/loader.go`
 | `tool_approvals.request_timeout` | `5s` | Must be positive when approval handling is enabled |
 | `tool_approvals.max_staleness` | `60s` | Freshness bound for approval-cache matches |
 | `sessions.extraction.http_header` | `Mcp-Session-Id` | Must be a valid, non-empty HTTP field name |
+| `grant_context.enabled` | `false` | Requires `authorization.enabled` when true |
+| `grant_context.policy_decision_point` | `""` | Defaults to the origin of `oauth2.token_endpoint`; set explicitly for a path-prefixed broker |
+| `grant_context.request_timeout` | `5s` | Discovery and evaluation timeout; must be positive |
+| `grant_context.max_staleness` | `60s` | Upper bound on permit reuse; must be positive |
 | `telemetry.enabled` | `false` | |
 | `telemetry.service_name` | `extproc-token-exchange` | |
 | `telemetry.exporter.protocol` | `grpc` | |
@@ -346,6 +391,7 @@ Use `examples/config/extproc-token-exchange.yaml` for base token-exchange config
 Use `examples/config/extproc-opa-authorization.yaml` for OPA.
 Use `examples/config/extproc-telemetry.yaml` for OpenTelemetry.
 Use `examples/config/extproc-tool-approvals.yaml` for approval gating.
+Use `examples/config/extproc-grant-context.yaml` for broker grant context.
 
 ## Docker Compose
 

@@ -249,6 +249,10 @@ func (cp *ConsentPage) SubmitConsent(ctx context.Context) error {
 	return nil
 }
 
+func (cp *ConsentPage) SaveConsent(ctx context.Context) error {
+	return cp.getConsentActionButton("Save").Click()
+}
+
 func (cp *ConsentPage) endDateInput() (playwright.Locator, error) {
 	input := cp.page().GetByLabel("End date", playwright.PageGetByLabelOptions{
 		Exact: playwright.Bool(true),
@@ -303,9 +307,11 @@ func (cp *ConsentPage) SetExpiration(ctx context.Context, expirationDays int) er
 
 // EnableSpecificEndDate selects the specific end date option.
 func (cp *ConsentPage) EnableSpecificEndDate(_ context.Context) error {
-	return cp.page().GetByRole("checkbox", playwright.PageGetByRoleOptions{
-		Name: "Specific end date",
-	}).Check()
+	return cp.expirationCheckbox().Check()
+}
+
+func (cp *ConsentPage) expirationCheckbox() playwright.Locator {
+	return cp.page().GetByRole("checkbox", playwright.PageGetByRoleOptions{Name: "Specific end date"})
 }
 
 // SetExpirationDate sets the grant expiration to a specific date.
@@ -764,13 +770,14 @@ func (cp *ConsentPage) ExcludePermissionSetService(_ context.Context, permission
 
 // IsPermissionSetServiceExcluded checks the per-service switch after a selection change.
 func (cp *ConsentPage) IsPermissionSetServiceExcluded(_ context.Context, permissionSetName, serviceName string) (bool, error) {
-	checked, err := cp.permissionSetCard(permissionSetName).GetByRole("switch", playwright.LocatorGetByRoleOptions{
-		Name: "Include " + serviceName,
-	}).GetAttribute("aria-checked")
+	card := cp.permissionSetCard(permissionSetName)
+	include := card.GetByRole("switch", playwright.LocatorGetByRoleOptions{Name: "Include " + serviceName, Exact: playwright.Bool(true)})
+	exclude := card.GetByRole("switch", playwright.LocatorGetByRoleOptions{Name: "Exclude " + serviceName, Exact: playwright.Bool(true)})
+	checked, err := include.Or(exclude).IsChecked()
 	if err != nil {
 		return false, err
 	}
-	return checked == "false", nil
+	return !checked, nil
 }
 
 // RevokeService clicks the Revoke button for a service.
@@ -1513,13 +1520,19 @@ func (cp *ConsentPage) HasCIMDClientIDInDetails(ctx context.Context, clientID st
 	return visible, nil
 }
 
-// WaitForGrantSuccess waits for the "Grant updated successfully!" toast to appear.
-// Returns an error if the toast does not appear within the page timeout or an error toast appears instead.
-func (cp *ConsentPage) WaitForGrantSuccess(ctx context.Context) error {
-
-	successToast := cp.page().GetByRole("status").Filter(playwright.LocatorFilterOptions{
+// ExpectGrantSuccess runs the action and waits for a new grant success toast.
+func (cp *ConsentPage) ExpectGrantSuccess(action func() error) error {
+	const previous = "data-e2e-previous-grant-toast"
+	successToasts := cp.page().GetByRole("status").Filter(playwright.LocatorFilterOptions{
 		HasText: "Grant updated successfully",
 	})
+	if _, err := successToasts.EvaluateAll(`(toasts, attr) => toasts.forEach(toast => toast.setAttribute(attr, ''))`, previous); err != nil {
+		return fmt.Errorf("mark previous grant success toasts: %w", err)
+	}
+	if err := action(); err != nil {
+		return err
+	}
+	successToast := successToasts.And(cp.page().Locator(":not([" + previous + "])")).Last()
 
 	err := successToast.WaitFor(playwright.LocatorWaitForOptions{
 		State:   playwright.WaitForSelectorStateVisible,
