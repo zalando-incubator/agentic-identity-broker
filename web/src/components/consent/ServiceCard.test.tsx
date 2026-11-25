@@ -8,8 +8,9 @@
  * - Grant status badges
  */
 
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { ServiceCard } from './ServiceCard';
 import type { ThirdpartyService, DelegatedToken } from '../../types/consent';
 
@@ -162,6 +163,39 @@ describe('ServiceCard', () => {
     expect(container).toBeInTheDocument();
     expect(screen.getByText('GitHub')).toBeInTheDocument();
   });
+
+  it.each(['{Enter}', ' '])(
+    'offers an accessible reconnect action activated with %s',
+    async (key) => {
+      const user = userEvent.setup();
+      const onDelegate = vi.fn();
+      render(
+        <ServiceCard
+          service={{
+            kind: 'requirement',
+            serviceId: 'reports',
+            serviceName: 'Reports Production',
+            requirementType: 'mandatory',
+            requiredScopes: [],
+            connectionStatus: 'not_connected',
+          }}
+          onDelegate={onDelegate}
+        />,
+      );
+
+      const card = screen.getByRole('article', {
+        name: 'Service: Reports Production',
+      });
+      const login = within(card).getByRole('button', { name: 'Login' });
+      expect(login).toHaveClass('bg-trust-deep', 'hover:bg-trust-hover', 'text-white');
+      expect(login).toHaveClass('focus:ring-2', 'focus:ring-offset-2', 'focus:ring-trust');
+      expect(within(card).queryByText('Active Session')).not.toBeInTheDocument();
+      await user.tab();
+      expect(login).toHaveFocus();
+      await user.keyboard(key);
+      expect(onDelegate).toHaveBeenCalledExactlyOnceWith('reports');
+    },
+  );
 
   it('renders with loading state', () => {
     const { container } = render(

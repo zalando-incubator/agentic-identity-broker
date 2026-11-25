@@ -36,7 +36,7 @@ func TestCredentialSourceMemoryTransitionsAreAtomicAndMonotonic(t *testing.T) {
 					candidate.Secret = model.NewEncryptedSecret([]byte("explicit-reverse-ciphertext"))
 				}
 				version := before.Version
-				require.NoError(t, repo.Update(ctx, candidate, &version))
+				require.NoError(t, providerUpdateError(repo.Update(ctx, candidate, &version)))
 				assert.True(t, candidate.CredentialSourceTransitioned, "update returns committed transition evidence")
 				stored, err := repo.Get(ctx, provider.ID)
 				require.NoError(t, err)
@@ -92,7 +92,7 @@ func TestCredentialSourceMemoryPreservesHistoryOnEverySupportedWrite(t *testing.
 							current.ClientID, current.Secret = "stored-client", model.NewEncryptedSecret([]byte("ciphertext"))
 						}
 						version := current.Version
-						require.NoError(t, repo.Update(ctx, current, &version))
+						require.NoError(t, providerUpdateError(repo.Update(ctx, current, &version)))
 					}
 				}
 				for _, metadataOnly := range []bool{false, true} {
@@ -104,7 +104,7 @@ func TestCredentialSourceMemoryPreservesHistoryOnEverySupportedWrite(t *testing.
 						candidate.DisplayName = "metadata rename"
 					}
 					candidate.ProtectedResources = []string{"https://ignored.example.test"}
-					require.NoError(t, repo.Update(ctx, candidate, nil))
+					require.NoError(t, providerUpdateError(repo.Update(ctx, candidate, nil)))
 					stored, err := repo.Get(ctx, provider.ID)
 					require.NoError(t, err)
 					assert.Equal(t, source, stored.CredentialSource)
@@ -135,7 +135,7 @@ func TestCredentialSourceMemoryPreservesHistoryOnEverySupportedWrite(t *testing.
 					candidate.CredentialSource, candidate.ClientID, candidate.Secret = model.CredentialSourceStored, "explicit-client", model.NewEncryptedSecret([]byte("explicit-ciphertext"))
 				}
 				staleVersion := before.Version - 1
-				requireStorageKind(t, repo.Update(ctx, candidate, &staleVersion), storage.ErrorKindConflict)
+				requireStorageKind(t, providerUpdateError(repo.Update(ctx, candidate, &staleVersion)), storage.ErrorKindConflict)
 				after, err := repo.Get(ctx, provider.ID)
 				require.NoError(t, err)
 				assert.Equal(t, before, after, "failed CAS preserves false or true evidence and every credential/resource field")
@@ -177,7 +177,7 @@ func TestCredentialSourceMemoryFailedTransitionsPreserveEntireRecordAndIndexes(t
 					candidate.Secret = model.NewPlaintextSecret("must-not-persist")
 					kind = storage.ErrorKindValidation
 				}
-				requireStorageKind(t, repo.Update(ctx, candidate, &version), kind)
+				requireStorageKind(t, providerUpdateError(repo.Update(ctx, candidate, &version)), kind)
 				after, err := repo.Get(ctx, provider.ID)
 				require.NoError(t, err)
 				assert.Equal(t, before, after)
@@ -218,7 +218,7 @@ func TestCredentialSourceMemoryConcurrentCASHasOneCompleteWinner(t *testing.T) {
 			defer workers.Done()
 			<-start
 			version := before.Version
-			errorsByCandidate[index] = repo.Update(ctx, candidate, &version)
+			errorsByCandidate[index] = providerUpdateError(repo.Update(ctx, candidate, &version))
 		}(index, candidate)
 	}
 	close(start)
@@ -310,7 +310,7 @@ func TestCredentialSourceMemoryLockedRefreshPreservesIdentityAndProvider(t *test
 			candidate.ClientID, candidate.Secret = "different-current-client", model.NewEncryptedSecret([]byte("explicit-ciphertext"))
 		}
 		version := candidate.Version
-		require.NoError(t, providers.Update(ctx, candidate, &version))
+		require.NoError(t, providerUpdateError(providers.Update(ctx, candidate, &version)))
 		before, err := providers.Get(ctx, provider.ID)
 		require.NoError(t, err)
 		for _, principal := range []id.Principal{"recorded@example.test", "legacy@example.test"} {
@@ -431,7 +431,7 @@ func TestCredentialSourceMemoryFilesystemUpdateValidationIsAtomic(t *testing.T) 
 			candidate.DisplayName = "must-not-commit"
 			tc.mutate(candidate)
 			version := before.Version
-			requireStorageKind(t, repo.Update(ctx, candidate, &version), storage.ErrorKindValidation)
+			requireStorageKind(t, providerUpdateError(repo.Update(ctx, candidate, &version)), storage.ErrorKindValidation)
 			after, err := repo.Get(ctx, provider.ID)
 			require.NoError(t, err)
 			assert.Equal(t, before, after)

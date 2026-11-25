@@ -12,7 +12,6 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/oauth2"
 )
 
 func TestExchangeCodeWithRetry_UsesConfiguredClientTimeout(t *testing.T) {
@@ -31,15 +30,9 @@ func TestExchangeCodeWithRetry_UsesConfiguredClientTimeout(t *testing.T) {
 		config:     Config{MaxRetries: 1},
 		logger:     slog.New(slog.DiscardHandler),
 	}
-	cfg := &oauth2.Config{
-		ClientID: "client",
-		Endpoint: oauth2.Endpoint{
-			TokenURL:  server.URL,
-			AuthStyle: oauth2.AuthStyleInParams,
-		},
-	}
+	provider := &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Endpoints: model.OAuth2Endpoints{TokenEndpoint: server.URL}}
 
-	token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, nil, "code", "verifier", nil)
+	token, _, err := service.exchangeCodeWithRetry(context.Background(), "", provider, nil, "code", "verifier")
 	require.Nil(t, token)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
@@ -70,15 +63,9 @@ func TestExchangeCodeWithRetry_DoesNotRetryNonTransientResponses(t *testing.T) {
 				config:     Config{MaxRetries: 3, RetryBaseDelay: time.Millisecond},
 				logger:     slog.New(slog.DiscardHandler),
 			}
-			cfg := &oauth2.Config{
-				ClientID: "client",
-				Endpoint: oauth2.Endpoint{
-					TokenURL:  server.URL,
-					AuthStyle: oauth2.AuthStyleInParams,
-				},
-			}
+			provider := &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Endpoints: model.OAuth2Endpoints{TokenEndpoint: server.URL}}
 
-			token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, nil, "code", "verifier", nil)
+			token, _, err := service.exchangeCodeWithRetry(context.Background(), "", provider, nil, "code", "verifier")
 			require.Nil(t, token)
 			require.ErrorIs(t, err, ErrTokenExchange)
 			require.Equal(t, int32(1), requests.Load())
@@ -108,15 +95,9 @@ func TestExchangeCodeWithRetry_RetriesNetworkFailure(t *testing.T) {
 		config:     Config{MaxRetries: 2, RetryBaseDelay: time.Millisecond},
 		logger:     slog.New(slog.DiscardHandler),
 	}
-	cfg := &oauth2.Config{
-		ClientID: "client",
-		Endpoint: oauth2.Endpoint{
-			TokenURL:  server.URL,
-			AuthStyle: oauth2.AuthStyleInParams,
-		},
-	}
+	provider := &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone, Endpoints: model.OAuth2Endpoints{TokenEndpoint: server.URL}}
 
-	token, err := service.exchangeCodeWithRetry(context.Background(), cfg, &model.ThirdpartyOAuth2ProviderEntity{ClientID: "client", TokenEndpointAuthMethod: model.TokenEndpointAuthMethodNone}, nil, "code", "verifier", nil)
+	token, _, err := service.exchangeCodeWithRetry(context.Background(), "", provider, nil, "code", "verifier")
 	require.NoError(t, err)
 	require.Equal(t, "retried", token.AccessToken)
 	require.Equal(t, int32(2), requests.Load())

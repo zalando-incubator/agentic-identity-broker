@@ -150,7 +150,7 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 			session.AccessTokenExpiresAt = nil
 			s.encryption = operationEncryption{decrypt: func(context.Context, []byte, map[string]string) ([]byte, error) { return nil, cause }}
 		}},
-		{"provider repository", OperationRefresh, DetailRepositoryUnavailable, DependencyProviderRepository, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, _ *storage.UserSession) {
+		{"provider repository", OperationSessionLookup, DetailCredentialSourceUnavailable, DependencyCredentialSource, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, _ *storage.UserSession) {
 			s.providerService = thirdparty.NewThirdpartyOAuth2ProviderService(operationProviderRepository{get: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) { return nil, cause }}, operationEncryption{}, operationBranchKeyManager{}, nil, false, s.logger)
 		}},
 		{"session lock", OperationRefresh, DetailRepositoryUnavailable, DependencySessionRepository, func(s *OAuth2SessionService, _ *model.ThirdpartyOAuth2ProviderEntity, _ *storage.UserSession) {
@@ -213,7 +213,11 @@ func TestGetValidAccessTokenClassifiesEveryFailingDependencyOrigin(t *testing.T)
 			_, _, err := service.GetValidAccessToken(context.Background(), session.Principal, provider.ID)
 			metadata := requireOperationError(t, err, tc.operation, tc.detail)
 			assert.Equal(t, tc.dependency, metadata.Dependency())
-			assert.ErrorIs(t, err, cause)
+			if tc.dependency == DependencyCredentialSource {
+				assert.ErrorIs(t, err, model.ErrCredentialSourceUnavailable)
+			} else {
+				assert.ErrorIs(t, err, cause)
+			}
 			assert.NotContains(t, err.Error(), cause.Error())
 			assert.NotContains(t, logs.String(), cause.Error())
 		})
@@ -382,8 +386,7 @@ func TestExchangeAndRefreshLogsOmitURLAndCredentialMaterial(t *testing.T) {
 				require.NoError(t, err)
 				service.config.MaxRetries = 2
 				service.config.RetryBaseDelay = time.Nanosecond
-				cfg := &oauth2.Config{ClientID: provider.ClientID.String(), Endpoint: oauth2.Endpoint{TokenURL: endpoint, AuthStyle: oauth2.AuthStyleInParams}}
-				_, err = service.exchangeCodeWithRetry(context.Background(), cfg, provider, nil, "sentinel-code", "sentinel-verifier", nil)
+				_, _, err = service.exchangeCodeWithRetry(context.Background(), "", provider, nil, "sentinel-code", "sentinel-verifier")
 				assert.ErrorIs(t, err, cause)
 				assert.NotContains(t, err.Error(), "sentinel-")
 			} else {

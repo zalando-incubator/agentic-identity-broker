@@ -115,12 +115,13 @@ func RunCredentialBrokerProcess() error {
 		return err
 	}
 	server := &CredentialServer{
-		AdminURL:   cfg.Server.Admin.PublicURL,
-		EndUserURL: cfg.Server.EndUser.PublicURL,
-		ConfigPath: path,
-		Principal:  os.Getenv("AIB_CREDENTIAL_BROKER_PRINCIPAL"),
-		logger:     slog.New(slog.NewJSONHandler(os.Stdout, nil)),
-		client:     newTestHTTPClient(),
+		AdminURL:         cfg.Server.Admin.PublicURL,
+		EndUserURL:       cfg.Server.EndUser.PublicURL,
+		EndUserPublicURL: cfg.Server.EndUser.PublicURL,
+		ConfigPath:       path,
+		Principal:        os.Getenv("AIB_CREDENTIAL_BROKER_PRINCIPAL"),
+		logger:           slog.New(slog.NewJSONHandler(os.Stdout, nil)),
+		client:           newTestHTTPClient(),
 	}
 	slog.SetDefault(server.logger)
 	defer server.Close()

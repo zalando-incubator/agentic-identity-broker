@@ -166,7 +166,7 @@ func TestService_ExpiredGrantRenewalInvalidatesRefreshSessions(t *testing.T) {
 				refreshRepo = failingConsentRefreshRepo{refresh, failureErr}
 			}
 			var logs bytes.Buffer
-			svc := consent.NewService(agents, nil, grants, sessions, refreshRepo, psService, slog.New(slog.NewJSONHandler(&logs, nil)))
+			svc := consent.NewService(agents, nil, grants, sessions, refreshRepo, psService, slog.New(slog.NewJSONHandler(&logs, nil))).WithSessionUsabilityEvaluator(gateEvaluatorFunc(usableTestSessions))
 			grant, err := svc.GrantConsent(ctx, &consent.GrantRequest{Principal: principal, AgentID: agentID, GrantedPermissionSets: entries})
 			if tc.fail {
 				require.ErrorIs(t, err, failureErr)

@@ -36,7 +36,11 @@ type OAuth2CredentialJourney struct {
 }
 
 func NewOAuth2CredentialJourney() (*OAuth2CredentialJourney, error) {
-	directory, err := os.MkdirTemp("", "broker-credential-journey-")
+	return NewOAuth2CredentialJourneyIn(os.TempDir())
+}
+
+func NewOAuth2CredentialJourneyIn(parent string) (*OAuth2CredentialJourney, error) {
+	directory, err := os.MkdirTemp(parent, "broker-credential-journey-")
 	if err != nil {
 		return nil, err
 	}
@@ -76,27 +80,6 @@ func (j *OAuth2CredentialJourney) WritePair(clientID, clientSecret string) (map[
 		}
 	}
 	return binding, nil
-}
-
-func PublishCredentialPair(binding map[string]string, clientID, clientSecret string) error {
-	directory := filepath.Dir(binding["client_id_file"])
-	generation, err := os.MkdirTemp(directory, "generation-")
-	if err != nil {
-		return err
-	}
-	if err := os.Chmod(generation, 0o755); err != nil { // #nosec G302 -- the non-root E2E broker process must traverse this directory.
-		return err
-	}
-	for name, value := range map[string]string{"identity": clientID, "credential": clientSecret} {
-		if err := os.WriteFile(filepath.Join(generation, name), []byte(value), 0o644); err != nil { // #nosec G306 -- the non-root E2E broker process must read these fake credentials.
-			return err
-		}
-	}
-	next := filepath.Join(directory, "..data.next")
-	if err := os.Symlink(filepath.Base(generation), next); err != nil {
-		return err
-	}
-	return os.Rename(next, filepath.Join(directory, "..data"))
 }
 
 func (j *OAuth2CredentialJourney) Start(bindings map[string]map[string]string) error {

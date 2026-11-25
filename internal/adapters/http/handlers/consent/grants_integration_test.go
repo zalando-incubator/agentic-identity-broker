@@ -25,6 +25,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testSessionUsabilityEvaluator struct{}
+
+func (testSessionUsabilityEvaluator) RequiresReauthentication(_ context.Context, sessions []*storage.UserSession, _ ports.UsabilityMode) (map[id.ServiceID]bool, error) {
+	result := make(map[id.ServiceID]bool, len(sessions))
+	for _, session := range sessions {
+		result[session.ServiceID] = session.RequiresReauthentication()
+	}
+	return result, nil
+}
+
 type permissivePermissionSetQuerier struct {
 	serviceIDs []id.ServiceID
 }
@@ -159,7 +169,8 @@ func TestGrantsIntegration_CreateUpdateRevoke(t *testing.T) {
 	seedActiveSession(t, sessionRepo, id.Principal("alice@example.com"), googleServiceID)
 
 	// Create consent service
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), psService, slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), psService, slog.Default()).
+		WithSessionUsabilityEvaluator(testSessionUsabilityEvaluator{})
 
 	// Create handler
 	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
@@ -371,7 +382,8 @@ func TestGrantsIntegration_SessionToken_CreateGrantWithRedirect(t *testing.T) {
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	seedActiveSession(t, sessionRepo, principalValue, serviceID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), newPermissivePermissionSetQuerier(serviceID), slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), newPermissivePermissionSetQuerier(serviceID), slog.Default()).
+		WithSessionUsabilityEvaluator(testSessionUsabilityEvaluator{})
 	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	validUntil := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
@@ -462,7 +474,8 @@ func TestGrantsIntegration_OptionalOnlyAgent(t *testing.T) {
 	sessionRepo := memory.NewInMemoryUserSessionRepository()
 	seedActiveSession(t, sessionRepo, id.Principal("bob@example.com"), optionalServiceID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), newPermissivePermissionSetQuerier(optionalServiceID), slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), newPermissivePermissionSetQuerier(optionalServiceID), slog.Default()).
+		WithSessionUsabilityEvaluator(testSessionUsabilityEvaluator{})
 	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	t.Run("approve_optional_service", func(t *testing.T) {
@@ -568,7 +581,8 @@ func TestGrantsIntegration_Validation(t *testing.T) {
 	psService := newPermissivePermissionSetQuerier(service.ID)
 	seedActiveSession(t, sessionRepo, id.Principal("test@example.com"), service.ID)
 
-	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), psService, slog.Default())
+	consentService := consent.NewService(agentRepo, providerService, grantRepo, sessionRepo, memory.NewRefreshTokenSessionStore(), psService, slog.Default()).
+		WithSessionUsabilityEvaluator(testSessionUsabilityEvaluator{})
 	handler := NewGrantsHandler(consentService, slog.New(slog.DiscardHandler), newTestSessionTokenValidator())
 
 	tests := []struct {

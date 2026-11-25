@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/tests/storagecontracts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,4 +75,12 @@ func TestCreateIfAbsentKeepsConcurrentCallbackWinner(t *testing.T) {
 	assert.Equal(t, new(id.ClientID("reconnected-client")), persisted.UpstreamClientID)
 	assert.Equal(t, "reconnect-generation", persisted.CallbackID)
 	assert.Equal(t, []byte("refreshed-access"), persisted.EncryptedAccessToken)
+}
+
+func TestSessionClientIdentityRevisionFence(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+	providers := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	sessions := NewUserSessionRepository(adapter)
+	storagecontracts.SessionClientIdentityRevisionFence(t, providers, providers, sessions, sessions)
 }

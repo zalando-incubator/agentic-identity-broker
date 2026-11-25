@@ -546,35 +546,68 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 
 	Context("US3: upgrade safely without losing governed agents", Label("docker"), func() {
 		var (
-			postgres     *bootstrap.PostgresFixture
-			db           *sql.DB
-			legacyStore  *storageadapter.Adapter
-			legacyServer *bootstrap.TestServer
-			legacy       []*storage.Agent
+			postgres       *bootstrap.PostgresFixture
+			db             *sql.DB
+			legacyStore    *storageadapter.Adapter
+			legacyServer   *helpers.ClientIdentityPriorRelease
+			upgradedServer *bootstrap.TestServer
+			journey        *helpers.OAuth2CredentialJourney
+			serviceID      id.ServiceID
+			legacy         []*storage.Agent
 		)
 		BeforeEach(func() {
+			postgres, db, legacyStore, legacyServer, upgradedServer, journey = nil, nil, nil, nil, nil, nil
 			var err error
 			postgres, err = bootstrap.NewPostgresFixtureAtVersion(ctx, 46)
 			Expect(err).To(Succeed())
 			Expect(postgres.RecoverExternalIDMigration(ctx)).NotTo(Succeed())
 			legacyStore = externalIDPostgresStorage(postgres)
-			legacyServer = externalIDAdminServer(legacyStore)
+			journey, err = helpers.NewOAuth2CredentialJourney()
+			Expect(err).To(Succeed())
+			document := fixtures.ClientIdentityRolloutDocument(journey.Upstream.URL(), postgres.ConnectionURL, map[string]map[string]string{})
+			var hostPorts []int
+			for _, endpoint := range []string{journey.Upstream.URL(), postgres.ConnectionURL} {
+				port, err := helpers.ClientIdentityHostPort(endpoint)
+				Expect(err).To(Succeed())
+				hostPorts = append(hostPorts, port)
+			}
+			// Current service repositories require columns absent from schema 46.
+			legacyServer, err = helpers.StartClientIdentityPriorRelease(ctx, "", document, hostPorts)
+			Expect(err).To(Succeed())
+			legacyServer.Principal = principal
+			request := fixtures.CredentialServiceRequest("external-id-upgrade", journey.Upstream.URL(), "stored")
+			request["scopes"] = []map[string]any{{"scope_value": "read", "description": "Read access"}}
+			resp, err := legacyServer.AdminJSON(http.MethodPost, "/api/services", request)
+			Expect(err).To(Succeed())
+			serviceID, err = id.ParseServiceID(readObject(resp, http.StatusCreated)["id"].(string))
+			Expect(err).To(Succeed())
+			permission := fixtures.ClientIdentityPermissionSet(serviceID, "GitHub read")
+			permission.ID = fixtures.PlaceholderPermissionSetID
+			canonical := "github-read"
+			permission.CanonicalID = &canonical
+			permission.ServiceScopes[0].Scopes = []string{"read"}
+			permission.ServiceScopes[0].RequirementType = storage.RequirementTypeOptional
+			Expect(legacyStore.PermissionSets().Create(ctx, permission)).To(Succeed())
 			db, err = sql.Open("pgx", postgres.ConnectionURL)
 			Expect(err).To(Succeed())
 			legacy = nil
 			for range 3 {
 				a := fixtures.AgentWithExternalID(id.ExternalID(id.NewAgentID().String()), fixtures.PlaceholderPermissionSetID)
-				a.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: fixtures.PlaceholderServiceID, RequirementType: storage.RequirementTypeOptional}}
+				a.ServiceRequirements = []storage.ServiceRequirement{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}
 				a.ClientURIs = []string{"https://agent.example/" + id.NewAgentID().String() + ".json"}
 				Expect(legacyStore.Agents().Create(ctx, a)).To(Succeed())
-				g := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), a.ID.String(), fixtures.PlaceholderServiceID.String(), []string{"read"})
+				g := fixtures.ActiveGrant(fixtures.DefaultPrincipal().String(), a.ID.String(), serviceID.String(), []string{"read"})
+				g.GrantedPermissionSets[0].IncludedServiceIDs = []id.ServiceID{serviceID}
 				Expect(legacyStore.UserGrants().Create(ctx, g)).To(Succeed())
 				legacy = append(legacy, a)
 			}
 		})
 		AfterEach(func() {
+			if upgradedServer != nil {
+				upgradedServer.Close()
+			}
 			if legacyServer != nil {
-				legacyServer.Close()
+				Expect(legacyServer.Container.Terminate(ctx)).To(Succeed())
 			}
 			if db != nil {
 				Expect(db.Close()).To(Succeed())
@@ -584,6 +617,9 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			}
 			if postgres != nil {
 				Expect(postgres.Close(ctx)).To(Succeed())
+			}
+			if journey != nil {
+				Expect(journey.Close()).To(Succeed())
 			}
 		})
 		setID := func(agent *storage.Agent, value any) {
@@ -622,7 +658,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			setID(legacy[0], string(selector))
 			setID(legacy[1], string(selector))
 			expectBlocked(legacy[0], legacy[1])
-			resp, err := legacyServer.AuthenticatedGET("/api/agents/"+legacy[0].ID.String(), principal)
+			resp, err := legacyServer.AdminJSON(http.MethodGet, "/api/agents/"+legacy[0].ID.String(), nil)
 			Expect(err).To(Succeed())
 			Expect(readObject(resp, http.StatusOK)["external_id"]).To(Equal(string(selector)))
 		})
@@ -644,9 +680,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 				if i == 0 {
 					desired["external_id"] = string(selector) + "-eu"
 				}
-				encoded, err := json.Marshal(desired)
-				Expect(err).To(Succeed())
-				resp, err := legacyServer.DirectRequest(http.MethodPut, "/api/agents/"+a.ID.String(), principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+				resp, err := legacyServer.AdminJSON(http.MethodPut, "/api/agents/"+a.ID.String(), desired)
 				Expect(err).To(Succeed())
 				Expect(readObject(resp, http.StatusOK)["id"]).To(Equal(a.ID.String()))
 			}
@@ -654,10 +688,11 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			Expect(postgres.RecoverExternalIDMigration(ctx)).To(Succeed())
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
+			upgradedServer = externalIDAdminAppServer(legacyStore)
 			definition["external_id"] = string(selector)
 			encoded, err := json.Marshal(definition)
 			Expect(err).To(Succeed())
-			resp, err := legacyServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+			resp, err := upgradedServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
 			Expect(err).To(Succeed())
 			Expect(readObject(resp, http.StatusConflict)["error"]).To(Equal("conflict"))
 			Expect(snapshot()).To(Equal(before))
@@ -672,14 +707,15 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			Expect(snapshot()).To(Equal(before))
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
-			resp, err := legacyServer.AuthenticatedGET("/api/agents/"+legacy[0].ID.String(), principal)
+			upgradedServer = externalIDAdminAppServer(legacyStore)
+			resp, err := upgradedServer.AuthenticatedGET("/api/agents/"+legacy[0].ID.String(), principal)
 			Expect(err).To(Succeed())
 			Expect(readObject(resp, http.StatusOK)["id"]).To(Equal(legacy[0].ID.String()))
 
 			definition["external_id"] = string(*legacy[0].ExternalID)
 			encoded, err := json.Marshal(definition)
 			Expect(err).To(Succeed())
-			resp, err = legacyServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+			resp, err = upgradedServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
 			Expect(err).To(Succeed())
 			Expect(readObject(resp, http.StatusConflict)["error"]).To(Equal("conflict"))
 			Expect(snapshot()).To(Equal(before))
@@ -687,7 +723,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			delete(definition, "external_id")
 			encoded, err = json.Marshal(definition)
 			Expect(err).To(Succeed())
-			resp, err = legacyServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
+			resp, err = upgradedServer.DirectRequest(http.MethodPost, "/api/agents", principal, map[string]string{"Content-Type": "application/json"}, bytes.NewReader(encoded))
 			Expect(err).To(Succeed())
 			Expect(readObject(resp, http.StatusCreated)["external_id"]).To(BeNil())
 		})

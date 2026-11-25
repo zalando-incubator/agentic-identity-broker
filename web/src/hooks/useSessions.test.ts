@@ -10,16 +10,36 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { createElement } from 'react';
+import {
+  act,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import axios from 'axios';
 import { useSessions, useSession } from './useSessions';
-import { sessionsApi } from '../services/api/sessions';
-import type { SessionSummary } from '../services/api/sessions';
+import { sessionsApi } from '@services/api/sessions';
+import type { SessionSummary } from '@services/api/sessions';
+import { consentApi } from '@services/api/consent';
+import { ThirdPartySessionsPage } from '../pages/ThirdPartySessionsPage';
 
 // Mock the sessions API
-vi.mock('../services/api/sessions', () => ({
+vi.mock('@services/api/sessions', () => ({
   sessionsApi: {
     listSessions: vi.fn(),
+    refreshSession: vi.fn(),
+    terminateSession: vi.fn(),
+  },
+}));
+
+vi.mock('@services/api/consent', () => ({
+  consentApi: {
+    getUserInfo: vi.fn(),
+    getAgentDelegations: vi.fn(),
   },
 }));
 
@@ -51,6 +71,11 @@ const mockSessions: SessionSummary[] = [
     dependent_agent_count: 1,
     is_encrypted: true,
   },
+];
+
+const invalidatedSessions: SessionSummary[] = [
+  { ...mockSessions[0], requires_reauthentication: true },
+  mockSessions[1],
 ];
 
 describe('useSessions', () => {
@@ -131,7 +156,10 @@ describe('useSessions', () => {
 
     it('handles API error responses with message', async () => {
       const error = new axios.AxiosError('Internal Server Error');
-      error.response = { status: 500, data: { message: 'Internal server error' } } as never;
+      error.response = {
+        status: 500,
+        data: { message: 'Internal server error' },
+      } as never;
       vi.mocked(sessionsApi.listSessions).mockRejectedValueOnce(error);
 
       const { result } = renderHook(() => useSessions());
@@ -255,6 +283,34 @@ describe('useSessions', () => {
         expect(result.current.loading).toBe(false);
       });
     });
+
+    it('reloads backend invalidation and reconnection without deriving usability from valid expiry', async () => {
+      vi.mocked(sessionsApi.listSessions)
+        .mockResolvedValueOnce(mockSessions)
+        .mockResolvedValueOnce(invalidatedSessions)
+        .mockResolvedValueOnce(mockSessions);
+      const { result } = renderHook(() => useSessions());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+
+      await act(async () => {
+        expect(await result.current.refetch()).toEqual(invalidatedSessions);
+      });
+
+      expect(result.current.sessions[0]).toEqual({
+        ...mockSessions[0],
+        requires_reauthentication: true,
+        access_token_expired: false,
+        has_refresh_token: true,
+      });
+      expect(result.current.sessions[1]).toEqual(mockSessions[1]);
+
+      await act(async () => {
+        expect(await result.current.refetch()).toEqual(mockSessions);
+      });
+
+      expect(result.current.sessions).toEqual(mockSessions);
+      expect(sessionsApi.listSessions).toHaveBeenCalledTimes(3);
+    });
   });
 
   describe('Loading State', () => {
@@ -344,5 +400,123 @@ describe('useSession', () => {
     const { result } = renderHook(() => useSession('google'));
 
     expect(result.current).toBeUndefined();
+  });
+});
+
+describe('useSessions callback integration', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.mocked(consentApi.getUserInfo).mockResolvedValue({
+      principal: 'alice@example.com',
+      displayName: 'Alice',
+    });
+    vi.mocked(consentApi.getAgentDelegations).mockResolvedValue([]);
+  });
+
+  function renderSessionsPage(initialEntry = '/sessions') {
+    const router = createMemoryRouter(
+      [{ path: '/sessions', element: createElement(ThirdPartySessionsPage) }],
+      { initialEntries: [initialEntry] },
+    );
+    render(createElement(RouterProvider, { router }));
+    return router;
+  }
+
+  it.each([false, true])(
+    'reloads connection state after a successful callback and obeys requires_reauthentication=%s',
+    async (requiresReauthentication) => {
+      const returnedSessions = [
+        {
+          ...mockSessions[0],
+          requires_reauthentication: requiresReauthentication,
+        },
+      ];
+      vi.mocked(sessionsApi.listSessions)
+        .mockResolvedValueOnce([invalidatedSessions[0]])
+        .mockResolvedValueOnce(returnedSessions);
+      const router = renderSessionsPage();
+      expect(
+        await screen.findByRole('button', { name: /login/i }),
+      ).toBeEnabled();
+
+      await act(async () => {
+        await router.navigate('/sessions?success=true&service_id=google');
+      });
+
+      expect(
+        await screen.findByText(/successfully connected to service/i),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', {
+            name: requiresReauthentication ? /login/i : /refresh/i,
+          }),
+        ).toBeEnabled();
+      });
+      expect(
+        screen.queryByRole('button', {
+          name: requiresReauthentication ? /refresh/i : /login/i,
+        }),
+      ).toBeNull();
+      expect(screen.getByRole('button', { name: /terminate/i })).toBeEnabled();
+      expect(sessionsApi.listSessions).toHaveBeenCalledTimes(2);
+      expect(sessionsApi.refreshSession).not.toHaveBeenCalled();
+      expect(sessionsApi.terminateSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      'access_denied',
+      'You denied access to the service. No tokens were stored.',
+    ],
+    ['callback_failed', 'Authorization failed. Please try again.'],
+  ])(
+    'keeps the invalidated session and a sign-in retry after %s',
+    async (error, message) => {
+      vi.mocked(sessionsApi.listSessions).mockResolvedValue([
+        invalidatedSessions[0],
+      ]);
+      const router = renderSessionsPage(`/sessions?error=${error}`);
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(
+        await screen.findByRole('button', { name: /login/i }),
+      ).toBeEnabled();
+      expect(screen.getByText('Sign-in required')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /terminate/i })).toBeEnabled();
+      expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
+      expect(screen.queryByText('Active')).toBeNull();
+      expect(router.state.location.pathname).toBe('/sessions');
+      expect(router.state.location.search).toBe('');
+      expect(sessionsApi.refreshSession).not.toHaveBeenCalled();
+      expect(sessionsApi.terminateSession).not.toHaveBeenCalled();
+    },
+  );
+
+  it('offers a load retry after callback state reload fails without treating the old session as connected', async () => {
+    const user = userEvent.setup();
+    vi.mocked(sessionsApi.listSessions)
+      .mockResolvedValueOnce([invalidatedSessions[0]])
+      .mockRejectedValueOnce(new Error('Connection state unavailable'))
+      .mockResolvedValueOnce([invalidatedSessions[0]]);
+    const router = renderSessionsPage();
+    expect(await screen.findByRole('button', { name: /login/i })).toBeEnabled();
+
+    await act(async () => {
+      await router.navigate('/sessions?success=true&service_id=google');
+    });
+
+    expect(
+      await screen.findByText('Connection state unavailable'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Active')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    expect(await screen.findByRole('button', { name: /login/i })).toBeEnabled();
+    expect(screen.queryByText('Connection state unavailable')).toBeNull();
+    expect(screen.queryByRole('button', { name: /refresh/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /terminate/i })).toBeEnabled();
+    expect(sessionsApi.listSessions).toHaveBeenCalledTimes(3);
   });
 });

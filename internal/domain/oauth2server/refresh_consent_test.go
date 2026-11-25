@@ -27,6 +27,16 @@ type testConsentVerifier struct {
 	grants *memory.UserGrantRepository
 }
 
+type testSessionUsabilityEvaluator struct{}
+
+func (testSessionUsabilityEvaluator) RequiresReauthentication(_ context.Context, sessions []*storage.UserSession, _ ports.UsabilityMode) (map[id.ServiceID]bool, error) {
+	result := make(map[id.ServiceID]bool, len(sessions))
+	for _, session := range sessions {
+		result[session.ServiceID] = session.RequiresReauthentication()
+	}
+	return result, nil
+}
+
 func newTestGrantVerifier(agents ports.AgentRepository) *testConsentVerifier {
 	grants := memory.NewUserGrantRepository()
 	return &testConsentVerifier{consent.NewService(agents, nil, grants, nil, memory.NewRefreshTokenSessionStore(), nil, testSlogger()), grants}
@@ -352,12 +362,14 @@ func TestProvider_RefreshRevokedAfterConsumption(t *testing.T) {
 			grant.GrantedPermissionSets = entries
 			require.NoError(t, grants.Update(ctx, grant))
 			sessions := memory.NewInMemoryUserSessionRepository()
-			require.NoError(t, sessions.Create(ctx, &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), EncryptedRefreshToken: []byte("refresh"), TokenType: "Bearer"}))
+			expiredAccess := time.Now().Add(-time.Minute)
+			require.NoError(t, sessions.Create(ctx, &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, EncryptedAccessToken: []byte("opaque"), EncryptedRefreshToken: []byte("refresh"), TokenType: "Bearer", AccessTokenExpiresAt: &expiredAccess}))
 			psRepo := memory.NewPermissionSetRepository()
 			require.NoError(t, psRepo.Create(ctx, &storage.PermissionSet{ID: psID, Name: "Access", Description: "Lifecycle test", ServiceScopes: []storage.ServiceScope{{ServiceID: serviceID, RequirementType: storage.RequirementTypeOptional}}}))
 			psService := permissionset.NewPermissionSetService(psRepo, grants, testSlogger())
 			t.Cleanup(psService.Close)
-			consentService := consent.NewService(agents, nil, grants, sessions, repo, psService, testSlogger())
+			consentService := consent.NewService(agents, nil, grants, sessions, repo, psService, testSlogger()).
+				WithSessionUsabilityEvaluator(testSessionUsabilityEvaluator{})
 			provider.fositeStorage.verifier = consentService
 			verifier := "refresh-consent-verifier-12345678901234567890"
 			code, err := provider.HandleAuthorize(ctx, agent.ID.String(), agent.RedirectURIs[0], "code", "offline_access read", "state", generateS256Challenge(verifier), "S256", principal)

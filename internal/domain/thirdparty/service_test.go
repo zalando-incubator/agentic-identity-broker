@@ -19,6 +19,7 @@ import (
 	domainencryption "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/encryption"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -65,9 +66,9 @@ func (m *MockRepository) GetCanonicalIDs(ctx context.Context, ids []id.ServiceID
 	return args.Get(0).(map[id.ServiceID]string), args.Error(1)
 }
 
-func (m *MockRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (m *MockRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	args := m.Called(ctx, entity, expectedVersion)
-	return args.Error(0)
+	return false, args.Error(0)
 }
 
 func (m *MockRepository) Delete(ctx context.Context, serviceID id.ServiceID) error {
@@ -160,7 +161,7 @@ type functionFieldProviderRepository struct {
 
 	createFn func(context.Context, *model.ThirdpartyOAuth2ProviderEntity) error
 	getFn    func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error)
-	updateFn func(context.Context, *model.ThirdpartyOAuth2ProviderEntity, *int64) error
+	updateFn func(context.Context, *model.ThirdpartyOAuth2ProviderEntity, *int64) (bool, error)
 	listFn   func(context.Context) ([]*model.ThirdpartyOAuth2ProviderEntity, error)
 }
 
@@ -178,9 +179,9 @@ func (m *functionFieldProviderRepository) Get(ctx context.Context, serviceID id.
 	return m.getFn(ctx, serviceID)
 }
 
-func (m *functionFieldProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+func (m *functionFieldProviderRepository) Update(ctx context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 	if m.updateFn == nil {
-		return errors.New("unexpected repository Update call")
+		return false, errors.New("unexpected repository Update call")
 	}
 	return m.updateFn(ctx, entity, expectedVersion)
 }
@@ -824,10 +825,10 @@ func TestThirdpartyOAuth2ProviderService_CIMDProvisionsServiceBranchKeyBeforePer
 					assert.True(t, stored.Secret.IsAbsent())
 					return nil
 				},
-				updateFn: func(_ context.Context, stored *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+				updateFn: func(_ context.Context, stored *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 					calls = append(calls, "persist")
 					assert.True(t, stored.Secret.IsAbsent())
-					return nil
+					return false, nil
 				},
 			}
 			branchKeys := &functionFieldBranchKeyManager{createFn: func(_ context.Context, subject domainencryption.BranchKeySubject) (string, error) {
@@ -987,9 +988,9 @@ func TestThirdpartyOAuth2ProviderService_CIMDPublicCreateAndUpdateWithoutKey(t *
 						stored = provider.Copy()
 						return nil
 					},
-					updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+					updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 						stored = provider.Copy()
-						return nil
+						return false, nil
 					},
 				}
 				var branchCalls, cryptoCalls int
@@ -1108,10 +1109,10 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDValidatesReplacementBeforeRe
 
 	var updateCalled bool
 	repo := &functionFieldProviderRepository{
-		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 			updateCalled = true
 			persisted = provider.Copy()
-			return nil
+			return false, nil
 		},
 	}
 	var encryptCalls int
@@ -1155,9 +1156,9 @@ func TestThirdpartyOAuth2ProviderService_Update_StaticToCIMDReplacesEncryptedSec
 			assert.Equal(t, serviceID, requestedID)
 			return persisted, nil
 		},
-		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 			stored = provider.Copy()
-			return nil
+			return false, nil
 		},
 	}
 	var encryptCalls, decryptCalls int
@@ -1212,9 +1213,9 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDToStaticRequiresNewSecretAnd
 			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 				return persisted, nil
 			},
-			updateFn: func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+			updateFn: func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 				updateCalls++
-				return nil
+				return false, nil
 			},
 		}
 		encryption := &functionFieldEncryption{
@@ -1258,9 +1259,9 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDToStaticRequiresNewSecretAnd
 			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 				return persisted, nil
 			},
-			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 				stored = provider.Copy()
-				return nil
+				return false, nil
 			},
 		}
 		var encryptedPlaintext []byte
@@ -1314,9 +1315,9 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDToPublicPersistsAbsentSecret
 		getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 			return persisted, nil
 		},
-		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 			stored = provider.Copy()
-			return nil
+			return false, nil
 		},
 	}
 	var encryptCalls, decryptCalls int
@@ -1364,9 +1365,9 @@ func TestThirdpartyOAuth2ProviderService_Update_CIMDPublicModeTransitions(t *tes
 		getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 			return stored.Copy(), nil
 		},
-		updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+		updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 			stored = entity.Copy()
-			return nil
+			return false, nil
 		},
 	}
 	readiness := &countingCIMDKeyReadiness{err: ports.ErrCIMDPublicKeyUnavailable}
@@ -1415,9 +1416,9 @@ func TestThirdpartyOAuth2ProviderService_Update_StaticAndCIMDPublicIdentitySwitc
 		getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 			return stored.Copy(), nil
 		},
-		updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+		updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 			stored = entity.Copy()
-			return nil
+			return false, nil
 		},
 	}
 	service := NewThirdpartyOAuth2ProviderService(repo, &functionFieldEncryption{
@@ -1777,9 +1778,9 @@ func TestThirdpartyOAuth2ProviderService_Update_PublicClient_ProvisionsBranchKey
 		getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 			return entity.Copy(), nil
 		},
-		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+		updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 			stored = provider
-			return nil
+			return false, nil
 		},
 	}
 	var branchKeySubjects []domainencryption.BranchKeySubject
@@ -1811,9 +1812,9 @@ func TestThirdpartyOAuth2ProviderService_Update_TransitionsCredentialStorage(t *
 			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 				return persisted.Copy(), nil
 			},
-			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 				persisted = provider.Copy()
-				return nil
+				return false, nil
 			},
 		}
 		var encryptCalls int
@@ -1843,9 +1844,9 @@ func TestThirdpartyOAuth2ProviderService_Update_TransitionsCredentialStorage(t *
 			getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 				return persisted.Copy(), nil
 			},
-			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
+			updateFn: func(_ context.Context, provider *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
 				persisted = provider.Copy()
-				return nil
+				return false, nil
 			},
 		}
 		var encryptedPlaintext []byte
@@ -3003,15 +3004,15 @@ func newRefreshTestRepository(stored *model.ThirdpartyOAuth2ProviderEntity) *ref
 			}
 			return repo.stored.Copy(), nil
 		},
-		updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) error {
+		updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expectedVersion *int64) (bool, error) {
 			if expectedVersion == nil || *expectedVersion != repo.stored.Version {
-				return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "stale service version")
+				return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "stale service version")
 			}
 			previousVersion := repo.stored.Version
 			repo.updates++
 			repo.stored = entity.Copy()
 			repo.stored.Version = previousVersion + 1
-			return nil
+			return false, nil
 		},
 	}
 	return repo
@@ -3171,9 +3172,9 @@ func TestThirdpartyOAuth2ProviderService_Update_DuplicateNewIssuerClientRecordsF
 	const nextMetadata = "https://other-auth.example.test/.well-known/oauth-authorization-server/tenant"
 	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretPost)
 	repo := newRefreshTestRepository(stored)
-	repo.updateFn = func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, version *int64) error {
+	repo.updateFn = func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, version *int64) (bool, error) {
 		require.Equal(t, stored.Version, *version)
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
+		return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
 			storage.ErrDuplicateDCRClientIdentity, "provider DCR issuer and client_id already exist")
 	}
 	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_post"}, nil))
@@ -3459,8 +3460,8 @@ func TestThirdpartyOAuth2ProviderService_Update_AudienceCountErrorDoesNotStartDi
 func TestThirdpartyOAuth2ProviderService_Update_CommitTimeAudienceConflictRecordsOnlyFailureStatus(t *testing.T) {
 	stored := readyRefreshProvider(model.TokenEndpointAuthMethodClientSecretBasic)
 	repo := newRefreshTestRepository(stored)
-	repo.updateFn = func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, _ *int64) error {
-		return storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
+	repo.updateFn = func(_ context.Context, _ *model.ThirdpartyOAuth2ProviderEntity, _ *int64) (bool, error) {
+		return false, storage.NewStorageError("UpdateThirdpartyOAuth2Provider", storage.ErrorKindConflict,
 			storage.ErrResourceChangeHasSessions, "user sessions block resource change")
 	}
 	client := dcrDiscoveryClient(issuerDCRDocument([]string{"client_secret_basic"}, nil))
@@ -3810,4 +3811,127 @@ func TestThirdpartyOAuth2ProviderService_DiscoveredBranchKeyFailureAuditsSafely(
 	require.NoError(t, json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &entry))
 	assert.Equal(t, "internal_failure", entry["failure_code"])
 	assert.NotContains(t, logs.String(), marker)
+}
+
+func clientIdentityChangeRecords(t *testing.T, logs *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var records []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		require.NoError(t, json.Unmarshal([]byte(line), &record))
+		if record["event"] == "session.oauth2.client_identity_changed" {
+			records = append(records, record)
+		}
+	}
+	return records
+}
+
+func TestClientIdentityAdminAuditUsesCommittedUpdateOutcome(t *testing.T) {
+	conflict := storage.NewStorageError("Update", storage.ErrorKindConflict, nil, "version conflict")
+	rollback := storage.NewStorageError("Update", storage.ErrorKindConnection, nil, "transaction commit failed")
+	for _, tc := range []struct {
+		name       string
+		filesystem bool
+		initialize bool
+		changed    bool
+		failure    error
+	}{
+		{name: "accepted stored client ID change", changed: true},
+		{name: "same ID secret and metadata update"},
+		{name: "legacy evidence initialization", initialize: true},
+		{name: "filesystem metadata preserves another writer's increment", filesystem: true},
+		{name: "version conflict", failure: conflict},
+		{name: "transaction rollback", failure: rollback},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const oldID = "private-old-client-identity"
+			const newID = "private-new-client-identity"
+			const secret = "private-rotated-client-secret"
+			const ciphertext = "private-encrypted-client-secret"
+			operator := id.Principal("operator@example.test")
+			ctx := principal.WithPrincipal(t.Context(), operator)
+			stored := minimalValidEntity(id.NewServiceID(), model.NewEncryptedSecret([]byte(ciphertext)))
+			stored.ClientID = oldID
+			stored.CredentialSource = model.CredentialSourceStored
+			stored.Version = 12
+			identity := id.ClientID(oldID)
+			stored.ClientIdentity = &identity
+			stored.ClientIdentityRevision = 7
+			update := minimalValidEntity(stored.ID, model.NewPlaintextSecret(secret))
+			update.ClientID = oldID
+			update.DisplayName = "Updated metadata"
+			update.CredentialSource = model.CredentialSourceStored
+			if tc.changed || tc.failure != nil {
+				update.ClientID = newID
+			}
+			if tc.initialize {
+				stored.ClientIdentity = nil
+				stored.ClientIdentityRevision = 0
+			}
+			if tc.filesystem {
+				canonicalID := "credential-source"
+				stored.CanonicalID, update.CanonicalID = &canonicalID, &canonicalID
+				stored.CredentialSource, update.CredentialSource = model.CredentialSourceFilesystem, model.CredentialSourceFilesystem
+				stored.ClientID, update.ClientID = "", ""
+				stored.Secret, update.Secret = model.NewAbsentSecret(), model.NewAbsentSecret()
+			}
+			var logs bytes.Buffer
+			reads, writes := 0, 0
+			repo := &functionFieldProviderRepository{
+				getFn: func(context.Context, id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
+					reads++
+					return stored.Copy(), nil
+				},
+				updateFn: func(_ context.Context, entity *model.ThirdpartyOAuth2ProviderEntity, expected *int64) (bool, error) {
+					writes++
+					require.Equal(t, stored.Version, *expected)
+					assert.Empty(t, clientIdentityChangeRecords(t, &logs), "no event may precede the committed mutation result")
+					if tc.failure != nil {
+						return false, tc.failure
+					}
+					committedID := entity.ClientID
+					entity.ClientIdentityRevision = stored.ClientIdentityRevision
+					if tc.changed || tc.filesystem {
+						committedID = newID
+						entity.ClientIdentityRevision++
+					}
+					entity.ClientIdentity = &committedID
+					entity.Version = stored.Version + 1
+					return tc.changed, nil
+				},
+			}
+			encryption := &functionFieldEncryption{encryptFn: func(context.Context, []byte, map[string]string) ([]byte, error) {
+				return []byte(ciphertext), nil
+			}}
+			service := NewThirdpartyOAuth2ProviderService(repo, encryption, newNoopBranchKeyManager(), nil, false,
+				slog.New(slog.NewJSONHandler(&logs, nil)))
+
+			err := service.Update(ctx, update, &stored.Version)
+
+			if tc.failure != nil {
+				require.ErrorIs(t, err, tc.failure)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, 1, reads, "audit must not reload and attribute a later writer's state")
+			assert.Equal(t, 1, writes)
+			events := clientIdentityChangeRecords(t, &logs)
+			if tc.changed {
+				require.Len(t, events, 1)
+				assert.Equal(t, "INFO", events[0]["level"])
+				assert.Equal(t, stored.ID.String(), events[0]["service_id"])
+				assert.Equal(t, float64(8), events[0]["client_identity_revision"])
+				assert.Equal(t, "admin_update", events[0]["channel"])
+				assert.Equal(t, operator.String(), events[0]["operator_principal"])
+			} else {
+				assert.Empty(t, events, "only this update's committed increment owns an admin event")
+			}
+			for _, sensitive := range []string{oldID, newID, secret, ciphertext} {
+				assert.NotContains(t, logs.String(), sensitive)
+			}
+		})
+	}
 }

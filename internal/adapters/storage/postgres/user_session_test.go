@@ -187,9 +187,6 @@ func TestUserSessionRepository(t *testing.T) {
 			}
 			require.NoError(t, repo.Create(ctx, session))
 		}
-		activeIDs, err := repo.ListActiveServiceIDsByPrincipal(ctx, principal)
-		require.NoError(t, err)
-		assert.Equal(t, []id.ServiceID{activeServiceID}, activeIDs)
 		summaries, err := repo.ListSummariesByPrincipal(ctx, principal)
 		require.NoError(t, err)
 		require.Len(t, summaries, 2)
@@ -279,9 +276,6 @@ func TestUserSessionRepository_Usability(t *testing.T) {
 			wantActive = append(wantActive, serviceID)
 		}
 	}
-	ids, err := repo.ListActiveServiceIDsByPrincipal(ctx, principal)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, wantActive, ids)
 	active, err := repo.ListActiveByPrincipal(ctx, principal)
 	require.NoError(t, err)
 	var activeIDs []id.ServiceID

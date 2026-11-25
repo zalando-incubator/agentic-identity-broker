@@ -79,6 +79,30 @@ func (sp *SessionsPage) ClickLoginButton(ctx context.Context) error {
 	return nil
 }
 
+func (sp *SessionsPage) LoginServiceWithKeyboard(_ context.Context, serviceName, key string) error {
+	button := sp.serviceCard(serviceName).GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name: "Login", Exact: playwright.Bool(true),
+	})
+	if err := button.Focus(); err != nil {
+		return err
+	}
+	focused, err := button.Evaluate(`async element => {
+		await Promise.all(element.getAnimations().map(animation => animation.finished));
+		const style = getComputedStyle(element);
+		return element === document.activeElement && style.boxShadow !== 'none' &&
+			style.getPropertyValue('--tw-ring-shadow').trim() !== '' &&
+			style.getPropertyValue('--tw-ring-shadow').trim() !== '0 0 #0000' &&
+			style.getPropertyValue('--tw-ring-color').trim() !== '';
+	}`, nil)
+	if err != nil {
+		return err
+	}
+	if focused != true {
+		return fmt.Errorf("service %q login did not receive visible keyboard focus", serviceName)
+	}
+	return button.Press(key)
+}
+
 func (sp *SessionsPage) GetLoginButtonCount(ctx context.Context) (int, error) {
 	count, err := sp.loginButtonLocator().Count()
 	if err != nil {
@@ -130,6 +154,30 @@ func (sp *SessionsPage) IsRefreshTokenExpiryVisible(ctx context.Context) (bool, 
 		return false, fmt.Errorf("failed to check refresh token expiry: %w", err)
 	}
 	return count > 0, nil
+}
+
+func (sp *SessionsPage) WaitForServiceStatus(_ context.Context, serviceName, status string) error {
+	if err := sp.serviceCard(serviceName).GetByText(status, playwright.LocatorGetByTextOptions{
+		Exact: playwright.Bool(true),
+	}).WaitFor(playwright.LocatorWaitForOptions{
+		State:   playwright.WaitForSelectorStateVisible,
+		Timeout: playwright.Float(float64(sp.timeout.Milliseconds())),
+	}); err != nil {
+		return fmt.Errorf("service %q status %q did not appear: %w", serviceName, status, err)
+	}
+	return nil
+}
+
+func (sp *SessionsPage) IsServiceActionVisible(_ context.Context, serviceName, action string) (bool, error) {
+	return sp.serviceCard(serviceName).GetByRole("button", playwright.LocatorGetByRoleOptions{
+		Name: action, Exact: playwright.Bool(true),
+	}).IsVisible()
+}
+
+func (sp *SessionsPage) serviceCard(serviceName string) playwright.Locator {
+	return sp.page().GetByRole("article", playwright.PageGetByRoleOptions{
+		Name: "Session: " + serviceName, Exact: playwright.Bool(true),
+	})
 }
 
 func (sp *SessionsPage) page() playwright.Page {

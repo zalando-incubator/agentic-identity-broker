@@ -187,9 +187,6 @@ func TestListUserSessions_ExcludesSpentAccessOnlyConnectionsFromActiveServices(t
 	active, err := sessions.ListActiveByPrincipal(ctx, principal)
 	require.NoError(t, err)
 	assert.Empty(t, active)
-	activeIDs, err := sessions.ListActiveServiceIDsByPrincipal(ctx, principal)
-	require.NoError(t, err)
-	assert.Empty(t, activeIDs)
 }
 
 // 013 US1-S7 from specs/013-token-exchange/spec.md.

@@ -5,7 +5,7 @@
  * Follows the "Refined Trust Architecture" design system.
  *
  * Features:
- * - Session status badge (Active, Access Token Expired, Login required)
+ * - Session status badge (Active, Access Token Expired, Sign-in required)
  * - Encryption indicator
  * - Dependent agent count
  * - Session initiation timestamp
@@ -64,7 +64,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   // Determine status and color variant
   const { status, variant } = useMemo(() => {
     if (session.requires_reauthentication) {
-      return { status: 'Login required', variant: 'error' as const };
+      return { status: 'Sign-in required', variant: 'error' as const };
     }
     if (session.access_token_expired) {
       return { status: 'Access Token Expired', variant: 'warning' as const };
@@ -86,7 +86,13 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   const needsLogin = session.requires_reauthentication;
 
   return (
-    <Card padding="default" border="subtle" hover="lift">
+    <Card
+      as="article"
+      aria-label={`Session: ${session.service_display_name}`}
+      padding="default"
+      border="subtle"
+      hover="lift"
+    >
       {/* Header: Service name and Terminate button */}
       <div className="mb-3 flex items-start justify-between gap-2">
         <div className="flex-1">

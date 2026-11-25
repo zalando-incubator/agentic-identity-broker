@@ -534,7 +534,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		h.logger.WarnContext(ctx, "service validation failed",
-			"client_id", entity.ClientID,
+			"service_id", entity.ID,
 			"error", err)
 		var storageErr *storage.StorageError
 		if errors.As(err, &storageErr) {
@@ -566,7 +566,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 
 		if err := h.providerService.ValidateUpdate(ctx, entity); err != nil {
 			h.logger.WarnContext(ctx, "service validation failed",
-				"client_id", entity.ClientID,
+				"service_id", entity.ID,
 				"error", err)
 			var storageErr *storage.StorageError
 			if errors.As(err, &storageErr) {
@@ -607,9 +607,7 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if req.Discovery.ResourceURL == nil {
-		h.logger.InfoContext(ctx, "OAuth2 service updated",
-			"service_id", entity.ID,
-			"client_id", entity.ClientID)
+		h.logger.InfoContext(ctx, "oauth2 service updated", "service_id", entity.ID)
 	}
 
 	resp := h.toResponse(entity.RedactedCopy())

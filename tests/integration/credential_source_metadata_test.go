@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Observe the real filesystem port, never replace its result. Zero calls is a
-// metadata boundary assertion: a handler that reads and ignores errors also fails.
+// Observe the real filesystem port, never replace its result. Administrative
+// metadata performs no reads; usability displays may acquire only the client ID.
 // The ordinary CRUD contract tests retain the unmodified Builder-created reader.
 // WithCredentialFileReader is the same setter used by production Builder wiring.
 type credentialMetadataReads struct {
@@ -184,6 +184,20 @@ func assertCredentialMetadataEvent(t *testing.T, records []map[string]any, event
 	assert.True(t, found, "expected %s for the actual service and operation; got %v", event, records)
 }
 
+func assertCredentialMetadataSourceFailure(t *testing.T, journey *helpers.OAuth2CredentialJourney, binding map[string]string, failure error) {
+	t.Helper()
+	assert.ErrorIs(t, failure, model.ErrCredentialSourceUnavailable)
+	assert.NotErrorIs(t, failure, oauth2session.ErrRefreshFailed, "source unavailability is not provider rejection")
+	var sourceError *model.CredentialSourceError
+	require.ErrorAs(t, failure, &sourceError)
+	assert.Equal(t, model.CredentialSourceReasonNotFound, sourceError.Reason)
+	var pathError *os.PathError
+	assert.False(t, errors.As(failure, &pathError), "safe source errors must not expose an OS error chain")
+	for cause := failure; cause != nil; cause = errors.Unwrap(cause) {
+		assertCredentialMetadataSafe(t, journey, binding, fmt.Sprintf("%v %+v", cause, cause))
+	}
+}
+
 // T057: independently lose each file after an established connection. Every
 // metadata endpoint must still return the affected service, not an empty success.
 func TestCredentialSourceMetadataAvailableDuringEachFileOutage(t *testing.T) {
@@ -237,30 +251,89 @@ func TestCredentialSourceMetadataAvailableDuringEachFileOutage(t *testing.T) {
 			assert.Equal(t, before["protected_resources"], updated["protected_resources"])
 			assert.Equal(t, before["canonical_id"], updated["canonical_id"])
 			assertCredentialMetadataReads(t, reads, 0, 0)
+			providerBefore, err := journey.Storage.Services().Get(ctx, serviceID)
+			require.NoError(t, err)
+			require.NotNil(t, providerBefore.ClientIdentity)
+			assert.Equal(t, fixtures.CredentialClientID, providerBefore.ClientIdentity.String())
+			sessionBefore, err := journey.Storage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(journey.Principal), serviceID)
+			require.NoError(t, err)
 
 			beforeTokens := len(journey.Upstream.GetTokenRequests())
 			beforeAuthorizations := journey.Upstream.GetAuthorizationRequestCount()
-			for _, endpoint := range []string{
-				"/api/consent/agents/" + agent.ID.String(),
-				"/api/consent/agents/" + agent.ID.String() + "/grants",
-				"/api/third-party/" + serviceID.String() + "/session",
-				"/api/third-party/sessions",
+			for _, endpoint := range []struct {
+				path          string
+				clientIDReads int
+			}{
+				{"/api/consent/agents/" + agent.ID.String(), 1},
+				{"/api/consent/agents/" + agent.ID.String() + "/grants", 0},
+				{"/api/third-party/" + serviceID.String() + "/session", 1},
+				{"/api/third-party/sessions", 1},
 			} {
-				response, err := journey.EndUser.AuthenticatedGET(endpoint, journey.Principal)
+				reads.reset()
+				response, err := journey.EndUser.AuthenticatedGET(endpoint.path, journey.Principal)
 				require.NoError(t, err)
 				body := credentialMetadataBody(t, response)
-				require.Equal(t, http.StatusOK, response.StatusCode, "%s: %s", endpoint, body)
+				require.Equal(t, http.StatusOK, response.StatusCode, "%s: %s", endpoint.path, body)
 				assert.Contains(t, body, serviceID.String())
 				assertCredentialMetadataSafe(t, journey, binding, body)
 				assert.NotContains(t, body, "upstream_client_id")
 				assert.NotContains(t, body, "credential_source_transitioned")
-				assertCredentialMetadataReads(t, reads, 0, 0)
+				assertCredentialMetadataReads(t, reads, endpoint.clientIDReads, 0)
+				_, _, failures := reads.snapshot()
+				if file == "client_id_file" && endpoint.clientIDReads != 0 {
+					require.Len(t, failures, 1)
+					assertCredentialMetadataSourceFailure(t, journey, binding, failures[0])
+				} else {
+					assert.Empty(t, failures, "usability never acquires the missing secret")
+				}
+				var result struct {
+					Data struct {
+						ActiveSessionIDs []string         `json:"active_session_service_ids"`
+						Session          map[string]any   `json:"session"`
+						Sessions         []map[string]any `json:"sessions"`
+					} `json:"data"`
+				}
+				require.NoError(t, json.Unmarshal([]byte(body), &result))
+				switch endpoint.path {
+				case "/api/consent/agents/" + agent.ID.String():
+					assert.Contains(t, result.Data.ActiveSessionIDs, serviceID.String(), "display retains persisted identity evidence during a source outage")
+				case "/api/third-party/" + serviceID.String() + "/session":
+					require.NotNil(t, result.Data.Session)
+					assert.Equal(t, false, result.Data.Session["requires_reauthentication"])
+					assert.Equal(t, false, result.Data.Session["is_expired"])
+				case "/api/third-party/sessions":
+					require.Len(t, result.Data.Sessions, 1)
+					assert.Equal(t, serviceID.String(), result.Data.Sessions[0]["service_id"])
+					assert.Equal(t, false, result.Data.Sessions[0]["requires_reauthentication"])
+					assert.Equal(t, false, result.Data.Sessions[0]["is_expired"])
+				}
 			}
 			assert.Len(t, journey.Upstream.GetTokenRequests(), beforeTokens)
 			assert.Equal(t, beforeAuthorizations, journey.Upstream.GetAuthorizationRequestCount())
 			assert.Empty(t, credentialMetadataEvents(t, journey, serviceID, "authorization_initiation"))
 			assert.Empty(t, credentialMetadataEvents(t, journey, serviceID, "code_exchange"))
 			assert.Empty(t, credentialMetadataEvents(t, journey, serviceID, "refresh"))
+			displayEvents := credentialMetadataEvents(t, journey, serviceID, "usability_display")
+			if file == "client_id_file" {
+				require.Len(t, displayEvents, 3)
+				assertCredentialMetadataEvent(t, displayEvents, "session.oauth2.credential_source_failed", "failed", "not_found")
+			} else {
+				assert.Empty(t, displayEvents)
+			}
+			providerAfter, err := journey.Storage.Services().Get(ctx, serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, providerBefore, providerAfter, "display observations do not change an unchanged or unavailable client identity")
+			sessionAfter, err := journey.Storage.UserSessions().FindByPrincipalAndService(ctx, id.Principal(journey.Principal), serviceID)
+			require.NoError(t, err)
+			assert.Equal(t, sessionBefore, sessionAfter, "display leaves encrypted tokens and established identity unchanged")
+			records, err := journey.Logs.Records()
+			require.NoError(t, err)
+			for _, record := range records {
+				if record["service_id"] == serviceID.String() {
+					assert.NotEqual(t, "service_secret_decrypted", record["msg"], "filesystem usability must not decrypt a provider secret")
+				}
+			}
+			assert.NotContains(t, journey.Logs.Raw(), "session.oauth2.client_identity_changed")
 			assertCredentialMetadataSafe(t, journey, binding, journey.Logs.Raw())
 		})
 	}
@@ -352,18 +425,16 @@ func TestCredentialSourceMetadataSourceErrorsAreSafeAtExchangeAndRefresh(t *test
 					assert.Empty(t, location.Query().Get("success"))
 					assertCredentialMetadataSafe(t, journey, binding, location.String())
 				}
-				assertCredentialMetadataReads(t, reads, 0, 1)
+				pairs := 1
+				if file == "client_id_file" {
+					pairs = 0 // Current identity must be available before acquiring a secret or token.
+				}
+				assertCredentialMetadataReads(t, reads, 1, pairs)
 				assert.Len(t, journey.Upstream.GetTokenRequests(), beforeTokens)
 				assert.Equal(t, beforeAuthorizations, journey.Upstream.GetAuthorizationRequestCount())
 				_, _, failures := reads.snapshot()
 				require.Len(t, failures, 1)
-				assert.True(t, errors.Is(failures[0], model.ErrCredentialSourceUnavailable))
-				assert.False(t, errors.Is(failures[0], oauth2session.ErrRefreshFailed), "source unavailability is not provider rejection")
-				var pathError *os.PathError
-				assert.False(t, errors.As(failures[0], &pathError), "safe source errors must not expose an OS error chain")
-				for cause := failures[0]; cause != nil; cause = errors.Unwrap(cause) {
-					assertCredentialMetadataSafe(t, journey, binding, fmt.Sprintf("%v %+v", cause, cause))
-				}
+				assertCredentialMetadataSourceFailure(t, journey, binding, failures[0])
 				events := credentialMetadataEvents(t, journey, serviceID, operation)
 				assertCredentialMetadataEvent(t, events, "session.oauth2.credential_source_failed", "failed", "not_found")
 				for _, event := range events {
@@ -415,7 +486,7 @@ func TestCredentialSourceMetadataUsablePairProviderRejectionIsDistinctAndSafe(t 
 				assert.Equal(t, "callback_failed", location.Query().Get("error"))
 				assertCredentialMetadataSafe(t, journey, binding, location.String())
 			}
-			assertCredentialMetadataReads(t, reads, 0, 1)
+			assertCredentialMetadataReads(t, reads, 1, 1)
 			_, _, failures := reads.snapshot()
 			assert.Empty(t, failures, "usable file acquisition succeeded before the provider rejected authentication")
 			requests := journey.Upstream.GetTokenRequests()

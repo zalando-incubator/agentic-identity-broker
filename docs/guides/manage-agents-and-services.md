@@ -142,24 +142,6 @@ The broker prevents deletion of a service that a grant references. `DELETE
 before you delete the service.
 :::
 
-## Migrate administrative consumers to Admin API 2.0.0
-
-Admin API `2.0.0` is an unreleased breaking change from the `1.0.0` contract in broker release `v0.1.81`.
-The existing `/api/services` routes remain unchanged. There is no compatibility endpoint or shim.
-
-Before deployment:
-
-1. Update administrative consumers to read `credential_source` and accept filesystem responses without `client_id` or `client_secret`.
-2. Preserve stored-mode handling: responses include the stored client ID and redact applicable secrets as `REDACTED`.
-3. For filesystem registration, supply a canonical ID and `credential_source: "filesystem"`. Omit both inline credential fields, including null placeholders.
-4. Apply database migrations 039 and 040 before new broker pods start.
-5. Enable filesystem mode only after all old broker pods are replaced.
-
-Filesystem authentication acquires current credentials for each exchange or refresh attempt. Missing bindings or unusable files fail closed without stored-credential fallback.
-Client-ID changes can require a new connection. The [filesystem service instructions](#register-and-update-a-filesystem-service) describe configuration and source transitions.
-
-Guarded database downgrade refuses filesystem services and prior source transitions. A compatible downgrade discards non-secret session client-ID associations.
-
 ## Register and update a filesystem service
 
 Filesystem mode supports standard and GitHub shared-secret authentication. Static public, CIMD confidential, CIMD public, and Google services retain stored mode.
@@ -217,8 +199,9 @@ jq '. + {credential_source:"stored", client_id:env.PROVIDER_CLIENT_ID, client_se
   --data-binary @- "http://localhost:14000/api/services/${SERVICE_ID}"
 ```
 
-For protected-resource replacement, retain the existing strong `If-Match` requirement. A source transition never changes established client identities.
-Matching recorded identities can continue. Different or missing identities require a new connection after a transition, including a return to stored.
+For protected-resource replacement, retain the existing strong `If-Match` requirement.
+
+If the client ID changes, users must sign in to the service again. Restoring the old ID does not restore their connections. Rotating the secret without changing the ID does not require sign-in.
 
 ## Register a broker-hosted outbound CIMD confidential service
 

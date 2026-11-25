@@ -209,7 +209,7 @@ CDP `DEP_BROKER_VERSION` placeholders remain. The local image was verified only.
 
 ## Decision 9: Preserve repository release-note conventions
 
-**Decision:** Keep generated GitHub release notes and the implementation PR description. Record the breaking change in the [Admin API 2.0.0 migration guide](../../docs/guides/manage-agents-and-services.md#migrate-administrative-consumers-to-admin-api-200). The approved Admin API `2.0.0` replaces `1.0.0` on existing `/api/services` routes without a compatibility endpoint or shim. Source-aware response schemas make filesystem omission explicit. Release notes must identify source selection, pair configuration, consumer migration, and fail-closed behavior.
+**Decision:** Keep generated GitHub release notes and the implementation PR description. The approved Admin API `2.0.0` replaces `1.0.0` on existing `/api/services` routes without a compatibility endpoint or shim. The [Admin API schema](../../api/admin/openapi.yaml) makes filesystem omission explicit. Release notes must identify source selection, pair configuration, consumer migration, and fail-closed behavior.
 
 Keep the removed manual changelog absent. The user confirmed this requirement on 2026-10-15. For this feature, migration guidance and generated release notes replace the legacy changelog-file requirement.
 

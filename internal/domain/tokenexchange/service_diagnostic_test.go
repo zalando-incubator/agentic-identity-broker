@@ -28,11 +28,13 @@ func (r *resolvingServiceRepository) Get(context.Context, id.ServiceID) (*model.
 func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 	privateKey, keySet := generateTestRSAKeySet(t)
 	for _, tc := range []struct {
-		name   string
-		code   string
-		detail FailureDetail
-		status int
-		body   string
+		name          string
+		code          string
+		detail        FailureDetail
+		status        int
+		body          string
+		reason        model.CredentialSourceReason
+		unknownExpiry bool
 	}{
 		{name: "no grant", code: "access_denied", detail: DetailGrantMissing},
 		{name: "expired grant", code: "access_denied", detail: DetailGrantExpired},
@@ -43,6 +45,10 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 		{name: "service rejects otherwise", code: "server_error", detail: DetailProviderUnavailable, status: 502, body: "unavailable"},
 		{name: "service unreachable", code: "server_error", detail: DetailProviderUnavailable},
 		{name: "insufficient scope", code: "invalid_grant", detail: DetailSessionScopeInsufficient},
+		{name: "identity missing", code: "invalid_grant", detail: DetailCredentialIdentityChanged, reason: model.CredentialSourceReasonIdentityMissing},
+		{name: "identity mismatch", code: "invalid_grant", detail: DetailCredentialIdentityChanged, reason: model.CredentialSourceReasonIdentityMismatch},
+		{name: "identity revision superseded", code: "invalid_grant", detail: DetailCredentialIdentityChanged, reason: model.CredentialSourceReasonIdentitySuperseded},
+		{name: "unknown expiry superseded", code: "invalid_grant", detail: DetailCredentialIdentityChanged, reason: model.CredentialSourceReasonIdentitySuperseded, unknownExpiry: true},
 		{name: "unresolved resource", code: "invalid_target", detail: DetailResourceUnregistered},
 		{name: "success"},
 	} {
@@ -110,6 +116,19 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			case "insufficient scope":
 				sessionRepo.session.Scope = []string{}
 			}
+			if tc.reason != "" {
+				repo.service.ClientIdentityRevision = 1
+				if tc.reason != model.CredentialSourceReasonIdentityMissing {
+					clientID := repo.service.ClientID
+					if tc.reason == model.CredentialSourceReasonIdentityMismatch {
+						clientID = "previous-client"
+					}
+					sessionRepo.session.UpstreamClientID = &clientID
+				}
+				if tc.unknownExpiry {
+					sessionRepo.session.AccessTokenExpiresAt = nil
+				}
+			}
 			thirdpartyService := newTestProviderService(repo)
 			sessionConfig := oauth2session.DefaultConfig()
 			sessionConfig.CallbackBaseURL = "https://broker.example.com/"
@@ -145,6 +164,13 @@ func TestExchange_ClassifiesFailuresForResolvedService(t *testing.T) {
 			require.True(t, ok, "error must be *TokenExchangeError, got %T: %v", err, err)
 			assert.Equal(t, tc.code, tokenErr.Code())
 			assert.Equal(t, tc.detail, tokenErr.Diagnostic().Detail())
+			if tc.reason != "" {
+				assert.Equal(t, http.StatusBadRequest, tokenErr.HTTPStatus())
+				assert.Equal(t, OutcomeReauthRequired, tokenErr.Diagnostic().Outcome())
+				assert.Equal(t, TargetProviderSession, tokenErr.Diagnostic().RecoveryTarget())
+				assert.Equal(t, "https://broker.example.com/api/third-party/"+svcID.String()+"/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions", tokenErr.ErrorURI())
+				assert.Nil(t, response)
+			}
 			if tc.detail == DetailGrantMissing || tc.detail == DetailGrantExpired {
 				assert.Nil(t, response)
 				assert.Equal(t, http.StatusForbidden, tokenErr.HTTPStatus())

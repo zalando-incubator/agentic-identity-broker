@@ -86,7 +86,7 @@ export class ConsentApiService {
 
   /**
    * Get detailed information about a specific agent including permission sets and CIMD metadata.
-   * Pass sessionToken for CIMD authorization flows. Results are cached for 5 minutes.
+   * Pass sessionToken for CIMD authorization flows. Always loads current connection state.
    *
    * @param agentId - Unique agent identifier
    * @param options - Optional: sessionToken for session-based CIMD flows
@@ -106,17 +106,6 @@ export class ConsentApiService {
     let agentUrl = `/consent/agents/${agentId}`;
     if (options?.sessionToken) {
       agentUrl += `?session_token=${encodeURIComponent(options.sessionToken)}`;
-    }
-
-    const cacheKey = `/consent/agents/${agentId}${options?.sessionToken ? `?session_token=${options.sessionToken}` : ''}`;
-
-    const cached = apiCache.get<{
-      agent: AgentDetail;
-      services: ThirdpartyService[];
-      cimd_metadata?: CIMDMetadata | null;
-    }>(cacheKey);
-    if (cached) {
-      return cached;
     }
 
     const response = await apiClient.get<GetAgentDetailResponse>(agentUrl);
@@ -143,10 +132,6 @@ export class ConsentApiService {
     });
 
     const data = { agent, services, cimd_metadata: responseData.cimd_metadata };
-
-    if (!options?.sessionToken) {
-      apiCache.set(cacheKey, data, 5 * 60 * 1000);
-    }
 
     return data;
   }

@@ -59,6 +59,7 @@ type MockUpstreamOAuth2Server struct {
 	lastAuthorizeURL      string
 	requestMutex          sync.RWMutex
 	tokenRequests         []CapturedTokenRequest
+	tokenGrantCounts      map[string]int
 	authorizationRequests int
 
 	// Response configuration
@@ -67,11 +68,13 @@ type MockUpstreamOAuth2Server struct {
 	metadataCalled          bool
 	jwksCalled              bool
 	successfulTokenResp     bool
+	authorizationError      string
 	errorCode               string
 	errorDescription        string
 	responseDelay           time.Duration
 	blockTokenUntilCanceled bool
 	tokenResponseGate       chan struct{}
+	grantBarrier            *TokenGrantBarrier
 	accessToken             string
 	refreshToken            string
 	omitRefreshToken        bool
@@ -94,10 +97,11 @@ type MockUpstreamOAuth2Server struct {
 // Generates RSA key pair on initialization for JWT signing in tests.
 func NewMockUpstreamOAuth2Server() *MockUpstreamOAuth2Server {
 	m := &MockUpstreamOAuth2Server{
-		accessToken:  "mock-access-token",
-		refreshToken: "mock-refresh-token",
-		tokenType:    "Bearer",
-		expiresIn:    3600,
+		accessToken:      "mock-access-token",
+		refreshToken:     "mock-refresh-token",
+		tokenType:        "Bearer",
+		expiresIn:        3600,
+		tokenGrantCounts: make(map[string]int),
 	}
 
 	// Reuse the package-level RSA key pair (generated once per test process).
@@ -161,6 +165,13 @@ func (m *MockUpstreamOAuth2Server) WithErrorResponseAndDescription(errorCode, de
 	m.successfulTokenResp = false
 	m.errorCode = errorCode
 	m.errorDescription = description
+	return m
+}
+
+func (m *MockUpstreamOAuth2Server) WithAuthorizationError(code string) *MockUpstreamOAuth2Server {
+	m.requestMutex.Lock()
+	defer m.requestMutex.Unlock()
+	m.authorizationError = code
 	return m
 }
 
@@ -380,6 +391,7 @@ func (m *MockUpstreamOAuth2Server) Reset() {
 	m.LastBody = ""
 	m.lastAuthorizeURL = ""
 	m.tokenRequests = nil
+	clear(m.tokenGrantCounts)
 	m.authorizeCalled = false
 	m.authorizationRequests = 0
 	m.tokenCalled = false
@@ -429,6 +441,15 @@ func (m *MockUpstreamOAuth2Server) handleAuthorize(w http.ResponseWriter, r *htt
 		w.WriteHeader(http.StatusFound)
 		return
 	}
+	m.requestMutex.RLock()
+	authorizationError := m.authorizationError
+	m.requestMutex.RUnlock()
+	if authorizationError != "" {
+		params := url.Values{"error": {authorizationError}, "state": {state}}
+		w.Header().Set("Location", redirectURI+"?"+params.Encode())
+		w.WriteHeader(http.StatusFound)
+		return
+	}
 
 	authorizationCode := "mock-auth-code-123"
 	m.requestMutex.Lock()
@@ -468,11 +489,35 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 		Body:   body,
 	})
 	m.tokenCalled = true
+	m.tokenGrantCounts[r.FormValue("grant_type")]++
+	barrier := m.grantBarrier
+	if barrier != nil && barrier.grantType == r.FormValue("grant_type") {
+		m.grantBarrier = nil
+		close(barrier.entered)
+	} else {
+		barrier = nil
+	}
+	// Capture this request's result before a delayed request permits a reconnect.
+	successfulTokenResp := m.successfulTokenResp
+	errorCode := m.errorCode
+	errorDescription := m.errorDescription
+	accessToken := m.accessToken
+	tokenType := m.tokenType
+	expiresIn := m.expiresIn
+	refreshToken := m.refreshToken
+	omitRefreshToken := m.omitRefreshToken
 	gate := m.tokenResponseGate
 	m.requestMutex.Unlock()
 	if gate != nil {
 		select {
 		case <-gate:
+		case <-r.Context().Done():
+			return
+		}
+	}
+	if barrier != nil {
+		select {
+		case <-barrier.released:
 		case <-r.Context().Done():
 			return
 		}
@@ -500,14 +545,12 @@ func (m *MockUpstreamOAuth2Server) handleToken(w http.ResponseWriter, r *http.Re
 	m.requestMutex.RLock()
 	blockTokenUntilCanceled := m.blockTokenUntilCanceled
 	responseDelay := m.responseDelay
-	successfulTokenResp := m.successfulTokenResp
-	errorCode := m.errorCode
-	errorDescription := m.errorDescription
-	accessToken := m.accessToken
-	tokenType := m.tokenType
-	expiresIn := m.expiresIn
-	refreshToken := m.refreshToken
-	omitRefreshToken := m.omitRefreshToken
+	if barrier == nil {
+		// The existing broad response gate intentionally allows reconfiguration while waiting.
+		successfulTokenResp, errorCode, errorDescription = m.successfulTokenResp, m.errorCode, m.errorDescription
+		accessToken, tokenType, expiresIn = m.accessToken, m.tokenType, m.expiresIn
+		refreshToken, omitRefreshToken = m.refreshToken, m.omitRefreshToken
+	}
 	m.requestMutex.RUnlock()
 
 	if blockTokenUntilCanceled {

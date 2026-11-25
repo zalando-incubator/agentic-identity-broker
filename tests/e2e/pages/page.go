@@ -146,6 +146,25 @@ func (p *Page) Navigate(ctx context.Context, path string) error {
 	return nil
 }
 
+// ClickHeaderNavigation follows a real SPA header link without reloading the document.
+func (p *Page) ClickHeaderNavigation(ctx context.Context, label string) error {
+	var route string
+	switch label {
+	case "Agent Delegations":
+		route = `/(delegations)?$`
+	case "Third-Party Sessions":
+		route = `/sessions$`
+	default:
+		return fmt.Errorf("unknown header navigation %q", label)
+	}
+	if err := p.page.GetByRole("link", playwright.PageGetByRoleOptions{
+		Name: label, Exact: playwright.Bool(true),
+	}).Click(); err != nil {
+		return fmt.Errorf("failed to click header navigation %q: %w", label, err)
+	}
+	return p.WaitForURL(ctx, route)
+}
+
 // GetBaseURL returns the base URL of this page.
 // Useful for subclasses that need to build URLs programmatically.
 //

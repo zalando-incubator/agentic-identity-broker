@@ -195,8 +195,8 @@ Use semantic roles instead of copying hex values or raw palette scales into comp
 - The browser uses same-origin endpoints. Vite forwards backend namespaces in development. The Go backend serves production APIs.
 - The Vite proxy adds `X-Remote-User` in development. An upstream proxy handles production authentication.
 - `ConsentApiService`, `SessionsApiService`, and `approvalApi` provide typed `apiClient` methods.
-- Consent GETs use a five-minute cache. Session GETs use a two-minute cache. Approval GETs do not use `apiCache`.
-- Consent detail requests with `session_token` do not populate the cache.
+- User metadata, delegation lists, and grants use a five-minute cache. Session list/detail and consent agent-detail reads bypass the cache for current usability.
+- Consent detail requests with `session_token` also bypass the cache.
 - The response interceptor normalizes errors to `ApiError`.
 
 After mutations, invalidate relevant cache entries.

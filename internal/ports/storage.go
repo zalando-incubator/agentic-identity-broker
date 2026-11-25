@@ -29,6 +29,25 @@ func IsNotFoundErr(err error) bool {
 	return errors.As(err, &storageErr) && storageErr.Kind == storage.ErrorKindNotFound
 }
 
+type ClientIdentityState struct {
+	Identity *id.ClientID
+	Revision int64
+}
+
+type ClientIdentityObservation struct {
+	ServiceVersion int64
+	CanonicalID    string
+	Revision       int64
+}
+
+// ThirdpartyOAuth2ClientIdentityRepository fences file observations against administrative changes.
+type ThirdpartyOAuth2ClientIdentityRepository interface {
+	// Every observation requires matching filesystem source, version, canonical ID, and revision.
+	// Lost preconditions return applied=false without writes; only a differing recorded ID increments.
+	// Initialization and same-ID observations return changed=false and preserve administrative metadata.
+	RecordObservedClientIdentity(ctx context.Context, serviceID id.ServiceID, observed id.ClientID, expected ClientIdentityObservation) (state ClientIdentityState, applied bool, changed bool, err error)
+}
+
 // HealthChecker verifies storage backend health.
 type HealthChecker interface {
 	// HealthCheck verifies storage backend is operational.
@@ -242,7 +261,9 @@ type UserSessionRepository interface {
 
 	// CreateIfAbsent inserts a first connection without replacing a competing callback's session.
 	// Returns the inserted session or the existing winner.
-	// It returns the same NotFound and Conflict errors as Create.
+	// Insertion is atomic with a check of the service's current client identity revision.
+	// A superseded revision returns Conflict wrapping a CredentialSourceError.
+	// It otherwise returns the same NotFound and Conflict errors as Create.
 	CreateIfAbsent(ctx context.Context, session *storage.UserSession) (*storage.UserSession, error)
 
 	// Get retrieves a session by ID.
@@ -260,9 +281,6 @@ type UserSessionRepository interface {
 
 	// ListSummariesByPrincipal returns session listing metadata, including expired sessions, without encrypted token blobs.
 	ListSummariesByPrincipal(ctx context.Context, principal id.Principal) ([]*storage.UserSessionSummary, error)
-
-	// ListActiveServiceIDsByPrincipal returns service IDs with usable access or refresh credentials.
-	ListActiveServiceIDsByPrincipal(ctx context.Context, principal id.Principal) ([]id.ServiceID, error)
 
 	// ListActiveByPrincipal retrieves only non-expired sessions for a principal.
 	// Used for FR-020 consent submission validation.
@@ -289,6 +307,8 @@ type UserSessionRepository interface {
 // only when it has changed the session and the adapter must atomically persist the encrypted
 // tokens, access expiry, refresh rejection, token type, scope, encryption context and callback generation.
 // Only a new callback generation may replace the established upstream client identity.
+// Such a write atomically checks the service's current client identity revision;
+// a superseded revision returns Conflict wrapping a CredentialSourceError without changing the session.
 // A nil session means the principal has no session for that service.
 type UserSessionRefreshRepository interface {
 	WithLockedSession(ctx context.Context, principal id.Principal, serviceID id.ServiceID, refresh func(context.Context, *storage.UserSession) (bool, error)) (*storage.UserSession, error)

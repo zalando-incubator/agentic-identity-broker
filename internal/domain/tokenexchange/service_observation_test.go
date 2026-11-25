@@ -57,14 +57,15 @@ func observationFixture(t *testing.T) (*TokenExchangeService, *TokenExchangeRequ
 	require.NoError(t, err)
 	evaluator, err := NewCELEvaluator(CELEvaluatorConfig{PrincipalExpression: "subject_token.sub", AgentIDExpression: "subject_token.agent_id", AuthorizationExpression: "true"})
 	require.NoError(t, err)
-	providers := newTestProviderService(&MockServiceRepository{service: &model.ThirdpartyOAuth2ProviderEntity{
-		ID: serviceID, DisplayName: "Service", ClientID: "provider-client", Secret: model.NewEncryptedSecret([]byte("synthetic-secret")), ProtectedResources: []string{"https://api.example.com"},
-	}})
+	providers := newTestProviderService(&fixedProviderRepository{MockServiceRepository{service: &model.ThirdpartyOAuth2ProviderEntity{
+		ID: serviceID, DisplayName: "Service", ClientID: "provider-client", CredentialSource: model.CredentialSourceStored,
+		Secret: model.NewEncryptedSecret([]byte("synthetic-secret")), ProtectedResources: []string{"https://api.example.com"},
+	}}})
 	svc := &TokenExchangeService{
 		jwtValidator: validator, celEvaluator: evaluator, providerService: providers, agentRepository: agentRepo,
 		consentService:       consent.NewService(agentRepo, providers, grants, nil, nil, nil, slog.Default()),
 		permissionSetService: ps,
-		oauth2SessionService: oauth2session.NewOAuth2SessionService(nil, sessions, nil, nil, nil, &MockEncryption{}, nil, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example.com"}, slog.Default()),
+		oauth2SessionService: oauth2session.NewOAuth2SessionService(providers, sessions, nil, nil, nil, &MockEncryption{}, nil, nil, oauth2session.Config{CallbackBaseURL: "https://broker.example.com"}, slog.Default()),
 		config:               &ports.TokenExchangeConfig{},
 	}
 	claims := map[string]interface{}{"iss": "https://issuer.example.com", "aud": "broker", "sub": "human", "agent_id": agentID.String(), "exp": future.Unix(), "iat": time.Now().Unix()}

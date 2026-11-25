@@ -316,7 +316,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_ActiveGrantRedirectsToUpstream(t *test
 		},
 		nil,
 		newTestSessionTokenSvc(),
-	)
+	).WithSessionUsabilityEvaluator(&connectedSessionRepository{})
 
 	handler := &OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -380,7 +380,7 @@ func TestOAuth2AuthorizeHandler_ServeHTTP_PreservesOAuth2Parameters(t *testing.T
 		},
 		nil,
 		newTestSessionTokenSvc(),
-	)
+	).WithSessionUsabilityEvaluator(&connectedSessionRepository{})
 
 	handler := &OAuth2AuthorizeHandler{
 		Service:        svc,
@@ -743,6 +743,14 @@ type connectedSessionRepository struct{ noopSessionRepository }
 
 func (c *connectedSessionRepository) FindByPrincipalAndService(_ context.Context, principal id.Principal, serviceID id.ServiceID) (*storage.UserSession, error) {
 	return &storage.UserSession{ID: id.NewSessionID(), Principal: principal, ServiceID: serviceID, TokenType: "Bearer"}, nil
+}
+
+func (c *connectedSessionRepository) RequiresReauthentication(_ context.Context, sessions []*storage.UserSession, _ ports.UsabilityMode) (map[id.ServiceID]bool, error) {
+	result := make(map[id.ServiceID]bool, len(sessions))
+	for _, session := range sessions {
+		result[session.ServiceID] = session.RequiresReauthentication()
+	}
+	return result, nil
 }
 
 type noopSessionRepository struct{ ports.UserSessionRepository }

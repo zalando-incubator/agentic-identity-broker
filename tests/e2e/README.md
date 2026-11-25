@@ -99,6 +99,19 @@ It then rotates credentials, refreshes the same session, and checks that cleanup
 It checks the callback return to `/sessions`, the existing session ID, and removal of the rejection marker.
 It then checks resumed exchange and refresh with the replacement credential.
 
+### Historical-schema upgrade journeys
+
+The Docker rollout harness uses the pinned published preceding-release image, not a current binary with enforcement disabled.
+Its HTTP client connects through Docker's mapped ports but sends the configured Admin public-URL Host, as the production trust boundary requires.
+Each replica retains its own public end-user URL for same-origin return targets, even when another replica starts on different ports.
+
+The rollout harness creates its credential files under the checkout and mounts them read-only into the prior-release container.
+If Docker or Podman runs in a VM, share the checkout path with that VM.
+
+The external-ID migration journeys bootstrap and remediate schema 46 through that released broker.
+They start the current production Admin server only after migration succeeds, so current service repositories never query columns absent from the historical schema.
+Rollback and reapply still traverse schema 46 and preserve agent UUIDs, grants, and client-URI relationships.
+
 ## Adding acceptance scenarios
 
 Apply the [acceptance rules](AGENTS.md#acceptance-rules) and [Constitution Principle XIII](../../.specify/memory/constitution.md#xiii-end-to-end-acceptance-testing--spec-traceability):

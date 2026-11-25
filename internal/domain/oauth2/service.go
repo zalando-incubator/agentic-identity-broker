@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/sessiontoken"
@@ -64,6 +65,7 @@ type OAuth2Config struct {
 type AuthorizationService struct {
 	grantRepo           ports.UserGrantRepository
 	sessionRepo         ports.UserSessionRepository
+	sessionUsability    ports.SessionUsabilityEvaluator
 	clientResolver      ports.ClientResolver
 	sessionTokenService *sessiontoken.Service
 	config              *OAuth2Config
@@ -97,6 +99,11 @@ func NewAuthorizationService(
 		logger:              logger,
 		sessionTokenService: sessionTokenService,
 	}
+}
+
+func (s *AuthorizationService) WithSessionUsabilityEvaluator(evaluator ports.SessionUsabilityEvaluator) *AuthorizationService {
+	s.sessionUsability = evaluator
+	return s
 }
 
 // ResolveForTokenGrant resolves the client_id, classifies the agent, and enforces
@@ -265,10 +272,11 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		return ports.ConsentDecision(consentURL), nil
 	}
 
-	// Step 4: Check that every service included in the grant has a usable session.
-	// A missing or unusable session sends the user to consent to reconnect or deselect it.
-	unusableServiceID, unusableReason, err := s.anyDelegatedSessionUnusable(ctx, principal, grant.GrantedPermissionSets)
+	// Step 4: Check included services and mandatory requirements together so each
+	// relevant session is read and identity-evaluated only once.
+	unusableServiceID, unusableReason, err := s.anyRequiredSessionUnusable(ctx, principal, grant.GrantedPermissionSets, agent.ServiceRequirements)
 	if err != nil {
+		s.auditUsabilityFailure(ctx, principal, err)
 		errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
 		if buildURLErr != nil && s.logger != nil {
 			s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
@@ -307,57 +315,6 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 			}, nil
 		}
 		return ports.ConsentDecision(consentURL), nil
-	}
-
-	// Step 5: Validate mandatory service requirements.
-	if len(agent.ServiceRequirements) > 0 {
-		err := s.validateMandatoryRequirements(ctx, principal.String(), agent)
-		if err != nil {
-			var storageErr *storage.StorageError
-			if errors.As(err, &storageErr) {
-				if s.logger != nil {
-					s.logger.ErrorContext(ctx,
-						"MandatoryRequirementStorageFailure",
-						"agent_id", agent.ID,
-						"error", err.Error(),
-					)
-				}
-				errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-				if buildURLErr != nil && s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-				}
-				return &ports.AuthorizationDecision{
-					Action:      "error",
-					ErrorCode:   "server_error",
-					ErrorDesc:   "Failed to validate service requirements",
-					RedirectURL: errRedirect,
-				}, nil
-			}
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
-					"agent_id", agent.ID,
-					"error", err.Error(),
-				)
-			}
-			consentURL, buildErr := s.buildConsentURL(ctx, req, principal, agent, cimdMeta)
-			if buildErr != nil {
-				if s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build consent URL", "error", buildErr)
-				}
-				errRedirect, buildURLErr := BuildErrorRedirectURL(req.RedirectURI, req.State, "server_error", "server error")
-				if buildURLErr != nil && s.logger != nil {
-					s.logger.ErrorContext(ctx, "failed to build error redirect URL", "redirect_uri", req.RedirectURI, "error", buildURLErr)
-				}
-				return &ports.AuthorizationDecision{
-					Action:      "error",
-					ErrorCode:   "server_error",
-					ErrorDesc:   "Failed to initiate consent session",
-					RedirectURL: errRedirect,
-				}, nil
-			}
-			return ports.ConsentDecision(consentURL), nil
-		}
 	}
 
 	// Active grant exists and all mandatory requirements satisfied — proceed.
@@ -541,21 +498,25 @@ func (s *AuthorizationService) GenerateMetadata(ctx context.Context) (*ports.Met
 	return metadata, nil
 }
 
-// anyDelegatedSessionUnusable reports the first service included in the grant whose
-// session is missing or no longer usable, with the reason. Only services listed in the
-// IncludedServiceIDs of a granted permission set entry are checked (FR-022 of Feature 019),
-// so sessions for services the user did not include never force consent.
-func (s *AuthorizationService) anyDelegatedSessionUnusable(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry) (id.ServiceID, string, error) {
-	relevantServices := make(map[id.ServiceID]bool)
+// anyRequiredSessionUnusable checks included services and mandatory requirements.
+// Excluded optional services never participate in authorization gating.
+func (s *AuthorizationService) anyRequiredSessionUnusable(ctx context.Context, principal id.Principal, grantEntries []storage.GrantedPermissionSetEntry, requirements []storage.ServiceRequirement) (id.ServiceID, string, error) {
+	relevantServices := make(map[id.ServiceID][]string)
 	for _, entry := range grantEntries {
 		for _, svcID := range entry.IncludedServiceIDs {
-			relevantServices[svcID] = true
+			relevantServices[svcID] = nil
+		}
+	}
+	for _, requirement := range requirements {
+		if requirement.IsMandatory() {
+			relevantServices[requirement.ServiceID] = requirement.RequiredScopes
 		}
 	}
 
 	// Use per-service lookup so sessions that require reauthentication stay visible.
 	// ListActiveByPrincipal filters those out; FindByPrincipalAndService returns them.
-	for svcID := range relevantServices {
+	sessions := make([]*storage.UserSession, 0, len(relevantServices))
+	for svcID, requiredScopes := range relevantServices {
 		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, principal, svcID)
 		if err != nil {
 			return id.ServiceID{}, "", fmt.Errorf("failed to find session for service %s: %w", svcID, err)
@@ -566,79 +527,55 @@ func (s *AuthorizationService) anyDelegatedSessionUnusable(ctx context.Context, 
 		if session.RequiresReauthentication() {
 			return svcID, "reauthentication_required", nil
 		}
+		if !s.hasRequiredScopes(session.Scope, requiredScopes) {
+			return svcID, "scope_mismatch", nil
+		}
+		sessions = append(sessions, session)
+	}
+	return s.firstUnusableSession(ctx, sessions)
+}
+
+func (s *AuthorizationService) firstUnusableSession(ctx context.Context, sessions []*storage.UserSession) (id.ServiceID, string, error) {
+	if len(sessions) == 0 {
+		return id.ServiceID{}, "", nil
+	}
+	if s.sessionUsability == nil {
+		return id.ServiceID{}, "", &ports.SessionUsabilityError{ServiceID: sessions[0].ServiceID, Err: model.NewCredentialSourceError(model.CredentialSourceReasonReadFailed)}
+	}
+	unusable, err := s.sessionUsability.RequiresReauthentication(ctx, sessions, ports.UsabilityGate)
+	if err != nil {
+		return id.ServiceID{}, "", err
+	}
+	for _, session := range sessions {
+		if unusable[session.ServiceID] {
+			return session.ServiceID, "reauthentication_required", nil
+		}
 	}
 	return id.ServiceID{}, "", nil
 }
 
-// validateMandatoryRequirements checks that user has active sessions for all mandatory services
-// with required scopes. Returns error if any mandatory requirement is not satisfied.
-// Optional requirements are ignored and never block authorization.
-func (s *AuthorizationService) validateMandatoryRequirements(
-	ctx context.Context,
-	principal string,
-	agent *storage.Agent,
-) error {
-	// If agent has no service requirements, nothing to validate
-	if len(agent.ServiceRequirements) == 0 {
-		return nil
+type usabilityOperation string
+type usabilityOutcome string
+
+const (
+	usabilityGateOperation usabilityOperation = "usability_gate"
+	usabilityFailedOutcome usabilityOutcome   = "failed"
+)
+
+func (s *AuthorizationService) auditUsabilityFailure(ctx context.Context, principal id.Principal, err error) {
+	var failure *ports.SessionUsabilityError
+	if s.logger == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) || !errors.As(err, &failure) {
+		return
 	}
-
-	// Check each mandatory requirement
-	for _, req := range agent.ServiceRequirements {
-		// Skip optional requirements
-		if !req.IsMandatory() {
-			continue
-		}
-
-		// Verify user has active session for this service.
-		// FindByPrincipalAndService returns (nil, nil) when no session exists — that is
-		// not an error condition per the port contract; check nil separately.
-		session, err := s.sessionRepo.FindByPrincipalAndService(ctx, id.Principal(principal), req.ServiceID)
-		if err != nil {
-			return fmt.Errorf("failed to check session for service %s: %w", req.ServiceID, err)
-		}
-		if session == nil {
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
-					"agent_id", agent.ID,
-					"service_id", req.ServiceID,
-					"reason", "session_not_found",
-				)
-			}
-			return fmt.Errorf("session_required: user does not have required session for service %s", req.ServiceID)
-		}
-
-		if session.RequiresReauthentication() {
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
-					"agent_id", agent.ID,
-					"service_id", req.ServiceID,
-					"reason", "reauthentication_required",
-				)
-			}
-			return fmt.Errorf("reauthentication_required: user session requires reauthentication for service %s", req.ServiceID)
-		}
-
-		// Check if session scopes include all required scopes (superset check)
-		if !s.hasRequiredScopes(session.Scope, req.RequiredScopes) {
-			if s.logger != nil {
-				s.logger.WarnContext(ctx,
-					"MandatoryRequirementNotMet",
-					"agent_id", agent.ID,
-					"service_id", req.ServiceID,
-					"reason", "scope_mismatch",
-					"required_scopes", req.RequiredScopes,
-					"actual_scopes", session.Scope,
-				)
-			}
-			return fmt.Errorf("scope_mismatch: user session lacks required scopes for service %s", req.ServiceID)
-		}
-	}
-
-	// All mandatory requirements satisfied
-	return nil
+	reason, level := failure.ReasonAndLevel()
+	s.logger.Log(ctx, level, "oauth2 credential source unavailable",
+		"event", "session.oauth2.credential_source_failed",
+		"principal", principal,
+		"service_id", failure.ServiceID,
+		"operation", usabilityGateOperation,
+		"outcome", usabilityFailedOutcome,
+		"reason", reason,
+		"oauth2_session", failure)
 }
 
 // hasRequiredScopes checks if sessionScopes is a superset of requiredScopes (case-sensitive).

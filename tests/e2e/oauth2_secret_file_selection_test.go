@@ -221,12 +221,14 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 			})
 
 			// US1-S7 from specs/051-oauth2-secret-file-overrides/spec.md
-			It("US1-S7 creates and reads filesystem mode without inline fields or stored file values", func() {
+			It("US1-S7 creates and reads filesystem mode without inline credentials or persisted file secrets", func() {
 				expectRepresentation := func(body map[string]any) {
 					GinkgoHelper()
 					Expect(body).To(HaveKeyWithValue("credential_source", "filesystem"))
 					Expect(body).NotTo(HaveKey("client_id"))
 					Expect(body).NotTo(HaveKey("client_secret"))
+					Expect(body).NotTo(HaveKey("client_identity"))
+					Expect(body).NotTo(HaveKey("client_identity_revision"))
 					encoded, err := json.Marshal(body)
 					Expect(err).NotTo(HaveOccurred())
 					for _, value := range []string{fixtures.CredentialClientID, fixtures.CredentialClientSecret, binding["client_id_file"], binding["client_secret_file"]} {
@@ -240,10 +242,12 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				Expect(before.ClientID.IsZero()).To(BeTrue())
 				Expect(before.Secret.IsAbsent()).To(BeTrue())
 				Expect(before.CredentialSourceTransitioned).To(BeFalse())
+				Expect(before.ClientIdentity).To(BeNil())
+				Expect(before.ClientIdentityRevision).To(BeZero())
 				connect(journey, serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 				renew(journey, serviceID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 				expectRepresentation(readService(journey, serviceID))
-				Expect(record(journey, serviceID)).To(Equal(before))
+				expectCredentialServiceIdentity(before, record(journey, serviceID), fixtures.CredentialClientID, 0)
 			})
 		})
 
@@ -299,8 +303,8 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 				renew(journey, serviceIDs[1], fixtures.AlternateCredentialClientID, fixtures.RotatedCredentialSecret)
 				renew(journey, serviceIDs[0], fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 				Expect(session(journey, serviceIDs[0]).ID).NotTo(Equal(session(journey, serviceIDs[1]).ID))
-				Expect(record(journey, serviceIDs[0])).To(Equal(firstBefore))
-				Expect(record(journey, serviceIDs[1])).To(Equal(secondBefore))
+				expectCredentialServiceIdentity(firstBefore, record(journey, serviceIDs[0]), fixtures.CredentialClientID, 0)
+				expectCredentialServiceIdentity(secondBefore, record(journey, serviceIDs[1]), fixtures.AlternateCredentialClientID, 0)
 			})
 		})
 
@@ -441,7 +445,7 @@ var _ = Describe("Explicit OAuth2 credential-source selection", Label("oauth2-se
 			Expect(record(journey, serviceID)).To(Equal(before))
 			connect(journey, filesystemID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
 			renew(journey, filesystemID, fixtures.CredentialClientID, fixtures.CredentialClientSecret)
-			Expect(record(journey, filesystemID)).To(Equal(beforeFilesystem))
+			expectCredentialServiceIdentity(beforeFilesystem, record(journey, filesystemID), fixtures.CredentialClientID, 0)
 		})
 	})
 })

@@ -88,7 +88,7 @@ func TestRefreshProviderRejectionKeepsCallerCancellationPrecedence(t *testing.T)
 	}
 }
 
-func TestRefreshProviderLookupKeepsConfigurationCauses(t *testing.T) {
+func TestRefreshProviderLookupFailsClosedWithSafeIdentityMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		missing bool
@@ -109,15 +109,11 @@ func TestRefreshProviderLookupKeepsConfigurationCauses(t *testing.T) {
 			}}
 			service.providerService = thirdparty.NewThirdpartyOAuth2ProviderService(repository, operationEncryption{}, operationBranchKeyManager{}, nil, false, service.logger)
 			_, _, err := service.GetValidAccessToken(context.Background(), session.Principal, provider.ID)
-			metadata := requireOperationError(t, err, OperationRefresh, DetailConfiguration)
-			assert.Equal(t, KindConfiguration, metadata.Kind())
-			assert.Equal(t, DependencyProviderRepository, metadata.Dependency())
-			if missing {
-				assert.ErrorIs(t, err, ports.ErrNotFound)
-				assert.ErrorIs(t, err, ErrServiceNotFound)
-			} else {
-				assert.ErrorIs(t, err, thirdparty.ErrProviderConfiguration)
-			}
+			metadata := requireOperationError(t, err, OperationSessionLookup, DetailCredentialSourceUnavailable)
+			assert.Equal(t, KindInfrastructure, metadata.Kind())
+			assert.Equal(t, DependencyCredentialSource, metadata.Dependency())
+			assert.ErrorIs(t, err, model.ErrCredentialSourceUnavailable)
+			assert.NotErrorIs(t, err, ErrReauthenticationRequired)
 		})
 	}
 }

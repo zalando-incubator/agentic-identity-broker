@@ -22,7 +22,8 @@ import (
 func credentialState(t *testing.T, service *oauth2session.OAuth2SessionService, principal id.Principal, serviceID id.ServiceID, established *id.ClientID) string {
 	t.Helper()
 	now := time.Now()
-	state, err := service.CreateStateToken(&oauth2session.OAuth2StateTokenClaims{Principal: principal, ServiceID: serviceID, UpstreamClientID: established, PKCEVerifier: "credential-test-verifier", RedirectURI: "https://broker.example.com/sessions", IssuedAt: now, ExpiresAt: now.Add(10 * time.Minute)})
+	revision := int64(0)
+	state, err := service.CreateStateToken(&oauth2session.OAuth2StateTokenClaims{Principal: principal, ServiceID: serviceID, UpstreamClientID: established, UpstreamClientRevision: &revision, PKCEVerifier: "credential-test-verifier", RedirectURI: "https://broker.example.com/sessions", IssuedAt: now, ExpiresAt: now.Add(10 * time.Minute)})
 	require.NoError(t, err)
 	return state
 }
@@ -183,7 +184,14 @@ func TestCredentialIdentity_SourceTransitionsPreserveAndCheckEstablishedIdentity
 					}
 					unchanged, getErr := h.records.Get(context.Background(), provider.ID)
 					require.NoError(t, getErr)
-					assert.Equal(t, transitioned, unchanged)
+					if finalSource == model.CredentialSourceFilesystem && identity != "missing" {
+						observed := id.ClientID(selectedID)
+						transitioned.ClientIdentity = &observed
+						if identity == "mismatching" {
+							transitioned.ClientIdentityRevision++
+						}
+					}
+					assert.Equal(t, transitioned, unchanged, "only the observed identity evidence may change")
 				})
 			}
 		}
@@ -213,19 +221,13 @@ func TestCredentialIdentity_LegacyAbsenceAllowedOnlyForNeverTransitionedStored(t
 				var err error
 				switch operation {
 				case "callback":
-					var result *oauth2session.HandleCallbackResult
-					result, err = h.service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{ServiceID: provider.ID, Code: "legacy-code", State: state})
-					if history == "never transitioned stored" {
-						require.NoError(t, err)
-						require.NotNil(t, result)
-						assert.Nil(t, result.Session.UpstreamClientID, "a legacy state is not evidence of an established client identity")
-					}
+					_, err = h.service.HandleCallback(context.Background(), principal, &oauth2session.HandleCallbackRequest{ServiceID: provider.ID, Code: "legacy-code", State: state})
 				case "explicit refresh":
 					_, err = h.service.ForceRefreshSession(context.Background(), principal, provider.ID)
 				default:
 					_, _, err = h.service.GetValidAccessToken(context.Background(), principal, provider.ID)
 				}
-				if history == "never transitioned stored" {
+				if history == "never transitioned stored" && operation != "callback" {
 					require.NoError(t, err)
 					requests := h.endpoint.captured(t)
 					require.Len(t, requests, 1)
@@ -330,7 +332,7 @@ func TestCredentialIdentity_EmptyRecordedIdentityIsNotLegacyAbsence(t *testing.T
 			h.service = oauth2session.NewOAuth2SessionService(h.providers, h.sessions,
 				emptyIdentityRefreshRepository{h.sessions.(ports.UserSessionRefreshRepository)},
 				memory.NewUserGrantRepository(), memory.NewAgentRepository(), newTestEncryption(t),
-				h.endpoint.server.Client(), jweService, config, slog.Default()).WithCredentialFileReader(h.reader)
+				h.endpoint.server.Client(), jweService, config, slog.Default()).WithCredentialFileReader(h.reader).WithClientIdentityRepository(h.records)
 			_, err = h.service.ForceRefreshSession(context.Background(), principal, provider.ID)
 			assertCredentialSourceNotProviderFailure(t, err, model.CredentialSourceReasonIdentityMissing)
 			assertOperationMetadata(t, err, oauth2session.OperationRefresh, oauth2session.DetailCredentialSourceUnavailable)
