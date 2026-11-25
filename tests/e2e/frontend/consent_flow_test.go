@@ -132,9 +132,7 @@ var _ = Describe("Consent Flow", func() {
 			err = consentPage.TogglePermissionSet(ctx, "Optional Services")
 			Expect(err).NotTo(HaveOccurred(), "Failed to select optional services")
 
-			err = consentPage.SubmitConsent(ctx)
-			Expect(err).NotTo(HaveOccurred(), "SubmitConsent should succeed after selecting optional services")
-			Expect(consentPage.WaitForGrantSuccess(ctx)).To(Succeed(), "Expected successful grant after approving optional services")
+			Expect(consentPage.ExpectGrantSuccess(func() error { return consentPage.SubmitConsent(ctx) })).To(Succeed(), "Expected successful grant after approving optional services")
 			hasError, err := consentPage.HasError(ctx)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(hasError).To(BeFalse(), "No validation error should remain after a successful grant")

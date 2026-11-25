@@ -683,6 +683,7 @@ export function AgentGrantDetailPage() {
                   s.kind === 'requirement'
                     ? s.serviceName
                     : (s.displayName ?? s.serviceId),
+                iconSvg: s.kind === 'requirement' ? s.iconSvg : undefined,
               }))}
               serviceRequirements={agent.service_requirements}
               initialGrantedPermissionSets={

@@ -1483,6 +1483,7 @@ func (s *OAuth2SessionService) ListUserSessions(
 			agentCount = 0
 		}
 		summary.ServiceDisplayName = service.DisplayName
+		summary.ServiceIconSVG = service.IconSVG
 		summary.DependentAgentCount = agentCount
 		result = append(result, summary)
 	}
@@ -1631,15 +1632,19 @@ func (s *OAuth2SessionService) GetSessionWithAgents(
 		"service_id", serviceID,
 		"dependent_agent_count", len(dependentAgents))
 
-	serviceDisplayName := ""
+	var serviceDisplayName string
+	var serviceIconSVG *string
 	if service, err := s.providerService.Get(ctx, serviceID); err != nil {
 		s.logger.WarnContext(ctx, "failed to load session service", "service_id", serviceID, "error", err)
 	} else {
 		serviceDisplayName = service.DisplayName
+		serviceIconSVG = service.IconSVG
 	}
+	details := storage.NewUserSessionDetails(session, serviceDisplayName, len(dependentAgents))
+	details.ServiceIconSVG = serviceIconSVG
 
 	return &SessionWithAgents{
-		Session:         storage.NewUserSessionDetails(session, serviceDisplayName, len(dependentAgents)),
+		Session:         details,
 		DependentAgents: dependentAgents,
 	}, nil
 }
@@ -2037,7 +2042,9 @@ func (s *OAuth2SessionService) ForceRefreshSession(
 		s.logger.WarnContext(ctx, "failed to count agents after refresh", "service_id", serviceID, "oauth2_session", NewErrorMetadata(OperationRefresh, DetailRepositoryUnavailable).WithDependency(DependencySessionRepository))
 		agentCount = 0
 	}
-	return storage.NewUserSessionSummary(session, service.DisplayName, agentCount), nil
+	summary = storage.NewUserSessionSummary(session, service.DisplayName, agentCount)
+	summary.ServiceIconSVG = service.IconSVG
+	return summary, nil
 }
 
 type sharedRefreshContextKey struct{}

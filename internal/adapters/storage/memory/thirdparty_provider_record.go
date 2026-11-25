@@ -40,6 +40,7 @@ func providerEntityCopy(entity *model.ThirdpartyOAuth2ProviderEntity) (*model.Th
 	}
 	copy.CredentialSource = source
 	copy.ClientRegistrationProvided = false
+	copy.IconSVGProvided = false
 	copy.ClearCanonicalID = false
 	copy.CredentialSourceProvided = false
 	copy.ClientIDProvided = false

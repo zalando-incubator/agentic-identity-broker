@@ -21,6 +21,7 @@ import { Badge } from '@design-system/components/primitives/Badge';
 import { StatusIndicator } from '@design-system/components/data-display/StatusIndicator';
 import { Stack } from '@design-system/components/layout/Stack';
 import type { SessionSummary } from '@services/api/sessions';
+import { ServiceIcon } from '@components/services/ServiceIcon';
 
 interface SessionCardProps {
   /** Session data to display */
@@ -88,13 +89,14 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   return (
     <Card padding="default" border="subtle" hover="lift">
       {/* Header: Service name and Terminate button */}
-      <div className="mb-3 flex items-start justify-between gap-2">
-        <div className="flex-1">
-          <h3 className="m-0 text-lg font-semibold text-neutral-900">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <ServiceIcon iconSvg={session.service_icon_svg} />
+          <h3 className="m-0 min-w-0 break-words text-lg font-semibold text-trust">
             {session.service_display_name}
           </h3>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {onViewDetails && (
             <Button
               variant="outline"

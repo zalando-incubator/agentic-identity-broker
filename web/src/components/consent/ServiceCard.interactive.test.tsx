@@ -12,7 +12,6 @@ describe('ServiceCard - Interactive Mode', () => {
     kind: 'scoped',
     serviceId: 'github',
     displayName: 'GitHub',
-    logoUrl: 'https://example.com/github-logo.png',
     scopes: [
       { value: 'read:user', description: 'Read user profile' },
       { value: 'read:repo', description: 'Read repository data' },

@@ -22,6 +22,7 @@ import (
 type ServiceRequirementForUser struct {
 	ServiceID        string                 `json:"serviceId"`
 	ServiceName      string                 `json:"serviceName"`
+	IconSVG          *string                `json:"iconSvg,omitempty"`
 	RequirementType  string                 `json:"requirementType"` // "mandatory" or "optional"
 	RequiredScopes   []ScopeWithDescription `json:"requiredScopes"`
 	ConnectionStatus string                 `json:"connectionStatus"` // "connected" or "not_connected"
@@ -321,6 +322,7 @@ func toServiceRequirementForUser(reqs []consent.ServiceRequirementStatus) []Serv
 		result[i] = ServiceRequirementForUser{
 			ServiceID:        req.ServiceID.String(),
 			ServiceName:      req.DisplayName,
+			IconSVG:          req.IconSVG,
 			RequirementType:  string(req.RequirementType),
 			RequiredScopes:   scopes,
 			ConnectionStatus: connStatus,

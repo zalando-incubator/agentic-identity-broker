@@ -60,6 +60,18 @@ info:
     - **OAuth2 responses**: Follow RFC 6749 format (no data envelope)
     - **Date/Time format**: ISO 8601 (RFC3339) format, e.g., `2025-12-19T10:30:00Z`
 
+    ## Service Icons
+
+    Existing consent `data.services` entries can include `iconSvg`.
+    Session summaries can include `service_icon_svg`, including inherited detail fields and summary-returning refresh responses.
+    Each field contains the current service's exact accepted SVG source, not a URL or session snapshot.
+    The server omits absent source. Clients accept omission or null and replace stale icon metadata after a fresh response.
+    Existing authentication, ownership, filtering, error envelopes, and JSON cache rules remain unchanged. No shared/public caching is introduced.
+    Unauthenticated requests to these routes return the existing `401` error without SVG bytes. No separate image endpoint exists.
+    Use only URI-encoded source in `<img src="data:image/svg+xml;charset=utf-8,...">` with empty alt text.
+    Accepted source is not safe for inline SVG or active document embedding, including object, embed, or iframe.
+    Visible service names, original fallbacks, and controls remain available if an image is absent or fails.
+
     ## API Guidelines
 
     This API follows the Zalando RESTful API Guidelines with emphasis on:
@@ -340,7 +352,7 @@ paths:
 
         - Service ID (UUID)
         - Service name (e.g., "Google Drive", "GitHub")
-        - Service logo URL
+        - Optional exact SVG source in `ServiceRequirementForUser.iconSvg`, not a logo URL
         - The OAuth2 permissions the agent can receive for the service, with human-readable descriptions. For a `require_all_scopes` requirement, this is the sorted, deduplicated union from this agent's assigned Permission Sets that cover that service.
 
         **Use Cases**:
@@ -349,6 +361,11 @@ paths:
         - Show available services and permissions
         - Help users make informed consent decisions
         - Link to governance and documentation
+
+        Icon source appears only on existing `data.services` entries and follows the same service filtering.
+        Permission-set service rows reuse this metadata. No extra icon catalog or SVG copies on permission-set scope records are added.
+        The server omits absent icons. Clients accept omitted or null values and discard stale source on fresh data.
+        Existing principal authentication applies. An unauthenticated request returns `401` without SVG bytes.
       operationId: getAgentDetail
       tags:
         - Consent
@@ -391,6 +408,7 @@ paths:
                       services:
                         - serviceId: 11111111-1111-1111-1111-111111111111
                           serviceName: Google Drive
+                          iconSvg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                           requirementType: mandatory
                           requiredScopes:
                             - name: read:files
@@ -715,6 +733,10 @@ paths:
         - Reauthentication status and access-token expiry status
         - Number of agents depending on this session, derived only from grants owned by the authenticated session principal
         - Encryption status indicator
+        - Optional `service_icon_svg` with the current service's exact accepted source, not a session snapshot
+
+        Replacement or clearing appears after fresh service data. Absent source is omitted, not retained from an earlier response.
+        Existing principal authentication and ownership apply. An unauthenticated request returns `401` without SVG bytes.
 
       tags:
         - Third-Party Sessions
@@ -745,6 +767,7 @@ paths:
                     - id: 660e8400-e29b-41d4-a716-446655440001
                       service_id: 550e8400-e29b-41d4-a716-446655440000
                       service_display_name: GitHub
+                      service_icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                       token_type: Bearer
                       scope:
                         - repo
@@ -1015,6 +1038,8 @@ paths:
       description: |
         Returns detailed information about the user's session with a third-party service, including only agents with grants owned by the authenticated session principal that depend on this session.
         Used to populate the session card and termination warning dialog.
+        Inherited `service_icon_svg` is the current service's exact accepted source, not the source at session creation.
+        The server omits absent source. Existing principal authentication, ownership, and errors remain unchanged, including `401` without SVG bytes.
       tags:
         - Third-Party Sessions
       security:
@@ -1056,6 +1081,7 @@ paths:
                     principal: user@example.com
                     service_id: 550e8400-e29b-41d4-a716-446655440000
                     service_display_name: GitHub
+                    service_icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
                     token_type: Bearer
                     initiated_at: "2025-12-20T10:30:00Z"
                     access_token_expires_at: "2025-12-20T11:30:00Z"
@@ -1161,6 +1187,8 @@ paths:
         grant. Unlike the transparent refresh performed during token exchange, this refreshes
         even when the current access token has not yet expired. Requires a stored refresh
         token that the provider has not rejected.
+        The returned summary uses current service metadata, including optional `service_icon_svg`, not a session snapshot.
+        Clearing the icon omits the property. Existing principal authentication and ownership apply, including `401` without SVG bytes.
       tags:
         - Third-Party Sessions
       security:
@@ -1185,6 +1213,21 @@ paths:
                 properties:
                   data:
                     $ref: "#/components/schemas/UserSessionSummary"
+              example:
+                data:
+                  id: 660e8400-e29b-41d4-a716-446655440001
+                  service_id: 550e8400-e29b-41d4-a716-446655440000
+                  service_display_name: GitHub
+                  service_icon_svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle fill="currentColor" cx="12" cy="12" r="8"/></svg>'
+                  token_type: Bearer
+                  scope: [repo, 'user:email']
+                  initiated_at: '2025-12-20T10:30:00Z'
+                  requires_reauthentication: false
+                  is_expired: false
+                  access_token_expired: false
+                  has_refresh_token: true
+                  dependent_agent_count: 3
+                  is_encrypted: true
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
@@ -3513,12 +3556,6 @@ components:
           type: string
           description: Human-readable service name
           example: Google Drive
-        logoUrl:
-          type: string
-          format: uri
-          nullable: true
-          description: Optional URL to service's logo or icon
-          example: https://cdn.example.com/services/google-drive.png
         scopes:
           type: array
           items:
@@ -3541,8 +3578,31 @@ components:
           nullable: true
           description: Human-readable description of scope permissions
           example: Read user profile information
+    ServiceIconSvg:
+      type: string
+      nullable: true
+      minLength: 1
+      description: |
+        Current service's exact accepted SVG source, not a URL, path, or data URI.
+        Non-null source is valid UTF-8 and contains 1–65536 bytes after JSON decoding.
+        The server omits absent source. Clients accept omission or null and replace previous metadata on fresh responses.
+        OpenAPI character-length keywords do not enforce the byte bound or the Admin API's semantic XML validation.
+        Accepted source preserves ordinary visual SVG features and can contain inactive external references.
+        Named upload rejections do not certify complete CSS, reference, animation, or arbitrary document safety.
+
+        Render only as URI-encoded exact source in `<img src="data:image/svg+xml;charset=utf-8,...">` with empty alt text.
+        SVG image mode prevents referenced external loads. The broker never fetches icon references.
+        Never insert the source into the page DOM or use object, embed, iframe, or SVG document delivery.
+        Keep the visible service name, original fallback, and usable controls if the image is absent or fails.
+        A changed source retries the image without a full page reload. Clearing source restores the original fallback.
+        No image endpoint, revision token, new cache lifetime, or public/shared cache is added.
+        Existing authenticated JSON controls receipt of bytes, not reuse by an authorized client who copies them.
+        The byte bound is an input limit, not a browser rendering-resource budget.
+      example: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16v16H4z"/></svg>'
+
     ServiceRequirementForUser:
       type: object
+      description: Existing consent data.services entry. Optional iconSvg uses current service metadata and the same response filtering.
       required:
         - serviceId
         - serviceName
@@ -3559,6 +3619,11 @@ components:
           type: string
           description: Human-readable service name for display
           example: GitHub
+        iconSvg:
+          allOf:
+            - $ref: "#/components/schemas/ServiceIconSvg"
+          readOnly: true
+          description: Exact current service source, omitted when absent. Permission-set service rows reuse this data.services metadata, not a separate catalog.
         requirementType:
           type: string
           enum:
@@ -4367,6 +4432,8 @@ components:
       description: |
         Flat session summary as returned by the session endpoints. Mirrors the
         storage.UserSessionSummary domain read model.
+        Optional service_icon_svg comes from the current referenced service, not a session snapshot.
+        List, detail, and summary-returning refresh responses use the same projection and omit absent source.
       required:
         - id
         - service_id
@@ -4389,6 +4456,11 @@ components:
           format: uuid
         service_display_name:
           type: string
+        service_icon_svg:
+          allOf:
+            - $ref: "#/components/schemas/ServiceIconSvg"
+          readOnly: true
+          description: Exact current service SVG source, omitted when absent. Replacement or clearing appears in fresh summaries without changing session state.
         token_type:
           type: string
         scope:
@@ -4428,6 +4500,7 @@ components:
         Session details: the UserSessionSummary fields plus ownership and lifecycle
         metadata. Mirrors the storage.UserSessionDetails domain read model. Token
         material and the rejection timestamp are never exposed.
+        Inherits the current service_icon_svg projection, including source replacement and omission after clearing.
       allOf:
         - $ref: "#/components/schemas/UserSessionSummary"
         - type: object

@@ -29,7 +29,7 @@ The server omits absent source. Clients accept omission or null and replace thei
 
 Permission-set rows already obtain service names from `data.services`. Carry `iconSvg` through that same frontend mapping. Do not emit `available_services` or repeat SVG source on permission-set scope records. Preserve the existing service filtering and response scope.
 
-The unused canonical `ThirdpartyService` schema, including `logoUrl`, remains unchanged. It needs no icon property for this feature. Do not turn `logoUrl` into an SVG alias or remote fallback.
+The unused canonical `ThirdpartyService` schema has no icon property. The legacy service `logoUrl` is removed, not repurposed as an SVG alias or remote fallback.
 
 ## Upload validation and rendering boundary
 

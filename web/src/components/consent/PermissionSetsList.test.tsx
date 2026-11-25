@@ -139,3 +139,22 @@ describe('PermissionSetsList — per-service toggle regression', () => {
     expect(screen.getByLabelText(/Service A \(required\)/i)).toBeTruthy();
   });
 });
+
+describe('PermissionSetsList — current icon propagation', () => {
+  it('forwards replacement and removal metadata without resetting per-service selection', () => {
+    const source = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="3"/></svg>';
+    const view = (iconSvg?: string | null) => (
+      <PermissionSetsList permissionSets={[mandatoryPS]} serviceRequirements={serviceRequirements}
+        availableServices={availableServices.map((service) => ({ ...service, iconSvg }))} />
+    );
+    const { container, rerender } = render(view(source));
+    const toggle = screen.getByRole('switch', { name: 'Exclude Service C' });
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(container.querySelectorAll('img')).toHaveLength(4);
+    rerender(view(null));
+    expect(container.querySelector('img')).toBeNull();
+    expect(screen.getByRole('switch', { name: 'Include Service C' })).toBe(toggle);
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+  });
+});

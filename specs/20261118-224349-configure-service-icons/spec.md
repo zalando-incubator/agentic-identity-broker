@@ -63,6 +63,8 @@ After an operator replaces a broken icon, the same open view can display the new
 2. **US3.2 — Broken image**: **Given** a stored SVG that fails to render in the browser, **When** a user opens the service views, **Then** they show their existing fallback rather than a broken-image marker. The image failure does not block service actions or show a page-level error.
 3. **US3.3 — Broken to valid**: **Given** an open service view that shows the fallback after an image error, **When** an operator replaces the SVG document and the view receives fresh service data, **Then** it attempts to render the new content and shows it on success. Recovery does not require a full page reload.
 4. **US3.4 — Accessible service identity**: **Given** configured, unset, and broken icon states, **When** a user reviews consent and sessions at narrow and wide viewport sizes, **Then** the service name remains readable. The icon adds no keyboard stop or duplicate service announcement, and all existing controls remain operable.
+   Configured SVG icons with square viewBoxes fit within their presentation boxes without clipping.
+   Consent chips center configured SVG artwork with a 4px inset on each side of the 24px icon slot.
 
 ### Edge Cases
 
