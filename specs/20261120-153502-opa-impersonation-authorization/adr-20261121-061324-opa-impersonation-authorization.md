@@ -122,13 +122,11 @@ The scope is unchanged. The exception still applies only to the subject role of 
 impersonation rule that declares `verification: none`. Client assertions and actors are always
 signature-verified. The constitution's Principle I carve-out requires a startup-verified predicate
 reference to `subject_token` and email minting only with a `subject_token.email` binding. Decision 5
-drops both for OPA rules, so this ADR needs a constitution amendment. **Proposed (CONST-AMEND)**:
+drops both for OPA rules, so this ADR needs a constitution amendment, **CONST-AMEND**:
 Principle I limits those two controls to rules authorized by a CEL predicate and states that
 OPA-authorized unsigned-subject rules rely on the operator's policy, retaining every other control.
-The proposed text is in the plan's approval item CONST-AMEND. This is not recorded approval: the
-maintainer must ratify the amendment, for example through `/speckit-constitution`, before
-implementation. Implementation of the exceptional modes requires approval of both ADR-OPA and
-CONST-AMEND.
+The text is in the plan's approval item CONST-AMEND. It was applied to the constitution as v4.8.0 on 2026-11-25 (commit `fb84c31`); it takes effect for OPA rules once ADR-OPA is Accepted.
+Implementation of the exceptional modes requires approval of ADR-OPA.
 
 ## Consequences
 

@@ -111,7 +111,7 @@ Check that this selection matches the task. Do not infer the feature from the br
 
 Treat `.specify/memory/constitution.md` as **BINDING**. Apply these principles:
 
-1. **Security-First** — Fail closed. Do not bypass security controls. Only accepted ADR 031 permits unsigned subjects, with its full controls. This exception applies only to explicit unverified-subject rules in local-mode impersonation. Client assertions, actor tokens, and signed subjects still require signature verification.
+1. **Security-First** — Fail closed. Do not bypass security controls. Only accepted ADR 031 permits unsigned subjects, with its controls. For OPA-authorized rules under accepted ADR `20261121-061324-opa-impersonation-authorization`, the subject-reference and email-binding controls do not apply; the operator's policy is the only control on the caller-asserted subject and email. This exception applies only to explicit unverified-subject rules in local-mode impersonation. Client assertions, actor tokens, and signed subjects still require signature verification.
 2. **Accepted ADRs are Binding** — Only ADRs with status "Accepted" are binding. Use `ARCHITECTURE.md` as the source of truth. Follow Principle II
    for same-PR ADR acceptance and revisions. A merged Accepted ADR requires an Accepted
    superseding ADR for deviations.

@@ -391,9 +391,8 @@ controls 3–4, ADR `034-audience-absent-impersonation-credentials` control 3, a
 binding checks, R5). It does not widen the unsigned-subject exception (subject role,
 `verification: none`, local mode). Constitution Principle I requires "a startup-verified
 authorization predicate reference to `subject_token`" and "an unverified email minted only when the
-predicate binds `subject_token.email`" for unsigned subjects, so **Proposed: CONST-AMEND** limits
-those two controls to CEL-authorized rules. The maintainer must ratify the amendment, for example
-through `/speckit-constitution`, before implementation; this worker does not edit the constitution.
+predicate binds `subject_token.email`" for unsigned subjects, so **CONST-AMEND** limits
+those two controls to CEL-authorized rules. It was applied to the constitution as v4.8.0 on 2026-11-25 (commit `fb84c31`); it takes effect for OPA rules once ADR-OPA is Accepted.
 ADR `028-opa-extproc-authorization` is unaffected.
 
 **Alternatives**: Separate ADRs for engine selection and the OPA control changes (two approvals for
