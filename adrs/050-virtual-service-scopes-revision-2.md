@@ -1,10 +1,10 @@
 # ADR 050 Revision 2 — ExtProc Challenge Metadata, Grant-Context Denial Challenge and Local Impersonation
 
-**Status**: Proposed
+**Status**: Accepted (approved by mjungsbluth on 2026-11-25)
 **Date**: 2026-11-22
 **Revises**: [`050-virtual-service-scopes`](050-virtual-service-scopes.md), introduced and accepted in this pull request.
-Under Principle II, the same pull request may revise it before merge. After approval, apply the
-changes below to `adrs/050-virtual-service-scopes.md` and record the approval there, as for
+Under Principle II, the same pull request may revise it before merge. The changes below are
+applied to `adrs/050-virtual-service-scopes.md`, which records the approval, as for
 [`050-virtual-service-scopes-revision-1`](050-virtual-service-scopes-revision-1.md).
 
 ## Context

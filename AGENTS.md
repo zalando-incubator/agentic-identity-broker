@@ -218,7 +218,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 049 | `adrs/049-service-session-recovery-return.md` | Service-page recovery return (`/sessions/<identifier>`); rejected sessions follow ADR 046 (Feature 055) |
 | 050 | `adrs/050-virtual-service-scopes.md` | Virtual service scopes, shared usability/coverage in `domain/servicescope/` and immutable refresh assurance (Feature 055) |
 | 050 Revision 1 | `adrs/050-virtual-service-scopes-revision-1.md` | Proxy refresh pre-forward syntax/existence/eligibility checks; dot-segment canonical-ID limitation deferred to #446 |
-| 050 Revision 2 | `adrs/050-virtual-service-scopes-revision-2.md` | Proposed: optional `aib.tokenexchange.resource_metadata_url` challenge field; body-path grant-context denial adds the service-scope `insufficient_scope` challenge; local impersonation applies virtual-scope checks (agent subjects rejected) |
+| 050 Revision 2 | `adrs/050-virtual-service-scopes-revision-2.md` | Optional `aib.tokenexchange.resource_metadata_url` challenge field; body-path grant-context denial adds the service-scope `insufficient_scope` challenge; local impersonation applies virtual-scope checks (agent subjects rejected) |
 
 ## Domain Glossary
 

@@ -315,7 +315,7 @@ Scope: [maintainer-approved F2–F5 proposal](https://github.com/zalando-incubat
 
 ## Maintainer decisions — 2026-11-22
 
-Scope: the maintainer's direct decisions recorded in `spec.md` Clarifications (2026-11-22), made because the pipeline could not apply the [proposal for `c55a4582`](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7070667026). ADR-SCOPES-REV2 items remain Proposed until approved.
+Scope: the maintainer's direct decisions recorded in `spec.md` Clarifications (2026-11-22), made because the pipeline could not apply the [proposal for `c55a4582`](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7070667026). The maintainer approved ADR-SCOPES-REV2 on 2026-11-25.
 
 - [X] T138 [US1] Replace `RequestedServiceBanner` with `web/src/components/consent/RequestedServiceGroup.tsx`: one `role="group"` request header per requested service inside Agent Permissions with text login/selection checks and the only login/retry control, covering sets nested on a semantic-token rail, no per-card "covers requested" badge, "Asked for"/"Connect above" in `ServiceCard`, and a one-sentence Save hint from `requestedServiceGate.ts`; update Vitest, Go page objects, the frontend journey and Wireloom States C/D (FR-009–FR-011; Principles XI, XIII, XIV).
 - [X] T139 [F1] Give "not selected" precedence over transient usability in `internal/domain/servicescope` so only selected requested services fail authorization or local refresh as transient; unselected ones follow focused consent / `invalid_scope` `not_selected`. Cover authorization and refresh with domain tests and the US1 S8 and US3 S5 journeys in `tests/e2e/incremental_authorization_test.go`, and align doc comments, OpenAPI descriptions, contracts and `Outcome.Reason` (FR-003, SR-003; Principles VIII, XV).
@@ -324,7 +324,7 @@ Scope: the maintainer's direct decisions recorded in `spec.md` Clarifications (2
 - [X] T142 [US4] In ExtProc grant-context mode, add the service-scope `insufficient_scope` challenge to body-path delegation denials when the concurrent exchange returns a matching `access_denied`; keep the denial body and header-only behavior; cover in `internal/extproc/server/grant_context_test.go` and document in `contracts/extproc-challenge.md` §5 (FR-005; ADR-SCOPES-REV2).
 - [X] T143 [US4] Add the US4 S6 grant-context journey to `tests/e2e/grant_context_journey_test.go` asserting the challenge header on a body-path denial and its absence on header-only requests (FR-005; Principle XIII).
 - [X] T145 [US1] Keep Login in Connect Your Accounts: remove the request-group login button, always list requested services there with the "Asked for" marker and usual Login, and point the header and Save hint to it; make the selection check follow the live selection even when it becomes empty (no fallback to the saved grant) in `AgentGrantDetailPage.tsx`; update Vitest, page objects, the browser journey and Wireloom State C/D (FR-009–FR-011; Principles XI, XIII).
-- [ ] T144 After ADR-SCOPES-REV2 approval, apply `adrs/050-virtual-service-scopes-revision-2.md` to `adrs/050-virtual-service-scopes.md` and record the approval (Principle II).
+- [X] T144 After ADR-SCOPES-REV2 approval (2026-11-25), apply `adrs/050-virtual-service-scopes-revision-2.md` to `adrs/050-virtual-service-scopes.md` and record the approval (Principle II).
 
 ## Acceptance Scenario → Task Mapping
 

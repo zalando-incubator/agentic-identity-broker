@@ -1,6 +1,6 @@
 # ADR 050: Virtual Service Scopes for Incremental Authorization
 
-**Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6857846872)
+**Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6857846872; Revision 2 approved by mjungsbluth on 2026-11-25)
 **Date**: 2026-10-29
 **Scope**: Broker OAuth2 authorization server (local, proxy, hybrid), consent, RFC 8693 errors, ExtProc challenge
 **Feature**: [055-incremental-service-authorization](../specs/055-incremental-service-authorization/spec.md)
@@ -32,7 +32,8 @@ services.
    configuration.
 3. **One owner**: A new bounded context, `internal/domain/servicescope/`, owns parsing, formatting,
    requested-set resolution, eligibility, the coverage rule, and usability evaluation. The
-   authorization, consent, local-issuance, and token-exchange services all consume it.
+   authorization, consent, local-issuance (including local impersonation), and token-exchange
+   services all consume it.
 4. **Local issuance**:
    - Granted virtual scopes appear in the token-response `scope` and the access-token `scope`
      claim, in their requested form.
@@ -44,6 +45,15 @@ services.
      unchanged as assurance-only obligations. Scope-less successor refresh cannot restore removed
      scopes, and retained bindings cannot authorize widening. Validation distinguishes code-granted
      bindings (within `Scope`) from refresh assurance bindings (possibly outside current `Scope`).
+   - **Local impersonation** exempts broker-prefixed scopes from the `allowed_scopes` pre-check and,
+     after rule authorization and human delegation and before minting, applies parsing, existence,
+     eligibility, grant coverage and usability to every requested virtual scope. Malformed, unknown,
+     ineligible or unsatisfied scopes return `400 invalid_scope` without consent redirection; a
+     lookup failure or transiently unverifiable usability returns `500 server_error`. A failure is
+     terminal and does not fall through to later rules. Agent subjects
+     ([`045-agent-subject-impersonation`](045-agent-subject-impersonation.md)) receive
+     `invalid_scope` for any virtual scope, as `client_credentials` does. Impersonation stores no
+     Service-Scope Binding because it issues no authorization code or refresh token.
 5. **Identity pinning**: Each granted virtual scope's resolved service UUID is persisted as a
    Service-Scope Binding on the authorization code and refresh-token session. Refresh fails closed
    when the scope no longer resolves to the bound UUID. Only UUID scopes survive canonical-ID
@@ -63,9 +73,37 @@ services.
      forwarded unchanged, without provider-session usability checks or a veto of response/rotation.
    - The broker never modifies upstream tokens.
    - Hybrid mode follows the agent's client type.
-7. **Discovery**: Virtual scopes are never listed in `scopes_supported`. Clients learn them from the
-   token-exchange `scope` error member, which the gateway copies into its `insufficient_scope`
-   challenge, or from operator route configuration.
+7. **Discovery**: Virtual scopes are never listed in `scopes_supported`. Clients learn them from
+   the token-exchange `scope` error member, which the gateway copies into its
+   `insufficient_scope` challenge, or from operator route configuration.
+   - **Challenge attributes.** For a non-transient broker exchange error with `error_uri`, ExtProc
+     appends to its existing 403 `insufficient_scope` challenge, in this fixed order:
+     `scope="<broker scope>"` and then `resource_metadata="<route metadata URL>"`. Status, body
+     and URL elicitation do not change. `scope` is included only when it is exactly one absolute
+     `http` or `https` URL with a host and only bytes `0x21`–`0x7E` other than `"` and `\`.
+     Otherwise it is omitted and the challenge stays valid.
+   - **Route metadata field.** `resource_metadata_url` is an optional string member of the
+     literal `aib.tokenexchange` metadata namespace, set on each Agentgateway route as a CEL string
+     expression beside `resource_uri`. It is advisory challenge input, not a token-exchange
+     input. ExtProc validates it only when it builds a challenge: an absolute `https` URL with a
+     non-empty host, no userinfo and no fragment, at most 2048 bytes, and only bytes
+     `0x21`–`0x7E` other than `"` and `\`. An absent value omits `resource_metadata`. An invalid
+     or non-string value also omits it, and ExtProc logs `challenge metadata invalid` with the
+     field name and without the value. The field never affects subject-token or resource
+     validation, exchange, caching, OPA input or the request outcome. There is no ExtProc YAML
+     key, environment variable, CLI flag, broker key or Helm value, and no default.
+   - **Grant-context mode.** With the `048-authzen-delegation-pip` resolver enabled, a body-bearing request whose
+     delegation is denied keeps `048-authzen-delegation-pip` precedence and its 403
+     `{"error":"access_denied","error_description":"delegation denied: <code>","error_uri":"<consent URL>"}`
+     body. ExtProc adds the `insufficient_scope` challenge header only when the concurrent
+     exchange failed with a non-transient broker `access_denied` whose `error_uri` equals the
+     denial's consent URL and whose `scope` is valid. The challenge reuses the default-mode
+     builder with `error_description="delegation denied: <code>"`, the consent URL as
+     `error_uri`, the exchange `scope` and the route's `resource_metadata`. Any other
+     exchange outcome, including success, a transient or non-broker failure, another code or
+     another URL, keeps the denial without a challenge. A header-only denial has no exchange
+     result, so it keeps the denial without a challenge and makes no extra broker call.
+     Resolution failures (non-decisions) keep their 503 response without a challenge.
 
 ## Consequences
 
@@ -84,6 +122,11 @@ services.
 - Scope narrowing durably removes privileges without dropping original continuing-service checks.
 - Consent adds per-candidate contribution usability and a protected authorize continuation parameter;
   both are covered by the supplied API-CONSENT approval, alongside the local narrowing contract under API-LOCAL-SCOPES.
+- ExtProc reads a third, optional `aib.tokenexchange` member. `036-extproc-metadata-token-exchange-input`'s exchange input boundary,
+  validation order and fail-closed responses for `subject_token` and `resource_uri` do not change.
+- In grant-context mode, a body-bearing request for a service the grant does not cover offers the
+  same scope step-up as the default mode. A header-only request for that service does not, and
+  clients must step up from a body-bearing request.
 
 ## Alternatives considered
 
@@ -106,10 +149,23 @@ services.
   FR-002 and hides an invalid service request from the client.
 - **UUID-only emission for `.` and `..`**: Rejected for this feature. Issue #446 owns the shared
   canonical-ID validation defect and its migration/Admin API consequences.
+- **Global ExtProc configuration key for the metadata URL**: Rejected. RFC 9728 metadata is
+  specific to each protected resource, and `036-extproc-metadata-token-exchange-input` makes route metadata the gateway-to-ExtProc
+  input boundary.
+- **Full URL-elicitation body for a grant-context denial**: Rejected. It would replace the
+  `access_denied` body that `048-authzen-delegation-pip` §4 and Feature 054 define. The added header gives MCP clients
+  the step-up, and the body keeps the consent URL.
+- **Add the virtual scope to the AuthZEN denial context**: Deferred. It would give header-only
+  denials a challenge without an exchange, but it changes the End-User AuthZEN contract and needs
+  its own API approval (Principles IV and X).
+- **Run an exchange after a header-only denial to obtain the scope**: Rejected. It adds a broker
+  call to every denied header-only request and records the `012-extproc-in-memory-token-cache` re-consent cooldown on that
+  path, which `048-authzen-delegation-pip` avoids.
 
 ## References
 
 - [Approved Revision 1](050-virtual-service-scopes-revision-1.md) (proxy pre-forward validation and dot-segment limitation).
+- [Approved Revision 2](050-virtual-service-scopes-revision-2.md) (ExtProc challenge metadata, grant-context denial challenge and local impersonation; approved by mjungsbluth on 2026-11-25).
 
 - Feature 055 [spec](../specs/055-incremental-service-authorization/spec.md), [research](../specs/055-incremental-service-authorization/research.md) R1–R8, [data model](../specs/055-incremental-service-authorization/data-model.md),
   and [contracts](../specs/055-incremental-service-authorization/contracts/).
