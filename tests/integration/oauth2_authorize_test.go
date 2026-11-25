@@ -771,7 +771,7 @@ func newConnectedSessionRepo(t *testing.T, grant *storage.UserGrant) ports.UserS
 }
 
 // These direct-constructor tests isolate consent and redirect behavior from client
-// identity changes while retaining ADR-046's refreshability and rejection checks.
+// identity changes while retaining ADR 046-observed-refresh-token-rejection's refreshability and rejection checks.
 type unchangedIntegrationSessionUsability struct{}
 
 func (unchangedIntegrationSessionUsability) RequiresReauthentication(_ context.Context, sessions []*storage.UserSession, _ ports.UsabilityMode) (map[id.ServiceID]bool, error) {

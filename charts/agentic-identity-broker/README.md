@@ -452,7 +452,7 @@ The migration Job defaults to `backoffLimit: 0`. A failed migration can leave di
 
 #### Application rollback with the schema retained
 
-This historical 040/041 procedure is insufficient after client-identity activation. Once the fleet has activated ADR 048, use revision-aware rollback only, as specified below; converting services to stored never authorizes an unaware binary.
+This historical 040/041 procedure is insufficient after client-identity activation. Once the fleet has activated ADR 048-client-identity-revisions, use revision-aware rollback only, as specified below; converting services to stored never authorizes an unaware binary.
 
 1. Select a rollback release that includes explicit session-query columns. Do not roll back to a binary with wildcard session scans.
 2. Before starting older pods, list services through the current Admin API.
@@ -464,7 +464,7 @@ An earlier compatibility release can instead exclude NULL-client-ID rows from ev
 
 ### Client-identity migrations 049 and 050
 
-[ADR 048](../../adrs/048-client-identity-revisions.md#guarded-rollout-and-rollback-proposed-dec-005) governs continuous rolling upgrade and rollback. Activation is an operator-verified boundary, not a runtime flag. New replicas enforce identity revisions immediately. No Helm values, templates, hooks, or workflow changes are required.
+[ADR 048-client-identity-revisions](../../adrs/048-client-identity-revisions.md#guarded-rollout-and-rollback-dec-005) governs continuous rolling upgrade and rollback. Activation is an operator-verified boundary, not a runtime flag. New replicas enforce identity revisions immediately. No Helm values, templates, hooks, or workflow changes are required.
 
 Migration 049 adds nullable service `client_identity`, service `client_identity_revision`, and session `upstream_client_revision` (both revisions default to 0). It performs no identity backfill or token rewrite. All three checks begin `NOT VALID`; new writes are still checked. Both table locks use `ACCESS EXCLUSIVE ... NOWAIT` with a one-second schema statement timeout. Migration 050 validates under `SHARE UPDATE EXCLUSIVE ... NOWAIT`, allowing ordinary reads and writes. Apply both online before new pods start; retain atomic golang-migrate execution with `x-multi-statement` disabled. Lock contention aborts instead of queuing an exclusive lock behind traffic.
 

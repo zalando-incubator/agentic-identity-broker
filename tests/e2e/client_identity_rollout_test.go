@@ -158,7 +158,7 @@ var _ = Describe("Client identity continuous rolling upgrade", Label("docker", "
 			connect(prior[0].CredentialServer, principal, serviceID)
 			connect(prior[0].CredentialServer, principal, filesystemID)
 		}
-		// Historical stored sessions predate ADR 041's establishing-identity claim.
+		// Historical stored sessions predate ADR 041-oauth2-client-secret-file-overrides's establishing-identity claim.
 		result, err := db.ExecContext(ctx, "UPDATE user_sessions SET upstream_client_id=NULL WHERE service_id=$1", serviceID)
 		Expect(err).NotTo(HaveOccurred())
 		count, err := result.RowsAffected()

@@ -11,7 +11,7 @@ info:
     is_expired remains an equal deprecated alias; access_token_expired is independent.
     During continuous rolling upgrade identities remain fixed until every old process and admitted
     operation drains and unaware images cannot restart. Pre-upgrade callbacks reaching new replicas
-    may need sign-in retry. After activation rollback is revision-aware only (ADR 048).
+    may need sign-in retry. After activation rollback is revision-aware only (ADR 048-client-identity-revisions).
 
     This API provides two main capabilities:
 
