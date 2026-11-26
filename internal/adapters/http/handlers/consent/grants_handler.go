@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	httpmiddleware "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/http/middleware"
@@ -125,25 +127,29 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// FR-029: Validate JWE session_token when present.
-	sessionToken := r.URL.Query().Get("session_token")
+	sessionToken, parameterErr := sessionTokenParameter(r.URL.RawQuery)
 	var sessionRedirectURI string
-	if sessionToken != "" {
-		claims, err := h.sessionTokenValidator.ValidateAuthorizationSessionToken(sessionToken, parsedAgentID, id.Principal(principalValue))
+	var requestedServiceIDs []id.ServiceID
+	var serviceScopeBindings map[string]id.ServiceID
+	if sessionToken != "" || parameterErr != nil {
+		var claims *ports.AuthorizationSession
+		err := ports.ErrSessionInvalidToken
+		if parameterErr == nil {
+			claims, err = h.sessionTokenValidator.ValidateAuthorizationSessionToken(sessionToken, parsedAgentID, id.Principal(principalValue))
+		}
 		if err != nil {
 			switch {
 			case errors.Is(err, ports.ErrSessionExpired):
-				h.logger.WarnContext(r.Context(), "authorization session token expired", "agent_id", agentID, "principal", principalValue)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonExpiredAuthorizationSession)
 				h.writeError(r.Context(), w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			case errors.Is(err, ports.ErrSessionAgentMismatch):
-				h.logger.WarnContext(r.Context(), "authorization session agent mismatch",
-					"expected_agent", parsedAgentID,
-					"principal", principalValue)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonAgentMismatch)
 				h.writeError(r.Context(), w, http.StatusBadRequest, "bad request", "authorization session does not match requested agent")
 			case errors.Is(err, ports.ErrSessionPrincipalMismatch):
-				h.logger.WarnContext(r.Context(), "authorization session principal mismatch", "principal", principalValue)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonPrincipalMismatch)
 				h.writeError(r.Context(), w, http.StatusForbidden, "forbidden", "authorization session does not belong to this user")
 			case errors.Is(err, ports.ErrSessionInvalidToken):
-				h.logger.WarnContext(r.Context(), "authorization session token invalid", "agent_id", agentID, "principal", principalValue)
+				logAuthorizationSessionRejected(r.Context(), h.logger, parsedAgentID, principalValue, reasonInvalidAuthorizationSession)
 				h.writeError(r.Context(), w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
 			default:
 				h.logger.ErrorContext(r.Context(), "unexpected error validating authorization session token", "agent_id", agentID, "principal", principalValue, "error", err)
@@ -151,6 +157,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+		requestedServiceIDs, serviceScopeBindings = claims.RequestedServiceIDs, claims.ServiceScopeBindings
 		sessionRedirectURI = claims.OriginalURL
 		if sessionRedirectURI == "" {
 			h.logger.ErrorContext(r.Context(), "authorization session token contains empty original_url",
@@ -210,6 +217,8 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 		AgentID:               parsedAgentID,
 		ValidUntil:            req.ValidUntil,
 		GrantedPermissionSets: entries,
+		RequestedServiceIDs:   requestedServiceIDs,
+		ServiceScopeBindings:  serviceScopeBindings,
 	}
 
 	handleGrantError := func(err error) {
@@ -267,6 +276,12 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if errors.Is(err, consent.ErrRequestedServiceNotSatisfied) {
+			h.writeError(r.Context(), w, http.StatusBadRequest, "requested service not satisfied",
+				strings.TrimPrefix(err.Error(), consent.ErrRequestedServiceNotSatisfied.Error()+": "))
+			return
+		}
+
 		if errors.Is(err, consent.ErrGrantValidation) {
 			h.logger.WarnContext(r.Context(), "grant validation failed",
 				"agent_id", agentID,
@@ -298,7 +313,12 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 
 	resp := map[string]interface{}{"data": h.toGrantResponse(grant)}
 	if sessionRedirectURI != "" {
-		resp["redirect_url"] = sessionRedirectURI
+		// The protected continuation carries the same JWE; authorize re-entry revalidates it.
+		separator := "?"
+		if strings.Contains(sessionRedirectURI, "?") {
+			separator = "&"
+		}
+		resp["redirect_url"] = sessionRedirectURI + separator + "session_token=" + url.QueryEscape(sessionToken)
 	}
 	h.writeJSON(r.Context(), w, http.StatusCreated, resp)
 }

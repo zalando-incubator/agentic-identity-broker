@@ -984,8 +984,8 @@ Google requires two `authorization_params` to support token refresh:
 
 If either parameter is absent, the broker stores no refresh token. After the access token expires, token exchange returns `invalid_grant`.
 Its `error_uri` starts third-party OAuth for the resolved service, for example:
-`https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions`.
-The broker uses its configured public URL and encodes the `/sessions` return URI. The provider callback returns the user to `/sessions`.
+`https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub`.
+The broker uses its configured public URL and encodes the `/sessions/<identifier>` return URI, using the service's current canonical ID or its UUID when absent. The provider callback returns the user to that service page ([20261106-141214-service-session-recovery-return](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/20261106-141214-service-session-recovery-return.md)).
 
 :::tip
 After you add or change `authorization_params`, existing sessions do not change. A user

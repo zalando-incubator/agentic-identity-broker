@@ -50,6 +50,18 @@ The `resource` and `audience` parameters are repeatable under RFC 8693 Section 2
 service token, distinct `resource` values return `400 invalid_target` per RFC 8693 Section
 2.2.2.
 
+## Incremental authorization and proxy refresh
+
+End-User API 1.4.0 adds [virtual service scopes](../guides/incremental-authorization.md).
+Local refresh rechecks every immutable service binding before rotation, including after scope
+narrowing. Proxy refresh instead validates broker-prefixed scope syntax, current service existence
+and agent eligibility before forwarding. Malformed, unknown or ineligible scopes return
+`400 invalid_scope` with `requested service scope is not permitted`; agent/service/permission-set
+lookup failure returns `500 server_error`. Both make no upstream call, leaving its refresh token
+unconsumed. Valid virtual scopes are stripped and an empty scope omitted. Ordinary-only requests
+add no lookup. No provider-usability or grant-coverage check runs, and upstream success/error bodies
+and refresh rotation remain unchanged. A later service exchange still enforces usability.
+
 ## Key concepts
 
 ### Tokens
@@ -243,15 +255,17 @@ No service has the requested URI in its `protected_resources`.
 {
   "error": "invalid_grant",
   "error_description": "User session is unavailable. Please re-authenticate.",
-  "error_uri": "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions"
+  "error_uri": "https://broker.example.com/api/third-party/550e8400-e29b-41d4-a716-446655440000/oauth2/authorize?redirect_uri=https%3A%2F%2Fbroker.example.com%2Fsessions%2Fgithub",
+  "scope": "https://broker.example.com/sessions/github"
 }
 ```
 
 Rejected subject credentials do not require provider-session recovery and have no recovery URI.
 A missing, expired, scope-deficient, or provider-rejected session has a service-specific `error_uri`.
-The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions)>`.
-The configured public URL supplies the origin. The resolved service UUID supplies `{serviceId}`.
-Opening the link starts third-party OAuth with PKCE. The provider callback returns to `/sessions`.
+The broker builds it as `<public URL>/api/third-party/{serviceId}/oauth2/authorize?redirect_uri=<url.QueryEscape(<public URL>/sessions/<identifier>)>` (ADR 20261106-141214-service-session-recovery-return).
+The configured public URL supplies the origin. The resolved service UUID supplies `{serviceId}`; `<identifier>` is the service's current canonical ID, or its UUID when it has none.
+Opening the link starts third-party OAuth with PKCE. The provider callback returns to that service page.
+Every recoverable error after service resolution, including grant denials that link to consent, also carries `scope`: the service's Virtual Service Scope, which is the same `<public URL>/sessions/<identifier>` URL. Non-recoverable errors and errors before service resolution carry neither `error_uri` nor `scope`.
 The link is not broker `/oauth2/authorize`, a provider URL, or a direct session-management page.
 Provider 5xx/429 responses remain infrastructure errors, regardless of their OAuth error code.
 
@@ -327,7 +341,7 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 `grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
 
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
-Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`; the encoded return URI targets `/sessions`.
+Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`; the encoded return URI targets the service page `/sessions/<identifier>`.
 Provider refresh rejection and recorded local expiry are distinct causes.
 Provider 5xx/429 responses remain infrastructure failures even when their bodies contain an OAuth rejection code.
 Provider client-authentication rejection instead indicates broker configuration failure.
@@ -441,7 +455,7 @@ Send these form fields:
 | `actor_token` | Signed JWT | Required. Its validated issuer and identity populate `act.iss` and `act.sub`. |
 | `subject_token_type` | `urn:ietf:params:oauth:token-type:jwt` | Required. |
 | `subject_token` | Signed JWT or unsigned `alg:none` JWT for a matching `verification: none` rule | Required. Its extracted identity populates human `sub`; eligible agent `sub` is target-derived. |
-| `scope` | Literal-space-separated scopes | Optional. Each non-reserved scope must be in the target `allowed_scopes`. An empty allow list permits all. `offline` and `offline_access` are reserved and permitted. |
+| `scope` | Literal-space-separated scopes | Optional. Each non-reserved scope must be in the target `allowed_scopes`. An empty allow list permits all. `offline` and `offline_access` are reserved and permitted. [Virtual service scopes](#virtual-service-scopes) are exempt from the allow list and checked separately. |
 | `requested_token_type` | `urn:ietf:params:oauth:token-type:access_token` | Optional. Another value returns `invalid_request`. |
 
 `resource` must be absent. A bare suffix or invalid suffix returns `invalid_request`. A
@@ -502,6 +516,24 @@ non-reserved scope must be in the target allow list. An empty allow list permits
 untrusted client assertion returns `invalid_client`. A valid request with no permitted rule
 returns `access_denied`. Errors do not expose credentials, signing keys, trust sources, or
 rejected scopes.
+
+#### Virtual service scopes
+
+A scope of the form `<server.enduser.public_url>/sessions/<canonical-id-or-UUID>` follows the
+same rules as authorization and local refresh. The broker checks it after the rule authorizes
+the request and after human delegation:
+
+- A human subject's scope must name an existing service that is eligible for the target agent.
+  The subject's grant must cover the service, and the subject must hold a usable session for it.
+- A malformed, unknown, ineligible or unsatisfied service scope returns `400 invalid_scope`.
+  Because impersonation is not interactive, an unsatisfied service is not redirected to consent.
+- A service, permission-set or session lookup that cannot be completed returns
+  `500 server_error`.
+- An agent subject has no user, so any service scope returns `400 invalid_scope`
+  (`service scopes require a user authorization`), as for `client_credentials`.
+
+A granted service scope appears in the response and JWT `scope` in its requested form.
+Impersonation issues no refresh token, so the broker stores no service-scope binding.
 
 ### Audit events
 

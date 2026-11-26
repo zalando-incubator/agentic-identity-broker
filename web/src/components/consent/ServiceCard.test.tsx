@@ -158,6 +158,29 @@ describe('ServiceCard', () => {
     // Component should still render even in loading state
     expect(container).toBeInTheDocument();
   });
+
+  it('marks a requested service as asked for and keeps its usual Login', () => {
+    render(
+      <ServiceCard
+        service={{ ...mockService, requirementType: 'optional' }}
+        isRequested
+        inStack
+      />,
+    );
+
+    expect(screen.getByText('Asked for')).toBeInTheDocument();
+    expect(screen.queryByText('Optional')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument();
+  });
+
+  it('keeps the requirement badge and Login for a service that was not requested', () => {
+    render(<ServiceCard service={{ ...mockService, requirementType: 'optional' }} inStack />);
+
+    expect(screen.getByText('Optional')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument();
+    expect(screen.queryByText('Asked for')).not.toBeInTheDocument();
+  });
+
   it.each(['mandatory', 'optional'] as const)('recovers the live %s requirement image without replacing Login', (requirementType) => {
     const onDelegate = vi.fn();
     const source = '<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>';

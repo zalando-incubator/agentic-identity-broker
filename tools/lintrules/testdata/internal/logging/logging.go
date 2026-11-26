@@ -40,3 +40,8 @@ func Principals(ctx context.Context, logger *slog.Logger, p id.Principal, s mode
 	logger.InfoContext(ctx, "client registered", "client_secret", s)              // want telemetrylint `credential: a Secret value must not be`
 	return fmt.Errorf("grant for %s not found", p)                                // want telemetrylint `principal-sink: a principal must not be in an error string`
 }
+
+func Continuation(ctx context.Context, logger *slog.Logger, c model.ContinuationParameter) {
+	logger.WarnContext(ctx, "authorization session rejected", "status", c.Status)
+	logger.WarnContext(ctx, "authorization session rejected", "session_token", c) // want telemetrylint `credential: a ContinuationParameter value must not be`
+}

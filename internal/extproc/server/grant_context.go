@@ -9,6 +9,7 @@ import (
 
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	httpv3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
@@ -73,18 +74,44 @@ func (s *Server) resolveGrantContext(ctx context.Context, logger *slog.Logger, s
 }
 
 // grantContextFailureResponse maps a resolution failure to the client response: 403 with the
-// consent URL for a denial, otherwise 503.
-func grantContextFailureResponse(err error) (*extprocv3.ProcessingResponse, Diagnostic) {
+// consent URL for a denial, otherwise 503. A denial also carries the disabled-mode
+// insufficient_scope challenge when the concurrent body-path exchange names the service
+// (adrs/20261122-103452-virtual-service-scopes-revision-2.md); the header-only path passes no exchange error.
+func (s *Server) grantContextFailureResponse(ctx context.Context, err, exchangeErr error, resourceMetadata *structpb.Value) (*extprocv3.ProcessingResponse, Diagnostic) {
 	var denied *grantcontext.DeniedError
-	if errors.As(err, &denied) {
-		body, _ := json.Marshal(map[string]string{
-			"error":             "access_denied",
-			"error_description": "delegation denied: " + denied.Code,
-			"error_uri":         denied.ConsentURL,
-		})
-		return immediateResponse(httpv3.StatusCode_Forbidden, string(body)), NewDiagnostic(StageClientAuthorization, DetailGrantContextDenied)
+	if !errors.As(err, &denied) {
+		return immediateResponse(httpv3.StatusCode_ServiceUnavailable, grantContextUnavailableBody), NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
 	}
-	return immediateResponse(httpv3.StatusCode_ServiceUnavailable, grantContextUnavailableBody), NewDiagnostic(StageClientAuthorization, DetailGrantContextUnavailable).asServerError(KindUnavailable)
+	diagnostic := NewDiagnostic(StageClientAuthorization, DetailGrantContextDenied)
+	description := "delegation denied: " + denied.Code
+	body, _ := json.Marshal(map[string]string{
+		"error":             "access_denied",
+		"error_description": description,
+		"error_uri":         denied.ConsentURL,
+	})
+	scope, ok := denialServiceScope(denied, exchangeErr)
+	if !ok {
+		return immediateResponse(httpv3.StatusCode_Forbidden, string(body)), diagnostic
+	}
+	logger := loggerFromContext(ctx, s.logger)
+	metadata := metadataFromError(ctx, exchangeErr)
+	metadataURL := challengeResourceMetadataURL(ctx, logger, resourceMetadata, metadata, diagnostic)
+	logOperationError(ctx, logger, slog.LevelInfo, "delegation denied for a known service — adding insufficient_scope challenge", metadata, diagnostic,
+		slog.Bool("token_exchange.challenge_scope_present", true),
+		slog.Bool("token_exchange.challenge_resource_metadata_present", metadataURL != ""))
+	return immediateResponseWithHeaders(httpv3.StatusCode_Forbidden, string(body),
+		map[string]string{"www-authenticate": serviceScopeChallenge(description, denied.ConsentURL, scope, metadataURL)}), diagnostic
+}
+
+// denialServiceScope returns the service scope of an authoritative broker access_denied for
+// the same consent URL. Any other exchange outcome names no service for the denial.
+func denialServiceScope(denied *grantcontext.DeniedError, exchangeErr error) (string, bool) {
+	var brokerErr *BrokerExchangeError
+	if !errors.As(exchangeErr, &brokerErr) || isTransientBrokerError(exchangeErr) || brokerErr.Code != "access_denied" ||
+		brokerErr.ErrorURI != denied.ConsentURL || !validChallengeScope(brokerErr.Scope) {
+		return "", false
+	}
+	return brokerErr.Scope, true
 }
 
 // grantContextExpired rejects a permit whose deadline has passed before a policy evaluation.

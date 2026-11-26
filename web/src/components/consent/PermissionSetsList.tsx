@@ -14,6 +14,14 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { Card } from '@design-system/components/data-display/Card';
 import { PermissionSetCard, type PermissionSetCardProps, type ServiceRequirementEntry } from './PermissionSetCard';
+import { RequestedServiceGroup } from './RequestedServiceGroup';
+import type { RequestedServiceResult } from './requestedServiceGate';
+
+/** One service requested through Virtual Service Scopes and the offered sets that cover it */
+export interface RequestedServiceEntry {
+  result: RequestedServiceResult;
+  coveringPermissionSetIds: string[];
+}
 
 export interface PermissionSetsListProps {
   /** Array of permission sets with their requirement types */
@@ -52,6 +60,16 @@ export interface PermissionSetsListProps {
    * Optional PSes in this map will start selected; per-service state is also restored.
    */
   initialGrantedPermissionSets?: Record<string, string[]>;
+
+  /** Agent display name used in requested-service group headers */
+  agentName?: string;
+
+  /**
+   * Requested services, in request order. Each renders a group nesting the covering sets;
+   * a set covering several requests appears under the first. Grouping never selects a set.
+   */
+  requestedServices?: RequestedServiceEntry[];
+  onRequestedServiceRetry?: () => void;
 }
 
 /**
@@ -65,6 +83,9 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
   serviceRequirements = [],
   onSelectionChange,
   initialGrantedPermissionSets = {},
+  agentName = 'This agent',
+  requestedServices = [],
+  onRequestedServiceRetry = () => {},
 }) => {
   const [selectedOptionalIds, setSelectedOptionalIds] = useState<Set<string>>(() => {
     const initial = new Set<string>();
@@ -249,8 +270,46 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const placed = new Set<string>();
+  const requestedGroups = requestedServices.map((entry) => {
+    const covering = new Set(entry.coveringPermissionSetIds);
+    const offered = orderedSets.filter((ps) => covering.has(ps.permission_set.id));
+    const rows = offered.filter((ps) => !placed.has(ps.permission_set.id));
+    const alsoAllowedBy = offered
+      .filter((ps) => placed.has(ps.permission_set.id))
+      .map((ps) => ps.permission_set.name);
+    rows.forEach((ps) => placed.add(ps.permission_set.id));
+    return { entry, offered, rows, alsoAllowedBy };
+  });
+  const ungroupedSets = orderedSets.filter((ps) => !placed.has(ps.permission_set.id));
+
+  const renderRow = (ps: (typeof orderedSets)[number], isFirst: boolean, isLast: boolean) => {
+    const isActive =
+      ps.requirement_type === 'mandatory' || selectedOptionalIds.has(ps.permission_set.id);
+    const includedServiceIds = computeIncludedServiceIds(
+      ps.permission_set.id,
+      ps.permission_set.service_scopes,
+      isActive,
+    );
+    return (
+      <PermissionSetCard
+        key={ps.permission_set.id}
+        permissionSet={ps.permission_set}
+        requirementType={ps.requirement_type}
+        isSelected={isActive}
+        onToggle={ps.requirement_type === 'optional' ? handleToggle : undefined}
+        availableServices={availableServices}
+        serviceRequirements={serviceRequirements}
+        includedServiceIds={isActive ? includedServiceIds : new Set()}
+        onServiceToggle={handleServiceToggle}
+        isFirst={isFirst}
+        isLast={isLast}
+      />
+    );
+  };
+
   // Empty state
-  if (permissionSets.length === 0) {
+  if (permissionSets.length === 0 && requestedServices.length === 0) {
     return (
       <p className="text-sm text-neutral-600">
         No permission sets configured for this agent.
@@ -271,41 +330,27 @@ export const PermissionSetsList: React.FC<PermissionSetsListProps> = ({
 
       {/* One shared card — padding="none" so rows own all vertical space and
           hover background fills flush to the rounded corners */}
-      <Card padding="none" border="subtle" hover="none">
-        {orderedSets.map((ps, index) => {
-          const isActive =
-            ps.requirement_type === 'mandatory' ||
-            selectedOptionalIds.has(ps.permission_set.id);
-          const includedServiceIds = computeIncludedServiceIds(
-            ps.permission_set.id,
-            ps.permission_set.service_scopes,
-            isActive,
-          );
-
-          return (
-            <React.Fragment key={ps.permission_set.id}>
-              {index > 0 && <hr className="border-neutral-200" />}
-              <PermissionSetCard
-                permissionSet={ps.permission_set}
-                requirementType={ps.requirement_type}
-                isSelected={
-                  ps.requirement_type === 'mandatory'
-                    ? true
-                    : selectedOptionalIds.has(ps.permission_set.id)
-                }
-                onToggle={
-                  ps.requirement_type === 'optional' ? handleToggle : undefined
-                }
-                availableServices={availableServices}
-                serviceRequirements={serviceRequirements}
-                includedServiceIds={isActive ? includedServiceIds : new Set()}
-                onServiceToggle={handleServiceToggle}
-                isFirst={index === 0}
-                isLast={index === orderedSets.length - 1}
-              />
-            </React.Fragment>
-          );
-        })}
+      <Card padding="none" border="subtle" hover="none" className="overflow-hidden">
+        {requestedGroups.map((group, groupIndex) => (
+          <React.Fragment key={group.entry.result.serviceId}>
+            {groupIndex > 0 && <hr className="border-neutral-200" />}
+            <RequestedServiceGroup
+              agentName={agentName}
+              result={group.entry.result}
+              hasCoveringSets={group.offered.length > 0}
+              alsoAllowedBy={group.alsoAllowedBy}
+              onRetry={onRequestedServiceRetry}
+            >
+              {group.rows.map((ps) => renderRow(ps, false, false))}
+            </RequestedServiceGroup>
+          </React.Fragment>
+        ))}
+        {ungroupedSets.map((ps, index) => (
+          <React.Fragment key={ps.permission_set.id}>
+            {(index > 0 || requestedGroups.length > 0) && <hr className="border-neutral-200" />}
+            {renderRow(ps, index === 0 && requestedGroups.length === 0, index === ungroupedSets.length - 1)}
+          </React.Fragment>
+        ))}
       </Card>
     </div>
   );

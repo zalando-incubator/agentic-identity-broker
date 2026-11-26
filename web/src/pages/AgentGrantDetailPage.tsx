@@ -30,6 +30,7 @@ import { RevokeGrantButton } from '@components/consent/RevokeGrantButton';
 import { CIMDSection } from '@components/consent/CIMDSection';
 import { GrantValidityControl } from '@components/consent/GrantValidityControl';
 import { PermissionSetsList } from '@components/consent/PermissionSetsList';
+import { evaluateRequestedServices } from '@components/consent/requestedServiceGate';
 import { useAgentGrants, useToggleGrant, useUpdateValidity } from '@hooks';
 import { loadConsentState, saveConsentSelections } from '@services/storage/session';
 import { validateGrantRequest, isSafeRedirectUrl } from '../utils/validation';
@@ -125,6 +126,19 @@ export function AgentGrantDetailPage() {
   const [perPsIncludedServiceIds, setPerPsIncludedServiceIds] = useState<
     Record<string, string[]>
   >({});
+  // True once PermissionSetsList has reported the live selection, even when it is empty, so an
+  // emptied selection never falls back to the saved grant.
+  const [selectionReported, setSelectionReported] = useState(false);
+
+  const [retryingAgentId, setRetryingAgentId] = useState<string | null>(null);
+  const handleRequestedServiceRetry = useCallback(async () => {
+    setRetryingAgentId(resolvedAgentId);
+    try {
+      await refetch();
+    } finally {
+      setRetryingAgentId(null);
+    }
+  }, [refetch, resolvedAgentId]);
 
   // Validation errors
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -176,7 +190,7 @@ export function AgentGrantDetailPage() {
   const buildGrantedPermissionSets = (): Record<string, string[]> => {
     // perPsIncludedServiceIds is populated by PermissionSetsList on mount (including initial
     // grant hydration), so it is the single authoritative source for submission.
-    if (Object.keys(perPsIncludedServiceIds).length > 0) {
+    if (selectionReported) {
       return { ...perPsIncludedServiceIds };
     }
 
@@ -318,7 +332,7 @@ export function AgentGrantDetailPage() {
 
     // Use perPsIncludedServiceIds as the authoritative source when available (FR-009, FR-010)
     // This reflects per-service toggle state from PermissionSetsList.
-    if (Object.keys(perPsIncludedServiceIds).length > 0) {
+    if (selectionReported) {
       const serviceIds = new Set<string>();
       Object.values(perPsIncludedServiceIds).forEach((ids) =>
         ids.forEach((id) => serviceIds.add(id)),
@@ -342,19 +356,7 @@ export function AgentGrantDetailPage() {
         });
       });
     return serviceIds;
-  }, [agent, perPsIncludedServiceIds]);
-
-  // Filter services: show only those without active sessions
-  // When dynamicServiceIds is null (no PSes), show ALL services without active sessions
-  // When dynamicServiceIds is set, only show services in the dynamic set
-  const servicesWithoutActiveSessions = useMemo(() => {
-    return services.filter(
-      (service) =>
-        (dynamicServiceIds === null ||
-          dynamicServiceIds.has(service.serviceId)) &&
-        !agent?.active_session_service_ids?.includes(service.serviceId),
-    );
-  }, [services, dynamicServiceIds, agent]);
+  }, [agent, perPsIncludedServiceIds, selectionReported]);
 
   // Compute effective requirement types for service connections badges.
   // A service is effectively mandatory if SR.requirement_type=mandatory OR any currently-active PS
@@ -367,7 +369,7 @@ export function AgentGrantDetailPage() {
     // Use perPsIncludedServiceIds as authoritative source; fall back to mandatory PS IDs
     // before PermissionSetsList has mounted and emitted.
     const activePsIds =
-      Object.keys(perPsIncludedServiceIds).length > 0
+      selectionReported
         ? Object.keys(perPsIncludedServiceIds)
         : (agent?.permission_sets
             ?.filter((p) => p.requirement_type === 'mandatory')
@@ -384,7 +386,7 @@ export function AgentGrantDetailPage() {
       }
     }
     return result;
-  }, [services, agent, perPsIncludedServiceIds]);
+  }, [services, agent, perPsIncludedServiceIds, selectionReported]);
 
   // FR-020: Approve button disabled until all displayed dynamic services have active sessions
   const isApproveDisabled = useMemo(() => {
@@ -404,6 +406,95 @@ export function AgentGrantDetailPage() {
     return false;
   }, [agent, dynamicServiceIds]);
 
+  // Requested services (Virtual Service Scopes) gate Save on the live, unsaved selection.
+  // The server re-evaluates the submitted selection afresh (FR-009–FR-011).
+  const requestedCoverage = useMemo(
+    () => agent?.requested_service_coverage ?? [],
+    [agent],
+  );
+  const serviceNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    for (const service of services) {
+      names[service.serviceId] =
+        service.kind === 'requirement'
+          ? service.serviceName
+          : (service.displayName ?? service.serviceId);
+    }
+    return names;
+  }, [services]);
+  const requestedResults = useMemo(
+    () =>
+      evaluateRequestedServices(
+        requestedCoverage,
+        selectionReported
+          ? perPsIncludedServiceIds
+          : (grants?.granted_permission_sets ?? {}),
+        serviceNames,
+      ),
+    [requestedCoverage, perPsIncludedServiceIds, selectionReported, grants, serviceNames],
+  );
+  const requestedServices = useMemo(
+    () =>
+      requestedCoverage.map((service, index) => ({
+        result: requestedResults[index],
+        coveringPermissionSetIds: service.covering_permission_sets.map(
+          (candidate) => candidate.permission_set_id,
+        ),
+      })),
+    [requestedCoverage, requestedResults],
+  );
+  const requestedServiceIds = useMemo(
+    () => new Set(requestedCoverage.map((service) => service.service_id)),
+    [requestedCoverage],
+  );
+  // Show services without active sessions, plus requested services whose live login is missing or
+  // unusable even though a session exists. When dynamicServiceIds is null (no PSes), show all of them.
+  const servicesWithoutActiveSessions = useMemo(() => {
+    const requestedNeedingLogin = new Set(
+      requestedResults
+        .filter((result) => result.login === 'missing' || result.login === 'unusable')
+        .map((result) => result.serviceId),
+    );
+    return services
+      .filter(
+        (service) =>
+          requestedNeedingLogin.has(service.serviceId) ||
+          ((dynamicServiceIds === null ||
+            dynamicServiceIds.has(service.serviceId) ||
+            requestedServiceIds.has(service.serviceId)) &&
+            !agent?.active_session_service_ids?.includes(service.serviceId)),
+      )
+      .map((service) =>
+        service.kind === 'requirement'
+          ? { ...service, connectionStatus: 'not_connected' as const }
+          : service,
+      );
+  }, [services, dynamicServiceIds, agent, requestedResults, requestedServiceIds]);
+
+  const requestedBlockReasons = requestedResults
+    .filter((result) => !result.satisfied)
+    .map((result) => result.reason);
+  // Requested services carry their own login condition in requestedBlockReasons.
+  const hasUnconnectedUnrequestedService =
+    isApproveDisabled &&
+    dynamicServiceIds !== null &&
+    [...dynamicServiceIds].some(
+      (serviceId) =>
+        !requestedServiceIds.has(serviceId) &&
+        !agent?.active_session_service_ids?.includes(serviceId),
+    );
+  const isSaveDisabled = isApproveDisabled || requestedBlockReasons.length > 0;
+  const connectAllReason = hasExistingGrant
+    ? 'Connect all required services before saving.'
+    : 'Connect all required services before approving.';
+  const saveDisabledReasons = [
+    ...(hasUnconnectedUnrequestedService ? [connectAllReason] : []),
+    ...requestedBlockReasons,
+  ];
+  const saveDisabledReason = (
+    saveDisabledReasons.length > 0 ? saveDisabledReasons : isApproveDisabled ? [connectAllReason] : []
+  ).join(' ');
+
   // Validate agentId parameter (after hooks to keep hook order stable)
   if (!agentId) {
     return (
@@ -418,8 +509,8 @@ export function AgentGrantDetailPage() {
     );
   }
 
-  // Loading state
-  if (loading) {
+  // Loading state; a requested-service retry keeps the page mounted so unsaved selections survive
+  if (loading && retryingAgentId !== resolvedAgentId) {
     return (
       <AppLayout>
         <div className="space-y-6">
@@ -673,10 +764,10 @@ export function AgentGrantDetailPage() {
             />
           </div>
 
-          {/* Permission Sets section */}
-          {agent?.permission_sets && agent.permission_sets.length > 0 && (
+          {/* Permission Sets section, with requested services grouping their covering sets */}
+          {((agent?.permission_sets?.length ?? 0) > 0 || requestedServices.length > 0) && (
             <PermissionSetsList
-              permissionSets={agent.permission_sets}
+              permissionSets={agent.permission_sets ?? []}
               availableServices={services.map((s) => ({
                 id: s.serviceId,
                 display_name:
@@ -689,8 +780,12 @@ export function AgentGrantDetailPage() {
               initialGrantedPermissionSets={
                 restoredSelections ?? grants?.granted_permission_sets ?? {}
               }
+              agentName={agent.displayName}
+              requestedServices={requestedServices}
+              onRequestedServiceRetry={() => void handleRequestedServiceRetry()}
               onSelectionChange={(_optionalIds, perPsIncluded) => {
                 setPerPsIncludedServiceIds(perPsIncluded);
+                setSelectionReported(true);
               }}
             />
           )}
@@ -730,6 +825,7 @@ export function AgentGrantDetailPage() {
                       onDelegate={() => handleServiceConnect(service.serviceId)}
                       onRevoke={() => {}}
                       inStack
+                      isRequested={requestedServiceIds.has(service.serviceId)}
                       isFirst={index === 0}
                       isLast={
                         index === servicesWithoutActiveSessions.length - 1
@@ -758,7 +854,8 @@ export function AgentGrantDetailPage() {
               variant="primary"
               onClick={handleSubmit}
               isLoading={isSubmitting}
-              disabled={isApproveDisabled}
+              disabled={isSaveDisabled}
+              aria-describedby={isSaveDisabled ? 'consent-save-reason' : undefined}
               title={
                 isApproveDisabled
                   ? hasExistingGrant
@@ -772,6 +869,11 @@ export function AgentGrantDetailPage() {
               {hasExistingGrant ? 'Save' : 'Approve & Delegate'}
             </Button>
           </div>
+          {isSaveDisabled && (
+            <p id="consent-save-reason" className="text-sm text-neutral-700 text-right">
+              {saveDisabledReason}
+            </p>
+          )}
         </div>
       </PageTransition>
     </AppLayout>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/authorization"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/extproc/grantcontext"
@@ -395,6 +397,112 @@ func TestGrantContext_BodyPathPrecedence(t *testing.T) {
 			})
 		}
 	}
+}
+
+// A consent denial for a service that the concurrent exchange names adds the disabled-mode
+// insufficient_scope challenge to the denial, so the agent can reauthorize
+// (adrs/20261122-103452-virtual-service-scopes-revision-2.md).
+func TestGrantContext_BodyPathConsentDenialOffersServiceScopeChallenge(t *testing.T) {
+	const serviceScope = "https://broker.example.com/sessions/github"
+	const metadataURL = "https://gateway.example.com/.well-known/oauth-protected-resource/mcp"
+	denied := &grantcontext.DeniedError{Code: "grant_service_omitted", ConsentURL: consentURL}
+	coverageErr := func(mutate func(*server.BrokerExchangeError)) error {
+		err := &server.BrokerExchangeError{StatusCode: 403, Code: "access_denied", Description: "service not granted",
+			ErrorURI: consentURL, Scope: serviceScope}
+		if mutate != nil {
+			mutate(err)
+		}
+		return err
+	}
+	const challenge = `Bearer error="insufficient_scope", error_description="delegation denied: grant_service_omitted", error_uri="` +
+		consentURL + `", scope="` + serviceScope + `"`
+
+	tests := []struct {
+		name          string
+		resolveErr    error
+		exchangeErr   error
+		metadata      *structpb.Value
+		wantStatus    int
+		wantChallenge string
+	}{
+		{name: "coverage denial with scoped exchange denial", resolveErr: denied, exchangeErr: coverageErr(nil),
+			wantStatus: 403, wantChallenge: challenge},
+		{name: "wrapped scoped exchange denial", resolveErr: denied, exchangeErr: fmt.Errorf("exchange: %w", coverageErr(nil)),
+			wantStatus: 403, wantChallenge: challenge},
+		{name: "route resource metadata follows the scope", resolveErr: denied, exchangeErr: coverageErr(nil),
+			metadata: structpb.NewStringValue(metadataURL), wantStatus: 403, wantChallenge: challenge + `, resource_metadata="` + metadataURL + `"`},
+		{name: "invalid route resource metadata is omitted", resolveErr: denied, exchangeErr: coverageErr(nil),
+			metadata: structpb.NewStringValue("http://gateway.example.com/metadata"), wantStatus: 403, wantChallenge: challenge},
+		{name: "exchange success keeps plain denial", resolveErr: denied, wantStatus: 403},
+		{name: "exchange denial without scope keeps plain denial", resolveErr: denied,
+			exchangeErr: coverageErr(func(e *server.BrokerExchangeError) { e.Scope = "" }), wantStatus: 403},
+		{name: "invalid scope keeps plain denial", resolveErr: denied,
+			exchangeErr: coverageErr(func(e *server.BrokerExchangeError) { e.Scope = "github" }), wantStatus: 403},
+		{name: "another agent's consent URL keeps plain denial", resolveErr: denied,
+			exchangeErr: coverageErr(func(e *server.BrokerExchangeError) {
+				e.ErrorURI = "https://broker.example.com/agents/660e8400-e29b-41d4-a716-446655440000"
+			}), wantStatus: 403},
+		{name: "session recovery error keeps plain denial", resolveErr: denied,
+			exchangeErr: coverageErr(func(e *server.BrokerExchangeError) {
+				e.StatusCode, e.Code = 400, "invalid_grant"
+			}), wantStatus: 403},
+		{name: "transient exchange failure keeps plain denial", resolveErr: denied,
+			exchangeErr: coverageErr(func(e *server.BrokerExchangeError) { e.StatusCode = 503 }), wantStatus: 403},
+		{name: "non-broker exchange failure keeps plain denial", resolveErr: denied, exchangeErr: errors.New("network"), wantStatus: 403},
+		{name: "resolution failure stays closed", resolveErr: &grantcontext.Error{Category: grantcontext.CategoryRejected},
+			exchangeErr: coverageErr(nil), wantStatus: 503},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newGrantContextHarness(t, func() (grantcontext.Result, error) { return grantcontext.Result{}, tt.resolveErr })
+			h.exchangeFn = func() (server.ExchangeResult, error) {
+				if tt.exchangeErr == nil {
+					return server.ExchangeResult{Token: "exchanged", Principal: "alice@example.com", AgentID: "agent-uuid"}, nil
+				}
+				return server.ExchangeResult{}, tt.exchangeErr
+			}
+			metadata := validTokenExchangeMetadata("mcp")
+			if tt.metadata != nil {
+				metadata.FilterMetadata[tokenExchangeMetadataNamespace].Fields["resource_metadata_url"] = tt.metadata
+			}
+
+			headersResp, bodyResp := sendHeadersThenBodyWithMetadata(t, h.client, map[string]string{":method": "POST"}, metadata, mcpCall)
+
+			assert.Nil(t, bodyResp)
+			ir := headersResp.GetImmediateResponse()
+			require.NotNil(t, ir)
+			assert.Equal(t, int32(tt.wantStatus), int32(ir.Status.Code))
+			assert.Zero(t, h.policies.Load())
+			assert.Equal(t, tt.wantChallenge, headerMutationValue(ir.Headers, "www-authenticate"))
+			assert.NotContains(t, string(ir.Body), testSubjectToken)
+			var body map[string]string
+			require.NoError(t, json.Unmarshal(ir.Body, &body))
+			if tt.wantStatus == 403 {
+				assert.Equal(t, map[string]string{"error": "access_denied", "error_description": "delegation denied: grant_service_omitted",
+					"error_uri": consentURL}, body, "the Feature 054 denial body is unchanged")
+			}
+		})
+	}
+}
+
+// The header-only path resolves before any exchange (ADR 048), so ExtProc knows no service
+// scope there: a denial keeps the plain consent response and makes no extra broker call.
+func TestGrantContext_HeaderOnlyDenialKeepsPlainConsentResponse(t *testing.T) {
+	h := newGrantContextHarness(t, func() (grantcontext.Result, error) {
+		return grantcontext.Result{}, &grantcontext.DeniedError{Code: "grant_service_omitted", ConsentURL: consentURL}
+	})
+	metadata := validTokenExchangeMetadata("mcp")
+	metadata.FilterMetadata[tokenExchangeMetadataNamespace].Fields["resource_metadata_url"] =
+		structpb.NewStringValue("https://gateway.example.com/.well-known/oauth-protected-resource/mcp")
+
+	resp, err := sendRequestHeadersWithMetadata(t, h.client, map[string]string{":method": "GET"}, metadata, true)
+	require.NoError(t, err)
+
+	ir := resp.GetImmediateResponse()
+	require.NotNil(t, ir)
+	assert.Equal(t, int32(403), int32(ir.Status.Code))
+	assert.Empty(t, headerMutationValue(ir.Headers, "www-authenticate"))
+	assert.Zero(t, h.exchanges.Load())
 }
 
 func TestGrantContext_BodyPathRejectsPermitExpiredBeforePolicy(t *testing.T) {

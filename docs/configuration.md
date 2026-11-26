@@ -200,10 +200,37 @@ Precedence is flags, then environment variables, then YAML, then defaults. ExtPr
 
 An empty `policy_decision_point` defaults to the scheme, host and port of `oauth2.token_endpoint`; for `https://broker.example.com:8443/oauth2/token` the identifier is `https://broker.example.com:8443`. The value must equal the broker's `server.enduser.public_url` without a trailing slash. When the broker's public URL has a path prefix, for example `https://example.com/broker`, set the identifier explicitly. ExtProc then discovers `https://example.com/.well-known/authzen-configuration/broker` (the AuthZEN well-known string goes between the host and the path), so the reverse proxy must route that URL to the broker's `/.well-known/authzen-configuration`.
 
-At startup ExtProc fetches the metadata without credentials, requires the advertised `policy_decision_point` to equal the expected identifier exactly, and validates the advertised `access_evaluation_endpoint`. ExtProc never guesses an endpoint or silently disables the feature. A failed discovery (transport error, non-200, invalid or incomplete metadata) is retried with a backoff that starts at 1 s and doubles to a 10 s cap, logging Warn `event=extproc.grant_context.discovery_failed` each time; the gRPC port stays closed until discovery succeeds. A `policy_decision_point` mismatch or an invalid advertised endpoint stops startup. Give the ExtProc container a `tcpSocket` readiness probe on its gRPC port, so a rollout during a broker outage keeps the existing ready pods instead of replacing them with pods that cannot serve. A permit is reused for at most `min(max-age, max_staleness)` from the moment the evaluation request was sent; the broker caps `max-age` at 60 seconds and at the grant expiry. A delegation denial returns 403 with the consent URL, and a broker failure or an expired permit returns 503; a cached exchanged token is never a fallback.
+At startup ExtProc fetches the metadata without credentials, requires the advertised `policy_decision_point` to equal the expected identifier exactly, and validates the advertised `access_evaluation_endpoint`. ExtProc never guesses an endpoint or silently disables the feature. A failed discovery (transport error, non-200, invalid or incomplete metadata) is retried with a backoff that starts at 1 s and doubles to a 10 s cap, logging Warn `event=extproc.grant_context.discovery_failed` each time; the gRPC port stays closed until discovery succeeds. A `policy_decision_point` mismatch or an invalid advertised endpoint stops startup. Give the ExtProc container a `tcpSocket` readiness probe on its gRPC port, so a rollout during a broker outage keeps the existing ready pods instead of replacing them with pods that cannot serve. A permit is reused for at most `min(max-age, max_staleness)` from the moment the evaluation request was sent; the broker caps `max-age` at 60 seconds and at the grant expiry. A delegation denial returns 403 with the consent URL, and a broker failure or an expired permit returns 503; a cached exchanged token is never a fallback. On a body-bearing request, a denial for a service that the concurrent exchange names also carries the `insufficient_scope` challenge with the service `scope` and the route's optional `resource_metadata` ([incremental service authorization](#incremental-service-authorization)).
 
 See [`examples/config/extproc-grant-context.yaml`](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/extproc-grant-context.yaml).
 
+
+## Incremental service authorization
+
+Incremental service authorization ([guide](guides/incremental-authorization.md)) reuses
+`server.enduser.public_url` for service scopes and recovery URLs, and
+`oauth2_authorization_server.mode` for local/proxy/hybrid behavior. It adds no broker
+or ExtProc process configuration key. See the
+[broker overlay](../examples/config/incremental-authorization.yaml) and
+[Agentgateway example](../examples/config/incremental-authorization-agentgateway.yaml).
+
+Agentgateway owns the optional route field
+`extProc.metadataContext.aib.tokenexchange.resource_metadata_url`; `aib.tokenexchange`
+is one literal namespace. Its value is a CEL string expression producing an absolute HTTPS
+URL with a nonempty host, no userinfo or fragment, at most 2048 bytes, and only bytes
+`0x21`–`0x7E` excluding double quote and backslash. ExtProc validates the resulting string
+only when generating a challenge. Absent values omit `resource_metadata`; invalid or
+non-string values also omit it and produce a value-free `challenge_metadata_invalid`
+diagnostic without changing the exchange outcome. Service `scope`, `error_uri` and URL
+elicitation remain independent of this advisory field. With ExtProc grant context enabled,
+the same field also applies to the challenge that a body-path delegation denial carries
+when the concurrent exchange names the service.
+
+There is no default URL, environment variable, CLI flag or configuration-source precedence
+for route metadata. Do not put it in `internal/ports/config.go`, ExtProc YAML, or the broker
+Helm values/ConfigMap. Agentgateway and ExtProc are deployed separately from the broker chart
+under ADRs 011 and 036. Metadata hosting remains an operator responsibility, not a new service
+provided by this feature.
 
 ## Environment-Specific Configuration
 
@@ -1803,6 +1830,8 @@ target agent. `requested_token_type` is optional. When present, it must be the a
 type. `resource` must be absent. `scope` is optional and uses literal-space-separated values.
 Each non-reserved scope must be in the resolved target `allowed_scopes`. An empty allow list
 permits all non-reserved scopes. `offline` and `offline_access` are reserved and permitted.
+Virtual service scopes are exempt from the allow list and follow the
+[impersonation service-scope rules](reference/token-exchange.md#virtual-service-scopes).
 The response and minted token contain a non-empty granted scope. The target UUID and agent
 always supply `agent_id` and local CEL `agent.*`, regardless of identifier form. Local policy
 controls `aud`.

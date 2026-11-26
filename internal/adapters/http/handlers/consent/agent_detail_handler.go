@@ -13,6 +13,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/go-chi/chi/v5"
 )
@@ -43,6 +44,11 @@ var errSessionExpired = errors.New("authorization session expired")
 // cannot be decrypted or unmarshalled (tampered, wrong key, truncated). Distinct from
 // errSessionExpired to allow callers to log at appropriate severity.
 var errInvalidToken = errors.New("authorization session token invalid")
+
+var (
+	errSessionAgentMismatch     = errors.New("authorization session does not match requested agent")
+	errSessionPrincipalMismatch = errors.New("authorization session does not belong to this user")
+)
 
 // errInternalSession is returned by resolveSessionContext when session validation fails
 // due to a server-side misconfiguration or invariant violation (not a bad client token).
@@ -96,6 +102,68 @@ type AgentDetailData struct {
 	ActiveSessionIDs    []string                       `json:"active_session_service_ids"`
 	ServiceRequirements []ServiceRequirementInfo       `json:"service_requirements"`
 	CIMDMetadata        *CIMDMetadataResponse          `json:"cimd_metadata,omitempty"`
+	// RequestedServiceIDs and RequestedServiceCoverage are derived from the sealed session
+	// token and are always present ([] without one).
+	RequestedServiceIDs      []string                   `json:"requested_service_ids"`
+	RequestedServiceCoverage []RequestedServiceCoverage `json:"requested_service_coverage"`
+}
+
+// RequestedServiceCoverage explains one requested service's coverage and session usability.
+type RequestedServiceCoverage struct {
+	ServiceID              string                  `json:"service_id"`
+	RequiredScopes         []string                `json:"required_scopes"`
+	Usability              string                  `json:"usability"`
+	CoveringPermissionSets []CoveringPermissionSet `json:"covering_permission_sets"`
+}
+
+// CoveringPermissionSet is a declared permission set that covers a requested service.
+type CoveringPermissionSet struct {
+	PermissionSetID        string   `json:"permission_set_id"`
+	SuppliedRequiredScopes []string `json:"supplied_required_scopes"`
+	Usability              string   `json:"usability"`
+}
+
+// publicUsability maps domain usability onto the API enum.
+func publicUsability(usability servicescope.Usability) string {
+	switch usability {
+	case servicescope.UsabilityUsable:
+		return "usable"
+	case servicescope.UsabilityMissing:
+		return "missing"
+	case servicescope.UsabilityUnverifiableTransient:
+		return "unavailable"
+	default:
+		return "unusable"
+	}
+}
+
+func toRequestedServiceCoverage(outcomes []servicescope.Outcome) []RequestedServiceCoverage {
+	coverage := make([]RequestedServiceCoverage, len(outcomes))
+	for i, outcome := range outcomes {
+		candidates := make([]CoveringPermissionSet, len(outcome.Candidates))
+		for j, candidate := range outcome.Candidates {
+			supplied := candidate.SuppliedRequiredScopes
+			if supplied == nil {
+				supplied = []string{}
+			}
+			candidates[j] = CoveringPermissionSet{
+				PermissionSetID:        candidate.PermissionSetID.String(),
+				SuppliedRequiredScopes: supplied,
+				Usability:              publicUsability(candidate.Usability),
+			}
+		}
+		required := outcome.RequiredScopes
+		if required == nil {
+			required = []string{}
+		}
+		coverage[i] = RequestedServiceCoverage{
+			ServiceID:              outcome.ServiceID.String(),
+			RequiredScopes:         required,
+			Usability:              publicUsability(outcome.Baseline),
+			CoveringPermissionSets: candidates,
+		}
+	}
+	return coverage
 }
 
 // AgentMetadata is the agent metadata portion of the unified response.
@@ -191,16 +259,25 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 	services := toServiceRequirementForUser(detail.ServiceRequirements)
 	sortServiceRequirements(services)
 
-	cimdMeta, err := h.resolveSessionContext(r, parsedAgentID)
+	cimdMeta, requestedServiceIDs, err := h.resolveSessionContext(r, parsedAgentID)
 	if err != nil {
 		if errors.Is(err, errSessionExpired) {
-			h.logger.WarnContext(ctx, "authorization session expired", "agent_id", agentID)
+			logAuthorizationSessionRejected(ctx, h.logger, parsedAgentID, userPrincipal, reasonExpiredAuthorizationSession)
 			h.writeError(ctx, w, http.StatusBadRequest, "session_expired", "authorization session has expired, please restart the authorization flow")
 			return
 		}
 		if errors.Is(err, errInvalidToken) {
-			h.logger.ErrorContext(ctx, "authorization session token invalid", "agent_id", agentID)
+			logAuthorizationSessionRejected(ctx, h.logger, parsedAgentID, userPrincipal, reasonInvalidAuthorizationSession)
 			h.writeError(ctx, w, http.StatusBadRequest, "invalid_token", "authorization session token is invalid")
+			return
+		}
+		if errors.Is(err, errSessionAgentMismatch) || errors.Is(err, errSessionPrincipalMismatch) {
+			reason := reasonAgentMismatch
+			if errors.Is(err, errSessionPrincipalMismatch) {
+				reason = reasonPrincipalMismatch
+			}
+			logAuthorizationSessionRejected(ctx, h.logger, parsedAgentID, userPrincipal, reason)
+			h.writeError(ctx, w, http.StatusBadRequest, "bad request", "invalid authorization session")
 			return
 		}
 		if errors.Is(err, errInternalSession) {
@@ -213,9 +290,24 @@ func (h *AgentDetailHandler) GetAgentDetail(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	outcomes := []servicescope.Outcome{}
+	if len(requestedServiceIDs) > 0 {
+		outcomes, err = h.consentService.RequestedServiceCoverage(ctx, userPrincipal, parsedAgentID, requestedServiceIDs)
+		if err != nil {
+			h.logger.ErrorContext(ctx, "failed to evaluate requested services", "agent_id", agentID, "error", err)
+			h.writeError(ctx, w, http.StatusInternalServerError, "internal server error", "")
+			return
+		}
+	}
+
 	response := GetAgentDetailResponse{
 		Data: h.buildResponse(ctx, detail, services, cimdMeta),
 	}
+	response.Data.RequestedServiceIDs = make([]string, len(requestedServiceIDs))
+	for i, serviceID := range requestedServiceIDs {
+		response.Data.RequestedServiceIDs[i] = serviceID.String()
+	}
+	response.Data.RequestedServiceCoverage = toRequestedServiceCoverage(outcomes)
 
 	h.logger.InfoContext(ctx, "agent detail retrieved",
 		"agent_id", agentID,
@@ -368,44 +460,50 @@ func sortServiceRequirements(services []ServiceRequirementForUser) {
 // grants endpoint; authorization-resumption state (original_url, PKCE, state) stays server-side.
 // CIMD agents require session_token — falling back to query params would reopen the
 // metadata-spoofing surface. Non-CIMD/opaque flows do not use session tokens.
-func (h *AgentDetailHandler) resolveSessionContext(r *http.Request, agentID id.AgentID) (*CIMDMetadataResponse, error) {
-	sessionToken := r.URL.Query().Get("session_token")
+func (h *AgentDetailHandler) resolveSessionContext(r *http.Request, agentID id.AgentID) (*CIMDMetadataResponse, []id.ServiceID, error) {
+	var requested []id.ServiceID
+	sessionToken, err := sessionTokenParameter(r.URL.RawQuery)
+	if err != nil {
+		return nil, requested, err
+	}
 	if sessionToken == "" {
-		return nil, nil
+		return nil, requested, nil
 	}
 
 	userID, ok := getPrincipalFromContext(r.Context())
 	if !ok {
-		return nil, fmt.Errorf("%w: principal not found in context", errInternalSession)
+		return nil, requested, fmt.Errorf("%w: principal not found in context", errInternalSession)
 	}
 	claims, err := h.sessionTokenValidator.ValidateAuthorizationSessionToken(sessionToken, agentID, id.Principal(userID))
 	if err != nil {
 		switch {
 		case errors.Is(err, ports.ErrSessionExpired):
-			return nil, errSessionExpired
+			return nil, requested, errSessionExpired
 		case errors.Is(err, ports.ErrSessionAgentMismatch):
-			return nil, errors.New("authorization session does not match requested agent")
+			return nil, requested, errSessionAgentMismatch
 		case errors.Is(err, ports.ErrSessionPrincipalMismatch):
-			return nil, errors.New("authorization session does not belong to this user")
+			return nil, requested, errSessionPrincipalMismatch
 		case errors.Is(err, ports.ErrSessionInvalidToken):
-			return nil, errInvalidToken
+			return nil, requested, errInvalidToken
 		default:
-			return nil, fmt.Errorf("%w: unexpected error: %v", errInternalSession, err)
+			return nil, requested, fmt.Errorf("%w: unexpected error: %v", errInternalSession, err)
 		}
 	}
 
+	requested = claims.RequestedServiceIDs
+
 	if claims.CIMDMetadata == nil {
-		return nil, nil
+		return nil, requested, nil
 	}
 
 	u, err := url.Parse(claims.CIMDMetadata.ClientID)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid client_id in sealed session token", errInternalSession)
+		return nil, requested, fmt.Errorf("%w: invalid client_id in sealed session token", errInternalSession)
 	}
 
 	orig, err := url.Parse(claims.OriginalURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid original_url in sealed session token", errInternalSession)
+		return nil, requested, fmt.Errorf("%w: invalid original_url in sealed session token", errInternalSession)
 	}
 	q := orig.Query()
 
@@ -420,5 +518,5 @@ func (h *AgentDetailHandler) resolveSessionContext(r *http.Request, agentID id.A
 		VerifiedDomain:  u.Hostname(),
 		RequestedScopes: requestedScopes,
 		LogoURI:         claims.CIMDMetadata.LogoURI,
-	}, nil
+	}, requested, nil
 }

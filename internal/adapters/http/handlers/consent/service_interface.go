@@ -5,6 +5,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/consent"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
@@ -16,6 +17,7 @@ type ConsentService interface {
 	RevokeConsentForPrincipal(ctx context.Context, principal id.Principal, agentID id.AgentID) error
 	GetAgentDelegations(ctx context.Context, principal id.Principal) ([]consent.AgentDelegation, error)
 	GetUserGrants(ctx context.Context, principal id.Principal, agentID id.AgentID) ([]*storage.UserGrant, error)
+	RequestedServiceCoverage(ctx context.Context, principal id.Principal, agentID id.AgentID, serviceIDs []id.ServiceID) ([]servicescope.Outcome, error)
 }
 
 var _ ConsentService = (*consent.Service)(nil)

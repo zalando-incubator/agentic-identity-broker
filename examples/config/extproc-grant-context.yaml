@@ -7,7 +7,11 @@
 # canonical IDs) instead of deployment-specific UUIDs.
 #
 # Every failure is closed: a delegation denial returns 403 with the consent URL, a
-# broker failure or an expired permit returns 503. Grant context requires
+# broker failure or an expired permit returns 503. On a body-bearing request, a
+# denial for a service named by the concurrent exchange also carries the
+# insufficient_scope challenge with that service's scope and the route's optional
+# aib.tokenexchange.resource_metadata_url
+# (adrs/20261122-103452-virtual-service-scopes-revision-2.md). Grant context requires
 # authorization.enabled. Disabled mode (the default) is unchanged.
 
 grpc:

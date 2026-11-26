@@ -22,6 +22,22 @@ GO_ENV=production ./agentic-identity-broker --config ./examples/config/config.pr
 
 ## Configuration Files
 
+### Incremental service authorization
+
+- [`incremental-authorization.yaml`](incremental-authorization.yaml) is a broker overlay using the existing `server.enduser.public_url` and `oauth2_authorization_server.mode`. Merge it with a complete secure deployment configuration. It does not configure credentials or authentication by itself.
+- [`incremental-authorization-agentgateway.yaml`](incremental-authorization-agentgateway.yaml) configures the separate Agentgateway producer with strict JWT validation, `preserveToken: false` and fail-closed ExtProc. Its optional `aib.tokenexchange.resource_metadata_url` is a route metadata field, not a broker/ExtProc configuration key.
+
+For the absent/default variant, omit `resource_metadata_url`:
+
+```yaml
+metadataContext:
+  aib.tokenexchange:
+    subject_token: "jwt.rawToken.unredacted()"
+    resource_uri: "'https://agentgateway.example.com/mcp'"
+```
+
+ExtProc omits only the `resource_metadata` challenge attribute when this field is absent or invalid; it preserves the service scope and recovery URL. No process default, environment variable, CLI flag or precedence chain is added. See [configuration ownership and validation](../../docs/configuration.md#incremental-service-authorization), [the gateway guide](../../docs/guides/token-exchange-gateway.md#incremental-authorization-metadata) and [the incremental authorization guide](../../docs/guides/incremental-authorization.md).
+
 ### `extproc-tool-approvals.yaml`
 
 This file configures OPA approval gating for the standalone ExtProc service. It contains the required approval API URL and session-header setting.

@@ -95,3 +95,22 @@ func AgentWithURLs() *storage.Agent {
 	agent.AgentInterfaceURL = &agentInterfaceURL
 	return agent
 }
+
+// DataAnalysisAssistant returns the incremental-authorization cast's local agent. It declares
+// mandatory Identity Access plus the optional GitHub sets, requires profile from mandatory
+// Corporate Identity and repo and user:email from optional GitHub. The GitHub requirement is
+// listed first. Further optional requirements can be appended by the caller.
+func DataAnalysisAssistant(identityAccess, githubRead, issueTriage id.PermissionSetID, identity, github id.ServiceID) *storage.Agent {
+	agent := newTestAgent(nil, "Data Analysis Assistant", "Analyzes repository data for the signed-in user")
+	agent.RedirectURIs = []string{"https://client.example.com/cb"}
+	agent.PermissionSets = []storage.AgentPermissionSetEntry{
+		{PermissionSetID: identityAccess, RequirementType: storage.RequirementTypeMandatory},
+		{PermissionSetID: githubRead, RequirementType: storage.RequirementTypeOptional},
+		{PermissionSetID: issueTriage, RequirementType: storage.RequirementTypeOptional},
+	}
+	agent.ServiceRequirements = []storage.ServiceRequirement{
+		{ServiceID: github, RequirementType: storage.RequirementTypeOptional, RequiredScopes: []string{"repo", "user:email"}},
+		{ServiceID: identity, RequirementType: storage.RequirementTypeMandatory, RequiredScopes: []string{"profile"}},
+	}
+	return agent
+}
