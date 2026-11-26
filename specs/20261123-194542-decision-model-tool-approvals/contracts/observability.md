@@ -47,9 +47,8 @@ Attributes of `assessment.tool_call.assessed`:
 | `arguments_ref` | `sha256:` and the arguments hash of the shared leaf package (D-07) |
 | `assessment_status` | A status of D-04 |
 | `outcome` | `automatic_approval`, `human_review`, or `denied` |
-| `auto_approval_rule` | The rule name from the policy, if one applies |
 | `would_auto_approve` | Boolean. True in the `recommend` mode if all other conditions of FR-041 are true (FR-044) |
-| `unmet_condition` | For an `allow` result that did not proceed: `mode`, `rule_missing`, `status`, or `denial` |
+| `unmet_condition` | For an `allow` result that did not proceed: `mode`, `status`, or `denial` |
 | `model` | The answering model |
 | `answers` | A group with the question name as the key. The value is the probability, or the list of level probabilities, or the answer state if no value exists |
 | `duration_ms` | The duration of the model request |

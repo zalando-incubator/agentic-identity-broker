@@ -41,14 +41,14 @@ Each journey uses the values of the journeys in [spec.md](spec.md).
 2. **No model request for other calls.** Send a call that the policy allows, a call that the policy denies, and a call with an existing permanent denial. Make sure that the double received no request.
 3. **Failures (Journey 3).** Set the double to each failure: a late answer, a refusal, a missing answer, an invalid probability, an HTTP error, and a closed connection. For each failure, make sure that a pending approval exists. Make sure that the create request has the description "Share a Drive file" and the risk level `medium`.
 4. **Second identical call.** Send the external editor share two times before the approval expires. Make sure that the double received one request. Make sure that the two responses contain the same approval URL.
-5. **Automatic approval (Journey 2).** Start ExtProc in the `auto_approve` mode. Send the internal reader share. Make sure that the tool double received the call and the broker double received no create request. Find the record `assessment.tool_call.assessed` with the rule name. Make sure that it contains no argument value.
-6. **Stops of automatic approval.** Do step 5 again in the `recommend` mode. Do it again with a policy that returns `allow` without a rule name. Do it again with a refusal for one question. Do it again with arguments that make the context larger than the limit. For each change, make sure that the call waits for a person.
+5. **Automatic approval (Journey 2).** Start ExtProc in the `auto_approve` mode. Send the internal reader share. Make sure that the tool double received the call and the broker double received no create request. Find the record `assessment.tool_call.assessed` with the outcome `automatic_approval`. Make sure that it contains no argument value.
+6. **Stops of automatic approval.** Do step 5 again in the `recommend` mode. Do it again with a refusal for one question. Do it again with arguments that make the context larger than the limit. For each change, make sure that the call waits for a person.
 7. **Disabled feature.** Set `authorization.assessment.enabled` to `false`. Send the external editor share. Make sure that the double received no request. Make sure that the create request is the same as before this feature.
 8. **Gateway path.** In the ExtProc suite with agentgateway `v1.7.0`, send the `tools/list` exchange and the share through agentgateway. Make sure that ExtProc learned the definition and that the client received the bytes that ExtProc returned. Make sure that the Decisions request with two `input_text` parts gets to the OpenAI-format double and to the System One-format double.
 
 ## Evidence and limits
 
-- Map each of the 20 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
+- Map each of the 19 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
 - The signal test is in its own file. It is not an acceptance scenario.
 - Copy the verification record of [research.md](research.md) into the ADR. The cases in `tests/e2e/extproc/assessment_gateway_verification_test.go`, `tests/e2e/extproc/assessment_decision_endpoint_verification_test.go`, and `tests/e2e/approval_api_test.go` stay in the suites.
 - The automated checks prove the behavior of the system around the model. They do not measure a model, a question, or a policy. That measurement is out of scope (D-18). An operator can analyse the decision logs of the policy engine outside the product.

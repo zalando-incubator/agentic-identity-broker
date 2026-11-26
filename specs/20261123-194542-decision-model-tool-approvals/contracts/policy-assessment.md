@@ -71,11 +71,12 @@ or `[]` is not.
 
 ## 3. Result fields
 
-The second evaluation can return each existing action. One field is new.
+The second evaluation can return each existing action. The result gets no new field. An `allow`
+result of the second evaluation lets the call proceed, if the conditions of FR-041 are true.
 
-| Action | New field | Type | Rules |
-|---|---|---|---|
-| `allow` | `auto_approval.rule` | string, pattern `^[a-z][a-z0-9_]{0,63}$` | It names the rule for the audit record. |
+The system ignores each field that it does not know. Thus, a policy can add a field of its own
+to the result, for example the name of the rule that applied. The decision log of the policy
+engine then has that field.
 
 `approval_context.description` and `approval_context.risk_level` keep their fields and their
 rules. They are the only values of the result that the approver sees (D-16). A policy can derive
@@ -113,8 +114,8 @@ The system sends the description and the risk level to the broker in the existin
 create request, with the existing rules. It adds no other value of the assessment to that request
 (FR-038). A policy result cannot stop the creation of a pending approval.
 
-In the first evaluation, the system reads only the existing fields. It ignores `auto_approval`
-there.
+In the first evaluation, an `allow` result lets the call proceed without an assessment, as
+before this feature.
 
 ## 5. Example
 

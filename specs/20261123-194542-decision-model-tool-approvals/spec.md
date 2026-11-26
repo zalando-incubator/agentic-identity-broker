@@ -10,8 +10,8 @@
 
 A decision model answers a fixed set of narrow, typed questions about one tool call. The policy
 reads the answers as evidence. Only the policy decides whether the call waits for a person. Only
-the policy decides what that person sees. If the operator opts in, a named policy rule can let a
-call proceed without a person.
+the policy decides what that person sees. If the operator opts in, the policy can let a call
+proceed without a person.
 
 The system never asks the model to approve or deny a call. No model result can change a policy
 denial or a human denial.
@@ -118,20 +118,16 @@ Make sure that each call results in a pending approval.
 2. **Given** the same setup, **When** the model refuses one question, omits one answer, or returns a probability that is not between 0 and 1, **Then** the assessment is incomplete, and the call waits for a person.
 3. **Given** the same setup, **When** the system cannot connect to the decision endpoint, **Then** the broker creates the pending approval as before. Alice can approve or deny it.
 4. **Given** an assessed call that waits for a person, **When** the agent sends the identical call again before the pending approval expires, **Then** the system sends no second model request. The call still waits for the same approval.
-5. **Given** an incomplete assessment, **When** the policy returns `allow` with a rule name, **Then** the system uses `approval_required` as the result.
+5. **Given** an incomplete assessment, **When** the policy returns `allow`, **Then** the system uses `approval_required` as the result.
 
 ---
 
-### User Story 4 - Let Harmless Calls Proceed Under a Named Rule (Priority: P2)
+### User Story 4 - Let Harmless Calls Proceed Without a Person (Priority: P2)
 
 Olivia enables automatic approval. Her policy contains a rule for a reader share in the
-organization that the owner can undo. The rule has a name. If a call satisfies the rule, the
-policy returns `allow` with that name. The agent then continues, and Alice gets no request. An
-audit record names the rule and the answers.
-
-A named rule is a policy rule that puts its name into the policy result (`auto_approval.rule`).
-Only a result with a rule name lets a call proceed without a person. The name tells an auditor
-which rule let the call proceed.
+organization that the owner can undo. If a call satisfies the rule, the policy returns `allow`
+after the assessment. The agent then continues, and Alice gets no request. An audit record has
+the answers.
 
 **Why this priority**: This story gives the decrease in approval requests that the issue asks for.
 It depends on stories 1 to 3. A model can be wrong with high confidence, and that risk stays
@@ -144,10 +140,9 @@ that the call waits for a person.
 
 **Acceptance Scenarios**:
 
-1. **Given** automatic approval mode and the rule `internal_reversible_share`, **When** the agent shares a file with an `example.com` colleague as reader and all answers satisfy the rule, **Then** the system forwards the call to the tool without an elicitation. The broker creates no pending approval. One audit record names the rule, the answering model, and each answer value. The audit record contains no argument value.
+1. **Given** automatic approval mode and a policy that allows an internal reader share, **When** the agent shares a file with an `example.com` colleague as reader and all answers satisfy the rule, **Then** the system forwards the call to the tool without an elicitation. The broker creates no pending approval. One audit record has the answering model and each answer value. The audit record contains no argument value.
 2. **Given** the same setup, **When** the agent shares a file with `thirdparty.example.com` as editor, **Then** the call does not satisfy the rule. The call waits for a person, as in User Story 1.
-3. **Given** recommendation mode, **When** the policy returns `allow` with a rule name after the assessment, **Then** the call waits for a person. The audit record shows that the rule approves this call in automatic approval mode.
-4. **Given** automatic approval mode, **When** the policy returns `allow` after the assessment without a rule name, **Then** the call waits for a person.
+3. **Given** recommendation mode, **When** the policy returns `allow` after the assessment, **Then** the call waits for a person. The audit record shows that the policy lets this call proceed in automatic approval mode.
 
 ---
 
@@ -363,29 +358,29 @@ risk_level := "low" if {
 
 approval_context := {"description": description, "risk_level": risk_level}
 
-# A named rule. It combines a deterministic precondition with several answers (R-03).
-auto_rule := "internal_reversible_share" if {
+# The rule for automatic approval. It combines a deterministic precondition with several answers (R-03).
+auto_approve if {
 	assessed
 	input.mcp.arguments.role == "reader"
 	not risky
 }
 
 # The system uses approval_context of an allow result only if the call waits for a person.
-result := {"action": "allow", "auto_approval": {"rule": auto_rule}, "approval_context": approval_context} if {
+result := {"action": "allow", "approval_context": approval_context} if {
 	is_share
-	auto_rule
+	auto_approve
 }
 
 result := {"action": "approval_required", "approval_context": approval_context} if {
 	is_share
-	not auto_rule
+	not auto_approve
 }
 ```
 
 Without an assessment, the policy returns `approval_required` for each share, with the
 description "Share a Drive file" and the risk level `medium`. This first result makes an
-assessment of the call possible. In `recommend` mode, an `allow` result with a rule name does not
-let the call proceed.
+assessment of the call possible. In `recommend` mode, an `allow` result after the assessment
+does not let the call proceed.
 
 The policy refers to the questions by name. The description and the risk level are the only
 values that Alice sees. Each description is a constant text of the policy.
@@ -697,14 +692,14 @@ to a party outside the organization. With only the static description, she sees 
 file" at a fixed risk level. Olivia wrote only the organization values. She
 wrote no question and nothing about this server or this tool.
 
-### Journey 2 — An internal reader share proceeds under a named rule (US1.2, US4.1, US4.3)
+### Journey 2 — An internal reader share proceeds without a person (US1.2, US4.1, US4.3)
 
 **Step 1 — Configuration change (other values as in Journey 1)**
 
 ```yaml
 authorization:
   assessment:
-    mode: "auto_approve"             # a named policy rule can let a call proceed
+    mode: "auto_approve"             # the policy can let a call proceed
 ```
 
 **Step 2 — 11:02:10: the agent asks to share a file with a colleague as reader**
@@ -748,16 +743,13 @@ response:
 }
 ```
 
-**Step 4 — 11:02:10: the policy names the rule, and the call proceeds**
+**Step 4 — 11:02:10: the policy allows the call, and the call proceeds**
 
 The policy returns:
 
 ```json
 {
   "action": "allow",
-  "auto_approval": {
-    "rule": "internal_reversible_share"
-  },
   "approval_context": {
     "description": "Share a Drive file inside the organization",
     "risk_level": "low"
@@ -770,7 +762,7 @@ The call proceeds, thus the system does not use the `approval_context`.
 Variant (US1.2): In the recommendation mode, the call waits for Alice. The pending approval has
 the risk level `low` and the description "Share a Drive file inside the organization".
 
-The mode is `auto_approve`, the result names a rule, and the assessment is complete. The system
+The mode is `auto_approve`, the result is `allow`, and the assessment is complete. The system
 forwards the call to `google-drive-mcp`. The agent receives the
 tool result. The broker creates no pending approval, and Alice gets no request.
 
@@ -783,7 +775,6 @@ tool result. The broker creates no pending approval, and Alice gets no request.
   "msg": "tool call assessed",
   "event": "assessment.tool_call.assessed",
   "outcome": "automatic_approval",
-  "auto_approval_rule": "internal_reversible_share",
   "target_server_name": "google-drive-mcp",
   "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "arguments_ref": "sha256:9b1f4c7e...",
@@ -807,7 +798,7 @@ Variant (US4.3): With `mode: "recommend"`, the same call waits for Alice. The re
 contains `"outcome": "human_review"` and `"would_auto_approve": true`.
 
 **Observable result**: The colleague can read the file. The agent session continued without a
-stop. An auditor can find the rule and the answers that let the call proceed.
+stop. An auditor can find the answers that let the call proceed.
 
 ### Journey 3 — The model does not answer, and Alice decides as before (US3.1)
 
@@ -914,7 +905,7 @@ Conditions for automatic approval:
 | Condition | Source |
 |---|---|
 | The mode is `auto_approve`. | Configuration |
-| The policy result after the assessment is `allow` and names a rule. | Policy |
+| The policy result after the assessment is `allow`. | Policy |
 | The assessment status is `complete`. | Assessment |
 | No permanent denial applies to the call. | Existing human decisions |
 
@@ -927,7 +918,7 @@ Conditions for automatic approval:
 
 **Audit and observability**
 
-- **FR-060**: The system MUST write one audit record for each assessed call. The record MUST contain the outcome, the status, and the applicable rule name. It MUST contain the answering model and the values of each answer. It MUST contain the target server, the agent, and the principal. It MUST NOT contain the tool name, because no configuration bounds that value (`coding-standards/LOGGING.md`, section 6.2). It MUST contain a reference to the arguments that does not reveal them.
+- **FR-060**: The system MUST write one audit record for each assessed call. The record MUST contain the outcome and the status. It MUST contain the answering model and the values of each answer. It MUST contain the target server, the agent, and the principal. It MUST NOT contain the tool name, because no configuration bounds that value (`coding-standards/LOGGING.md`, section 6.2). It MUST contain a reference to the arguments that does not reveal them.
 - **FR-061**: The audit records, other log records, spans, and metrics that the system writes for an assessment MUST NOT contain argument values, the context, tool definition text, question text, or credentials. The decision logs of the policy engine and the reason texts of a policy are outputs that the operator configures. The decision logs contain the policy input, with the arguments and the assessment, and the policy result. The documentation MUST state this content (SR-010).
 - **FR-062**: The operator MUST be able to monitor the number of assessments by outcome and by status. The operator MUST be able to monitor the duration of model requests. A metric MUST NOT contain a principal.
 
@@ -994,10 +985,10 @@ sequenceDiagram
     PDP->>Model: context and typed questions
     Model-->>PDP: typed answers, or no usable response
     PDP->>Policy: evaluate with assessment
-    alt allow with rule name and all automatic approval conditions hold
+    alt allow and all automatic approval conditions hold
         PDP->>Server: tools/call
         Server-->>Agent: tool result
-        PDP->>PDP: audit record with rule and answers
+        PDP->>PDP: audit record with the answers
     else approval required
         PDP->>Broker: create pending approval with the description and risk level of the policy
         PDP-->>Agent: approval URL
@@ -1021,7 +1012,7 @@ sequenceDiagram
 - **Assessment Question**: A named, typed question with fixed text. A higher value shows more risk. It has no text for the approver.
 - **Answer**: The validated result for one question, with a state and its probabilities.
 - **Assessment**: The status and the answers for one call, with the answering model. It is evidence for the policy. The approver does not see it.
-- **Automatic Approval**: The outcome in which a named policy rule lets a call proceed without a person.
+- **Automatic Approval**: The outcome in which the policy lets a call proceed without a person. The policy returns `allow` after the assessment.
 
 **Domain Events** (state changes of business significance):
 - **ToolCallAssessed**: An assessment attempt ended with a status and an outcome. The outcome is automatic approval, human review, or denial.
@@ -1055,7 +1046,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
 
 - **API-001**: The feature MUST NOT change `api/enduser/openapi.yaml`. The request that creates a pending approval keeps its fields, and the approval responses keep their fields.
 - **API-005**: The Admin API does not change. The broker gets no registry of MCP servers or tools.
-- **API-006**: Before implementation, the planning phase MUST define three contracts. These are the assessment input of the policy, the extended policy result, and the request to the decision endpoint. The extended policy result has one new field: `auto_approval.rule`. Stakeholders MUST approve the contracts (Principle X).
+- **API-006**: Before implementation, the planning phase MUST define three contracts. These are the assessment input of the policy, the rules for the policy result, and the request to the decision endpoint. The policy result gets no new field. Stakeholders MUST approve the contracts (Principle X).
 
 ### Database Requirements *(if applicable)*
 
@@ -1077,6 +1068,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
   - A model can be wrong with high confidence. Injected argument text can move probabilities. A server can describe a tool falsely.
   - The product does not measure a model, a question, or a policy. The operator selects the thresholds of each automatic approval rule and is responsible for its false-approval rate. The operator must write automatic approval rules only for tools of trusted servers.
   - A changed tool definition, a changed question, or a changed model changes the answers. The system does not stop automatic approval after such a change. A policy can require one answering model name. An endpoint that returns the model alias of the request hides a new model release.
+  - The policy engine writes decision logs only if the service uses an OPA configuration file with decision logs enabled. With a local policy path, the engine writes no decision log. The audit record of FR-060 exists in each case.
   - The decision logs of the policy engine contain the policy input, which includes the arguments and the assessment, and the policy result. A policy can also write argument values into its reasons. The operator decides who can read these logs and whether to mask a part of them. Retention at a remote model provider is also a decision of the operator.
   - An approval identifies a call by the tool name without the target server. If two servers on different routes list one tool name, a pending approval and its description can apply to the call of the other server.
   - While assessment is enabled, the decision endpoint gets the full arguments of each assessed call. This includes a secret that a tool takes as an argument. The feature has no setting that withholds values. The operator must use an endpoint that can receive these values, for example a model inside the deployment.
@@ -1100,7 +1092,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **SC-002**: A test of a minimum of 20 different failure conditions of the model interaction lets 0 calls proceed without a person. The conditions include timeout, refusal, missing answer, malformed answer, out-of-range value, missing definition, and oversized content.
 - **SC-004**: Calls that the policy allows or denies without an assessment get no delay and cause no model request.
 - **SC-005**: The assessment delays a call that proceeds by automatic approval by a maximum of the configured request timeout plus one policy evaluation timeout. The defaults are 500 ms and 100 ms.
-- **SC-006**: For 100% of calls that proceed by automatic approval, one audit record contains the rule name, the answers, and the model. No record contains an argument value.
+- **SC-006**: For 100% of calls that proceed by automatic approval, one audit record contains the answers and the model. No record contains an argument value.
 - **SC-008**: An operator can enable assessment for all target servers with the default question set and without configuration for an individual server, tool, or argument. This includes servers that the operator adds later.
 - **SC-009**: A reviewer can state the data that leaves the deployment for an assessed call without knowledge of a server: the organization values, the target server name, the tool definition, and the tool name and the arguments of the call. The system sends no other data of the request.
 

@@ -75,4 +75,4 @@ These decisions change the scope or the security model:
 - An automatic approval creates no approval record. It is visible only in the audit log.
 - The approver sees only the description and the risk level of the policy. The page does not show that a model contributed to them.
 - The product has a default question set. No model measured the default questions. A release that changes a default question changes the answers, and the release notes must state it.
-- The feature measures no model, no question, and no policy. It has no evaluation run and no evaluation record. Automatic approval needs only the mode, a named policy rule, and a complete assessment. The operator is responsible for the thresholds.
+- The feature measures no model, no question, and no policy. It has no evaluation run and no evaluation record. Automatic approval needs only the mode, an `allow` result of the policy after the assessment, and a complete assessment. The operator is responsible for the thresholds.

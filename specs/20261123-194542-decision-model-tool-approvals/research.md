@@ -219,12 +219,11 @@ cause (FR-031, FR-032).
 
 **Alternatives considered**: One "failed" status hides the cause from the operator.
 
-## D-05 — The policy contract adds one input key and one result field
+## D-05 — The policy contract adds one input key and no result field
 
 **Decision**: The second evaluation uses the same prepared query and the same input, with the
 added key `assessment`. `ParseDecision` (`internal/extproc/authorization/decision.go:23-59`)
-reads one new field: `auto_approval.rule` on an `allow` result. It also reads the existing
-`approval_context` on an `allow` result. Go code applies the conditions of FR-041 after it parses
+reads no new field. It reads the existing `approval_context` also on an `allow` result. Go code applies the conditions of FR-041 after it parses
 the result. The contract is in [contracts/policy-assessment.md](contracts/policy-assessment.md).
 
 An `allow` result can carry an `approval_context`. The system uses it only if a condition of
@@ -334,16 +333,16 @@ organization values are keys of the service configuration (D-17).
 ## D-12 — The audit record has no tool name
 
 **Decision**: The audit record `assessment.tool_call.assessed` contains the target server name,
-the rule name, the answering model, the answers, and a reference to the arguments. It does not
+the answering model, the answers, and a reference to the arguments. It does not
 contain the tool name. The contract is in [contracts/observability.md](contracts/observability.md).
 
 **Rationale**: `coding-standards/LOGGING.md` section 6.2 permits a tool name only if
 configuration bounds it. The tool name of a call comes from the agent, and no configuration of
-the feature lists tools. The target server name comes from the gateway configuration, and the
-rule name comes from the policy of the operator.
+the feature lists tools. The target server name comes from the gateway configuration.
 
-**Consequence**: An auditor finds the tool of an automatic approval through the rule name, or
-through the decision log of the policy engine, which has the full policy input.
+**Consequence**: An auditor finds the tool of an automatic approval through the record "opa
+authorization decision" of the same request, or through the decision log of the policy engine,
+which has the full policy input.
 
 **Existing deviation**: The existing record "opa authorization decision"
 (`internal/extproc/authorization/authorizer.go:323-332`) logs `tool_name` from the request for
@@ -554,7 +553,7 @@ default.
 **Decision**: The feature does not record cases, measure a model, or tune questions and
 thresholds. It has no evaluation run, no case set, no evaluation record, and no fingerprint. A
 call proceeds automatically if four conditions are true: the mode is `auto_approve`, the policy
-result is `allow` with a rule name, the assessment status is `complete`, and no permanent denial
+result after the assessment is `allow`, the assessment status is `complete`, and no permanent denial
 applies (FR-041).
 
 **Rationale**: The stakeholder decided this on 2026-11-26. The model answers are an input of the
@@ -567,7 +566,8 @@ tuning outside the product. The product does not need a second mechanism for tha
 - The operator selects the thresholds of each automatic approval rule and is responsible for its false-approval rate. The product gives no number for that rate.
 - A changed tool definition, a changed question, or a changed model changes the answers. The system does not stop automatic approval after such a change, and it does not report the change. A policy can require one answering model name, because the policy input has that name.
 - The default questions and the example thresholds have no measured results. The documentation states this (SR-010).
-- The record of the `recommend` mode stays: it shows that a rule approves a call in the `auto_approve` mode (FR-044). An operator can count these records before the change of the mode.
+- The policy result has no rule name. An earlier design required the field `auto_approval.rule` on an `allow` result, for the audit record. The stakeholder removed it: the decision log has the input and the result, and a policy can add a field of its own to the result. One limit applies. The policy engine writes decision logs only with an OPA configuration file that enables them. With a local policy path, it writes none, and the audit record of ExtProc is then the only record of the answers.
+- The record of the `recommend` mode stays: it shows that the policy lets a call proceed in the `auto_approve` mode (FR-044). An operator can count these records before the change of the mode.
 
 **Alternatives considered**: An evaluation run on the production code path with a labeled case
 set, an evaluation record with fingerprints of the questions and of each tool definition, and a

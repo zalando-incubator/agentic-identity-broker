@@ -13,7 +13,7 @@ The scope changes of 2026-11-26 (`research.md`, D-16 to D-18) removed these task
 ## Feature Scope
 
 A decision model answers fixed typed questions about one tool call. The policy alone decides.
-The call proceeds under a named rule, waits for a person, or is denied. A call that waits for a
+The call proceeds without a person, waits for a person, or is denied. A call that waits for a
 person gets the description and the risk level that the policy derived from the answers.
 
 Each task refers to a requirement, a scenario, or a binding constraint. A larger scope needs
@@ -95,8 +95,8 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 ### Phase 2f: Acceptance Test Design (Principles XIII, XIV)
 
 - [ ] T025 Write one Ginkgo `It` for each of US1.1 to US1.3, US2.1 to US2.8, and US3.1 to US3.5 in `tests/e2e/extproc/tool_assessment_test.go`. Use the observable results of the mapping table in `plan.md`. Put the scenario identifier in a comment on each case.
-- [ ] T026 Write one Ginkgo `It` for each of US4.1 to US4.4 in `tests/e2e/extproc/tool_assessment_test.go`, after T025.
-- [ ] T029 Run `just test-e2e-extproc`. Make sure that the 20 cases of T025 and T026 compile and fail on their assertions. Make sure that no case in `tests/e2e/extproc/tool_assessment_test.go` uses `XIt`, `PIt`, or `Skip`. Without a local container runtime, the container-backed cases can run for the first time in CI (Principle XIII).
+- [ ] T026 Write one Ginkgo `It` for each of US4.1 to US4.3 in `tests/e2e/extproc/tool_assessment_test.go`, after T025.
+- [ ] T029 Run `just test-e2e-extproc`. Make sure that the 19 cases of T025 and T026 compile and fail on their assertions. Make sure that no case in `tests/e2e/extproc/tool_assessment_test.go` uses `XIt`, `PIt`, or `Skip`. Without a local container runtime, the container-backed cases can run for the first time in CI (Principle XIII).
 - [ ] T030 Compare the three journeys of `spec.md` with the approved contracts. Correct each difference. Make sure that the create request of Journey 1, step 8, agrees with `api/enduser/openapi.yaml`, which the feature does not change (Principle XIV).
 
 ### Phase 2g: Observability Design (Principle XV)
@@ -105,7 +105,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T032 [P] Add the namespace `assessment` to the table in section 4.1 of `coding-standards/OPENTELEMETRY.md`. State this change in the description of the pull request (Principle XV).
 - [ ] T033 [P] List the signals that need a safety test in `contracts/observability.md`: the bearer credential of the model request in log records and spans, the principal in the audit record as the output of the principal policy, the absent tool name (D-12), and the attribute set of each instrument (`LOGGING.md` section 9, `OPENTELEMETRY.md` section 7). T056a and T056b write these tests.
 
-**Checkpoint**: The contracts have approval, the ADR is Accepted, and 20 acceptance cases fail on realistic assertions.
+**Checkpoint**: The contracts have approval, the ADR is Accepted, and 19 acceptance cases fail on realistic assertions.
 
 **Phase 2.7 (entity boilerplate)**: Not applicable. The feature adds no entity, no handler, and no repository (`plan.md`).
 
@@ -130,7 +130,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T048 Write the answer validation in `internal/extproc/assessment/answers.go` until T047 passes. It sets `data-model.md` `Assessment and Answer.status`, `.model`, `.answers.<name>.status`, `.answers.<name>.probability`, and `.answers.<name>.probabilities`, `score`, `confidence` (FR-030 to FR-032).
 - [ ] T049 [P] Write tests in `internal/extproc/assessment/client_test.go` with `httptest`. Cover the request shape of `contracts/decision-request.md` and the composed question text. Cover the deadline, the single attempt, and the credential file. Cover the 256 KiB limit and the limit of 64 requests in progress (SC-005).
 - [ ] T050 Write the model client in `internal/extproc/assessment/client.go` with `internal/extproc/httpclient` until T049 passes (FR-007, FR-024 to FR-026, D-03).
-- [ ] T052 Extend `internal/extproc/authorization/decision_test.go` for `auto_approval.rule` and for the `approval_context` on an `allow` result (`contracts/policy-assessment.md` section 3). Extend `internal/extproc/authorization/authorizer_test.go` for the evaluation outcome: a result, an undefined result, an error, and a timeout, each with the prepared query and with the SDK (D-05).
+- [ ] T052 Extend `internal/extproc/authorization/decision_test.go` for the `approval_context` on an `allow` result (`contracts/policy-assessment.md` section 3). Extend `internal/extproc/authorization/authorizer_test.go` for the evaluation outcome: a result, an undefined result, an error, and a timeout, each with the prepared query and with the SDK (D-05).
 - [ ] T053 Change `ParseDecision` in `internal/extproc/authorization/decision.go` and the audit switch in `internal/extproc/authorization/authorizer.go` until T052 passes. Add the evaluation outcome to the decision. The action of each outcome stays as today, and the log call of the record "opa authorization decision" does not change (D-05).
 - [ ] T093 [P] Write tests in `internal/extproc/assessment/conditions_test.go` for each condition of the table "Conditions for automatic approval" in `spec.md`. Each false condition gives its `unmet_condition` value of `contracts/observability.md`. A permanent denial gives a denial, and each other false condition gives `approval_required` (FR-041 to FR-044).
 - [ ] T096 Write the conditions in `internal/extproc/assessment/conditions.go` until T093 passes. A policy cannot disable a condition (FR-040, FR-043).
@@ -208,11 +208,11 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 ---
 
-## Phase 6: User Story 4 — Let Harmless Calls Proceed Under a Named Rule (P2)
+## Phase 6: User Story 4 — Let Harmless Calls Proceed Without a Person (P2)
 
-**Goal**: A call proceeds without a person only if all conditions of FR-041 are true. One audit record names the rule and the answers.
+**Goal**: A call proceeds without a person only if all conditions of FR-041 are true. One audit record has the answers.
 
-**Independent Test**: Run the cases US4.1 to US4.4 in `tests/e2e/extproc/tool_assessment_test.go` with the example rule.
+**Independent Test**: Run the cases US4.1 to US4.3 in `tests/e2e/extproc/tool_assessment_test.go` with the example rule.
 
 ### Tests first
 
@@ -220,7 +220,7 @@ The tests and the code of the conditions are T093 and T096 in Phase 2.5.
 
 - [ ] T094 [P] [US4] Write tests in `internal/extproc/assessment/audit_test.go`. An error from `Handle` keeps the call for a person. A disabled INFO level also keeps the call for a person (SR-009, D-13).
 - [ ] T095 [P] [US4] Extend `internal/extproc/approval/cache_test.go` for a lookup of a permanent denial. The lookup only reads. It reserves no `once` approval (D-15).
-- [ ] T095b [P] [US4] Write the table-driven test `internal/extproc/server/assessment_failure_test.go` for SC-002. Each row uses the `auto_approve` mode and a rule that permits the call. Use a minimum of 20 failure conditions: a timeout, a refusal, a missing answer, an empty answer list, a malformed body, an answer with a wrong type, a probability out of range, a wrong level count, a wrong level label, a missing level value, a wrong total of a scale, an unknown answer name, a duplicate answer name, an HTTP error, a redirect, a closed connection, a response that is too large, the limit of requests in progress, an absent model value, a missing definition, an oversized context, an error in the second evaluation, and a timeout in the second evaluation. No row lets the call proceed (SC-002, SR-002).
+- [ ] T095b [P] [US4] Write the table-driven test `internal/extproc/server/assessment_failure_test.go` for SC-002. Each row uses the `auto_approve` mode and a policy that allows the call. Use a minimum of 20 failure conditions: a timeout, a refusal, a missing answer, an empty answer list, a malformed body, an answer with a wrong type, a probability out of range, a wrong level count, a wrong level label, a missing level value, a wrong total of a scale, an unknown answer name, a duplicate answer name, an HTTP error, a redirect, a closed connection, a response that is too large, the limit of requests in progress, an absent model value, a missing definition, an oversized context, an error in the second evaluation, and a timeout in the second evaluation. No row lets the call proceed (SC-002, SR-002).
 
 ### Implementation
 
@@ -228,7 +228,7 @@ The tests and the code of the conditions are T093 and T096 in Phase 2.5.
 - [ ] T098 [US4] Add the read-only denial lookup to `internal/extproc/approval/cache.go` until T095 passes.
 - [ ] T099 [US4] Add the automatic approval path to the approval branch in `internal/extproc/server/server.go` until T095b passes (SC-002). The sequence is the conditions, the denial lookup, the audit write, and then the forward of the call. A matching permanent denial denies the call (FR-042). In the `recommend` mode, record `would_auto_approve` and keep the call for a person. A call that proceeds creates no approval record (FR-041, FR-044, FR-045, DB-004).
 - [ ] T100a [US4] Update `docs/guides/token-exchange-gateway.md`: the minimum agentgateway release `v1.7.0`, and the fact that in the `auto_approve` mode a call with the result `approval_required` can proceed without a pending approval and without an elicitation (FR-041, D-14).
-- [ ] T101 [US4] Run `just test-e2e-extproc`. Make sure that US4.1 to US4.4 in `tests/e2e/extproc/tool_assessment_test.go` pass. Make sure that the signal test of T056b passes with the automatic approval cases (SC-006).
+- [ ] T101 [US4] Run `just test-e2e-extproc`. Make sure that US4.1 to US4.3 in `tests/e2e/extproc/tool_assessment_test.go` pass. Make sure that the signal test of T056b passes with the automatic approval cases (SC-006).
 
 **Checkpoint**: All four user stories operate. Automatic approval stays disabled by default.
 
@@ -243,7 +243,7 @@ The tests and the code of the conditions are T093 and T096 in Phase 2.5.
 - [ ] T102 Make sure that each task and each change refers to a requirement of `spec.md`. Make sure that no change is unrelated to the feature (Feature Scope).
 - [ ] T103 Make sure that `ARCHITECTURE.md` has the glossary terms and the trust boundary. Make sure that the ADR of T014 is Accepted, names the decisions that it supersedes, and agrees with the code. Make sure that `examples/config/README.md` refers to each new example. Make sure that the Helm chart has no key of the feature, because it does not deploy ExtProc (`adrs/011-extproc-standalone-binary.md`, Principles II, V, VII).
 - [ ] T104 Make sure that the feature diff has no change under `api/`, `docs/api/`, `migrations/`, `internal/adapters/`, `internal/domain/storage/` apart from T002a, and `web/` (API-001, API-005, DB-001, FR-038, D-16). Make sure that the approval of T020 is in the pull request (Principles IV, X).
-- [ ] T105 Make sure that `tests/e2e/extproc/tool_assessment_test.go` contains exactly 20 cases, one for each scenario. Each case has its scenario identifier, and no case is pending or skipped. The case of T056b is in its own file and is not a scenario case (Principle XIII).
+- [ ] T105 Make sure that `tests/e2e/extproc/tool_assessment_test.go` contains exactly 19 cases, one for each scenario. Each case has its scenario identifier, and no case is pending or skipped. The case of T056b is in its own file and is not a scenario case (Principle XIII).
 - [ ] T105a Make sure that each journey of `spec.md` refers to its scenarios. Make sure that the configuration, the HTTP exchanges, and the default question set agree with the requirements, the contracts, and the code (Principle XIV).
 
 ### Implementation phase verification
