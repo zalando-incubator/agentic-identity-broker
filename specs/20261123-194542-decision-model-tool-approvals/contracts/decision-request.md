@@ -40,7 +40,8 @@ The JSON document describes one tool call. The operator wrote `organization`. `s
 
 The Assessment Context has the sections and the rules of
 [data-model.md](../data-model.md). The compact JSON text has no spaces and no HTML escapes. Its
-sections and fields keep the sequence of the data model, not a sorted sequence. The full example
+sections and fields keep the sequence of the data model. The keys of each map inside a section
+are in sorted sequence, as the Go JSON encoder writes them (FR-022). The full example
 is in [spec.md](../spec.md), Journey 1, step 6.
 
 The request has no `input_json` part. agentgateway `v1.7.0` rejects an `input_json` part with
@@ -108,5 +109,5 @@ The canonical document for `tool_context` has these values:
 
 - The format version `1`
 - The target server name
-- The disclosure settings
+- The disclosure setting
 - The tool definition as the context can show it: name, description, annotations, and all described arguments.

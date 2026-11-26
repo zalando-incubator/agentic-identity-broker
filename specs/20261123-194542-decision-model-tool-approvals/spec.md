@@ -68,8 +68,7 @@ Olivia operates the gateway. She does not describe tools. Each MCP server lists 
 description, an input schema, and annotations. The gateway sees these listings.
 
 Olivia describes her organization once in the service configuration. She sets once for the
-deployment whether the system can send argument values. She also names the arguments whose values
-the system never sends. The product supplies the questions. Olivia can replace them with her own
+deployment whether the system can send argument values. The product supplies the questions. Olivia can replace them with her own
 set, but she does not have to. She adds nothing for an individual server, and she operates
 hundreds of servers.
 
@@ -89,7 +88,7 @@ received.
 
 **Acceptance Scenarios**:
 
-1. **Given** a configuration with the organization and a deployment-wide disclosure setting that permits argument values and withholds `file_id`. The configuration sets no questions and has no entry for a server, and `google-drive-mcp` listed `drive.share_file` through the gateway. **When** the system assesses a call, **Then** the system sends exactly one model request. The request contains the questions of the default question set, the organization text of the operator, and the target server name. The `tool` section contains the tool description, the annotations, and the schema entries for the supplied arguments. The request names the server as the author of that section. The request contains the values of the permitted arguments. It contains the name `file_id` as withheld and does not contain its value.
+1. **Given** a configuration with the organization and a deployment-wide disclosure setting that permits argument values. The configuration sets no questions and has no entry for a server, and `google-drive-mcp` listed `drive.share_file` through the gateway. **When** the system assesses a call, **Then** the system sends exactly one model request. The request contains the questions of the default question set, the organization text of the operator, and the target server name. The `tool` section contains the tool description, the annotations, and the schema entries for the supplied arguments. The request names the server as the author of that section. The request contains the value of each supplied argument.
 2. **Given** the same call, **When** the test examines the model request, **Then** the request contains no principal, agent identity, session identifier, or credential. It contains no static policy risk level and no policy description. It contains no definition of a different tool and no text from the agent.
 3. **Given** a call with an argument `note` that the listed input schema of the tool does not describe, **When** the system assesses the call, **Then** the request contains neither the name nor the value of `note`. The request reports one undescribed argument. The call waits for a person in each mode.
 4. **Given** a target server without a known tool listing, **When** the policy sends a call for that server to approval, **Then** the system sends no model request. The system creates the pending approval as before this feature.
@@ -97,6 +96,7 @@ received.
 6. **Given** a configuration with a yes/no question without a "no" criterion, or a configuration without the setting for argument values, **When** the service starts, **Then** startup fails. The error names the question or the missing setting. The service processes no tool call with a partial configuration.
 7. **Given** a policy that allows one tool and denies a different tool without an assessment, **When** the agent calls each tool, **Then** the system sends no model request for the two calls.
 8. **Given** Alice has a permanent denial for one tool and a session approval for a different tool, **When** the agent calls each tool, **Then** the existing decisions apply. The system sends no model request.
+9. **Given** the disclosure setting `none`, **When** the system assesses a call, **Then** the request contains the name of each supplied argument as withheld. The request contains no argument value.
 
 ---
 
@@ -185,7 +185,7 @@ that the report and the evaluation record are correct.
 - **A server changes a tool definition after the evaluation.** The tool context fingerprint changes. Automatic approval stops for that tool until a new evaluation record names the new fingerprint. Recommendations continue with the new definition.
 - **The instance saw no tool listing after it started.** The instance knows no definition. Calls wait for a person without an assessment until a listing passes through the gateway.
 - **Two listings from one server describe the same tool differently.** The latest listing applies. Automatic approval applies only while the fingerprint is in the evaluation record.
-- **A tool lists no input schema, or a schema without described properties.** Each argument of a call is undescribed, and a call with one or more arguments waits for a person. A call without arguments has no undescribed argument. The conditions of FR-041 apply to it as to each other call.
+- **A tool lists no input schema, or a schema without `properties`.** Each argument of a call is undescribed, and a call with one or more arguments waits for a person. A call without arguments has no undescribed argument. The conditions of FR-041 apply to it as to each other call.
 - **A listing does not contain a description, an input schema, or annotations for a tool.** The feature requires only the tool name. The `tool` section does not contain an absent field, and the system adds no default value.
 - **Two target servers on different routes list a tool with the same name.** Approvals identify a call by the tool name without the target server, as before this feature. The second call can thus get the pending approval of the first call with its description (FR-008, SR-010). Automatic approval is not affected, because the evaluation record names the target server.
 - **The second policy evaluation has an error or a timeout.** The system uses the first result, and the call waits for a person. A denial that the policy returns stays a denial.
@@ -241,7 +241,6 @@ authorization:
       internal_domains: ["example.com"]
     disclosure:                      # one decision for all target servers
       arguments: all                 # required: "all" or "none"; there is no default
-      withhold: ["file_id", "*token*", "*secret*"]   # values of these arguments are never sent
 ```
 
 Olivia writes these values once for the deployment. The configuration has no list of servers and
@@ -299,7 +298,7 @@ configuration of step 1 (see Configuration Requirements). This journey uses the 
 
 Three of the five questions got new wording on 2026-11-26, because a smoke test showed weak
 answers for them ([research.md](research.md), D-17). No model measured the new wording at this
-time. The project measures each default question before a release (FR-054).
+time. The project measures each default question before the feature merges (FR-054).
 
 The table shows the reader and the purpose of each field.
 
@@ -506,7 +505,7 @@ Content-Type: application/json
         },
         {
           "type": "input_text",
-          "text": "{\"organization\":{\"name\":\"Example Corp\",\"description\":\"Employees of Example Corp. All other parties are outside, including partners, customers, and personal accounts.\",\"internal_domains\":[\"example.com\"]},\"server\":{\"name\":\"google-drive-mcp\"},\"tool\":{\"name\":\"drive.share_file\",\"description\":\"Share a file with a user, group, or domain. The grantee gets access at once and receives a notification email.\",\"annotations\":{\"readOnlyHint\":false,\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":true},\"arguments\":{\"file_id\":{\"type\":\"string\",\"description\":\"ID of the file to share.\"},\"role\":{\"type\":\"string\",\"enum\":[\"reader\",\"commenter\",\"editor\"],\"description\":\"Access level to grant.\"},\"grantee_domain\":{\"type\":\"string\",\"description\":\"Email domain of the grantee.\"},\"transfer_ownership\":{\"type\":\"boolean\",\"description\":\"Make the grantee the owner. The previous owner cannot revert this.\"}}},\"call\":{\"arguments\":{\"role\":\"editor\",\"grantee_domain\":\"thirdparty.example.com\",\"transfer_ownership\":false},\"withheld_arguments\":[\"file_id\"],\"undescribed_argument_count\":0}}"
+          "text": "{\"organization\":{\"name\":\"Example Corp\",\"description\":\"Employees of Example Corp. All other parties are outside, including partners, customers, and personal accounts.\",\"internal_domains\":[\"example.com\"]},\"server\":{\"name\":\"google-drive-mcp\"},\"tool\":{\"name\":\"drive.share_file\",\"description\":\"Share a file with a user, group, or domain. The grantee gets access at once and receives a notification email.\",\"annotations\":{\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":true,\"readOnlyHint\":false},\"arguments\":{\"file_id\":{\"description\":\"ID of the file to share.\",\"type\":\"string\"},\"grantee_domain\":{\"description\":\"Email domain of the grantee.\",\"type\":\"string\"},\"role\":{\"description\":\"Access level to grant.\",\"enum\":[\"reader\",\"commenter\",\"editor\"],\"type\":\"string\"},\"transfer_ownership\":{\"description\":\"Make the grantee the owner. The previous owner cannot revert this.\",\"type\":\"boolean\"}}},\"call\":{\"arguments\":{\"file_id\":\"1Zx9QpL0aB3\",\"grantee_domain\":\"thirdparty.example.com\",\"role\":\"editor\",\"transfer_ownership\":false},\"undescribed_argument_count\":0}}"
         }
       ]
     }
@@ -587,33 +586,34 @@ of FR-022. This is the same context with line breaks:
     "name": "drive.share_file",
     "description": "Share a file with a user, group, or domain. The grantee gets access at once and receives a notification email.",
     "annotations": {
-      "readOnlyHint": false,
       "destructiveHint": false,
       "idempotentHint": true,
-      "openWorldHint": true
+      "openWorldHint": true,
+      "readOnlyHint": false
     },
     "arguments": {
-      "file_id": {"type": "string", "description": "ID of the file to share."},
-      "role": {"type": "string", "enum": ["reader", "commenter", "editor"], "description": "Access level to grant."},
-      "grantee_domain": {"type": "string", "description": "Email domain of the grantee."},
-      "transfer_ownership": {"type": "boolean", "description": "Make the grantee the owner. The previous owner cannot revert this."}
+      "file_id": {"description": "ID of the file to share.", "type": "string"},
+      "grantee_domain": {"description": "Email domain of the grantee.", "type": "string"},
+      "role": {"description": "Access level to grant.", "enum": ["reader", "commenter", "editor"], "type": "string"},
+      "transfer_ownership": {"description": "Make the grantee the owner. The previous owner cannot revert this.", "type": "boolean"}
     }
   },
   "call": {
     "arguments": {
-      "role": "editor",
+      "file_id": "1Zx9QpL0aB3",
       "grantee_domain": "thirdparty.example.com",
+      "role": "editor",
       "transfer_ownership": false
     },
-    "withheld_arguments": ["file_id"],
     "undescribed_argument_count": 0
   }
 }
 ```
 
 The `tool` section contains only the schema entries of the four supplied arguments. The request
-does not contain the `file_id` value, a user identity, an agent identity, or a session
-identifier. It does not contain a static risk level, a different tool, or text from the agent.
+does not contain a user identity, an agent identity, or a session identifier. It does not
+contain a static risk level, a different tool, or text from the agent. The sections have a fixed
+sequence, and the keys inside a section are in sorted sequence, as the JSON encoder writes them.
 
 Two instructions in this example are shortened. The system composes each instruction in the same
 sequence as the first: the question, then the yes criterion, then the no criterion.
@@ -633,7 +633,7 @@ The policy receives the assessment as an addition to its existing input (excerpt
       "context": "tc-8c21e0b7"
     },
     "context": {
-      "withheld_arguments": ["file_id"],
+      "withheld_arguments": [],
       "undescribed_argument_count": 0,
       "oversized_arguments": []
     },
@@ -994,22 +994,23 @@ The system never sends these items to the model:
 - Definitions of other tools
 - Text from the agent, apart from permitted argument values
 - Tool results and earlier calls
-- Withheld values and undescribed arguments.
+- Argument values, if the disclosure setting is `none`
+- Undescribed arguments.
 
 The requirements for the context are:
 
 - **FR-010**: The context MUST be a structured document with exactly these sections: `organization`, `server`, `tool`, and `call` (R-12).
 - **FR-011**: The `organization` section MUST contain only the organization values that the operator wrote in the service configuration. The `server` section MUST contain only the target server name from the target configuration of the gateway. It MUST NOT contain text from the operator.
-- **FR-012**: The `tool` section MUST contain the tool definition that the target server listed. This definition has the name, the description, the annotations, and the schema entry of each supplied argument. The request MUST name the target server as the author of the section. The section MUST NOT contain text from the operator or definitions of other tools (R-10, R-11). The feature requires only the tool name from a listing. A field that the listing does not contain MUST be absent in the section, and the system MUST NOT add a default value.
+- **FR-012**: The `tool` section MUST contain the tool definition that the target server listed. This definition has the name, the description, the annotations, and the schema entry of each supplied argument. The schema entry of an argument is the value of its key in `properties` of the input schema, as the server listed it. The request MUST name the target server as the author of the section. The section MUST NOT contain text from the operator or definitions of other tools (R-10, R-11). The feature requires only the tool name from a listing. A field that the listing does not contain MUST be absent in the section, and the system MUST NOT add a default value.
 - **FR-013**: The system MUST learn a tool definition only from a tool listing that the target server returned through the gateway. The system MUST keep the latest definition for each target server and tool name. The system MUST NOT accept a definition, or a part of a definition, from a tool call, from the agent, from the policy, or from the configuration of the operator.
 - **FR-015**: The request MUST state that `tool` and `call` are data. Content from the caller MUST be only in the `call` section (R-13).
 - **FR-016**: The assessment configuration MUST NOT have a key for an individual target server or tool. One deployment-wide setting MUST state whether the system can send argument values. This setting MUST NOT have a default.
-- **FR-017**: The configuration can name arguments, by name or name pattern, whose values the system never sends. The list applies to each target server. For a withheld argument that the tool definition describes, the context MUST contain the name as withheld and MUST NOT contain the value.
-- **FR-018**: For an argument that the tool definition does not describe, the context MUST contain neither the name nor the value. The context MUST contain the number of undescribed arguments.
+- **FR-017**: If the disclosure setting is `none`, the system MUST NOT send an argument value. The context MUST then contain the name of each supplied argument that the tool definition describes as withheld.
+- **FR-018**: The tool definition describes an argument if the name of the argument is a key of `properties` in the input schema of the tool. For an argument that the tool definition does not describe, the context MUST contain neither the name nor the value. The context MUST contain the number of undescribed arguments.
 - **FR-019**: The context MUST NOT contain an item from the list "The system never sends these items to the model" (R-11, R-14).
 - **FR-020**: The system MUST apply a size limit to each argument value, to the tool definition, and to the full context. The system MUST withhold and report an oversized value. The system MUST NOT send an oversized definition or context (R-11).
 - **FR-021**: If the system knows no definition of the tool, it MUST NOT request an assessment.
-- **FR-022**: For the same configuration, question set, tool definition, and call, the context MUST have identical content and sequence. The sequence MUST be `organization`, `server`, `tool`, `call`.
+- **FR-022**: For the same configuration, question set, tool definition, and call, the context MUST have identical content and sequence, so that the evaluation run and the service send the same text for the same call. The sequence of the sections MUST be `organization`, `server`, `tool`, `call`. The keys of each map inside a section MUST be in sorted sequence.
 - **FR-023**: The system MUST calculate a tool context fingerprint for each tool. The fingerprint MUST include all content about that tool that can change an answer. This content is the disclosure settings and the tool definition. Each change to this content MUST change the fingerprint (R-15, R-20).
 
 **Typed questions**
@@ -1063,7 +1064,7 @@ Conditions for automatic approval:
 - **FR-051**: For each case, the evaluation report MUST give the outcome and the answers. The report MUST give the share of cases that skip a person. It MUST give the number and the rate of false approvals with a 95% upper bound. It MUST give the number of incomplete assessments and each answering model that a response named. It MUST give the question set fingerprint and the tool context fingerprints (R-19). For cases that give expected answers, it MUST give the numbers of FR-054.
 - **FR-052**: The evaluation run MUST write an evaluation record. The record names the answering model, the question set fingerprint, and the tool context fingerprint of each tool in the cases. If the responses named more than one model, or no response named a model, the run MUST NOT write a record.
 - **FR-053**: The project MUST publish a starter case set with a label for each case. The set MUST contain the calls from issue #206, dangerous counterexamples, and adversarial argument variants. The set MUST have two fixed parts: a tuning part and a validation part. The project MUST publish a false-approval rate and its bound only from the validation part, which is not used to change questions or thresholds (R-16).
-- **FR-054**: The project MUST measure each default question on its own before a release that contains it. Each case of the starter case set MUST give the expected answer of each default question: yes or no, or the level. Each part of the set MUST contain a minimum of 30 cases for each expected answer of each default question. These cases MUST include difficult cases for the answer no, for example a tool description with instructions for the caller and an argument value with instructions for a recipient. For each question, the evaluation report MUST give the number of cases with each expected answer and the number of these cases in which the model gave the expected answer. The project MUST publish these numbers from the validation part, with the name of each measured model. The stakeholder MUST approve the default question set for a release with these numbers (R-16, R-19).
+- **FR-054**: The project MUST measure each default question on its own before the product contains it, and again before a change of its wording. Each case of the starter case set MUST give the expected answer of each default question: yes or no, or the level. Each part of the set MUST contain a minimum of 30 cases for each expected answer of each default question. These cases MUST include difficult cases for the answer no, for example a tool description with instructions for the caller and an argument value with instructions for a recipient. For each question, the evaluation report MUST give the number of cases with each expected answer and the number of these cases in which the model gave the expected answer. The project MUST publish these numbers from the validation part, with the name of each measured model. The stakeholder MUST approve the default question set with these numbers (R-16, R-19).
 
 **Audit and observability**
 
@@ -1094,7 +1095,6 @@ erDiagram
     }
     Disclosure {
         string arguments
-        list withhold
     }
     ToolDefinition {
         string targetServerName
@@ -1174,7 +1174,7 @@ sequenceDiagram
 - **Decision Model**: An external model that returns typed answers with probabilities for typed questions about supplied content. It does not generate text. This term is different from the "four-valued decision model" of the policy result in `specs/026-extproc-approval-sync`.
 - **Organization Context**: The name, the description, and the internal domains of the organization that operates the deployment. The operator writes it once in the service configuration. It is trusted context for each question.
 - **Tool Definition**: The data that an MCP server lists for one tool: name, description, input schema, and annotations. It is a claim of the server about the tool. The policy decision point learns it from tool listings. The broker does not store it.
-- **Disclosure**: The deployment-wide setting for whether the system can send argument values. It also names the arguments whose values the system never sends.
+- **Disclosure**: The deployment-wide setting for whether the system can send argument values.
 - **Assessment Context**: The document that the model receives for one call. It contains the Organization Context, the Tool Definition, and the permitted part of the call.
 - **Assessment Question**: A named, typed question with fixed text. A higher value shows more risk. It has no text for the approver.
 - **Question Set Fingerprint**: A value that identifies the exact Organization Context, questions, and request framing.
@@ -1206,7 +1206,6 @@ in agreement with `adrs/011-extproc-standalone-binary.md`. The Helm chart does n
 - **authorization.assessment.max_listing_bytes**: An integer. The default is `1048576`. The system does not learn definitions from a larger tool listing.
 - **authorization.assessment.organization.name**, **.description**, **.internal_domains**: The Organization Context. The three values are required while the feature is enabled. The system sends them to the model with each assessed call.
 - **authorization.assessment.disclosure.arguments**: `all` or `none`. It is required while the feature is enabled, and it has no default. It applies to each target server.
-- **authorization.assessment.disclosure.withhold**: An optional list of argument names or name patterns. The system never sends the values of these arguments.
 - **authorization.assessment.questions**: The question set, as a list. The default is the default question set of this spec (Journey 1, step 2). A list in the configuration replaces the full default set.
 - **authorization.assessment.auto_approval.evaluation_record_file**: The path of the Evaluation Record. It is required in the `auto_approve` mode.
 
@@ -1234,7 +1233,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **SR-003**: A model result MUST NOT change a policy denial into a different action. It MUST NOT override a permanent human denial. It MUST NOT grant an authority that the caller does not have.
 - **SR-004**: Argument names, argument values, and tool definition text are untrusted. The system MUST NOT use them to make questions, criteria, operator sections of the context, approver text, or log field names.
 - **SR-005**: A tool definition is a claim of the server. The system MUST send it to the model only in the `tool` section. The system MUST NOT send it to the broker. Only the answers of the model and the policy can use it for a decision.
-- **SR-006**: The disclosure rules of FR-016 to FR-018 are security controls. They MUST apply with each possible setting: the system MUST NOT send a withheld value or an undescribed value to the decision endpoint.
+- **SR-006**: The disclosure rules of FR-016 to FR-018 are security controls. With the setting `none`, the system MUST NOT send an argument value to the decision endpoint. With each setting, the system MUST NOT send an undescribed value.
 - **SR-007**: After it processes the call, the system MUST NOT keep the context or the raw model response. FR-061 gives the rule for logs, spans, and metrics.
 - **SR-008**: The approver sees one description and one risk level. The two values come from the policy result, as before this feature. The system adds no approver text of its own. A policy can put an argument value or an answer value into its description. The system cannot prevent this, as it cannot today. Thus, the authoring rules and the published example policy MUST use only constant description texts (FR-039). The broker shows the description as plain text, as before this feature.
 - **SR-009**: The audit record of FR-060 MUST exist for each assessed call. If the system cannot write the record, the call MUST NOT proceed by automatic approval.
@@ -1243,6 +1242,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
   - An endpoint that returns the model alias of the request hides a new model release from the model condition. For automatic approval, the operator must configure a model name that identifies one release.
   - The decision logs of the policy engine contain the full policy input, which includes the arguments and the assessment. A policy can also write argument values into its reasons. The operator must mask the assessment and the arguments in decision logs and must not write such values into reasons.
   - An approval identifies a call by the tool name without the target server. If two servers on different routes list one tool name, a pending approval and its description can apply to the call of the other server.
+  - With the disclosure setting `all`, the decision endpoint gets the value of each described argument, including a secret that a tool takes as an argument. The operator must select the setting `none`, or an endpoint that can receive these values.
   - The approval page does not show that a model contributed to the description and the risk level. A wrong answer can give a description that is wrong for the call. The approver must read the technical details, which show all arguments.
 - **SR-011**: The assurance case in `docs/resources/assurance-case.md` MUST get the new trust boundary to the decision endpoint. It MUST describe the tool definition as input that the server controls. It MUST contain the controls of this section.
 
@@ -1271,7 +1271,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **SC-008**: An operator can enable assessment for all target servers with the default question set and without configuration for an individual server, tool, or argument. This includes servers that the operator adds later.
 - **SC-009**: A reviewer can find the upper limit of the data that leaves the deployment from only the disclosure settings of the configuration. A tool listing can only decrease the data, because the system sends only described arguments.
 - **SC-010**: A change of the answering model that the response names, of the organization values, of a question, or of a tool definition stops automatic approval for the related tools. This is true for 100% of tested changes. Automatic approval starts again only with a new evaluation record.
-- **SC-011**: For each release, the published results give for each default question and each measured model the number of validation cases with each expected answer and the number with the expected answer of the model. No default question is in a release without these results and the approval of the stakeholder.
+- **SC-011**: For each version of the default question set, the published results give for each default question and each measured model the number of validation cases with each expected answer and the number with the expected answer of the model. No default question is in the product without these results and the approval of the stakeholder.
 
 ## Assumptions
 
@@ -1281,9 +1281,9 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **A definition from a server is context, not fact.** A server can put hostile text into a definition or change it (R-15). The spec accepts definitions from servers, because a description of each tool by the operator is not practical. Four controls apply. The definition is in the separate `tool` section. The Evaluation Record must contain the tool context fingerprint. A policy rule must apply to the call. One question finds description text that addresses a reviewer.
 - **The operator maintains no metadata about servers or tools.** MCP servers have their own owners and their own release cycles. A description of a server or a tool in the configuration of the operator couples that configuration to each change of each server, and the operator cannot keep the two in agreement. Thus, the configuration has no key that describes a server, or that describes, corrects, or replaces a tool definition. The model gets the target server name from the gateway and the tool definition from the server. The configuration also has no setting for an individual server, because each such entry needs maintenance when servers change. The disclosure settings apply to each server, and the operator cannot exclude one server from assessment. If the operator does not trust the definitions of a server, the operator writes no automatic approval rule for its tools. If the data of one server must not go to the decision endpoint, the deployment-wide disclosure settings must protect it.
 - **The approver sees no new element.** The stakeholder decided on 2026-11-26 that the approver gets one statement, and that this statement is a part of the policy result. The existing description and the existing risk level are that statement. A list of findings, a recommendation, a notice about the assessment, and a stored assessment summary are out of scope. Thus, the broker, its API, its database, and the approval page do not change.
-- **The product has default questions.** This spec defines the default question set (Journey 1, step 2), and the service contains it. An operator can replace it in the configuration. A product release that changes a default question changes the question set fingerprint. Automatic approval then stops until a new evaluation run, and the release notes must state the change. The project measures each default question before a release, and the stakeholder approves the set with the results (FR-054). If the tuning run of the project changes a default question, this spec changes with it.
+- **The product has default questions.** This spec defines the default question set (Journey 1, step 2), and the service contains it. An operator can replace it in the configuration. A product release that changes a default question changes the question set fingerprint. Automatic approval then stops until a new evaluation run, and the release notes must state the change. The project measures each default question before the product contains it, and the stakeholder approves the set with the results (FR-054). If the tuning run of the project changes a default question, this spec changes with it.
 - **The organization values, the disclosure settings, and the questions are service configuration.** They are keys of the ExtProc configuration and use its existing loader, defaults, and validation. A separate file for them is out of scope.
-- **Disclosure is one deployment-wide decision.** Deployments have dozens or hundreds of target servers. Thus, the spec has no configuration for an individual server or tool. Issue #206 says that remote assessment must not forward the full argument map implicitly. The spec satisfies this with a required setting without a default, a list of withheld argument names, and one more rule. The system never sends undescribed arguments. A setting for each argument of each tool is out of scope.
+- **Disclosure is one deployment-wide decision.** Deployments have dozens or hundreds of target servers. Thus, the spec has no configuration for an individual server or tool. Issue #206 says that remote assessment must not forward the full argument map implicitly. The spec satisfies this with a required setting without a default and one more rule: the system never sends undescribed arguments. A list of argument names whose values the system does not send is out of scope, because an operator cannot maintain the argument names of externally managed tools. Thus, with the setting `all`, the value of each described argument goes to the decision endpoint. This includes a secret that a tool takes as an argument.
 - **The policy and the Evaluation Record show the trust in a server.** A trust flag for a server does not exist. A call proceeds automatically only if a policy rule applies to it and the Evaluation Record names its tool.
 - **Model names.** OpenAI documents `gpt-6-luna` as the model for the Decisions API. The spec uses the term "the configured decision model". Model names are configuration values.
 - **The system does not send the static risk level to the model.** The example in the issue includes the policy risk level in the model input. This spec excludes it, because it is not evidence about the call and the policy has it (R-11). The policy can derive the risk level from the answers.

@@ -37,7 +37,7 @@ see.
 
 Each journey uses the values of the journeys in [spec.md](spec.md).
 
-1. **Recommendation (Journey 1).** Start ExtProc in the `recommend` mode with the example configuration and the example policy. The configuration has the organization values and the disclosure settings, and it sets no questions. Send a `tools/list` exchange for `google-drive-mcp`. The example policy allows the session setup and the listing. Send the external editor share. Make sure that the decision endpoint double received one request with the four context sections and the five default questions. Make sure that the request does not contain the `file_id` value or an identity. Make sure that the create request at the broker double has the risk level `critical` and the description "Share a Drive file with a party outside the organization". Make sure that the create request has no field that the request of today does not have.
+1. **Recommendation (Journey 1).** Start ExtProc in the `recommend` mode with the example configuration and the example policy. The configuration has the organization values and the disclosure settings, and it sets no questions. Send a `tools/list` exchange for `google-drive-mcp`. The example policy allows the session setup and the listing. Send the external editor share. Make sure that the decision endpoint double received one request with the four context sections and the five default questions. Make sure that the request does not contain an identity. Set `disclosure.arguments` to `none`, send a share with a different file, and make sure that the request contains no argument value. Make sure that the create request at the broker double has the risk level `critical` and the description "Share a Drive file with a party outside the organization". Make sure that the create request has no field that the request of today does not have.
 2. **No model request for other calls.** Send a call that the policy allows, a call that the policy denies, and a call with an existing permanent denial. Make sure that the double received no request.
 3. **Failures (Journey 3).** Set the double to each failure: a late answer, a refusal, a missing answer, an invalid probability, an HTTP error, and a closed connection. For each failure, make sure that a pending approval exists. Make sure that the create request has the description "Share a Drive file" and the risk level `medium`.
 4. **Second identical call.** Send the external editor share two times before the approval expires. Make sure that the double received one request. Make sure that the two responses contain the same approval URL.
@@ -49,7 +49,7 @@ Each journey uses the values of the journeys in [spec.md](spec.md).
 
 ## Evidence and limits
 
-- Map each of the 26 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
+- Map each of the 27 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
 - The case for SC-003 and the signal test are in their own files. They are not acceptance scenarios.
 - Copy the verification record of [research.md](research.md) into the ADR. The cases in `tests/e2e/extproc/assessment_gateway_verification_test.go`, `tests/e2e/extproc/assessment_decision_endpoint_verification_test.go`, and `tests/e2e/approval_api_test.go` stay in the suites.
 - The automated checks prove the behavior of the system around the model. They do not measure a model. The false-approval rate of a real model comes only from an evaluation run with real cases.

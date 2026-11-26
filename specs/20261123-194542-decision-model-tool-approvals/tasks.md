@@ -92,10 +92,10 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 ### Phase 2f: Acceptance Test Design (Principles XIII, XIV)
 
-- [ ] T025 Write one Ginkgo `It` for each of US1.1 to US1.3, US2.1 to US2.8, and US3.1 to US3.5 in `tests/e2e/extproc/tool_assessment_test.go`. Use the observable results of the mapping table in `plan.md`. Put the scenario identifier in a comment on each case.
+- [ ] T025 Write one Ginkgo `It` for each of US1.1 to US1.3, US2.1 to US2.9, and US3.1 to US3.5 in `tests/e2e/extproc/tool_assessment_test.go`. Use the observable results of the mapping table in `plan.md`. Put the scenario identifier in a comment on each case.
 - [ ] T026 Write one Ginkgo `It` for each of US4.1 to US4.7 in `tests/e2e/extproc/tool_assessment_test.go`, after T025.
 - [ ] T027 [P] Write one Ginkgo `It` for each of US5.1 to US5.3 in `tests/e2e/extproc/assessment_evaluate_test.go`.
-- [ ] T029 Run `just test-e2e-extproc`. Make sure that the 26 cases of T025 to T027 compile and fail on their assertions. Make sure that no case in `tests/e2e/extproc/tool_assessment_test.go` or `tests/e2e/extproc/assessment_evaluate_test.go` uses `XIt`, `PIt`, or `Skip`. Without a local container runtime, the container-backed cases can run for the first time in CI (Principle XIII).
+- [ ] T029 Run `just test-e2e-extproc`. Make sure that the 27 cases of T025 to T027 compile and fail on their assertions. Make sure that no case in `tests/e2e/extproc/tool_assessment_test.go` or `tests/e2e/extproc/assessment_evaluate_test.go` uses `XIt`, `PIt`, or `Skip`. Without a local container runtime, the container-backed cases can run for the first time in CI (Principle XIII).
 - [ ] T030 Compare the four journeys of `spec.md` with the approved contracts. Correct each difference. Make sure that the create request of Journey 1, step 8, agrees with `api/enduser/openapi.yaml`, which the feature does not change. Make sure that `...` marks each shortened fingerprint in an HTTP body (Principle XIV).
 
 ### Phase 2g: Observability Design (Principle XV)
@@ -104,7 +104,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T032 [P] Add the namespace `assessment` to the table in section 4.1 of `coding-standards/OPENTELEMETRY.md`. State this change in the description of the pull request (Principle XV).
 - [ ] T033 [P] List the signals that need a safety test in `contracts/observability.md`: the bearer credential of the model request in log records and spans, the principal in the audit record as the output of the principal policy, the tool name under D-12, and the attribute set of each instrument (`LOGGING.md` section 9, `OPENTELEMETRY.md` section 7). T056a and T056b write these tests.
 
-**Checkpoint**: The contracts have approval, the ADR is Accepted, and 26 acceptance cases fail on realistic assertions.
+**Checkpoint**: The contracts have approval, the ADR is Accepted, and 27 acceptance cases fail on realistic assertions.
 
 **Phase 2.7 (entity boilerplate)**: Not applicable. The feature adds no entity, no handler, and no repository (`plan.md`).
 
@@ -114,8 +114,8 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 **Purpose**: Build the parts that each user story needs. Write the test task of each pair first. The automatic approval conditions are in this phase, because the evaluation run of US5 and the request path of US4 use them.
 
-- [ ] T034 Write tests in `internal/extproc/config/validate_assessment_test.go` and `internal/extproc/config/loader_assessment_test.go` for each key, default, and validation rule of `contracts/assessment-files.md` section 1. Cover each rule of `data-model.md` `Organization Context.name`, `.description`, and `.internal_domains`, and of `Disclosure.arguments` and `.withhold`. Include a missing organization value and a missing `disclosure.arguments` value. Make sure that the schema has no key for an individual server or tool (FR-016). Include assessment enabled with `log.level: warn` in each mode, and a path that is a directory (D-13).
-- [ ] T035 Add the assessment keys to `internal/extproc/config/config.go`, `loader.go`, and `validate.go` until T034 passes. They apply the rules of `data-model.md` `Organization Context.name`, `.description`, and `.internal_domains`, and of `Disclosure.arguments` and `.withhold` (Principle VII, D-17).
+- [ ] T034 Write tests in `internal/extproc/config/validate_assessment_test.go` and `internal/extproc/config/loader_assessment_test.go` for each key, default, and validation rule of `contracts/assessment-files.md` section 1. Cover each rule of `data-model.md` `Organization Context.name`, `.description`, and `.internal_domains`, and of `Disclosure.arguments`. Include a missing organization value and a missing `disclosure.arguments` value. Make sure that the schema has no key for an individual server or tool (FR-016). Include assessment enabled with `log.level: warn` in each mode, and a path that is a directory (D-13).
+- [ ] T035 Add the assessment keys to `internal/extproc/config/config.go`, `loader.go`, and `validate.go` until T034 passes. They apply the rules of `data-model.md` `Organization Context.name`, `.description`, and `.internal_domains`, and of `Disclosure.arguments` (Principle VII, D-17).
 - [ ] T036 [P] Write tests in `internal/extproc/config/validate_assessment_questions_test.go` for each rejection of `contracts/assessment-files.md` section 2. Cover `data-model.md` `Question Set.questions`. The default value of `questions` equals the questions of `spec.md` Journey 1, step 2, and of `examples/config/extproc-tool-assessment.yaml`, and it obeys each rule. A list in the configuration replaces the full default list (FR-024, FR-028).
 - [ ] T037 Extend `internal/extproc/config/validate_assessment_questions_test.go` after T036. Cover each rule of `data-model.md` `Assessment Question.name`, `.type`, `.instructions`, `.yes_when`, `.no_when`, and `.levels`. Include the placeholder rule and the length limits of the criteria and the level texts (FR-025, FR-028).
 - [ ] T038 Add the key `questions` with its default to `internal/extproc/config/config.go` and `loader.go`, and its rules to `validate.go`, after T035 and until T036 and T037 pass. Apply the rules of `data-model.md` `Question Set.questions`, and of `Assessment Question.name`, `.type`, `.instructions`, `.yes_when`, `.no_when`, and `.levels`. The error names the question or the key (FR-024, FR-028, D-17).
@@ -145,7 +145,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 **Goal**: An assessed call causes exactly one model request with the bounded context. Other calls cause no model request.
 
-**Independent Test**: Run the cases US2.1 to US2.8 and US1.3 in `tests/e2e/extproc/tool_assessment_test.go` with the decision endpoint double.
+**Independent Test**: Run the cases US2.1 to US2.9 and US1.3 in `tests/e2e/extproc/tool_assessment_test.go` with the decision endpoint double.
 
 ### Tests first
 
@@ -161,7 +161,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T060 [US2] Add the assessment to the `approval_required` branch in `internal/extproc/server/server.go` with the sequence of D-01. Evaluate the policy a second time with `input.assessment`. For this story, each assessed call ends as a pending approval or a denial (FR-001 to FR-004).
 - [ ] T061 [US2] Connect the configuration, the question set, the store, the client, and the assessor in `cmd/extproc-token-exchange/root.go` with one constructor. Use that constructor in `tests/e2e/extproc/bootstrap/`. Write the event `assessment.question_set.loaded` at startup, as T056a tests it (`contracts/observability.md`).
 - [ ] T062 [US2] Write the record `assessment.tool_call.assessed`, the spans, and the instruments of `contracts/observability.md` in `internal/extproc/assessment/telemetry.go` until T056a passes. Obey D-12 for the tool name (FR-060 to FR-063). T097 adds the write with an error result for an automatic approval.
-- [ ] T063 [US2] Run `just test-e2e-extproc`. Make sure that US2.1 to US2.8 and US1.3 in `tests/e2e/extproc/tool_assessment_test.go` pass. Make sure that the signal test of T056b passes (FR-006, FR-061, SC-004, SC-008).
+- [ ] T063 [US2] Run `just test-e2e-extproc`. Make sure that US2.1 to US2.9 and US1.3 in `tests/e2e/extproc/tool_assessment_test.go` pass. Make sure that the signal test of T056b passes (FR-006, FR-061, SC-004, SC-008).
 
 **Checkpoint**: The model interface operates in the request path. Each assessed call still waits for a person.
 
@@ -208,8 +208,8 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T087 [P] [US5] Write the starter case set with a label for each case in two fixed files: the tuning part `examples/config/assessment-cases.jsonl` and the validation part `examples/config/assessment-cases-validation.jsonl`. Include the calls of issue #206, dangerous counterexamples, and adversarial argument variants in each part. Include a `human` case with the role `reader`, for example the look-alike domain share. Give the expected answer of each default question for each case. Each part has a minimum of 30 cases for each expected answer of each default question. Include difficult cases for the answer no: a tool description with long instructions for the caller, an argument value that is a prompt or a message for a recipient, and a tool that sends a notification. Include tool listings with a description that tells a reviewer to approve calls (FR-053, FR-054, US5.3).
 - [ ] T088 [P] [US5] Write the example policy `examples/config/assessment-policy.rego` from `spec.md` Journey 1, step 3. Evaluate it with the OPA library against the first evaluation and the inputs of journeys 1 to 3 in a test in `internal/extproc/assessment/example_policy_test.go`. The test makes sure that each description is a constant text of the policy (FR-039).
 - [ ] T089 [US5] Write one case in `tests/e2e/extproc/assessment_starter_set_test.go`. It is not an acceptance scenario. It runs the subcommand with the default question set and the starter files of T087 and T088 with the double. The external editor share and each adversarial variant wait for a person (SC-003).
-- [ ] T090 [US5] Measure the default questions. Do an evaluation run of the tuning part of the starter files with each real decision model that the project can reach, a minimum of one. For each default question, compare the answers with the expected answers. Change the wording of a question until the tuning part agrees, and obey the authoring rules of FR-027 with each change. Start with `persistent_effect`, `addresses_assessor`, and `definition_addresses_assessor`, whose wording changed without a measurement (`research.md`, D-17). For each changed question, change `spec.md` Journey 1, step 2, the default value in `internal/extproc/config/`, and `examples/config/extproc-tool-assessment.yaml` in one commit. Set the thresholds of `examples/config/assessment-policy.rego` from the tuning part. Then do one run of the validation part and do not change a question or a threshold after it. Record the numbers for each question and each model. This task needs access to a model, for example the local model of the smoke test. It is a gate for the first release (FR-054, SC-011).
-- [ ] T090a [US5] Get the approval of the stakeholder for the default question set with the numbers of T090. Record the approval and the numbers in the pull request. Without the approval, do not release a default question (FR-054, SC-011).
+- [ ] T090 [US5] Measure the default questions. Do an evaluation run of the tuning part of the starter files with each real decision model that the project can reach, a minimum of one. For each default question, compare the answers with the expected answers. Change the wording of a question until the tuning part agrees, and obey the authoring rules of FR-027 with each change. Start with `persistent_effect`, `addresses_assessor`, and `definition_addresses_assessor`, whose wording changed without a measurement (`research.md`, D-17). For each changed question, change `spec.md` Journey 1, step 2, the default value in `internal/extproc/config/`, and `examples/config/extproc-tool-assessment.yaml` in one commit. Set the thresholds of `examples/config/assessment-policy.rego` from the tuning part. Then do one run of the validation part and do not change a question or a threshold after it. Record the numbers for each question and each model. This task needs access to a model, for example the local model of the smoke test. It is a gate for the merge of the pull request (FR-054, SC-011).
+- [ ] T090a [US5] Get the approval of the stakeholder for the default question set with the numbers of T090. Record the approval and the numbers in the pull request. Without the approval, the pull request does not merge (FR-054, SC-011).
 - [ ] T091 [US5] Write `docs/guides/assess-tool-calls.md`. Describe the evaluation run and the case values for a policy that reads request values. Give the numbers for each default question and each model, and the false-approval rate of the example policy with its bound, only from the validation run of T090. Name the tuning run as such. State the residual risks of SR-010: a policy change without a new evaluation run, a model alias, the decision logs and the reasons of the policy with an example of a decision log mask, one tool name on two servers, and a description that a wrong answer caused (FR-053, FR-061, SR-010).
 - [ ] T092 [US5] Run `just test-e2e-extproc`. Make sure that US5.1 to US5.3 in `tests/e2e/extproc/assessment_evaluate_test.go` pass (SC-007).
 
@@ -233,7 +233,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T120 [US1] Add to `docs/guides/assess-tool-calls.md` after T091. Describe the organization values, the disclosure settings, and the default question set. Give the authoring rules for questions in the configuration with one correct and one incorrect question for each rule, and an annotated organization description and question set. Give the rules for a policy description: constant texts, and no argument value or answer value (FR-027, FR-039, SR-008).
 - [ ] T121 [US1] Run `just test-e2e-extproc`. Make sure that US1.1 and US1.2 in `tests/e2e/extproc/tool_assessment_test.go` pass (SC-001).
 
-**Checkpoint**: Recommendation mode operates with measured default questions. US2, US3, US5, and US1 form the first release. Automatic approval is not possible at this point. The record of FR-044 (`would_auto_approve`) is complete with US4, because it needs an evaluation record.
+**Checkpoint**: Recommendation mode operates with measured default questions. Automatic approval is not possible at this point. The record of FR-044 (`would_auto_approve`) is complete with US4, because it needs an evaluation record.
 
 ---
 
@@ -274,7 +274,7 @@ The tests and the code of the conditions are T093 and T096 in Phase 2.5.
 - [ ] T102 Make sure that each task and each change refers to a requirement of `spec.md`. Make sure that no change is unrelated to the feature (Feature Scope).
 - [ ] T103 Make sure that `ARCHITECTURE.md` has the glossary terms and the trust boundary. Make sure that the ADR of T014 is Accepted, names the decisions that it supersedes, and agrees with the code. Make sure that `examples/config/README.md` refers to each new example. Make sure that the Helm chart has no key of the feature, because it does not deploy ExtProc (`adrs/011-extproc-standalone-binary.md`, Principles II, V, VII).
 - [ ] T104 Make sure that the feature diff has no change under `api/`, `docs/api/`, `migrations/`, `internal/adapters/`, `internal/domain/storage/` apart from T002a, and `web/` (API-001, API-005, DB-001, FR-038, D-16). Make sure that the approval of T020 is in the pull request (Principles IV, X).
-- [ ] T105 Make sure that `tests/e2e/extproc/tool_assessment_test.go` and `tests/e2e/extproc/assessment_evaluate_test.go` contain exactly 26 cases, one for each scenario. Each case has its scenario identifier, and no case is pending or skipped. The cases of T056b and T089 are in their own files and are not scenario cases (Principle XIII).
+- [ ] T105 Make sure that `tests/e2e/extproc/tool_assessment_test.go` and `tests/e2e/extproc/assessment_evaluate_test.go` contain exactly 27 cases, one for each scenario. Each case has its scenario identifier, and no case is pending or skipped. The cases of T056b and T089 are in their own files and are not scenario cases (Principle XIII).
 - [ ] T105a Make sure that each journey of `spec.md` refers to its scenarios. Make sure that the configuration, the HTTP exchanges, and the default question set agree with the requirements, the contracts, and the code (Principle XIV).
 
 ### Implementation phase verification
@@ -314,7 +314,7 @@ flowchart TD
 - **Phase 2** blocks all behavior. T020 (approval) comes before the Accepted status of T014. T013, T014, and T015 change `ARCHITECTURE.md` and run one after the other. T025 comes before T026, because they change one file. T029 follows T025 to T027. T017 comes before T016 and T035.
 - **Phase 2.5** follows Phase 2. Each implementation task follows its test task. T037 follows T036 in one file. T093 and T096 follow T051 and T053.
 - **US2 and US3** supply the request path. US2 builds it, and US3 makes it safe for failures.
-- **US5** follows US3, because the evaluation run uses the assessor, the system rules of T067, and the conditions of T096. T088 comes before T089. T090 needs access to a real model and follows T086 and T087. T090a follows T090. T090 and T090a are a gate for the first release. If no model is available, the first release is not complete.
+- **US5** follows US3, because the evaluation run uses the assessor, the system rules of T067, and the conditions of T096. T088 comes before T089. T090 needs access to a real model and follows T086 and T087. T090a follows T090. T090 and T090a are a gate for the merge. If no model is available, the pull request is not complete.
 - **US1** follows US5. It gives the approver the description and the risk level of the policy. T120 follows T091 in one file.
 - **US4** follows US1. T099 follows T095b, T097, and T098. T100 follows T095a.
 - **Phase 8** follows all stories.
@@ -341,26 +341,19 @@ T082 and T083 can run at the same time, and so can T087 and T088. For US4, T094,
 
 ## Implementation Strategy
 
-### First release: recommendation mode with measured default questions (US2, US3, US5, US1)
+One pull request delivers the full feature. Do the phases in this sequence:
 
 1. Complete Phase 0, Phase 1, and Phase 2. Stop until T020 has approval.
 2. Complete the foundations.
 3. Complete US2, then US3.
-4. Complete US5. Do the measurement of T090 with a real model, and get the approval of T090a. Do not continue to the release without the two.
-5. Complete US1.
-6. Stop and validate: do journeys 1, 2, 3, 4, 5, and 8 of `quickstart.md`.
+4. Complete US5. Do the measurement of T090 with a real model, and get the approval of T090a. Do not continue without the two.
+5. Complete US1, then US4.
+6. Complete Phase 8, and do the nine journeys of `quickstart.md`.
 
-This release changes no approval decision. Each assessed call still waits for a person. The
-service does not read an evaluation record for automatic approval in this release. The second
-release completes FR-044.
+The pull request does not merge before these gates are complete: the approved contracts (T020),
+the Accepted ADR (T014), the measured default questions (T090), and their approval (T090a).
 
-### Second release: automatic approval (US4)
-
-1. Complete US4.
-2. Stop and validate: do journeys 6, 7, and 9 of `quickstart.md`.
-3. Complete Phase 8.
-
-Automatic approval stays disabled by default in each release.
+Automatic approval is a part of the delivery. It stays disabled by default.
 
 ## Notes
 

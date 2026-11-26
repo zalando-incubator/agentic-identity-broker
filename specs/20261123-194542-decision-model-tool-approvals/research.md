@@ -124,9 +124,9 @@ configuration has no key for a server or a tool, and the status `excluded` does 
 **Decision**: ExtProc sends `POST <endpoint>` with a JSON body in the OpenAI Decisions shape. It
 uses the existing `internal/extproc/httpclient` package and adds no SDK dependency. The input is
 one user message with two `input_text` parts. The first part is the fixed framing. The second
-part is the context as compact JSON text. The sections keep the sequence of FR-022, because the
-text form makes the sequence visible to the model. The canonical form of D-06 sorts keys and is
-only for fingerprints. The contract is in [contracts/decision-request.md](contracts/decision-request.md).
+part is the context as compact JSON text. The sections keep the sequence of FR-022. Inside a section,
+the keys of a map are sorted, as the Go JSON encoder writes them. The sequence has one purpose:
+the service and the evaluation run send the same text for the same call. The contract is in [contracts/decision-request.md](contracts/decision-request.md).
 
 ExtProc sends no second attempt after an error. The deadline of the request is `request_timeout`.
 ExtProc reads the credential file for each request and sends the value as a bearer token. TLS
@@ -589,9 +589,15 @@ No model measured the new wording. A container without a model wrote this revisi
 revision is a hypothesis, and these controls apply:
 
 - The project measures each default question on its own, with expected answers for each case and a minimum number of cases for each answer (FR-054). The cases include difficult cases for the answer no.
-- The evaluation run and this measurement are parts of the first release. No release contains a default question without published results and the approval of the stakeholder (SC-011).
+- The evaluation run and this measurement are parts of the same pull request as the feature. The pull request does not merge with a default question that has no published results and no approval of the stakeholder (SC-011).
 - The project changes questions only with the tuning part of the case set and publishes results only from the validation part (FR-053).
 - The project measures with each model that it can reach, and it names each model with its results. A result for one model does not apply to a different model (R-19, R-20).
+
+**Disclosure**: The disclosure settings have one key, `arguments`, with the values `all` and
+`none`. A list of argument names whose values the system does not send was a part of the design
+until 2026-11-26. The stakeholder removed it, because an operator cannot maintain the argument
+names of externally managed tools. With `all`, the value of each described argument goes to the
+decision endpoint (SR-010).
 
 **Alternatives considered**: A separate catalog file or a question set file. The stakeholder
 rejected the two on 2026-11-26: the service has one configuration approach, and the name

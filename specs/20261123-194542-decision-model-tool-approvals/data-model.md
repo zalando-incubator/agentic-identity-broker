@@ -28,7 +28,6 @@ The source is the ExtProc configuration: `authorization.assessment.disclosure` (
 | Field | Type | Rules |
 |---|---|---|
 | `arguments` | `all` or `none` | Required while assessment is enabled. No default. |
-| `withhold` | list of name patterns | Optional. Maximum 100 entries. The shared matcher for approval patterns reads them. |
 
 The configuration has no key for an individual server or tool. The operator cannot describe a
 server, and cannot describe, correct, or replace a tool definition (FR-011, FR-013, FR-016).
@@ -66,7 +65,7 @@ The source is a `tools/list` result as the client sees it through the gateway (D
 | `target_server_name` | string | From the gateway metadata. Part of the key. |
 | `name` | string | Required. Maximum 255 characters. Part of the key. The name as the client sees it. On a route with two or more MCP targets, the gateway adds the target name as a prefix, for example `drive_drive.share_file` (D-02). |
 | `description` | string | Optional. If the listing has none, the `tool` section of the context has no description. |
-| `input_schema` | JSON object | Optional. The system uses only the entries in `properties`. |
+| `input_schema` | JSON object | Optional. The system uses only the entries in `properties`. The definition describes an argument if the name of the argument is a key of `properties`. The schema entry of the argument is the value of that key, as the server listed it. |
 | `annotations` | JSON object | Optional. The system keeps only the four hint values of the MCP specification that the listing contains. It adds no default hint value. |
 | `tool_context` | fingerprint | Calculated when the definition changes (D-06). |
 
@@ -89,7 +88,8 @@ ExtProc builds this document for one call and discards it after the call (SR-007
 
 Rules:
 
-- The sections have the sequence of the table.
+- The sections have the sequence of the table, and the fields of a section have the sequence of its row. The keys of each map inside a section are in sorted sequence. This is the output of the Go JSON encoder for a map, thus the service and the evaluation run give the same text for the same call (FR-022).
+- With the disclosure setting `none`, `call.arguments` is absent, and `withheld_arguments` has the name of each supplied and described argument. With the setting `all`, `withheld_arguments` is empty.
 - One argument value has a maximum of 4 KiB of canonical JSON and a maximum of 8 levels. A larger value is oversized.
 - The full context has a maximum of `max_context_bytes`.
 - The names in `withheld_arguments` and `oversized_arguments` are names that the definition describes.

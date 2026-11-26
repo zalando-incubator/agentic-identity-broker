@@ -36,7 +36,7 @@ The input never contains approval records (FR-034).
       "context": "tc-<64 hexadecimal characters>"
     },
     "context": {
-      "withheld_arguments": ["file_id"],
+      "withheld_arguments": [],
       "oversized_arguments": [],
       "undescribed_argument_count": 0
     },
