@@ -5,8 +5,8 @@
 **Binding sources**: `coding-standards/LOGGING.md`, `coding-standards/OPENTELEMETRY.md`,
 Constitution Principles I and XV, spec FR-022, FR-023, SR-006.
 
-**Status**: Proposed. The amendment in section 4 needs maintainer sign-off (STD-LOGGING in
-[plan.md](../plan.md#approval-items)).
+**Status**: Proposed. The maintainer reviews the amendment in section 4 in the PR (STD-LOGGING
+in [plan.md](../plan.md#review-items)).
 
 ## 1. Audit records
 

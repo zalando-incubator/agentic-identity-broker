@@ -4,8 +4,8 @@
 
 **Input**: Feature specification from `specs/20261125-152113-service-accounts-stored-jwt/spec.md`
 
-**Status**: Planned. Every item in [Approval Items](#approval-items) needs the maintainer's
-sign-off before the implementation of that item starts (Constitution Principle X).
+**Status**: Planned. The maintainer approves the API contract (Constitution Principle X) and the
+decisions in [Review Items](#review-items) by reviewing the PR.
 
 ## Summary
 
@@ -96,10 +96,11 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
 - [x] **Helm Deployment Contract**: No parameter change. The existing migration Job applies `050`.
 - [x] **API Design First**:
   [contracts/admin-service-accounts-openapi.yaml](./contracts/admin-service-accounts-openapi.yaml)
-  defines the change; it is merged into `api/admin/openapi.yaml` only after approval.
+  defines the change; it is merged into `api/admin/openapi.yaml` before any handler is implemented.
 - [x] **API Documentation**: Admin API only (`api/admin/openapi.yaml`).
-- [ ] **API Changes**: Pending maintainer sign-off on API-SA, API-SHAPE, API-UPDATE,
-  API-SVC-DELETE and API-VERSION. This gate stays open until the approval is recorded on the PR.
+- [ ] **API Changes**: The maintainer confirms API-SA, API-SHAPE, API-UPDATE, API-SVC-DELETE,
+  API-VERSION, DEC-FINGERPRINT and DEC-EXP-RANGE by reviewing the PR (maintainer decision,
+  2026-11-26). No separate approval record is kept.
 - [x] **Database Design**: `050_create_service_accounts.{up,down}.sql`, go-migrate naming, atomic;
   schema in [data-model.md](./data-model.md#postgresql-schema--migration-050_create_service_accounts).
 - [x] **E2E Acceptance Tests**: Planned for all scenarios before implementation
@@ -143,9 +144,12 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
   binding, no UI (FR-024). No metric is added because no requirement asks for one.
 
 **Post-design re-check (after Phase 1)**: All blocking preconditions pass except the API
-confirmation gate, which is the expected sign-off. No violation needs Complexity Tracking.
+confirmation, which the maintainer gives in PR review. No violation needs Complexity Tracking.
 
-## Approval Items
+## Review Items
+
+The maintainer reviews these decisions in the PR. Implementation does not wait for a separate
+approval.
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
@@ -260,7 +264,7 @@ existence checks; `ProviderService.WithServiceAccounts(counter)`;
 | Phase | Purpose | Required? |
 |-------|---------|-----------|
 | **Phase 0** | Pre-implementation refactoring | Skipped |
-| **Phase 1** | Setup — record approvals, add the ADR | Required |
+| **Phase 1** | Setup — read area instructions, reserve the migration number | Required |
 | **Phase 2** | Design Preconditions (domain model and glossary, API, DB, E2E tests, observability) | **MANDATORY** |
 | **Phase 2.7** | Entity Boilerplate — typed ID, entity types, port, empty adapters, `501` handlers, routes | Included |
 | **Phase 2.5** | Foundational Infrastructure — migration, both repositories, credential rules | Required |
@@ -278,7 +282,7 @@ existence checks; `ProviderService.WithServiceAccounts(counter)`;
 
 Ordering constraints for tasks:
 
-1. Approvals recorded; ADR added; OpenAPI delta merged with version `3.1.0`; LOGGING.md amended.
+1. ADR added; OpenAPI delta merged with version `3.1.0`; LOGGING.md amended.
 2. Glossary and `ARCHITECTURE.md`; typed ID generated.
 3. Scaffold (Phase 2.7), then E2E tests for all scenarios and the migration and repository
    contract tests, failing on concrete assertions.

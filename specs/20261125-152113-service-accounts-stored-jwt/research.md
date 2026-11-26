@@ -4,8 +4,8 @@
 
 The Technical Context has no open `NEEDS CLARIFICATION` items. Each section records one design
 decision, its rationale and the main alternatives. Decisions marked **Proposed** are not fixed by
-the spec, issue #471 or issue #478; they are registered in [plan.md](./plan.md#approval-items) and
-need the maintainer's sign-off.
+the spec, issue #471 or issue #478; they are listed in [plan.md](./plan.md#review-items) for the maintainer's
+review of the PR.
 
 ## R1 — Where the domain code lives
 
