@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
 
@@ -16,6 +17,12 @@ var (
 	ErrNotFound = errors.New("entity not found")
 	// ErrExternalIDConflict identifies a set external ID held by another agent.
 	ErrExternalIDConflict = errors.New("external_id already held by another agent")
+	// ErrServiceAccountCanonicalIDConflict identifies a canonical_id held by another service
+	// account of the same service. It is wrapped in a storage.StorageError of kind conflict.
+	ErrServiceAccountCanonicalIDConflict = errors.New("service account canonical_id already exists on this service")
+	// ErrServiceAccountVersionMismatch identifies a write whose expected version is not the
+	// stored version. It is wrapped in a storage.StorageError of kind conflict.
+	ErrServiceAccountVersionMismatch = errors.New("service account version mismatch")
 )
 
 // IsNotFoundErr returns true if err represents a not-found condition from any
@@ -51,6 +58,35 @@ type ThirdpartyOAuth2ProviderDiscoveryStatusWriter interface {
 	// RecordDiscoveryFailure rejects a stale version or an attempt no later than
 	// the stored attempt or success. failureCode contains no remote response data.
 	RecordDiscoveryFailure(ctx context.Context, serviceID id.ServiceID, expectedVersion int64, completedAt time.Time, failureCode string) error
+}
+
+// ServiceAccountRepository persists service accounts. Every method is scoped by service: an
+// account of another service is not found. The credential is opaque ciphertext on input and
+// output. All errors are storage.StorageError; reads use the configured read timeout and writes
+// the write timeout.
+type ServiceAccountRepository interface {
+	// Create stores a new account and sets its Version to 1. An unknown service is not_found; a
+	// canonical_id taken within the service is conflict wrapping
+	// ErrServiceAccountCanonicalIDConflict.
+	Create(ctx context.Context, account *model.ServiceAccount) error
+	// Get returns the account with the ID within the service, or not_found.
+	Get(ctx context.Context, serviceID id.ServiceID, accountID id.ServiceAccountID) (*model.ServiceAccount, error)
+	// GetByCanonicalID returns the account with the canonical_id within the service, or not_found.
+	GetByCanonicalID(ctx context.Context, serviceID id.ServiceID, canonicalID string) (*model.ServiceAccount, error)
+	// ListByService returns the service's accounts ordered by canonical_id in byte order; an
+	// empty slice when it holds none.
+	ListByService(ctx context.Context, serviceID id.ServiceID) ([]*model.ServiceAccount, error)
+	// Update writes canonical_id, scopes, credential, summary, credential expiry and updated_at,
+	// increments the version and sets it on the entity. A missing account is not_found; a taken
+	// canonical_id is conflict wrapping ErrServiceAccountCanonicalIDConflict; a set
+	// expectedVersion that differs from the stored version is conflict wrapping
+	// ErrServiceAccountVersionMismatch. Without expectedVersion the write is unconditional.
+	Update(ctx context.Context, account *model.ServiceAccount, expectedVersion *int64) error
+	// Delete erases the account and its credential. A missing account is not_found; the version
+	// rule is the one of Update.
+	Delete(ctx context.Context, serviceID id.ServiceID, accountID id.ServiceAccountID, expectedVersion *int64) error
+	// CountByService returns how many accounts the service holds.
+	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
 // User represents a user entity in the storage layer.

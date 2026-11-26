@@ -1016,8 +1016,11 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		Agents:             admin.NewAgentsHandler(agentService, app.ProviderService, app.PermissionSetService, b.logger),
 		Services:           admin.NewServicesHandler(app.ProviderService, b.config, b.logger),
 		ProtectedResources: admin.NewProtectedResourcesHandler(app.ProviderService, b.logger),
-		PermissionSets:     admin.NewPermissionSetsHandler(app.PermissionSetService, app.ProviderService, b.logger),
-		CIMDClientKeys:     admin.NewCIMDClientKeysHandler(app.CIMDKeyService, b.logger),
+		ServiceAccounts: admin.NewServiceAccountsHandler(
+			thirdparty.NewServiceAccountService(b.storage.ServiceAccounts(), encryptor, b.storage.Services(), thirdparty.NoServiceAccountBindings{}, time.Now, b.logger),
+			app.ProviderService, b.logger),
+		PermissionSets: admin.NewPermissionSetsHandler(app.PermissionSetService, app.ProviderService, b.logger),
+		CIMDClientKeys: admin.NewCIMDClientKeysHandler(app.CIMDKeyService, b.logger),
 	}
 	app.AdminHandlers.SessionSweep = admin.NewSessionSweepHandler(
 		oauth2session.NewSessionSweepService(b.storage.SessionExpiry(), app.OAuth2SessionService, b.logger), b.logger)
