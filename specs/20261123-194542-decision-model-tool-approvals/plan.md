@@ -189,7 +189,7 @@ The tests do not exist at this time.
 | US2.1 | ExtProc | One model request with the organization text, the server name, the listed definition, the permitted values, and `file_id` as withheld. |
 | US2.2 | ExtProc | The request body has no principal, agent identifier, session identifier, credential, risk level, policy description, or other tool. |
 | US2.3 | ExtProc | An undescribed argument is absent from the request, the count is 1, and the call waits in each mode. |
-| US2.4 | ExtProc | An excluded server and a server without a listing: no model request, and each create request has `not_available`. |
+| US2.4 | ExtProc | A server without a listing: no model request, and the create request has `not_available`. |
 | US2.5 | ExtProc | Two requests with equal bytes for the questions and the first three sections. The injected text is only in `call`. |
 | US2.6 | ExtProc | Startup fails for each invalid catalog, and the error names the question or the key. |
 | US2.7 | ExtProc | Calls with an `allow` or `deny` policy result cause no model request. |
@@ -282,7 +282,7 @@ Unit tests come first for each of these subjects:
 - The server: a batched MCP request and a request that is not MCP cause no assessment.
 - The failure conditions of SC-002: a minimum of 20 conditions in the `auto_approve` mode with a rule that permits the call. No condition lets the call proceed.
 - The statistics: the exact bound against known values, including 0 of 410 and 1 of 410.
-- The configuration: defaults, each validation rule, assessment enabled with `log.level: warn`, and each invalid catalog. A server `withhold` list adds to the deployment-wide list.
+- The configuration: defaults, each validation rule, assessment enabled with `log.level: warn`, and each invalid catalog. A catalog with a key for an individual server or tool does not load.
 
 A fuzz test covers the listing parser, because it reads data from MCP servers.
 

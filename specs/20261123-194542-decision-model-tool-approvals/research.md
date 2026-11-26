@@ -91,7 +91,7 @@ two targets on one route apart, and the names in `tools/list` and in `tools/call
 
 - Definitions apply to all users of one instance. A server can return a different listing for each user. The latest listing applies. The fingerprint condition and the change report (FR-063) limit this risk.
 - If an operator adds a second target to a route, the tool names of the first target get a prefix. Each tool of that route then has no definition and no evaluation record entry until a new listing and a new evaluation run. The calls wait for a person.
-- On a route with two or more MCP targets, the target server name is the `mcp_server` value of the route. It is not the name of one server. An exception in `servers.<name>`, also `assess: false`, thus applies to all targets of the route. A server that needs its own exception needs its own route with its own `mcp_server` value. The verification case "two targets on one route" used `mcp_server: 'workspace-mcp'` for two servers.
+- On a route with two or more MCP targets, the target server name is the `mcp_server` value of the route. It is not the name of one server. The `server` section of the context and the keys of the evaluation record thus name the route. The verification case "two targets on one route" used `mcp_server: 'workspace-mcp'` for two servers.
 - After a start, an instance knows no definitions.
 - The tests used `mcp-go` servers only. A server that sends the result as an event stream with other events before the result was not tested. The parser looks for the response with the request identifier and thus does not depend on the event sequence.
 
@@ -109,7 +109,12 @@ operator cannot keep the two in agreement. Thus, the catalog has no key that des
 or a tool. The `server` section has only the target server name
 from the gateway, and the `tool` section has no author field: the server is always the author,
 and the framing text states it. If an operator does not trust the definitions of a server, the
-operator excludes the server (`assess: false`) or writes no automatic approval rule for its tools.
+operator writes no automatic approval rule for its tools.
+
+On the same date, the stakeholder rejected the optional `servers` part of the catalog. It had
+exceptions for one server: no assessment, or a different disclosure. Each entry for a server
+needs maintenance when servers change. The disclosure settings now apply to each server, the
+catalog rejects a key for a server or a tool, and the status `excluded` does not exist.
 
 ## D-03 — The decision request is plain JSON in the Decisions shape, with the context as text
 
@@ -179,7 +184,6 @@ configuration key and a second fingerprint for one question set.
 
 | Result | Status |
 |---|---|
-| The server has an exception with `assess: false` | `excluded` |
 | No definition of the tool is known | `definition_missing` |
 | The definition or the context is larger than its limit | `context_too_large` |
 | The deadline passes | `timeout` |

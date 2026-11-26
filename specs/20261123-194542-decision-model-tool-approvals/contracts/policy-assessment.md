@@ -18,7 +18,7 @@ result fields keep their meaning.
 
 A policy author can use `not input.assessment` to find the first evaluation.
 
-The second evaluation occurs for each status, including `excluded` and `definition_missing`. Thus,
+The second evaluation occurs for each status, including `definition_missing` and `context_too_large`. Thus,
 a policy can deny a call or keep it for a person if no assessment is possible.
 
 The input never contains approval records (FR-034).
@@ -56,7 +56,7 @@ The input never contains approval records (FR-034).
 
 | Field | Values | Rules |
 |---|---|---|
-| `status` | `complete`, `incomplete`, `timeout`, `unavailable`, `context_too_large`, `definition_missing`, `excluded` | Always present. |
+| `status` | `complete`, `incomplete`, `timeout`, `unavailable`, `context_too_large`, `definition_missing` | Always present. |
 | `model` | string | The model that the response names. Absent if no response arrived. |
 | `question_set` | fingerprint | Always present. |
 | `evaluated` | boolean | True only if the evaluation record contains the model, the question set, and the tool context. |
@@ -74,7 +74,7 @@ Keys for each status (FR-031, FR-033):
 
 | Status | `model` | `tool` | `context` | `answers` |
 |---|---|---|---|---|
-| `excluded`, `definition_missing`, `context_too_large` | absent | absent | absent | each entry `missing` |
+| `definition_missing`, `context_too_large` | absent | absent | absent | each entry `missing` |
 | `timeout`, `unavailable` | absent | present | present | each entry `missing` |
 | `incomplete` | present if the response has a valid `model` value | present | present | the validated state of each entry |
 | `complete` | present | present | present | each entry `answered` |

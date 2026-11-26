@@ -96,7 +96,7 @@ Attribute values:
 
 | Attribute | Values |
 |---|---|
-| `assessment.status` | The seven statuses of D-04 |
+| `assessment.status` | The six statuses of D-04 |
 | `assessment.outcome` | `automatic_approval`, `human_review`, `denied` |
 | `assessment.evaluated` | `true`, `false` |
 | `assessment.listing_result` | `stored`, `too_large`, `not_parsed`, `ignored` |

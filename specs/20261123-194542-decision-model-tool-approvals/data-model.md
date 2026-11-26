@@ -22,7 +22,9 @@ The source is the catalog file. ExtProc reads it one time at startup (D-11).
 | `questions` | list of Assessment Question | Required. 1 to 16 entries. Each name is unique. |
 | `disclosure.arguments` | `all` or `none` | Required. No default. |
 | `disclosure.withhold` | list of name patterns | Optional. Maximum 100 entries. The shared matcher for approval patterns reads them. |
-| `servers` | map of Server Exception | Optional. The key is a target server name. |
+
+The catalog has no key for an individual server or tool. The operator cannot describe a server,
+and cannot describe, correct, or replace a tool definition (FR-011, FR-013, FR-016).
 
 ### Assessment Question
 
@@ -34,17 +36,6 @@ The source is the catalog file. ExtProc reads it one time at startup (D-11).
 | `yes_when`, `no_when` | string | Required for `predicate`. Not permitted for `score`. Maximum 500 characters each. No placeholder characters `{{` or `}}`. |
 | `levels` | list of `label` and `description` | Required for `score`. 2 to 10 entries. Not permitted for `predicate`. Each `label` has 1 to 120 characters. Each `description` has 1 to 500 characters. No placeholder characters `{{` or `}}`. |
 | `statement` | string | Required. 1 to 120 characters. Plain text in one line. No control characters. The rule is equal to the rule of `Finding.statement`, so that the broker accepts each catalog statement. |
-
-### Server Exception
-
-| Field | Type | Rules |
-|---|---|---|
-| `assess` | boolean | Optional. The default is `true`. |
-| `arguments` | as in `disclosure` | Optional. It replaces the deployment-wide argument setting for this server. |
-| `withhold` | as in `disclosure` | Optional. Its names apply in addition to the deployment-wide names. An exception cannot remove a deployment-wide name. An empty list changes nothing. |
-
-An exception has no key that describes a server or a tool. The operator cannot describe a server,
-and cannot describe, correct, or replace a tool definition (FR-011, FR-013).
 
 ### Tool Definition
 
@@ -91,9 +82,9 @@ Rules:
 | `status` | enumeration | One value of D-04. |
 | `model` | string | The `model` value of the response. Absent in the policy input if no response arrived. |
 | `question_set` | fingerprint | From the catalog. It does not include `statement` (FR-029). |
-| `tool.context` | fingerprint | Absent in the policy input for `excluded`, `definition_missing`, and `context_too_large`. |
+| `tool.context` | fingerprint | Absent in the policy input for `definition_missing` and `context_too_large`. |
 | `evaluated` | boolean | True if the evaluation record contains the model, the question set, and the tool context. |
-| `context` | flags | `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count`. Absent in the policy input for `excluded`, `definition_missing`, and `context_too_large`. |
+| `context` | flags | `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count`. Absent in the policy input for `definition_missing` and `context_too_large`. |
 | `answers.<name>.status` | enumeration | `answered`, `refused`, `missing`, or `invalid`. Each catalog question has an entry for each assessment status. Without a response, the value is `missing`. |
 | `answers.<name>.probability` | number | Only for an answered `predicate`. |
 | `answers.<name>.probabilities`, `score`, `confidence` | list, number, number | Only for an answered `score`. The list has one value for each level. |

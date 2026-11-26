@@ -48,6 +48,9 @@
   the tool definitions that the servers list, and the operator describes no tools. Second,
   disclosure became one deployment-wide setting, and entries for each server became optional
   exceptions. Third, all prose obeys the Simple English rules of the project skill.
+- **Revision of 2026-11-26.** The catalog has no entry for a server or a tool. The optional
+  exceptions, the server description, and the replacement tool description are removed, because
+  an operator cannot maintain metadata about externally managed servers.
 - **Language.** The prose uses the structural rules of Simplified Technical English in the
   pragmatic mode. Each clause of a Given/When/Then scenario counts as one sentence. Code,
   identifiers, quoted source text, and interface text did not change.
