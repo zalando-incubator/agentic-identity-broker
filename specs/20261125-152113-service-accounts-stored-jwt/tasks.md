@@ -110,7 +110,7 @@ they fail on `404`, after Phase 2.7 on `501`.
 - [X] T014 [US3] Write the nine User Story 3 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–9). Scenarios 7 and 9 carry `Label("docker")` and run both store cases. Scenario 3 registers a token expiring a few seconds ahead and waits for `failed` with `Eventually` before rotating; no fixed sleep. Scenario 8's rename body repeats the stored `scopes`, which `PUT` requires (US3.1–US3.9; FR-005, FR-017–FR-019; SC-005).
 - [X] T015 [US4] Write the four User Story 4 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–4); Scenario 2 uses `Eventually` on both the status read and the list (US4.1–US4.4; FR-014, FR-015; SC-004).
 - [X] T016 [US5] Write the four User Story 5 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–4). Scenario 4 carries `Label("docker")`, runs both store cases, and asserts `409` on service deletion, the unchanged service and account, then `204` after the account is removed (US5.1–US5.4; FR-020, FR-021, FR-025).
-- [ ] T017 Check both suites: `Describe` → `Context` → exactly one `It()` per scenario, scenario comments, fresh server and storage per test, fixtures from T010, no `XIt`, `PIt`, `Skip()` or red-phase comments. Run `ginkgo -v --label-filter="!performance && !docker" --focus "Service accounts" ./tests/e2e/` and confirm each test fails on a concrete assertion. Add `file:line` to each row of `plan.md` §Scenario Mapping (Principle XIII).
+- [X] T017 Check both suites: `Describe` → `Context` → exactly one `It()` per scenario, scenario comments, fresh server and storage per test, fixtures from T010, no `XIt`, `PIt`, `Skip()` or red-phase comments. Run `ginkgo -v --label-filter="!performance && !docker" --focus "Service accounts" ./tests/e2e/` and confirm each test fails on a concrete assertion. Add `file:line` to each row of `plan.md` §Scenario Mapping (Principle XIII).
 
 **Checkpoint**: Journeys reviewed; 31 E2E scenarios written and failing semantically.
 
@@ -291,9 +291,9 @@ with an account (`409`) (spec User Story 5).
 
 ## Phase 8: Documentation and Validation
 
-- [ ] T068 [P] Add an "Add a service account" section to `docs/guides/manage-agents-and-services.md`: what a service account is, create, list, read, status, rotate, change the ceiling, rename, remove, the 16 KiB and form rules, that the broker never shows or verifies the JWT, that an expired token marks the account failed until replaced, and that a service with accounts cannot be deleted. End-user content only (AGENTS.md §Documentation Scope; SC-001).
-- [ ] T069 [P] Add the six service-account operations to the Admin API map in `docs/reference/api.md` under Services (API-001).
-- [ ] T070 [P] Update `internal/AGENTS.md` (AdminHandlers list, Key Storage Types row for `ServiceAccount`) and the admin API, data store §4.1 and directory text of `ARCHITECTURE.md` for the new handler, table and domain service (Principles II, XII).
+- [X] T068 [P] Add an "Add a service account" section to `docs/guides/manage-agents-and-services.md`: what a service account is, create, list, read, status, rotate, change the ceiling, rename, remove, the 16 KiB and form rules, that the broker never shows or verifies the JWT, that an expired token marks the account failed until replaced, and that a service with accounts cannot be deleted. End-user content only (AGENTS.md §Documentation Scope; SC-001).
+- [X] T069 [P] Add the six service-account operations to the Admin API map in `docs/reference/api.md` under Services (API-001).
+- [X] T070 [P] Update `internal/AGENTS.md` (AdminHandlers list, Key Storage Types row for `ServiceAccount`) and the admin API, data store §4.1 and directory text of `ARCHITECTURE.md` for the new handler, table and domain service (Principles II, XII).
 - [ ] T071 Run the validation steps of `specs/20261125-152113-service-accounts-stored-jwt/quickstart.md` §§1–4 and 6 (`just check`, `just test`, `just test-integration`, the memory E2E focus run, `just telemetry-doc`, then `just verify` where a container runtime exists) and record the results, naming any suite left to CI, in `specs/20261125-152113-service-accounts-stored-jwt/tasks.md` (Principles VIII, XIII).
 
 ---

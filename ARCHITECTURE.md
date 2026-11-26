@@ -282,10 +282,10 @@ internal/adapters/storage/postgres/
 
 - **[api/admin/openapi.yaml](api/admin/openapi.yaml)** - Admin server (Port 14000)
   - Canonical OpenAPI documentation for all administrative APIs
-  - Endpoints: Health check, agent management (CRUD), service management (CRUD), and operator-triggered session sweep
+  - Endpoints: Health check, agent management (CRUD), service management (CRUD), service accounts of a service (CRUD and status), and operator-triggered session sweep
   - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT); admin access controlled upstream
-  - Security emphasis: Client secrets always redacted in responses (SR-003)
-  - Referential integrity: 409 Conflict responses when deleting services with active grants
+  - Security emphasis: Client secrets always redacted in responses (SR-003); service-account credentials never returned, only a credential summary
+  - Referential integrity: 409 Conflict responses when deleting services with active grants or with service accounts
   - OAuth2 support: Service metadata for OIDC discovery
 
 **Key Features**:
@@ -608,6 +608,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
 - **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange and refresh retry transient failures, but not permanent OAuth errors.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of stored confidential provider `client_secret` values via the `Secret` value object. Filesystem, public, and CIMD services use an absent secret. No other layer touches `EncryptionPort` for provider secrets.
+- **ServiceAccountService** (`internal/domain/thirdparty/service_account_service.go`): Owns the Service Account workflow of a third-party service ([20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md)). It checks a `signed_jwt` credential for form only with `jwx` (no verification), encrypts the format-discriminated credential document under the owning service's `service_id` context, derives status on read from the stated expiry, detects no-op updates, enforces the optional version precondition and the binding check on delete, and writes one `service.service_account.*` audit record per committed write. It never decrypts in this release. `admin.ServiceAccountsHandler` parses input and maps results; `ports.ServiceAccountRepository` has memory and PostgreSQL adapters. `ThirdpartyOAuth2ProviderService.Delete` refuses a service that holds service accounts.
 - Protected-resource resolution leaves stored confidential secrets encrypted and filesystem/public/CIMD secrets absent. Token exchange uses only the provider ID and display name. Refresh retrieves the service through `ThirdpartyOAuth2ProviderService.Get()` and selects operation credentials in the session domain. Successful stored-secret decryption is logged at Info with structured fields.
 - No manual encryption steps required in calling code - encryption is transparent
 
@@ -1213,9 +1214,9 @@ Name: Broker transactional store
 
 Type: PostgreSQL, accessed through sqlx repositories
 
-Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
+Purpose: Persists agents, services, encrypted service-account credentials, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
 
-Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
+Key tables: `agents`, `thirdparty_oauth2_services`, `service_accounts` (migration `050`; `ON DELETE RESTRICT` to its service), `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
 
 ### 4.2. DynamoDB branch-key store
 

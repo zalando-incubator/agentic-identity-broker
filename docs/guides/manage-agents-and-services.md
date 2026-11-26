@@ -732,6 +732,129 @@ Set `enable_discovery: false` and provide an HTTPS `issuer_uri`, manual endpoint
 and provider credentials. Do not include `discovery.resource_url` in this separate
 request.
 
+## Add a service account
+
+A service account is a machine credential that a third-party service issued to software, for
+example a JWT that your identity provider signed for one agent. You attach it to an existing
+service, the same service that users already hold sessions with, and give it a scope ceiling:
+the most the account may ever obtain. A service can hold any number of service accounts.
+
+In this release, a service account is an inventory entry. No agent can use it yet, and it has no
+effect on user or agent requests.
+
+The first kind is `jwt_bearer` with the credential format `signed_jwt`: a ready-signed JWT that
+the broker stores and later hands out unchanged as an access token. The broker stores the JWT
+encrypted and never shows it again. It does not verify the signature, the issuer or the
+audience, and it does not contact the issuer. It checks only the form of the token:
+
+- The token is at most 16384 bytes (16 KiB).
+- The token is a signed compact JWS (three dot-separated parts) whose payload is a JWT claims
+  set. The broker parses it with its JOSE library and refuses what the library refuses.
+- The header states an `alg`, and it is not `none`.
+- When the token states an `exp`, that time lies in the future. A token without `exp` is
+  accepted.
+
+Leading or trailing spaces are not trimmed, and a token with them is refused. Every refusal names
+the failed rule and never repeats the token.
+
+### Register a service account
+
+```bash
+curl -X POST http://localhost:14000/api/services/company-platform/service-accounts \
+  -H "X-Remote-User: admin@example.com" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "canonical_id": "platform-triage-bot",
+    "kind": "jwt_bearer",
+    "scopes": ["read"],
+    "credential": { "format": "signed_jwt", "use": "access_token", "jwt": "eyJ..." }
+  }'
+```
+
+- `canonical_id` is your name for the account. It is unique within the service and follows the
+  rules of other canonical IDs: 1–128 letters, digits, `.`, `_` or `-`, and not UUID-shaped.
+- `scopes` is the ceiling: a non-empty list of unique scope values. The broker does not compare
+  it with the token's own claims.
+- `use` is optional and defaults to `access_token`, the only value offered.
+
+The broker answers `201` with a `Location` header, a strong `ETag` (`"1"`) and the account. The
+response has no `credential` member. Instead, `credential_summary` lets you recognise the token:
+`format`, `use`, the `iss`, `sub`, `kid` and `exp` read from the token (each omitted when the
+token does not state it), and a `fingerprint` such as `SHA256:fhbwk8g0…`. The fingerprint changes
+whenever the stored token changes; equal tokens have equal fingerprints. These values are for
+display and status only.
+
+`narrowing` is `none`: the broker can hand out only what the stored token grants.
+
+### List and read service accounts
+
+```bash
+curl http://localhost:14000/api/services/company-platform/service-accounts \
+  -H "X-Remote-User: admin@example.com"
+
+curl http://localhost:14000/api/services/company-platform/service-accounts/platform-triage-bot \
+  -H "X-Remote-User: admin@example.com"
+```
+
+The list is a JSON array ordered by `canonical_id`. A single read returns the same representation
+and the account's `ETag`. Address an account by its `id` or its `canonical_id` under its own
+service; an account of another service is not found.
+
+### Check whether an account is usable
+
+```bash
+curl http://localhost:14000/api/services/company-platform/service-accounts/platform-triage-bot/status \
+  -H "X-Remote-User: admin@example.com"
+```
+
+```json
+{ "status": "ready", "failure_reason": null, "credential_expires_at": "2026-12-31T00:00:00Z" }
+```
+
+From the instant the stored token's `exp` passes, every status read and listing reports
+`"status": "failed"` with `"failure_reason": "credential_expired"`. The account stays failed until
+you replace the token. The broker does not renew tokens or send reminders, so whoever issues the
+token must replace it before it expires. An account whose token states no `exp` stays `ready`.
+
+### Rotate the token, change the ceiling or rename
+
+Use `PUT` on the account. `scopes` is required and replaces the ceiling. The other members are
+optional:
+
+- `credential` replaces the stored token in place. The account keeps its ID; the summary and
+  status are recomputed, and the previous token is no longer stored.
+- `canonical_id` renames the account. The old name stops working at once and becomes free.
+- `kind`, when sent, must be the account's kind. It cannot change.
+- `null` is not accepted for any member.
+
+```bash
+curl -X PUT http://localhost:14000/api/services/company-platform/service-accounts/platform-triage-bot \
+  -H "X-Remote-User: admin@example.com" \
+  -H "Content-Type: application/json" \
+  -H 'If-Match: "1"' \
+  -d '{
+    "scopes": ["read", "write"],
+    "credential": { "format": "signed_jwt", "jwt": "eyJ..." }
+  }'
+```
+
+`If-Match` is optional. With it, the broker answers `412` and changes nothing when the account
+changed since you read it. Without it, the last writer wins. A request that changes nothing
+answers `200` with the same `ETag`. A refused token leaves the account unchanged.
+
+### Remove a service account
+
+```bash
+curl -X DELETE http://localhost:14000/api/services/company-platform/service-accounts/platform-triage-bot \
+  -H "X-Remote-User: admin@example.com"
+```
+
+The broker answers `204` and erases the stored token. `If-Match` works as for `PUT`.
+
+A service that still holds a service account cannot be deleted: `DELETE /api/services/{service-id}`
+answers `409` with `cannot delete service: N service account(s) are attached to it`. Remove the
+accounts first. The broker never erases a stored token as a side effect of deleting a service.
+
 ## Define permission sets
 
 A permission set is a business-readable group of scopes for one or more services. Users

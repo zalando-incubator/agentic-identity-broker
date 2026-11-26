@@ -48,7 +48,7 @@ Use `docs/ENCRYPTION_INTEGRATION_GUIDE.md` for integration details.
 |---|---|
 | `internal/adapters/http/routing/admin.go` | Admin route registration |
 | `internal/adapters/http/routing/enduser.go` | End-user, approval, OAuth2, and SPA routes |
-| `internal/adapters/http/handlers/admin/` | Agents, services, protected resources, permission sets, credentials, and key management |
+| `internal/adapters/http/handlers/admin/` | Agents, services, protected resources, service accounts, permission sets, credentials, and key management |
 | `internal/adapters/http/handlers/approval/` | Approval creation, lifecycle, synchronization, and lists |
 | `internal/adapters/http/handlers/consent/` | User info, agent delegation, details, and grants |
 | `internal/adapters/http/enduser/` | OAuth2 authorization, token, and metadata handlers |

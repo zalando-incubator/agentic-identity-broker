@@ -13,7 +13,6 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
-	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -99,7 +98,7 @@ func (h *ServiceAccountsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	}
 	view, err := h.accounts.Create(r.Context(), operator, serviceID, create)
 	if err != nil {
-		h.domainError(w, r, err, true)
+		h.domainError(w, err, true)
 		return
 	}
 	w.Header().Set("Location", "/api/services/"+serviceID.String()+"/service-accounts/"+view.Account.ID.String())
@@ -117,7 +116,7 @@ func (h *ServiceAccountsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	views, err := h.accounts.List(r.Context(), serviceID)
 	if err != nil {
-		h.domainError(w, r, err, true)
+		h.domainError(w, err, true)
 		return
 	}
 	responses := make([]serviceAccountResponse, len(views))
@@ -135,7 +134,7 @@ func (h *ServiceAccountsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	view, err := h.accounts.Get(r.Context(), serviceID, accountID)
 	if err != nil {
-		h.domainError(w, r, err, false)
+		h.domainError(w, err, false)
 		return
 	}
 	h.writeAccount(w, http.StatusOK, view)
@@ -177,7 +176,7 @@ func (h *ServiceAccountsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	}
 	view, _, err := h.accounts.Update(r.Context(), operator, serviceID, accountID, update)
 	if err != nil {
-		h.domainError(w, r, err, false)
+		h.domainError(w, err, false)
 		return
 	}
 	h.writeAccount(w, http.StatusOK, view)
@@ -198,7 +197,7 @@ func (h *ServiceAccountsHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.accounts.Delete(r.Context(), operator, serviceID, accountID, expectedVersion); err != nil {
-		h.domainError(w, r, err, false)
+		h.domainError(w, err, false)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -212,7 +211,7 @@ func (h *ServiceAccountsHandler) Status(w http.ResponseWriter, r *http.Request) 
 	}
 	view, err := h.accounts.Status(r.Context(), serviceID, accountID)
 	if err != nil {
-		h.domainError(w, r, err, false)
+		h.domainError(w, err, false)
 		return
 	}
 	response := serviceAccountStatusResponse{Status: string(view.Status)}
@@ -237,7 +236,7 @@ func (h *ServiceAccountsHandler) operator(w http.ResponseWriter, r *http.Request
 func (h *ServiceAccountsHandler) service(w http.ResponseWriter, r *http.Request) (id.ServiceID, bool) {
 	serviceID, err := h.services.ResolveID(r.Context(), chi.URLParam(r, "service-id"))
 	if err != nil {
-		h.domainError(w, r, err, true)
+		h.domainError(w, err, true)
 		return id.ServiceID{}, false
 	}
 	return serviceID, true
@@ -258,7 +257,7 @@ func (h *ServiceAccountsHandler) resolve(w http.ResponseWriter, r *http.Request)
 	}
 	accountID, err := h.accounts.Resolve(r.Context(), serviceID, chi.URLParam(r, "service-account-id"))
 	if err != nil {
-		h.domainError(w, r, err, false)
+		h.domainError(w, err, false)
 		return id.ServiceID{}, id.ServiceAccountID{}, false
 	}
 	return serviceID, accountID, true
@@ -345,8 +344,9 @@ func (h *ServiceAccountsHandler) assign(w http.ResponseWriter, raw json.RawMessa
 }
 
 // domainError maps a domain result to the error envelope. Messages are constants or the domain's
-// constant validation messages; none contains request content.
-func (h *ServiceAccountsHandler) domainError(w http.ResponseWriter, r *http.Request, err error, serviceScope bool) {
+// constant validation messages; none contains request content. The domain logs write failures;
+// the request log carries the status of every other failure.
+func (h *ServiceAccountsHandler) domainError(w http.ResponseWriter, err error, serviceScope bool) {
 	var credentialErr *model.CredentialValidationError
 	var entityErr *model.ServiceAccountValidationError
 	switch {
@@ -363,12 +363,6 @@ func (h *ServiceAccountsHandler) domainError(w http.ResponseWriter, r *http.Requ
 	case ports.IsNotFoundErr(err):
 		h.writeError(w, http.StatusNotFound, "service account not found", "service account not found")
 	default:
-		kind := storage.ErrorKindUnknown
-		var storageErr *storage.StorageError
-		if errors.As(err, &storageErr) {
-			kind = storageErr.Kind
-		}
-		h.logger.ErrorContext(r.Context(), "service account request failed", "error_kind", string(kind))
 		h.writeError(w, http.StatusInternalServerError, "internal server error", "")
 	}
 }

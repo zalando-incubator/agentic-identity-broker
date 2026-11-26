@@ -312,42 +312,41 @@ Ordering constraints for tasks:
 
 #### Scenario Mapping
 
-Line numbers are filled during Phase 2f. `R` = `service_accounts_register_test.go`,
-`L` = `service_accounts_lifecycle_test.go`.
+Each row links the `It()` in `tests/e2e/` by `file:line`.
 
 | Spec Scenario | File | Test Description |
 |---|---|---|
-| US1.1 | R | `It("should create a ready account with a summary and an ETag and without the JWT")` |
-| US1.2 | R | `It("should list both accounts with summaries and no credential material")` |
-| US1.3 | R | `It("should default use to access_token when the credential omits it")` |
-| US1.4 | R | `It("should accept a JWT without exp and report no expiry")` |
-| US1.5 | R, `Label("docker")`, both stores | `It("should refuse a taken canonical_id on the same service and accept it on another")` |
-| US1.6 | R | `It("should answer 404 for create and list under an unknown service")` |
-| US1.7 | R | `It("should read one account by ID and by canonical_id with its ETag")` |
-| US2.1 | R | `It("should refuse a JWT that is not a compact JWS")` |
-| US2.2 | R | `It("should refuse a JWT with alg none in any letter case or without alg")` |
-| US2.3 | R | `It("should refuse a JWT whose exp is not in the future")` |
-| US2.4 | R | `It("should refuse a JWT longer than 16384 bytes")` |
-| US2.5 | R | `It("should refuse use assertion and unknown use, format and kind")` |
-| US2.6 | R | `It("should refuse empty or missing scopes, a missing credential and an invalid canonical_id")` |
-| US2.7 | R | `It("should name the failed rule without echoing any part of the JWT")` |
-| US3.1 | L | `It("should rotate the credential in place and change summary and ETag")` |
-| US3.2 | L | `It("should change the ceiling and keep credential and summary")` |
-| US3.3 | L | `It("should return a failed account to ready when a valid JWT replaces the expired one")` |
-| US3.4 | L | `It("should leave the account unchanged when an update carries an invalid credential")` |
-| US3.5 | L | `It("should answer 200 with the same ETag when nothing changes")` |
-| US3.6 | L | `It("should answer 404 for an unknown account and for an account of another service")` |
-| US3.7 | L, `Label("docker")`, both stores | `It("should answer 412 for a stale If-Match and carry out a current or absent one")` |
-| US3.8 | L | `It("should rename the account and stop addressing it by the old name")` |
-| US3.9 | L, `Label("docker")`, both stores | `It("should refuse a rename to a name taken on the same service")` |
-| US4.1 | L | `It("should report ready with the stated expiry and no failure reason")` |
-| US4.2 | L | `It("should report failed with credential_expired in status and list once exp has passed")` |
-| US4.3 | L | `It("should keep an account without exp ready")` |
-| US4.4 | L | `It("should answer 404 for the status of an unknown account")` |
-| US5.1 | L | `It("should delete the account and remove it from the list")` |
-| US5.2 | L | `It("should answer 404 when deleting an unknown account")` |
-| US5.3 | L | `It("should answer 412 and keep the account when a delete carries a stale If-Match")` |
-| US5.4 | L, `Label("docker")`, both stores | `It("should refuse deleting a service that holds an account and allow it after the last one is removed")` |
+| US1.1 | `service_accounts_register_test.go:53` | `It("should create a ready account with a summary and an ETag and without the JWT")` |
+| US1.2 | `service_accounts_register_test.go:122` | `It("should list both accounts with summaries and no credential material")` |
+| US1.3 | `service_accounts_register_test.go:80` | `It("should default use to access_token when the credential omits it")` |
+| US1.4 | `service_accounts_register_test.go:95` | `It("should accept a JWT without exp and report no expiry")` |
+| US1.5 | `service_accounts_register_test.go:144`, `Label("docker")`, both stores | `It("should refuse a taken canonical_id on the same service and accept it on another")` |
+| US1.6 | `service_accounts_register_test.go:168` | `It("should answer 404 for create and list under an unknown service")` |
+| US1.7 | `service_accounts_register_test.go:193` | `It("should read one account by ID and by canonical_id with its ETag")` |
+| US2.1 | `service_accounts_register_test.go:220` | `It("should refuse a JWT that is not a compact JWS")` |
+| US2.2 | `service_accounts_register_test.go:227` | `It("should refuse a JWT with alg none in any letter case or without alg")` |
+| US2.3 | `service_accounts_register_test.go:240` | `It("should refuse a JWT whose exp is not in the future")` |
+| US2.4 | `service_accounts_register_test.go:248` | `It("should refuse a JWT longer than 16384 bytes")` |
+| US2.5 | `service_accounts_register_test.go:255` | `It("should refuse use assertion and unknown use, format and kind")` |
+| US2.6 | `service_accounts_register_test.go:277` | `It("should refuse empty or missing scopes, a missing credential and an invalid canonical_id")` |
+| US2.7 | `service_accounts_register_test.go:312` | `It("should name the failed rule without echoing any part of the JWT")` |
+| US3.1 | `service_accounts_lifecycle_test.go:97` | `It("should rotate the credential in place and change summary and ETag")` |
+| US3.2 | `service_accounts_lifecycle_test.go:120` | `It("should change the ceiling and keep credential and summary")` |
+| US3.3 | `service_accounts_lifecycle_test.go:200` | `It("should return a failed account to ready when a valid JWT replaces the expired one")` |
+| US3.4 | `service_accounts_lifecycle_test.go:134` | `It("should leave the account unchanged when an update carries an invalid credential")` |
+| US3.5 | `service_accounts_lifecycle_test.go:153` | `It("should answer 200 with the same ETag when nothing changes")` |
+| US3.6 | `service_accounts_lifecycle_test.go:164` | `It("should answer 404 for an unknown account and for an account of another service")` |
+| US3.7 | `service_accounts_lifecycle_test.go:218`, `Label("docker")`, both stores | `It("should answer 412 for a stale If-Match and carry out a current or absent one")` |
+| US3.8 | `service_accounts_lifecycle_test.go:176` | `It("should rename the account and stop addressing it by the old name")` |
+| US3.9 | `service_accounts_lifecycle_test.go:248`, `Label("docker")`, both stores | `It("should refuse a rename to a name taken on the same service")` |
+| US4.1 | `service_accounts_lifecycle_test.go:275` | `It("should report ready with the stated expiry and no failure reason")` |
+| US4.2 | `service_accounts_lifecycle_test.go:295` | `It("should report failed with credential_expired in status and list once exp has passed")` |
+| US4.3 | `service_accounts_lifecycle_test.go:320` | `It("should keep an account without exp ready")` |
+| US4.4 | `service_accounts_lifecycle_test.go:336` | `It("should answer 404 for the status of an unknown account")` |
+| US5.1 | `service_accounts_lifecycle_test.go:354` | `It("should delete the account and remove it from the list")` |
+| US5.2 | `service_accounts_lifecycle_test.go:365` | `It("should answer 404 when deleting an unknown account")` |
+| US5.3 | `service_accounts_lifecycle_test.go:381` | `It("should answer 412 and keep the account when a delete carries a stale If-Match")` |
+| US5.4 | `service_accounts_lifecycle_test.go:393`, `Label("docker")`, both stores | `It("should refuse deleting a service that holds an account and allow it after the last one is removed")` |
 
 US2.1, US2.2, US2.5 and US2.6 each state several variants of one rule. Each keeps one `It()` and
 iterates over a table of inputs inside it, asserting status, message and an unchanged list for
