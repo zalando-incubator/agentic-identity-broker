@@ -235,8 +235,8 @@ store-level check closes the race between a concurrent account creation and serv
 `thirdparty.NoServiceAccountBindings` implementation that always answers false; #472 replaces it
 with the agent-grant repository. The `409` response and its message
 (`service account is bound by an agent grant`) are in the OpenAPI contract now. A domain unit test
-with a checker that answers true covers the refusal path; the E2E test for User Story 5
-Scenario 3 arrives with #472, as the spec states.
+with a checker that answers true covers the refusal path; the acceptance scenario and its E2E
+test belong to #472, where a binding can first exist.
 
 **Rationale**: The spec asks for the rule and its response now and enforcement from #472. A port
 with a null implementation keeps the refusal path tested and makes #472 a wiring change.
@@ -360,7 +360,7 @@ preconditions, delete, count) lives in `tests/integration/storage/contract/`. It
 memory adapter in the self-contained integration suite and against PostgreSQL under the
 `integration` build tag. Adapter packages cannot share `_test.go` code, and `tests/` is where
 AGENTS.md puts shared test helpers. The E2E scenarios whose outcome depends on store
-semantics (User Story 1 Scenario 5, User Story 3 Scenarios 7 and 9, User Story 5 Scenario 5) keep
+semantics (User Story 1 Scenario 5, User Story 3 Scenarios 7 and 9, User Story 5 Scenario 4) keep
 one `It()` each, labelled `docker`, with both store cases inside, as feature
 `055-agent-external-id-upsert` did. All other scenarios run on the memory store.
 

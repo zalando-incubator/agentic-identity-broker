@@ -84,6 +84,9 @@ Evaluated in order; the first failed rule decides the reason ([research R4](./re
 | No agent grant binds the account (delete; enforced from #472) | `service account is bound by an agent grant` | `409` |
 | Service holds no accounts (service delete) | `cannot delete service: N service account(s) are attached to it` | `409` |
 
+On update, an unknown `kind` is refused with `kind must be jwt_bearer` before it is compared
+with the stored kind.
+
 ## State
 
 ```mermaid

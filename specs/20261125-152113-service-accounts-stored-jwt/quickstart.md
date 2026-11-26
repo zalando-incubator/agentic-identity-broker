@@ -45,8 +45,8 @@ Expected to pass, among others:
 ginkgo -v --label-filter="!performance && !docker" --focus "Service accounts" ./tests/e2e/
 ```
 
-Expected: one passing `It()` for each acceptance scenario of the spec except User Story 5
-Scenario 3, which arrives with #472, and the four store-dependent scenarios of step 4. The mapping
+Expected: one passing `It()` for each acceptance scenario of the spec except the four
+store-dependent scenarios of step 4. The mapping
 is in [plan.md](./plan.md#scenario-mapping).
 
 ## 4. PostgreSQL
@@ -61,7 +61,7 @@ Expected:
 - Migration `050` applies, rolls back and reapplies; the unique constraint, the checks and the
   `RESTRICT` foreign key hold.
 - The PostgreSQL repository passes the same contract test as the memory repository.
-- User Story 1 Scenario 5, User Story 3 Scenarios 7 and 9, and User Story 5 Scenario 5 pass on
+- User Story 1 Scenario 5, User Story 3 Scenarios 7 and 9, and User Story 5 Scenario 4 pass on
   both stores.
 
 ## 5. Manual journey (optional)

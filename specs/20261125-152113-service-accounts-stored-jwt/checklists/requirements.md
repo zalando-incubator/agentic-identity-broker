@@ -33,4 +33,4 @@
 
 - No [NEEDS CLARIFICATION] markers remain. The five points that issues #471 and #478 leave open were answered by the maintainer on 2026-11-25 and are recorded under "Clarifications" in the spec.
 - The admin API paths, field names and payload shapes in the spec are taken from the settled design in #478 and from the repository's spec template, which requires API, database and security sections and RFC-style HTTP exchanges (Constitution Principles IV, X, XIV). They are the feature's contract, not implementation detail.
-- User Story 5, Scenario 3 (delete refused while an agent grant binds the account) cannot be exercised until #472 exists; its E2E test is added there.
+- The scenario for a delete refused while an agent grant binds the account was moved to #472, where a binding can first exist (constitution Principle XIII requires an E2E test for every scenario in this spec). FR-020 still defines the rule and its `409` here.

@@ -71,8 +71,8 @@ behave identically (DB-001, SC-008). The migration is atomic (DB-002). Existing 
 unchanged (FR-024, SC-007).
 
 **Scale/Scope**: An administrative registry: tens of accounts per service, hundreds in total. The
-unpaginated list and a transactional table creation are adequate. 31 acceptance scenarios are
-tested now; one (User Story 5 Scenario 3) arrives with #472.
+unpaginated list and a transactional table creation are adequate. All 31 acceptance
+scenarios are tested in this feature.
 
 ## Constitution Check
 
@@ -104,7 +104,7 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
 - [x] **Database Design**: `050_create_service_accounts.{up,down}.sql`, go-migrate naming, atomic;
   schema in [data-model.md](./data-model.md#postgresql-schema--migration-050_create_service_accounts).
 - [x] **E2E Acceptance Tests**: Planned for all scenarios before implementation
-  ([Testing Strategy](#testing-strategy)); User Story 5 Scenario 3 is deferred to #472 by the spec.
+  ([Testing Strategy](#testing-strategy)).
 - [x] **E2E Test Mapping**: One `It()` per scenario ([Scenario Mapping](#scenario-mapping)).
 - [x] **E2E Red Phase**: Tests assert concrete status codes, headers, bodies and list contents
   against handlers that first answer `501`.
@@ -221,6 +221,7 @@ tests/
 ├── e2e/service_accounts_register_test.go               # User Stories 1 and 2
 ├── e2e/service_accounts_lifecycle_test.go              # User Stories 3, 4 and 5
 ├── e2e/fixtures/service_account.go                     # signed, unsigned, expiring tokens; requests
+├── e2e/service_accounts_backend_test.go               # memory and PostgreSQL store cases
 ├── e2e/helpers/service_account.go                      # PUT/DELETE with If-Match, credential-absence matcher
 ├── integration/migrations/service_accounts_migration_test.go
 ├── integration/storage/contract/service_account_repository.go # shared repository contract
@@ -344,9 +345,8 @@ Line numbers are filled during Phase 2f. `R` = `service_accounts_register_test.g
 | US4.4 | L | `It("should answer 404 for the status of an unknown account")` |
 | US5.1 | L | `It("should delete the account and remove it from the list")` |
 | US5.2 | L | `It("should answer 404 when deleting an unknown account")` |
-| US5.3 | — | Added with #472 (spec: "its E2E test is added with #472"). The refusal path is covered now by a domain unit test with a binding checker that answers true. |
-| US5.4 | L | `It("should answer 412 and keep the account when a delete carries a stale If-Match")` |
-| US5.5 | L, `Label("docker")`, both stores | `It("should refuse deleting a service that holds an account and allow it after the last one is removed")` |
+| US5.3 | L | `It("should answer 412 and keep the account when a delete carries a stale If-Match")` |
+| US5.4 | L, `Label("docker")`, both stores | `It("should refuse deleting a service that holds an account and allow it after the last one is removed")` |
 
 US2.1, US2.2, US2.5 and US2.6 each state several variants of one rule. Each keeps one `It()` and
 iterates over a table of inputs inside it, asserting status, message and an unchanged list for
@@ -411,6 +411,9 @@ error messages, list contents. No `XIt`, `PIt`, `Skip()` or red-phase comments.
 - `internal/adapters/storage/memory/service_account_repository_test.go`: adapter-specific
   behaviour (deep copies in and out, service-existence check); concurrent creates and updates
   under `-race`.
+- `internal/adapters/storage/postgres/service_account_repository_unit_test.go` (no build tag,
+  no database): error mapping to `StorageError` and the sentinels, and record conversion to and
+  from the entity (Principle IX requires unit tests for both adapters).
 - `tests/integration/storage/service_account_repository_test.go` (self-contained,
   `just test-integration`): the shared repository contract from
   `tests/integration/storage/contract/` on the memory store.
@@ -423,7 +426,8 @@ error messages, list contents. No `XIt`, `PIt`, `Skip()` or red-phase comments.
 **Integration Tests**:
 
 - `tests/integration/migrations/service_accounts_migration_test.go` (`integration` tag): apply,
-  rollback, reapply; unique `(service_id, canonical_id)`; each `CHECK`; deleting a service with
+  rollback, reapply repeated twice with existing services and other rows intact (rolling back
+  `050` removes only `service_accounts` rows, by design); unique `(service_id, canonical_id)`; each `CHECK`; deleting a service with
   an account fails with a foreign-key violation; no plaintext column.
 - `tests/integration/storage/infra/service_account_test.go` and
   `internal/adapters/storage/postgres/service_account_repository_test.go` (`integration` tag): the
@@ -437,7 +441,7 @@ error messages, list contents. No `XIt`, `PIt`, `Skip()` or red-phase comments.
 
 - Unit: all branches of the credential rules, the domain service and the handler's error mapping.
 - Integration: migration `050` in both directions; every repository method on PostgreSQL.
-- E2E: 100% of the acceptance scenarios testable in this feature (31 of 32; US5.3 with #472).
+- E2E: 100% of the acceptance scenarios testable in this feature (31 scenarios).
 - Frontend E2E: not applicable.
 
 ## Complexity Tracking

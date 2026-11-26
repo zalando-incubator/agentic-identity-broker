@@ -24,7 +24,7 @@ Answered from the settled design. The source issue is named with each answer.
 - Q: Is a JWT without an `exp` accepted, and what is its status over time? → A: Accepted; it stays `ready`. Expiry is checked only "when it states an `exp`", and the account fails only "once a stated `exp` has passed" (#471). Recorded in FR-009, FR-014, User Story 1 Scenario 4, User Story 4 Scenario 3.
 - Q: Which values does `use` accept in this feature? → A: Only `access_token`, which is also the default. `assertion` with a `token_endpoint` is prepared in the shape and refused for now (#471; #478 "Decided or deferred": a stored JWT used as an assertion is deferred). Recorded in FR-007, User Story 2 Scenario 5.
 - Q: What does an update without a `credential` do? → A: It keeps the stored credential; the ceiling can be changed. Only "a `PUT` carrying a new `credential` rotates it in place" (#478 "What an administrator does" and "Create payloads per kind"). Recorded in FR-017, FR-018.
-- Q: Is the delete refusal for a bound account part of this feature? → A: The rule and its conflict response are defined here; enforcement starts when agent grants exist (#471: "enforced once the agent-grants issue lands"). Recorded in FR-020, User Story 5 Scenario 3.
+- Q: Is the delete refusal for a bound account part of this feature? → A: The rule and its conflict response are defined here; enforcement starts when agent grants exist (#471: "enforced once the agent-grants issue lands"). Recorded in FR-020. The acceptance scenario for the refusal belongs to #472, where a binding can first exist.
 - Q: Can the administrator set whether an account can narrow? → A: No. Narrowing is "a fact about the provider, not a setting" and is derived as none for a stored JWT (#478 "Service accounts belong to services"; #471). Recorded in FR-003.
 - Q: Under which encryption context is the credential stored? → A: The owning service's `service_id` context (#471 Requirements). Recorded in SR-001.
 - Q: May values read from the stored JWT drive any decision? → A: No. They are "for display and status only, never for an authorization decision" (#478; #471). Recorded in FR-013.
@@ -36,8 +36,8 @@ Answered from the settled design. The source issue is named with each answer.
 
 Issues #471 and #478 do not decide these points. The maintainer answered them on 2026-11-25.
 
-- Q: Is `If-Match` required, optional or unsupported on update and delete of a service account? → A: Optional. When supplied and stale the broker answers `412` and changes nothing; without it the last writer wins. Recorded in FR-019, API-004, User Story 3 Scenario 7, User Story 5 Scenario 4 and Edge Cases.
-- Q: What happens when an administrator deletes a service that still has service accounts? → A: The deletion is refused with `409` until the accounts are removed; stored machine credentials are never erased as a side effect. Recorded in FR-025, DB-002, User Story 5 Scenario 5 and Edge Cases.
+- Q: Is `If-Match` required, optional or unsupported on update and delete of a service account? → A: Optional. When supplied and stale the broker answers `412` and changes nothing; without it the last writer wins. Recorded in FR-019, API-004, User Story 3 Scenario 7, User Story 5 Scenario 3 and Edge Cases.
+- Q: What happens when an administrator deletes a service that still has service accounts? → A: The deletion is refused with `409` until the accounts are removed; stored machine credentials are never erased as a side effect. Recorded in FR-025, DB-002, User Story 5 Scenario 4 and Edge Cases.
 - Q: Is there a read of a single service account? → A: Yes. `GET .../service-accounts/{service-account-id}` returns the same representation as the list, with the ETag header. Recorded in FR-016, API-001, User Story 1 Scenario 7.
 - Q: What is the size limit for a stored JWT? → A: 16 KiB: the compact serialization may be at most 16384 bytes. The limit is fixed in the API contract and is not configurable. Recorded in FR-009, User Story 2 Scenario 4.
 - Q: May `canonical_id` change after creation? → A: Yes. An update that states a different `canonical_id` renames the account, subject to uniqueness within the service (`409` when taken); an update that omits it keeps it. The account's ID never changes, and `kind` stays fixed. Recorded in FR-005, FR-017, User Story 3 Scenarios 8–9 and Edge Cases.
@@ -125,7 +125,7 @@ An administrator or a monitoring job asks for an account's status. A stored JWT 
 
 ### User Story 5 - Remove a service account (Priority: P3)
 
-An administrator removes an account that is no longer needed. The stored credential is gone with it. Once agent grants exist (#472), removal is refused while any agent grant still binds the account.
+An administrator removes an account that is no longer needed. The stored credential is gone with it. Once agent grants exist (#472), removal is refused while any agent grant still binds the account; that refusal is specified and tested with #472.
 
 **Why this priority**: Clean-up completes the lifecycle but blocks nothing else.
 
@@ -135,9 +135,8 @@ An administrator removes an account that is no longer needed. The stored credent
 
 1. **Given** an account that no agent grant binds, **When** an administrator deletes it, **Then** the broker answers `204`, the account no longer appears in the service's list, and its stored credential is erased.
 2. **Given** an account identifier that matches no account of the addressed service, **When** an administrator deletes it, **Then** the broker answers `404`.
-3. **Given** an account that an agent grant binds, **When** an administrator deletes it, **Then** the broker answers `409` and the account is unchanged. This scenario becomes testable, and its E2E test is added, with #472; until then no binding can exist.
-4. **Given** an account whose current ETag is `"2"`, **When** a delete carries `If-Match: "1"`, **Then** the broker answers `412` and the account still exists.
-5. **Given** a service that holds at least one service account, **When** an administrator deletes the service, **Then** the broker answers `409`, and the service and its accounts are unchanged; after the last account is removed the service can be deleted as before.
+3. **Given** an account whose current ETag is `"2"`, **When** a delete carries `If-Match: "1"`, **Then** the broker answers `412` and the account still exists.
+4. **Given** a service that holds at least one service account, **When** an administrator deletes the service, **Then** the broker answers `409`, and the service and its accounts are unchanged; after the last account is removed the service can be deleted as before.
 
 ---
 
@@ -145,7 +144,7 @@ An administrator removes an account that is no longer needed. The stored credent
 
 - **Expiry between validation and use**: a JWT accepted seconds before its `exp` is stored and becomes `failed` at `exp`. No grace period or clock-skew allowance is applied in either direction.
 - **`nbf` in the future, or other time claims**: not interpreted. Only `exp` drives validation and status.
-- **Malformed `exp`**: an `exp` that is present but not a JSON number is refused on write, because the broker could not tell when the account fails.
+- **Malformed `exp`**: an `exp` that is present but not a JSON number, or a number outside 0 to 253402300799 (the end of year 9999), is refused on write, because the broker could not tell when the account fails.
 - **Absent `iss`, `sub` or `kid`**: accepted. The summary omits what the token does not state.
 - **Encrypted JWT (JWE, five segments)**: refused as not a compact JWS.
 - **Whitespace**: leading and trailing whitespace around the pasted `jwt` is refused, not trimmed, so the fingerprint always describes exactly the submitted value.
@@ -217,7 +216,7 @@ Content-Type: application/json
     "sub": "triage-bot",
     "kid": "2026-11",
     "exp": 1798675200,
-    "fingerprint": "SHA256:T1-fingerprint"
+    "fingerprint": "SHA256:fhbwk8g0dDlEiuXzadc7Ytx+R1pSlxRBBNgzBxN+3UQ"
   },
   "created_at": "2026-11-25T10:00:00Z",
   "updated_at": "2026-11-25T10:00:00Z"
@@ -245,7 +244,7 @@ Content-Type: application/json
     "scopes": ["read"],
     "narrowing": "none",
     "status": "ready",
-    "credential_summary": { "format": "signed_jwt", "use": "access_token", "iss": "https://idp.example.com", "sub": "triage-bot", "kid": "2026-11", "exp": 1798675200, "fingerprint": "SHA256:T1-fingerprint" },
+    "credential_summary": { "format": "signed_jwt", "use": "access_token", "iss": "https://idp.example.com", "sub": "triage-bot", "kid": "2026-11", "exp": 1798675200, "fingerprint": "SHA256:fhbwk8g0dDlEiuXzadc7Ytx+R1pSlxRBBNgzBxN+3UQ" },
     "created_at": "2026-11-25T10:00:00Z",
     "updated_at": "2026-11-25T10:00:00Z"
   }
@@ -299,7 +298,7 @@ Content-Type: application/json
     "sub": "triage-bot",
     "kid": "2026-12",
     "exp": 1801353600,
-    "fingerprint": "SHA256:T2-fingerprint"
+    "fingerprint": "SHA256:kYIMTyaG3c1Au7s4+XWRspT3DUg22fPiV9UR6yiEHVs"
   },
   "created_at": "2026-11-25T10:00:00Z",
   "updated_at": "2026-12-20T09:00:00Z"
@@ -436,7 +435,7 @@ Content-Type: application/json
 
 **The `jwt_bearer` kind with the `signed_jwt` format**
 
-- **FR-006**: This feature MUST accept exactly one kind, `jwt_bearer`, and exactly one credential format for it, `signed_jwt`. Any other kind or format MUST be refused. The request shape MUST discriminate the credential by kind and format so that later kinds and formats (#474–#477) add a branch without changing this one.
+- **FR-006**: This feature MUST accept exactly one kind, `jwt_bearer`, and exactly one credential format for it, `signed_jwt`. Any other kind or format MUST be refused. `kind` selects which credential formats are accepted, and the credential is discriminated by its `format`, so that later kinds and formats (#474–#477) add a branch without changing this one.
 - **FR-007**: A `signed_jwt` credential MUST carry `jwt` and MAY carry `use`. `use` MUST accept only `access_token` and MUST default to it. The value `assertion` MUST be refused until a later feature offers it; the model MUST allow that value and an accompanying `token_endpoint` to be added later without a new format.
 - **FR-008**: The broker MUST treat the JWT as opaque: store it exactly as submitted, never verify its signature, never fetch keys for it, never modify or rebuild it.
 - **FR-009**: On every write that carries a `signed_jwt` credential the broker MUST refuse it unless all of these hold: it is a compact JWS of exactly three non-empty base64url segments; its header and payload each decode to a JSON object; its header states an `alg` that is not `none` in any letter case; its compact serialization is at most 16384 bytes (16 KiB), a fixed limit that is not configurable; and, when the payload states an `exp`, that `exp` is a number and lies after the time of the request. A JWT without `exp` MUST be accepted.
@@ -539,7 +538,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 ### API Requirements
 
 - **API-001**: The operations are defined in `api/admin/openapi.yaml` before implementation, on the admin server only: create and list under `/api/services/{service-id}/service-accounts`; read, update and delete under `/api/services/{service-id}/service-accounts/{service-account-id}`; status under `.../{service-account-id}/status`. No end-user API changes.
-- **API-002**: The create and update request is one schema discriminated by `kind`, with `credential` a `oneOf` keyed by kind and format and marked write-only. The representation schema has no `credential` property and requires `credential_summary`, `status`, `narrowing` and `scopes`.
+- **API-002**: The create and update request is one schema with `kind` as an enumerated member and `credential` a `oneOf` discriminated by `format` and marked write-only; an update may omit `kind`. The representation schema has no `credential` property and requires `credential_summary`, `status`, `narrowing` and `scopes`.
 - **API-003**: `{service-id}` keeps its existing meaning (UUID or canonical service identifier). `{service-account-id}` accepts the account's UUID or its `canonical_id` within the addressed service.
 - **API-004**: Responses that return one account carry its strong ETag. Errors use the existing error envelope and the existing meanings of `400`, `401`, `404`, `409`, `412` and `500`. `If-Match` is optional on update and delete (FR-019).
 - **API-005**: The contract includes examples that match the journeys of this specification, including the refusals of Journey 3, and documents the delete conflict of FR-020 and the new conflict on service deletion of FR-025.
