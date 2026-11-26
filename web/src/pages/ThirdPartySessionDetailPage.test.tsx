@@ -238,4 +238,35 @@ describe('ThirdPartySessionDetailPage', () => {
     expect(screen.queryByText('Previous Service')).not.toBeInTheDocument();
     expect(screen.queryByText('Session token refreshed successfully.')).not.toBeInTheDocument();
   });
+  it('shows no alert for the previous service when navigation happens while its post-refresh reload is pending', async () => {
+    const user = userEvent.setup();
+    const previous = { ...detail(activeSession), service: { ...detail(activeSession).service, display_name: 'Previous Service' } };
+    let finishReload!: () => void;
+    let previousLoads = 0;
+    vi.mocked(sessionsApi.getServiceSessionDetail).mockImplementation((identifier) => {
+      if (identifier !== 'previous') return Promise.resolve(detail(activeSession));
+      previousLoads += 1;
+      if (previousLoads === 1) return Promise.resolve(previous);
+      return new Promise((resolve) => {
+        finishReload = () => resolve(previous);
+      });
+    });
+    vi.mocked(sessionsApi.refreshSession).mockResolvedValue({} as never);
+    const router = createMemoryRouter(
+      [{ path: '/sessions/:service', element: <ThirdPartySessionDetailPage /> }],
+      { initialEntries: ['/sessions/previous'] },
+    );
+    render(<RouterProvider router={router} />);
+    await screen.findByRole('heading', { level: 2, name: 'Previous Service' });
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(previousLoads).toBe(2));
+    await act(() => router.navigate('/sessions/github'));
+    expect(await screen.findByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
+
+    await act(async () => finishReload());
+    await act(async () => {});
+    expect(screen.getByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
+    expect(screen.queryByText('Session token refreshed successfully.')).not.toBeInTheDocument();
+  });
 });

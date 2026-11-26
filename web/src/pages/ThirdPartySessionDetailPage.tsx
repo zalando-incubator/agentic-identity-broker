@@ -111,10 +111,12 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
       await sessionsApi.refreshSession(serviceID);
       if (!isCurrent(requested)) return;
       await load();
+      if (!isCurrent(requested)) return;
       setAlert({ type: 'success', message: 'Session token refreshed successfully.' });
     } catch (err) {
       if (!isCurrent(requested)) return;
       const detail = await load();
+      if (!isCurrent(requested)) return;
       setAlert({
         type: 'error',
         message: detail?.session?.requires_reauthentication
@@ -135,8 +137,10 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
       setConfirmingTermination(false);
       if (!isCurrent(requested)) return;
       await load();
+      if (!isCurrent(requested)) return;
       setAlert({ type: 'success', message: 'Session terminated successfully.' });
     } catch (err) {
+      if (!isCurrent(requested)) return;
       setTerminationError(extractApiError(err, 'Failed to terminate session. Please try again.'));
     } finally {
       setTerminating(false);
