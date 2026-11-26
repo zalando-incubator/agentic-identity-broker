@@ -19,10 +19,26 @@ the decision log of OPA:
 - OPA writes decision logs only if ExtProc uses an OPA configuration file. With a local policy path, no decision log exists.
 - The operator decides who can read the log and whether to mask a part of it, for example `/input/mcp/arguments`.
 
-The existing record "opa authorization decision" occurs two times for an assessed call: one time
-for each evaluation. The feature does not change it. It contains the `reasons` of a policy
-result without a change. A policy must not write argument values or assessment data into its
-reasons.
+### The existing decision record of ExtProc
+
+ExtProc already writes the record "opa authorization decision" for each policy evaluation
+(`internal/extproc/authorization/authorizer.go`). The feature keeps it and does not change it.
+It occurs two times for an assessed call: one time for each evaluation.
+
+| Attribute | Value |
+|---|---|
+| `action` | The action of the policy result |
+| `reasons` | The reasons of a denial |
+| `tool_name`, `method`, `protocol`, `target_server_name` | The dimensions of the request |
+| `duration_ms`, `result_code` | The duration and the result of the evaluation |
+
+The record already goes through OpenTelemetry. The logger of ExtProc has a bridge to the
+OpenTelemetry log pipeline, which is active if `telemetry.enabled` and `telemetry.logs.enabled`
+are true. Each evaluation also has the existing span `extproc.opa.evaluate`.
+
+The record has the action of each evaluation. It does not have the answers of the model. The
+answers are only in the decision log of OPA. A policy must not write argument values or
+assessment data into its `reasons`.
 
 ## Data that no signal contains
 

@@ -343,7 +343,7 @@ for the log level, and two changes of the logging standard.
 
 **Consequences**:
 
-- The policy engine writes decision logs only if ExtProc uses an OPA configuration file that enables them. With a local policy path, ExtProc evaluates the policy without the engine service, and no decision log exists. The answers of an assessment are then in no record. The existing record "opa authorization decision" still has the action of each evaluation.
+- The policy engine writes decision logs only if ExtProc uses an OPA configuration file that enables them. With a local policy path, ExtProc evaluates the policy without the engine service, and no decision log exists. The answers of an assessment are then in no record. The existing record "opa authorization decision" still has the action of each evaluation. ExtProc writes it for each policy evaluation today, and the telemetry of the service exports it as an OpenTelemetry log record. The feature keeps it without a change.
 - The decision log has the arguments of the call. Issue #206 asks for an audit record without sensitive arguments. The operator can mask `/input/mcp/arguments` in the configuration of the policy engine.
 - No signal of the feature has a tool name or a principal.
 
