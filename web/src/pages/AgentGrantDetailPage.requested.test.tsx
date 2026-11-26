@@ -261,6 +261,49 @@ describe('AgentGrantDetailPage — requested services', () => {
     expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('Permission set on');
   });
 
+  it('keeps the unsaved selection when the requested-service retry fails and a later reload recovers', async () => {
+    const user = userEvent.setup();
+    const loaded = {
+      agent: agent(coverage('unavailable')),
+      services, cimdMeta: null, grants: grant, loading: false, error: null,
+    };
+    let current: Record<string, unknown> = { ...loaded };
+    let failReload!: () => void;
+    const reloaded = new Promise<void>((resolve) => {
+      failReload = resolve;
+    });
+    const refetch = vi.fn(() => {
+      current = { ...loaded, loading: true };
+      return reloaded;
+    });
+    vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockImplementation(() => ({ ...current, refetch }) as never);
+    const page = () => (
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/agents/agent-1?session_token=sealed']}>
+          <Routes>
+            <Route path="*" element={<AgentGrantDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+    const { rerender } = render(page());
+
+    await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
+    await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' }));
+    await user.click(within(group()).getByRole('button', { name: 'Retry' }));
+    rerender(page());
+    current = { ...loaded, agent: null, error: 'Failed to load agent' };
+    await act(async () => failReload());
+    rerender(page());
+    expect(screen.queryByRole('switch', { name: 'Toggle GitHub Read Access' })).not.toBeInTheDocument();
+
+    current = { ...loaded };
+    rerender(page());
+
+    expect(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' })).toHaveAttribute('aria-checked', 'true');
+  });
+
   it('explains that a request no offered set covers cannot be allowed here', () => {
     renderWith({ ...coverage('missing'), covering_permission_sets: [] });
     expect(group()).toHaveTextContent("None of this agent's permission sets include GitHub Production");

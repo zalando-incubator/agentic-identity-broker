@@ -48,6 +48,10 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
   const [terminationError, setTerminationError] = useState<string | null>(null);
   const loginButton = useRef<HTMLButtonElement>(null);
   const latestLoad = useRef(0);
+  // A refresh or termination started for a previous service must not update this page.
+  const currentIdentifier = useRef(identifier);
+  currentIdentifier.current = identifier;
+  const isCurrent = (requested: string) => currentIdentifier.current === requested;
 
   useEffect(() => {
     if (state.kind === 'loaded' && !state.detail.session && alert?.message === 'Session terminated successfully.') {
@@ -59,12 +63,12 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
     const request = ++latestLoad.current;
     try {
       const detail = await sessionsApi.getServiceSessionDetail(identifier);
-      if (request === latestLoad.current) {
+      if (request === latestLoad.current && currentIdentifier.current === identifier) {
         setState({ kind: 'loaded', detail });
       }
       return detail;
     } catch (err) {
-      if (request !== latestLoad.current) {
+      if (request !== latestLoad.current || currentIdentifier.current !== identifier) {
         return null;
       }
       if (isApiError(err) && err.status === 404) {
@@ -100,13 +104,16 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
   };
 
   const handleRefresh = async (serviceID: string) => {
+    const requested = identifier;
     setRefreshing(true);
     setAlert(null);
     try {
       await sessionsApi.refreshSession(serviceID);
+      if (!isCurrent(requested)) return;
       await load();
       setAlert({ type: 'success', message: 'Session token refreshed successfully.' });
     } catch (err) {
+      if (!isCurrent(requested)) return;
       const detail = await load();
       setAlert({
         type: 'error',
@@ -120,11 +127,13 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
   };
 
   const handleTerminationConfirm = async (serviceID: string) => {
+    const requested = identifier;
     setTerminating(true);
     setTerminationError(null);
     try {
       await sessionsApi.terminateSession(serviceID);
       setConfirmingTermination(false);
+      if (!isCurrent(requested)) return;
       await load();
       setAlert({ type: 'success', message: 'Session terminated successfully.' });
     } catch (err) {

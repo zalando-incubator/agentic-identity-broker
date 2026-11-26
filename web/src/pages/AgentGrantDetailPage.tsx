@@ -131,14 +131,23 @@ export function AgentGrantDetailPage() {
   const [selectionReported, setSelectionReported] = useState(false);
 
   const [retryingAgentId, setRetryingAgentId] = useState<string | null>(null);
+  // The live selection when a requested-service retry starts. A failed retry swaps in the error
+  // view, which unmounts PermissionSetsList; the next mount for this agent starts from it.
+  const [retainedSelection, setRetainedSelection] = useState<{
+    agentId: string | undefined;
+    selection: Record<string, string[]>;
+  } | null>(null);
   const handleRequestedServiceRetry = useCallback(async () => {
     setRetryingAgentId(resolvedAgentId);
+    if (selectionReported) {
+      setRetainedSelection({ agentId: resolvedAgentId, selection: perPsIncludedServiceIds });
+    }
     try {
       await refetch();
     } finally {
       setRetryingAgentId(null);
     }
-  }, [refetch, resolvedAgentId]);
+  }, [refetch, resolvedAgentId, selectionReported, perPsIncludedServiceIds]);
 
   // Validation errors
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -253,6 +262,7 @@ export function AgentGrantDetailPage() {
     }
 
     if (grant.kind === 'created') {
+      setRetainedSelection(null);
       await refetch();
       showToast('Grant updated successfully!', 'success');
     }
@@ -778,7 +788,12 @@ export function AgentGrantDetailPage() {
               }))}
               serviceRequirements={agent.service_requirements}
               initialGrantedPermissionSets={
-                restoredSelections ?? grants?.granted_permission_sets ?? {}
+                (retainedSelection?.agentId === resolvedAgentId
+                  ? retainedSelection?.selection
+                  : undefined) ??
+                restoredSelections ??
+                grants?.granted_permission_sets ??
+                {}
               }
               agentName={agent.displayName}
               requestedServices={requestedServices}
@@ -786,6 +801,11 @@ export function AgentGrantDetailPage() {
               onSelectionChange={(_optionalIds, perPsIncluded) => {
                 setPerPsIncludedServiceIds(perPsIncluded);
                 setSelectionReported(true);
+                setRetainedSelection((retained) =>
+                  retained?.agentId === resolvedAgentId
+                    ? { agentId: resolvedAgentId, selection: perPsIncluded }
+                    : retained,
+                );
               }}
             />
           )}

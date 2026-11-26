@@ -209,4 +209,33 @@ describe('ThirdPartySessionDetailPage', () => {
     expect(screen.queryByText('Stale Service')).not.toBeInTheDocument();
     expect(screen.queryByText('Service not found')).not.toBeInTheDocument();
   });
+  it('ignores a refresh for the previous service that finishes after navigating to another', async () => {
+    const user = userEvent.setup();
+    const previous = { ...detail(activeSession), service: { ...detail(activeSession).service, display_name: 'Previous Service' } };
+    vi.mocked(sessionsApi.getServiceSessionDetail).mockImplementation((identifier) =>
+      Promise.resolve(identifier === 'previous' ? previous : detail(activeSession)),
+    );
+    let finishRefresh!: () => void;
+    vi.mocked(sessionsApi.refreshSession).mockImplementation(
+      () => new Promise((resolve) => {
+        finishRefresh = () => resolve({} as never);
+      }),
+    );
+    const router = createMemoryRouter(
+      [{ path: '/sessions/:service', element: <ThirdPartySessionDetailPage /> }],
+      { initialEntries: ['/sessions/previous'] },
+    );
+    render(<RouterProvider router={router} />);
+    await screen.findByRole('heading', { level: 2, name: 'Previous Service' });
+
+    await user.click(screen.getByRole('button', { name: 'Refresh' }));
+    await act(() => router.navigate('/sessions/github'));
+    expect(await screen.findByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
+
+    await act(async () => finishRefresh());
+    await act(async () => {});
+    expect(screen.getByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
+    expect(screen.queryByText('Previous Service')).not.toBeInTheDocument();
+    expect(screen.queryByText('Session token refreshed successfully.')).not.toBeInTheDocument();
+  });
 });
