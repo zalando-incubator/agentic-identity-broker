@@ -66,12 +66,12 @@ different descriptions and different risk levels.
 Olivia operates the gateway. She does not describe tools. Each MCP server lists its tools with a
 description, an input schema, and annotations. The gateway sees these listings.
 
-Olivia describes her organization once in the service configuration. The product supplies the
+Olivia describes her organization once through configuration. The product supplies the
 questions. Olivia can replace them with her own
-set, but she does not have to. She adds nothing for an individual server, and she operates
-hundreds of servers.
+set, but she does not have to. She adds nothing for an individual server, because she does not want to maintain a registry of
+hundreds of servers, each with their own lifecycle and evolutions.
 
-The model then gets a small, structured document. The document contains the text from Olivia as
+The model then gets a small, structured document. The document contains the org metadata from Olivia as
 trusted context. It contains the tool definition as a claim of the server. It contains the
 permitted argument values as untrusted content.
 
