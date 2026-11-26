@@ -167,7 +167,7 @@ needs. Tests first in each pair.
 - [X] T038 Implement `internal/adapters/storage/memory/service_account_repository.go`: one mutex, map by ID, index by `(service_id, canonical_id)`, deep copies, version rules and sentinels, service existence through an injected function wired in `internal/adapters/storage/factory.go`. Make the memory runs of T031 green (DB-001; data-model §In-memory adapter).
 - [X] T039 Implement `internal/adapters/storage/postgres/service_account_repository.go` with sqlx, explicit columns, the configured read and write timeouts, `version = $n` conditions for preconditions, error mapping to `StorageError` and the sentinels, and `startStorageSpan` with the names of `contracts/observability.md` §5. Make T033, including the unit tests, green (DB-001, DB-002; ADR 004; OPENTELEMETRY.md §3).
 - [X] T040 Add a description for each of the seven spans to `docs/reference/telemetry-descriptions.yaml`, run `just telemetry-doc` and commit `docs/reference/telemetry.md` (OPENTELEMETRY.md §10).
-- [ ] T041 Run `just check`, `just test` and `just test-integration`; record the results in `specs/20261125-152113-service-accounts-stored-jwt/tasks.md`. `just test-integration-infra` runs locally only where a container runtime exists, otherwise in CI (Principles VIII, IX).
+- [X] T041 Run `just check`, `just test` and `just test-integration`; record the results in `specs/20261125-152113-service-accounts-stored-jwt/tasks.md`. `just test-integration-infra` runs locally only where a container runtime exists, otherwise in CI (Principles VIII, IX).
 
 **Checkpoint**: Rules, schema and both repositories done; user stories can start.
 
@@ -294,7 +294,7 @@ with an account (`409`) (spec User Story 5).
 - [X] T068 [P] Add an "Add a service account" section to `docs/guides/manage-agents-and-services.md`: what a service account is, create, list, read, status, rotate, change the ceiling, rename, remove, the 16 KiB and form rules, that the broker never shows or verifies the JWT, that an expired token marks the account failed until replaced, and that a service with accounts cannot be deleted. End-user content only (AGENTS.md §Documentation Scope; SC-001).
 - [X] T069 [P] Add the six service-account operations to the Admin API map in `docs/reference/api.md` under Services (API-001).
 - [X] T070 [P] Update `internal/AGENTS.md` (AdminHandlers list, Key Storage Types row for `ServiceAccount`) and the admin API, data store §4.1 and directory text of `ARCHITECTURE.md` for the new handler, table and domain service (Principles II, XII).
-- [ ] T071 Run the validation steps of `specs/20261125-152113-service-accounts-stored-jwt/quickstart.md` §§1–4 and 6 (`just check`, `just test`, `just test-integration`, the memory E2E focus run, `just telemetry-doc`, then `just verify` where a container runtime exists) and record the results, naming any suite left to CI, in `specs/20261125-152113-service-accounts-stored-jwt/tasks.md` (Principles VIII, XIII).
+- [X] T071 Run the validation steps of `specs/20261125-152113-service-accounts-stored-jwt/quickstart.md` §§1–4 and 6 (`just check`, `just test`, `just test-integration`, the memory E2E focus run, `just telemetry-doc`, then `just verify` where a container runtime exists) and record the results, naming any suite left to CI, in `specs/20261125-152113-service-accounts-stored-jwt/tasks.md` (Principles VIII, XIII).
 
 ---
 
@@ -491,3 +491,27 @@ Journeys 1–3 agree with the merged contract (`api/admin/openapi.yaml` 3.1.0):
 > `id.Principal` through the principal policy, but had no row for a credential fingerprint. The
 > digest cannot be reversed to the credential, and the row is scoped to these audit events.
 > `ServiceAccountCredentialInput` is added to `credential-types` in `.golangci.yml`.
+
+### Validation results (T041, T071, T101) — 2026-11-26
+
+Run locally with Docker available.
+
+| Step | Command | Result |
+|---|---|---|
+| Static checks | `just check` | Passed (0 lint issues) |
+| Unit tests | `just test` | Feature packages pass. Two packages outside this feature fail in this sandbox and also fail with the feature's changes stashed: `internal/adapters/encryption/aws` (`TestBuildAWSConfig_DisableSSL`, proxied network) and `internal/adapters/outboundhttp` (two IPv6 loopback tests; the sandbox has no IPv6 sockets). Left to CI. |
+| Self-contained integration | `just test-integration` | Passed |
+| Infra-backed integration | `just test-integration-infra` | Passed, including migration `050` and the shared repository contract on PostgreSQL |
+| Memory E2E focus | `ginkgo --label-filter="!performance && !docker" --focus "Service accounts" ./tests/e2e/` | 27 of 27 passed |
+| Store-dependent E2E | `ginkgo --procs=1 --label-filter="docker" --focus "Service accounts" ./tests/e2e/` | 4 of 4 passed on memory and PostgreSQL |
+| Backend E2E | `just test-e2e-backend` | 1031 passed, 0 failed |
+| Docker E2E | `just test-e2e-docker` | 20 passed, 1 failed: the existing agentgateway scenario could not pull `cr.agentgateway.dev/agentgateway:v1.7.0` (host blocked by the sandbox network policy). All service-account scenarios passed. The agentgateway scenario is left to CI, so T101 stays open until CI confirms it. |
+| Telemetry reference | `just telemetry-doc` | Regenerated and committed; `TestReferenceIsCurrent` passes |
+| Full gate | `just verify` | Not run as a whole: its web, CDK, security-scan and browser suites are outside this change. Its Go and container suites are listed above. |
+
+## Future Work
+
+None recorded. Information from the orchestrating session (2026-11-26, not yet in `spec.md`): the
+maintainer decided that a ceiling change is always accepted, also below what a bound agent grant
+uses. This feature never refuses an update because of a grant; the spec edge case and requirement
+are to be added when the maintainer resumes spec work.
