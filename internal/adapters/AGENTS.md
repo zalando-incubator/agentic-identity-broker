@@ -87,6 +87,8 @@ The domain validates each local document with `trustanchor.ParseLocalKeySet`.
 | `FileAdapter` | Implements `ports.JWKSPort`. Reads a `jwks_file` at construction. A failure fails startup. Re-reads it every `jwks_min_refresh`. A valid re-read replaces the set. A failed re-read keeps the last valid set and reports `degraded`. After `jwks_max_refresh` since the last success, `GetKeySet` fails closed. `Shutdown` stops the loop. |
 | `TrustDirectory` | Wraps `os.Root` over `security.trust_material_dir`. Opens paths relative to the directory. Rejects `..` and symbolic links that leave it. Rejects absolute symbolic links even when the target is inside. The caller checks the regular file on the opened descriptor. |
 
+The containment is shared through `internal/fscontain`, which `jwks` and `policy/opa` both use without importing each other.
+
 The builder creates these adapters and injects them.
 `internal/adapters/jwtauth/` receives a `ports.JWKSPort` through its config and never imports `internal/adapters/jwks/`.
 Errors and logs never include document content or key material.
@@ -103,6 +105,7 @@ Each instance has independent accepted media types, timeout, and response-size l
 |---|---|
 | `internal/adapters/jwks/` | Upstream refresh through `httprc`. `internal/adapters/jwks/published_adapter.go` serves the broker JWKS to in-process consumers |
 | `internal/adapters/jwtauth/` | Configurable end-user JWT authenticator |
+| `internal/adapters/policy/opa/` | Implements `ports.ImpersonationPolicySource`: the one shared impersonation OPA engine. Builds broker-admitted revisions with restricted built-ins, validates the closed bootstrap allowlist, loads local bundle directories, and provides the `aib_bearer_token_file` credential plugin. Read `adrs/20261121-061324-opa-impersonation-authorization.md`. Imports no other adapter and nothing from `internal/extproc` |
 | `internal/adapters/outboundhttp/` | CIMD HTTP fetcher. Read `adrs/015-cimd-fetcher-architecture.md` for SSRF and redirect controls |
 | `internal/adapters/telemetry/` | OpenTelemetry providers and context-aware logging |
 | `internal/adapters/storage/factory.go` | Selects memory or PostgreSQL and returns the repository composite |

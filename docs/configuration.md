@@ -1694,9 +1694,15 @@ token_exchange:
 | `impersonation.rules[].trusted_issuers[].jwks_max_refresh` | duration | `max(jwks_min_refresh, 1h)` | Non-negative Go duration | No | Maximum JWKS refresh interval. For `jwks_file`, the default is `max(3 × jwks_min_refresh, 1h)` when unset or below the minimum; remote sources use `max(jwks_min_refresh, 1h)`. |
 | `impersonation.rules[].trusted_issuers[].allowed_algorithms` | list | — | Subset of `RS256,RS384,RS512,PS256,PS384,PS512,ES256,ES384,ES512,EdDSA` | Yes (CR-007) | Accepted signing algorithms; `none` and `HS*` are rejected. |
 | `impersonation.rules[].trusted_issuers[].signs_roles` | list | — | Subset of defined signed roles | Yes (CR-008) | Which signed roles this issuer may sign. |
-| `impersonation.rules[].authorization.type` | enum | — | `cel` | Yes (CR-005) | Authorization predicate type; reuses the token-exchange schema. |
-| `impersonation.rules[].authorization.cel.expression` | string | — | CEL expression | Yes (CR-005) | Predicate deciding the request; compiled at startup. |
+| `impersonation.rules[].authorization.type` | enum | — | `cel`, `opa` | Yes (CR-005) | The rule's engine: a CEL predicate or an OPA decision in the shared engine. |
+| `impersonation.rules[].authorization.cel.expression` | string | — | CEL expression | Yes for `cel` (CR-005) | Predicate deciding the request; compiled at startup. Must be empty for `opa`. |
 | `impersonation.rules[].authorization.cel.evaluation_timeout` | duration | `100ms` | `10ms`–`5s` | No (CR-005) | Per-evaluation CEL timeout. |
+| `impersonation.rules[].authorization.opa.package` | string | `aib.broker.impersonation` | Dot-separated Rego identifiers, without `data.` | No | Package of the rule's decision. Must be empty for `cel`. |
+| `impersonation.rules[].authorization.opa.decision` | string | `result` | Rego identifier | No | Rule in `package` whose value is the decision. |
+| `impersonation.rules[].authorization.opa.evaluation_timeout` | duration | `100ms` | `10ms`–`5s` | No | Per-decision OPA timeout. Timeouts are terminal `500 server_error`. |
+| `impersonation.opa.policy.config_file` | path | — | Absolute path | One of `config_file` and `path` when a rule selects `opa` | Managed mode: the OPA bootstrap file. See [OPA impersonation policies](#opa-impersonation-policies). |
+| `impersonation.opa.policy.path` | path | — | Absolute path | One of `config_file` and `path` when a rule selects `opa` | Local mode: a bundle directory read once at startup. |
+| `impersonation.opa.startup_timeout` | duration | `30s` | `1s`–`5m` | No | Bound for the first admitted policy revision; otherwise the broker does not start. |
 
 **Startup validation:** Each failure returns a `ConfigError` with an indexed field path. For
 example: `oauth2_authorization_server.impersonation.rules[1].trusted_issuers[0].allowed_algorithms`.
@@ -1712,13 +1718,18 @@ example: `oauth2_authorization_server.impersonation.rules[1].trusted_issuers[0].
   `principal_expression`. Signed roles require `expected_audience`. An unverified subject
   must not use it. Only `subject` can use `verification` and `email_expression`.
 - **CR-004:** The local `issuer_uri` must not be a trusted issuer for `client_assertion`.
-- **CR-005:** `authorization.type` is `cel`. Its expression is required and compiles at
-  startup. `authorization.cel.evaluation_timeout` must be 10ms through 5s. The default is
-  100ms.
+- **CR-005:** `authorization.type` is `cel` or `opa`, and only the selected block is set.
+  A CEL expression is required and compiles at startup. `authorization.cel.evaluation_timeout`
+  and `authorization.opa.evaluation_timeout` must be 10ms through 5s. The default is 100ms.
+  `authorization.opa` accepts only `package`, `decision`, and `evaluation_timeout`; any other
+  key, including `policy_url`, `policy_path`, `policy`, and `startup_timeout`, fails startup
+  naming `rules[<i>] (<name>)` and the key. `impersonation.opa` is required when a rule selects
+  `opa`, and must be absent or empty otherwise.
 - **CR-005a:** Unverified subject mode is disabled unless a rule declares
-  `verification: none`. Its authorization predicate must reference `subject_token`. The
-  broker checks this at startup. It can issue a caller-provided email only when the predicate
-  binds `subject_token.email`.
+  `verification: none`. On a CEL rule the authorization predicate must reference
+  `subject_token`, checked at startup, and the broker issues a caller-provided email only when
+  the predicate binds `subject_token.email`. On an OPA rule there is no such check: the policy
+  is the only control on the caller-asserted subject and email.
 - **CR-006:** The broker rejects `impersonation` outside local mode.
 - **CR-007:** `allowed_algorithms` is a non-empty subset of
   `{RS256, RS384, RS512, PS256, PS384, PS512, ES256, ES384, ES512, EdDSA}`. The broker
@@ -1731,6 +1742,89 @@ example: `oauth2_authorization_server.impersonation.rules[1].trusted_issuers[0].
 - **CR-010:** Impersonation requires the user-delegation verifier and
   `server.enduser.public_url`. The broker does not start without both. It has no bypass
   mode.
+
+##### OPA impersonation policies
+
+A rule with `authorization.type: opa` decides through the one OPA engine shared by every OPA
+rule. The engine lives under `oauth2_authorization_server.impersonation.opa`:
+
+```yaml
+oauth2_authorization_server:
+  impersonation:
+    opa:
+      policy:
+        config_file: /etc/broker/opa/bootstrap.yaml   # managed mode; or path: <bundle directory>
+      startup_timeout: 30s
+    rules:
+      - name: governed-inventory
+        # roles and trusted_issuers as for CEL rules
+        authorization:
+          type: opa
+          opa:
+            package: company.impersonation   # evaluates data.company.impersonation.result
+            decision: result
+            evaluation_timeout: 100ms
+```
+
+Defaults apply at use; the loader sets none. Every file is configured by absolute path and read
+through its own directory: relative Kubernetes `..data` links work, while links that leave the
+directory and absolute links fail. The broker reads no OPA file from
+`security.trust_material_dir`.
+
+**Managed mode** (`policy.config_file`) reads the OPA bootstrap file once at startup (a regular
+file of at most 1 MiB, YAML or JSON) and validates it against a closed allowlist before OPA sees
+it. Changing the file needs a restart; bundle contents update without one.
+
+| Bootstrap key | Accepted members |
+| --- | --- |
+| `services.<name>` | `url`, `headers`, `response_header_timeout_seconds`, `credentials` |
+| `services.<name>.credentials` | Exactly one of: `bearer` (`token`, `scheme`); `oauth2` client credentials (`grant_type: client_credentials`, `token_url`, `client_id`, `client_secret`, `scopes`, `additional_headers`, `additional_parameters`); `s3_signing` (`environment_credentials`, `metadata_credentials`, `assume_role_credentials` with an accepted nested `aws_signing`, `service`, `signature_version`); `gcp_metadata`; `azure_managed_identity`; `plugin: aib_bearer_token_file` |
+| `bundles.<name>` | `service`, `resource`, `signing` (`keyid`, `scope`, `exclude_files`), `polling`, `size_limit_bytes`, `trigger` |
+| `keys.<id>` | `algorithm`, `key`, `scope` (verification keys only) |
+| `labels` | Any string map |
+| `plugins.aib_bearer_token_file` | `path` (absolute, required), `scheme` (default `Bearer`) |
+
+At least one bundle is required. Everything else fails startup naming the key, never its value:
+other top-level keys (`decision_logs`, `status`, `discovery`, `server`, `persistence_directory`,
+`caching`, `distributed_tracing`, `nd_builtin_cache`, `storage`, `default_decision`, ...), other
+plugins, `persist: true`, `file://` resources, service `tls`, `client_tls`,
+`allow_insecure_tls`, and `type`, and every credential member that reads a file (`token_path`,
+`client_assertion_path`, signing keys, `web_identity_credentials`, `profile_credentials`,
+`sso_credentials`). The cloud credential forms that read no file (`environment_credentials`,
+`metadata_credentials`, `assume_role_credentials`, `gcp_metadata`, `azure_managed_identity`)
+are accepted. An ExtProc bootstrap works only if it uses this subset; copy only `services`,
+`bundles`, `keys`, and `labels`.
+
+The `aib_bearer_token_file` credential plugin reads the bundle token from its file before every
+bundle request (at most 64 KiB, whitespace trimmed, non-empty), so a rotated Secret applies
+without a restart. The path is checked at startup. A later read failure fails that download,
+keeps the active revision, and logs `token_unavailable` without the contents. One token file is
+supported per bootstrap. Its downloads use the broker's traced HTTP client; services with
+OPA's inline credential forms use OPA's own client and are not traced.
+
+**Local mode** (`policy.path`) reads a bundle directory once at startup: `*.rego` modules,
+`data.json`, `data.yaml`, or `data.yml` documents, and an optional root `.manifest`, at most
+1,000 files and 16 MiB. Any other file fails startup naming its relative path. The manifest
+`revision` becomes the `policy_revision` label (`local=<revision>`). Nothing is polled; policy
+and data change only on restart. Use managed mode for live governance updates.
+
+**Readiness.** The broker starts only after it admits a revision that contains every configured
+bundle and defines every OPA rule's decision rule, within `startup_timeout`. A failure names the
+field and the last rejection, for example
+`oauth2_authorization_server.impersonation.opa.startup_timeout: no admissible policy revision
+within 30s (last rejection: decision_absent for rules[0] (governed-inventory))`. Diagnostics use
+the reason classes `unreadable`, `invalid_document`, `unsupported_key`, `no_bundles`,
+`persist_unsupported`, `invalid_opa_configuration`, `path_not_absolute`, `root_directory`,
+`escaping_link`, `file_too_large`, `local_file_unsupported`, `too_many_files`,
+`unsupported_file`, and `token_invalid`.
+
+See the [OPA policy reference](reference/token-exchange.md#opa-impersonation-policies) for the
+input, decision, built-ins, update behavior, and operational guidance, and
+`examples/config/impersonation-opa.yaml` for a complete example.
+
+**Upgrade note:** an explicit `token_exchange.authorization.type: opa` now fails startup with
+`token_exchange.authorization.type: OPA is supported only on impersonation rules`. It was never
+implemented for ordinary exchange. Remove it or set it to `cel`.
 
 **Example** (`local` mode; the same issuer signs the credentials of two signed rules):
 

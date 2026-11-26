@@ -28,6 +28,7 @@ For feature changes, read the relevant specification, plan, and tasks before cha
 | `internal/ports/cimd_client.go` | `CIMDClientKeyService`, narrow capability interfaces | Dedicated CIMD keys, client assertions, metadata-safe service reads, and public metadata |
 | `internal/ports/config.go` | `ConfigPort` | Configuration access, nested DTOs, defaults, validation, and mode resolution |
 | `internal/ports/encryption.go` | `EncryptionPort`, `BranchKeyRepository`, `BranchKeyIdProvider` | Encryption and typed branch-key subjects |
+| `internal/ports/impersonation_policy.go` | `ImpersonationPolicySource`, `ImpersonationPolicyRevision` | The shared impersonation OPA engine and its immutable admitted revisions. DTOs: `ImpersonationPolicyInput` (renders only `[REDACTED]`), `ImpersonationPolicyDecisionRef`, `ImpersonationPolicyAdmission`. Errors: `ErrPolicyDecisionInvalid`, `ErrPolicyEvaluationFailed`, `ImpersonationPolicyAdmissionError`, `ImpersonationPolicyNotReadyError` |
 | `internal/ports/jwks.go` | `JWKSPort`, `JWKSHealthPort` | JWKS retrieval with embedded health reporting and the health-only interface |
 | `internal/ports/jwks_publisher.go` | `JWKSPublisherPort`, `JWKSPublisherHealthPort` | Aggregated JWKS publication and health |
 | `internal/ports/oauth2.go` | `OAuth2Service`, token and session interfaces | Authorization decisions, metadata, token issuance, and authorization sessions. DTOs include `AuthorizationRequest`, `AuthorizationDecision`, `MetadataResponse`, and `ClientCredentials` |
