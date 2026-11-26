@@ -42,10 +42,9 @@ The source is the catalog file. ExtProc reads it one time at startup (D-11).
 | `assess` | boolean | Optional. The default is `true`. |
 | `arguments` | as in `disclosure` | Optional. It replaces the deployment-wide argument setting for this server. |
 | `withhold` | as in `disclosure` | Optional. Its names apply in addition to the deployment-wide names. An exception cannot remove a deployment-wide name. An empty list changes nothing. |
-| `description` | string | Optional. Maximum 500 characters. |
 
-An exception has no key for a tool. The operator cannot describe, correct, or replace a tool
-definition (FR-013).
+An exception has no key that describes a server or a tool. The operator cannot describe a server,
+and cannot describe, correct, or replace a tool definition (FR-011, FR-013).
 
 ### Tool Definition
 
@@ -73,7 +72,7 @@ ExtProc builds this document for one call and discards it after the call (SR-007
 | Section | Fields |
 |---|---|
 | `organization` | `name`, `description`, `internal_domains` |
-| `server` | `name`, and `description` if an exception supplies it |
+| `server` | `name` |
 | `tool` | `name`, `description`, `annotations`, and `arguments` with the schema entry of each supplied and described argument |
 | `call` | `arguments`, `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count` |
 

@@ -101,11 +101,13 @@ listing. An active `tools/list` request from ExtProc needs credentials for each 
 A catalog of tool descriptions by the operator is not practical for hundreds of servers. The
 stakeholder rejected it. The fallbacks of the first version of this decision are not necessary.
 
-An optional replacement description for one tool was a part of this decision until 2026-11-26.
-The stakeholder rejected it for the same reason. MCP servers have their own owners and their own
-release cycles. A description in the configuration of the operator couples that configuration to
-each change of a server, and the operator cannot keep the two in agreement. Thus, the catalog has
-no key for a tool, and the `tool` section has no author field: the server is always the author,
+An optional replacement description for one tool and an optional description of a server were
+parts of this decision until 2026-11-26. The stakeholder rejected the two for the same reason.
+MCP servers have their own owners and their own release cycles. A description in the
+configuration of the operator couples that configuration to each change of a server, and the
+operator cannot keep the two in agreement. Thus, the catalog has no key that describes a server
+or a tool. The `server` section has only the target server name
+from the gateway, and the `tool` section has no author field: the server is always the author,
 and the framing text states it. If an operator does not trust the definitions of a server, the
 operator excludes the server (`assess: false`) or writes no automatic approval rule for its tools.
 

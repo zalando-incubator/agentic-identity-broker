@@ -111,5 +111,4 @@ The canonical document for `tool_context` has these values:
 - The format version `1`
 - The target server name
 - The disclosure settings that apply to the server
-- The server description from an exception
 - The tool definition as the context can show it: name, description, annotations, and all described arguments.
