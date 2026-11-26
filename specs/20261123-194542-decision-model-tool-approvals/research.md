@@ -117,7 +117,7 @@ operator writes no automatic approval rule for its tools.
 On the same date, the stakeholder rejected an optional `servers` part of the configuration. It had
 exceptions for one server: no assessment, or a different disclosure. Each entry for a server
 needs maintenance when servers change. The disclosure settings now apply to each server, the
-configuration rejects a key for a server or a tool, and the status `excluded` does not exist.
+configuration has no key for a server or a tool, and the status `excluded` does not exist.
 
 ## D-03 — The decision request is plain JSON in the Decisions shape, with the context as text
 
@@ -378,12 +378,13 @@ migration.
 
 Withdrawn on 2026-11-26 (D-16). The approval page does not change.
 
-## D-11 — The question set file and the evaluation record are YAML files that the service reads at startup
+## D-11 — The evaluation record is a YAML file that the service reads at startup
 
-**Decision**: ExtProc reads the two files one time at startup with strict decoding. Unknown keys,
-a missing required key, or a file larger than 1 MiB stop the startup. The service does not read
-the files again while it operates. The default question set is an embedded file with the same
-format, and the same loader reads it (D-17).
+**Decision**: ExtProc reads the evaluation record one time at startup with strict decoding. An
+unknown key, a missing required key, or a file larger than 1 MiB stops the startup. The service
+does not read the file again while it operates. The questions, the organization values, and the
+disclosure settings are not in a file of their own. They are keys of the service configuration
+(D-17).
 
 **Rationale**: A fingerprint must be stable while the service operates. A startup error shows a
 mistake at once (FR-028).
@@ -550,29 +551,52 @@ the approver.
 **Alternatives considered**: A new result field for one statement duplicates the description. A
 finding list from the policy keeps a second text channel to the approver and all broker changes.
 
-## D-17 — The organization values and the disclosure settings are ExtProc configuration, and the product has a default question set
+## D-17 — The organization values, the disclosure settings, and the questions are ExtProc configuration, and the product has a default question set
 
-**Decision**: The organization values and the disclosure settings are keys of the ExtProc
-configuration under `authorization.assessment`. The feature has no catalog file. The ExtProc
-binary contains the default question set of the spec as an embedded YAML file. The optional key
-`questions_file` names a file that replaces the full default set. The contract is in
+**Decision**: The organization values, the disclosure settings, and the questions are keys of the
+ExtProc configuration under `authorization.assessment`. They use the existing approach of
+`internal/extproc/config/`: the schema in `config.go`, the defaults in `loader.go`, and the rules
+in `validate.go`. The key `questions` is a list, as `rules` is in the impersonation configuration
+of the broker. Its default value is the default question set of the spec. A list in the
+configuration replaces the full default list. The feature has no catalog file, no question set
+file, and no file format of its own for these values. The contract is in
 [contracts/assessment-files.md](contracts/assessment-files.md).
 
-**Rationale**: The organization values are deployment configuration, as the endpoint and the
-model are. One configuration file is easier to operate than two. With a default set, an operator
+**Rationale**: The values are deployment configuration, as the endpoint and the model are. One
+configuration file with one loader is easier to operate than two. With a default set, an operator
 enables the feature without writing a question, and the project can measure and publish results
-for one known set (FR-053).
+for one known set (FR-054).
 
 **Consequences**:
 
 - A policy refers to the default questions by name. The names are part of the product contract for one release.
 - A release that changes a default question changes the question set fingerprint of each deployment that uses the default set. Automatic approval then stops until a new evaluation run. The release notes must state the change.
-- The smoke test showed two default questions that need work with the tested model: `persistent_effect` and `definition_addresses_assessor` ([decision-model-research.md](decision-model-research.md), "Smoke test with a local model"). The tuning run of the task list can change them. The spec then changes with them.
+- The existing loader ignores a key that the schema does not have. Thus, a wrong key name does not stop the startup, as for each other key of the service.
 
-**Alternatives considered**: A separate catalog file for the organization values, the questions,
-and the disclosure settings. The stakeholder rejected it on 2026-11-26: the name suggests a list
-of servers, and the organization values belong to the normal configuration. A set of questions
-that each operator must write gives no default and no common measured result.
+**Quality of the default questions**: The smoke test of 2026-11-24 showed weak answers for three
+default questions ([decision-model-research.md](decision-model-research.md), "Smoke test with a
+local model"). On 2026-11-26, the spec changed their wording:
+
+| Question | Observation | Cause in the wording | Change |
+|---|---|---|---|
+| `persistent_effect` | 0.74 to 0.80 on the top level for each share, also for the reader share inside the organization | The question "What remains" was vague. Level 0 excluded each call that sends something, thus the notification email of the tool moved each share to the top level. The top level also collected each doubt. | The question asks how hard it is to undo the main effect. It tells the model to ignore a notification about the change. Each level gives examples, and the top level is for a call that does not show what it changes (R-04, R-05). |
+| `definition_addresses_assessor` | 0.23 to 0.28 for a description that addresses no reviewer | The yes criterion named text that addresses "a model". Each tool description addresses a model: the agent that calls the tool. | The question asks if the text tries to influence a review or an approval. The no criterion states that instructions for the caller are not a yes (R-05). |
+| `addresses_assessor` | 0.044 to 0.053, at the example threshold of 0.05 | The same criterion: an argument value can address a model or a person as normal data. | The same change. The no criterion states that text for a recipient of the tool is not a yes. |
+
+`leaves_organization` and `changes_access` gave clear answers and did not change.
+
+No model measured the new wording. A container without a model wrote this revision. Thus, the
+revision is a hypothesis, and these controls apply:
+
+- The project measures each default question on its own, with expected answers for each case and a minimum number of cases for each answer (FR-054). The cases include difficult cases for the answer no.
+- The evaluation run and this measurement are parts of the first release. No release contains a default question without published results and the approval of the stakeholder (SC-011).
+- The project changes questions only with the tuning part of the case set and publishes results only from the validation part (FR-053).
+- The project measures with each model that it can reach, and it names each model with its results. A result for one model does not apply to a different model (R-19, R-20).
+
+**Alternatives considered**: A separate catalog file or a question set file. The stakeholder
+rejected the two on 2026-11-26: the service has one configuration approach, and the name
+"catalog" suggests a list of servers. A set of questions that each operator must write gives no
+default and no common measured result.
 
 ## Verification record## Verification record
 

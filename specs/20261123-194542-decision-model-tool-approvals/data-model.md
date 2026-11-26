@@ -35,16 +35,15 @@ server, and cannot describe, correct, or replace a tool definition (FR-011, FR-0
 
 ### Question Set
 
-The source is the default question set in the ExtProc binary, or the question set file of
-`authorization.assessment.questions_file` (D-17). ExtProc reads it one time at startup (D-11).
+The source is the ExtProc configuration: `authorization.assessment.questions` (D-17). The default
+value of the key is the default question set of [spec.md](spec.md), Journey 1, step 2. ExtProc
+reads the configuration one time at startup.
 
 | Field | Type | Rules |
 |---|---|---|
-| `questions` | list of Assessment Question | Required. 1 to 16 entries. Each name is unique. |
-| `source` | `default` or `file` | Set by the loader. `file` if the configuration names a question set file. |
+| `questions` | list of Assessment Question | 1 to 16 entries. Each name is unique. A list in the configuration replaces the full default list. |
 
-The default question set is the set of [spec.md](spec.md), Journey 1, step 2. It obeys the rules
-of this document, and a test proves it (FR-028).
+The default question set obeys the rules of this document, and a test proves it (FR-028).
 
 ### Assessment Question
 
@@ -56,7 +55,7 @@ of this document, and a test proves it (FR-028).
 | `yes_when`, `no_when` | string | Required for `predicate`. Not permitted for `score`. Maximum 500 characters each. No placeholder characters `{{` or `}}`. |
 | `levels` | list of `label` and `description` | Required for `score`. 2 to 10 entries. Not permitted for `predicate`. Each `label` has 1 to 120 characters. Each `description` has 1 to 500 characters. No placeholder characters `{{` or `}}`. |
 
-A question has no text for the approver (FR-025). The loader rejects each other key.
+A question has no text for the approver (FR-025).
 
 ### Tool Definition
 

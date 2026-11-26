@@ -26,52 +26,49 @@ change.
 | `authorization.assessment.organization.internal_domains` | list of strings | none | Required while enabled. 1 to 50 entries. Each entry is a lowercase DNS name. |
 | `authorization.assessment.disclosure.arguments` | string | none | Required while enabled. `all` or `none`. There is no default. |
 | `authorization.assessment.disclosure.withhold` | list of name patterns | empty | Optional. Maximum 100 entries. |
-| `authorization.assessment.questions_file` | path | none | Optional. Without it, ExtProc uses the default question set (section 2). |
+| `authorization.assessment.questions` | list of questions | the default question set (section 2) | 1 to 16 entries. A list in the configuration replaces the full default list. |
 | `authorization.assessment.auto_approval.evaluation_record_file` | path | none | Required in the `auto_approve` mode. Optional in the `recommend` mode. In that mode, ExtProc reads it if it is set, and `would_auto_approve` uses it (FR-044). Without it, `would_auto_approve` is always false. |
 
-The schema has no key for an individual target server or tool (FR-016). ExtProc decodes the
-`assessment` part strictly: an unknown key stops the startup.
+The schema has no key for an individual target server or tool (FR-016). The keys use the existing
+loader of `internal/extproc/config/`: the YAML file of `EXTPROC_CONFIG_PATH`, the `EXTPROC_`
+environment variables for single values, the defaults in `loader.go`, and the rules in
+`validate.go`. As for each other key, the loader ignores a key that the schema does not have.
 
 Path values obey the existing rule for `authorization.policy.config_file`: no `..` segment, and
 the path must be a file that exists at startup. A directory is not permitted, because each value
 names one file.
 
 The documentation and the examples change in these files: `docs/configuration.md`,
-`examples/config/extproc-tool-assessment.yaml`, `examples/config/assessment-questions.yaml`,
-`examples/config/README.md`, `configs/config.extproc.docker.yaml`, and the configuration table in
+`examples/config/extproc-tool-assessment.yaml`, `examples/config/README.md`, `configs/config.extproc.docker.yaml`, and the configuration table in
 `internal/extproc/AGENTS.md`.
 
 ## 2. Question set
 
-### Default question set
+The key `authorization.assessment.questions` is a list. Each entry has the fields of
+[data-model.md](../data-model.md): `name`, `type`, `instructions`, and `yes_when` with `no_when`,
+or `levels`.
 
-The ExtProc binary contains the default question set of [spec.md](../spec.md), Journey 1, step 2,
-as an embedded file: `internal/extproc/assessment/default_questions.yaml`. ExtProc uses it if
-`questions_file` is not set. `examples/config/assessment-questions.yaml` is a copy of it, and a
-test makes sure that the two files are equal.
+The default value of the key is the default question set of [spec.md](../spec.md), Journey 1,
+step 2. It is a part of the defaults in `internal/extproc/config/`. The example file
+`examples/config/extproc-tool-assessment.yaml` shows the same questions in full, and a test makes
+sure that the two are equal. A list in the configuration replaces the full default list.
 
 A change to a default question changes the question set fingerprint of each deployment that uses
 the default set. The release notes must state such a change, because automatic approval stops
 until a new evaluation run (SC-010).
 
-### Question set file
+ExtProc rejects the configuration at startup in these cases:
 
-The format is YAML with one key, `questions`. The fields and their rules are in
-[data-model.md](../data-model.md). A file replaces the full default set.
-
-ExtProc rejects the file at startup in these cases:
-
-- An unknown key, or a missing required key
-- A file that is larger than 1 MiB
+- A question without a required field
 - A question name that is not unique
 - A placeholder in a question text, a criterion, a level label, or a level description
 - A text that is longer than its limit in [data-model.md](../data-model.md)
 - A question set with no question or with more than 16 questions
-- A `predicate` question without `yes_when` or `no_when`
-- A `score` question with fewer than 2 levels or more than 10 levels.
+- A `predicate` question without `yes_when` or `no_when`, or with `levels`
+- A `score` question with fewer than 2 levels or more than 10 levels, or with `yes_when` or `no_when`.
 
 The error message names the question or the key. At startup, ExtProc writes the question set
-fingerprint and the source of the set (`default` or `file`) to the log.
+fingerprint to the log.
 
 ## 3. Evaluation record file
 
@@ -102,6 +99,7 @@ The format is JSON Lines. Each line is one case.
 | `target_server_name` | string | Required. |
 | `tool_name` | string | Required. |
 | `arguments` | JSON object | Required. It can be empty. |
+| `expected_answers` | JSON object | Optional. The key is a question name. The value is `yes` or `no` for a `predicate` question, or the level index for a `score` question (FR-054). |
 | `context` | JSON object | Optional. The keys of the production input `context`: `granted_permission_sets`, `granted_permission_sets_available` (default `true`), and `agent_session_id` (default: absent). |
 | `request` | JSON object | Optional. The HTTP values of the production input: `method` (default `POST`), `path` (default `/mcp`), `host` (default: empty), `scheme` (default `https`), `headers` (default: none), and `mcp_session_id` (default: absent). |
 
@@ -155,8 +153,14 @@ The report is plain text. It contains these values (FR-051):
 - Each false approval with its case identifier, the rule name, and the answers
 - One line for each case with its identifier, its label, the outcome, the rule name if one applies, and the answers
 - The number and the share of `automatic_ok` cases that wait for a person
+- For each question and each expected answer of the cases: the number of cases, and the number of these cases with the expected answer of the model (FR-054)
 - The number of assessments for each status that is not `complete`
 - The number of cases that used a default for a `context` value or a `request` value.
+
+The model gave the expected answer of a `predicate` question if the probability is 0.5 or more for
+`yes`, or less than 0.5 for `no`. It gave the expected answer of a `score` question if the expected
+level has the highest probability. A refused, missing, or invalid answer is not the expected
+answer.
 
 A false approval is a case with the label `human` that satisfies the conditions of FR-041. The
 run ignores two of these conditions: the mode and the evaluation record. The example is in [spec.md](../spec.md),

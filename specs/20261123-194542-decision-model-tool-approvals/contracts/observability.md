@@ -37,7 +37,7 @@ Two outputs are not signals of this contract, because the operator configures th
 | `assessment.tool_call.assessed` | INFO | ExtProc, one time for each assessed call (FR-060) | See the table that follows |
 | `assessment.tool_definition.changed` | INFO | ExtProc, if a listing changes a known definition (FR-063) | `target_server_name`, `previous_tool_context`, `tool_context`, and `tool_name` under D-12 |
 | `assessment.evaluation_record.mismatched` | ERROR | ExtProc at startup, if the question set of the record differs from the question set of the service | `question_set`, `evaluated_question_set` |
-| `assessment.question_set.loaded` | INFO | ExtProc at startup | `question_set`, `question_count`, `question_source` (`default` or `file`), `mode` |
+| `assessment.question_set.loaded` | INFO | ExtProc at startup | `question_set`, `question_count`, `mode` |
 
 Attributes of `assessment.tool_call.assessed`:
 

@@ -102,8 +102,7 @@ The canonical document for `question_set` has these values:
 - The `organization` section
 - Each question in the sequence of the set, with each field that the model receives: `name`, `type`, `instructions`, `yes_when`, `no_when`, and `levels`.
 
-A question has no other field (FR-025). The default question set and a question set file give
-fingerprints with the same rules.
+A question has no other field (FR-025).
 
 The canonical document for `tool_context` has these values:
 
