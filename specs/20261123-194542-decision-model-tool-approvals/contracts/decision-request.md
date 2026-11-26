@@ -30,7 +30,7 @@ context headers of the existing outbound client. It sends no other header from t
 | `input` | A list with one message. The role is `user`. The content has two parts. |
 | `input[0].content[0]` | `{"type": "input_text", "text": <framing>}` |
 | `input[0].content[1]` | `{"type": "input_text", "text": <compact JSON text of the Assessment Context>}` |
-| `questions` | One entry for each catalog question, in catalog sequence |
+| `questions` | One entry for each question of the question set, in the sequence of the set |
 
 The framing is this fixed text:
 
@@ -55,7 +55,7 @@ gateway puts the two parts into one `state` message and joins them with a line b
 
 ## 2. Questions
 
-| Catalog type | Request entry |
+| Question type | Request entry |
 |---|---|
 | `predicate` | `{"type": "predicate", "name": <name>, "instructions": <composed text>}` |
 | `score` | `{"type": "score", "name": <name>, "instructions": <instructions>, "levels": [{"label", "description"}]}` |
@@ -100,11 +100,10 @@ The canonical document for `question_set` has these values:
 - The format version `1`
 - The framing text and the name of the input encoding (`input_text`)
 - The `organization` section
-- Each question in catalog sequence, with each field that the model receives: `name`, `type`, `instructions`, `yes_when`, `no_when`, and `levels`.
+- Each question in the sequence of the set, with each field that the model receives: `name`, `type`, `instructions`, `yes_when`, `no_when`, and `levels`.
 
-The document does not contain `statement`. The system never sends the statement to the model,
-thus a new statement cannot change an answer (FR-029). A change of approver text does not stop
-automatic approval.
+A question has no other field (FR-025). The default question set and a question set file give
+fingerprints with the same rules.
 
 The canonical document for `tool_context` has these values:
 

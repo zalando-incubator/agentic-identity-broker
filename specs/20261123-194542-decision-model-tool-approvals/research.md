@@ -6,12 +6,15 @@
 
 This document records the design decisions of the planning phase. The guidance about decision
 models is in [decision-model-research.md](decision-model-research.md) (`R-01` to `R-20`). This
-document refers to its own decisions as `D-01` to `D-15`.
+document refers to its own decisions as `D-01` to `D-17`.
 
 The first version of this document used the code of this repository and published documentation
 only. On 2026-11-24, Docker tests against agentgateway `v1.5.0` and `v1.7.0` replaced the
 assumptions of D-02, D-03, and D-07 with observed results. Each decision states its evidence. The
 section "Verification record" at the end gives the commands and the test files.
+
+On 2026-11-26, the stakeholder narrowed the scope. D-16 and D-17 record the two decisions. D-09
+and D-10 are withdrawn. D-02, D-05, D-07, and D-11 changed with them.
 
 ## D-01 — The assessment runs in the request-body phase of ExtProc
 
@@ -25,7 +28,7 @@ sequence for one call is:
 3. If no decision applies, ExtProc builds the context and sends one model request.
 4. ExtProc evaluates the policy again with `input.assessment`.
 5. ExtProc applies the conditions for automatic approval.
-6. The call proceeds, or the gate creates a pending approval with the summary, or ExtProc denies the call.
+6. The call proceeds, or the gate creates a pending approval with the description and the risk level of the policy, or ExtProc denies the call.
 
 **Rationale**: The branch has all necessary data in scope: the parsed tool call, the target
 server name, the principal, and the agent. The policy stays the only decision source. Calls that
@@ -105,16 +108,16 @@ An optional replacement description for one tool and an optional description of 
 parts of this decision until 2026-11-26. The stakeholder rejected the two for the same reason.
 MCP servers have their own owners and their own release cycles. A description in the
 configuration of the operator couples that configuration to each change of a server, and the
-operator cannot keep the two in agreement. Thus, the catalog has no key that describes a server
+operator cannot keep the two in agreement. Thus, the configuration has no key that describes a server
 or a tool. The `server` section has only the target server name
 from the gateway, and the `tool` section has no author field: the server is always the author,
 and the framing text states it. If an operator does not trust the definitions of a server, the
 operator writes no automatic approval rule for its tools.
 
-On the same date, the stakeholder rejected the optional `servers` part of the catalog. It had
+On the same date, the stakeholder rejected an optional `servers` part of the configuration. It had
 exceptions for one server: no assessment, or a different disclosure. Each entry for a server
 needs maintenance when servers change. The disclosure settings now apply to each server, the
-catalog rejects a key for a server or a tool, and the status `excluded` does not exist.
+configuration rejects a key for a server or a tool, and the status `excluded` does not exist.
 
 ## D-03 — The decision request is plain JSON in the Decisions shape, with the context as text
 
@@ -198,15 +201,14 @@ An answer is invalid in these cases:
 - A probability that is not between 0 and 1
 - A wrong number of levels
 - A set of level `value` entries that is not exactly `0` to `n-1`, each one time
-- A level `label` that is not equal to the catalog label of that level
+- A level `label` that is not equal to the label of that level in the question set
 - A total of the level probabilities that differs from 1 by more than 0.01.
 
 ExtProc puts each level probability at the position of its `value`, not at its position in the
-response. Thus, index 0 of the policy input is always the catalog level with the least risk.
+response. Thus, index 0 of the policy input is always the level with the least risk.
 
 The `model` value is not valid if it is absent, empty, longer than 100 characters, or contains a
-control character. The same limit applies to the summary in the broker ([data-model.md](data-model.md)). Thus, the broker
-never rejects a summary because of the model value.
+control character.
 
 ExtProc reads a maximum of 256 KiB of a response.
 
@@ -215,21 +217,20 @@ cause (FR-031, FR-032).
 
 **Alternatives considered**: One "failed" status hides the cause from the operator.
 
-## D-05 — The policy contract adds one input key and three result fields
+## D-05 — The policy contract adds one input key and one result field
 
 **Decision**: The second evaluation uses the same prepared query and the same input, with the
 added key `assessment`. `ParseDecision` (`internal/extproc/authorization/decision.go:23-59`)
-reads three new fields: `auto_approval.rule` on an `allow` result, and
-`approval_context.recommendation` and `approval_context.findings` on an `allow` or an
-`approval_required` result. Go code applies the conditions of FR-041 after it parses the result.
-The contract is in [contracts/policy-assessment.md](contracts/policy-assessment.md).
+reads one new field: `auto_approval.rule` on an `allow` result. It also reads the existing
+`approval_context` on an `allow` result. Go code applies the conditions of FR-041 after it parses
+the result. The contract is in [contracts/policy-assessment.md](contracts/policy-assessment.md).
 
 An `allow` result can carry an `approval_context`. The system uses it only if a condition of
 FR-041 is false and the call waits for a person. Without it, the recommendation mode gives the
-person no findings for exactly the calls that a rule approves (US1.2, FR-044).
+person no call-specific description for exactly the calls that a rule approves (US1.2, FR-044).
 
-If the second evaluation fails, ExtProc uses the result of the first evaluation with the status
-`not_available` for the summary. The call waits for a person. An error in the second evaluation
+If the second evaluation fails, ExtProc uses the result of the first evaluation, with its
+description and its risk level. The call waits for a person. An error in the second evaluation
 thus never removes the decision of a person, and it never lets a call proceed.
 
 The authorizer of today cannot show this failure. The prepared query, the SDK path, and the
@@ -260,9 +261,9 @@ and numbers as the source wrote them.
 The examples in the spec show eight characters to keep them short. Real values have 64
 characters. In an HTTP body of the spec, `...` marks the shortened value (Principle XIV).
 
-The canonical document of the question set contains only the fields that the model receives. It
-does not contain `statement`. A change of approver text thus does not stop automatic approval
-(FR-029, [contracts/decision-request.md](contracts/decision-request.md) section 5).
+The canonical document of the question set contains each field of each question, because the
+model receives each field (FR-029, [contracts/decision-request.md](contracts/decision-request.md)
+section 5).
 
 **Rationale**: A short value lets a server search for a second definition with the same
 fingerprint. The standard library supplies the hash (Principle III).
@@ -280,11 +281,11 @@ assessment, as it does today before it creates a pending approval (`gate.go:86-9
 read, ExtProc looks for a pending approval of the same agent with the same tool name and the same
 `arguments_hash`. The sync response already contains `arguments_hash` (`sync_handler.go:46`), and
 the ExtProc `Record` type adds the field. If such an approval exists, ExtProc sends no model
-request. It calls the idempotent create operation with the summary `not_available`, which returns
-the existing approval URL. The stored summary of the existing approval does not change. If that
-approval expired or got a decision after the read, the broker creates a new approval
-(`internal/domain/approval/service.go:558`). The new approval then has the summary
-`not_available` and shows the notice of FR-039.
+request. It calls the idempotent create operation with the result of the first evaluation, which
+returns the existing approval URL. The stored description and risk level of the existing approval
+do not change. If that approval expired or got a decision after the read, the broker creates a
+new approval (`internal/domain/approval/service.go:558`). The new approval then has the
+description and the risk level of the first evaluation.
 
 The hash function moves to the shared leaf package `internal/domain/approval/toolpattern`,
 because `adrs/035-shared-tool-pattern-matching.md` permits ExtProc no other import from
@@ -319,9 +320,9 @@ instances and is fresh after the read.
 **Consequences**:
 
 - The ExtProc cache keeps pending records today, but `Record.matchable` (`cache.go:332-344`) accepts only `approved` records. The feature adds a separate lookup for `pending` records. The existing match for human decisions does not change.
-- An idempotent create keeps the summary of the first assessment. The broker needs no change for this rule of FR-037.
-- The sync record has no expiry time. ExtProc thus cannot know that a pending approval is near its end. The summary `not_available` on the create request covers this case.
-- Two instances can assess the same call at the same time. Each sends one model request, and the broker keeps the first summary.
+- An idempotent create keeps the description and the risk level of the first create request. The broker needs no change.
+- The sync record has no expiry time. ExtProc thus cannot know that a pending approval is near its end. The create request with the result of the first evaluation covers this case.
+- Two instances can assess the same call at the same time. Each sends one model request, and the broker keeps the first create request.
 - A pending record never lets a call proceed. The lookup only selects the path without a model request.
 
 **Alternatives considered**: A create request before the assessment makes a record for calls
@@ -331,7 +332,7 @@ does not satisfy FR-008 for two or more instances.
 ## D-08 — The evaluation run is the first subcommand of the ExtProc binary
 
 **Decision**: The ExtProc binary gets the subcommand `assessment evaluate`. It uses the same
-packages as the service for the catalog, the context, the model request, the policy, and the
+packages as the service for the question set, the context, the model request, the policy, and the
 conditions of FR-041. It reads the service configuration, a case file, and one tool listing file
 for each server. It writes a report and an evaluation record. The contract is in
 [contracts/assessment-files.md](contracts/assessment-files.md).
@@ -368,43 +369,21 @@ requires `evaluated` applies in the run as it will apply in production after the
 **Alternatives considered**: A separate binary doubles the release and container work. A test
 helper is not usable by operators.
 
-## D-09 — The broker stores the summary in one JSON column
+## D-09 — Withdrawn: the broker stores the summary in one JSON column
 
-**Decision**: A migration pair adds a nullable `assessment` JSONB column to `tool_approvals`. The
-migration uses the next free number on `main` when the implementation starts. On 2026-11-24, the
-last migration on `main` is `048`, and two open branches use `049`. This plan uses the name
-`NNN_add_tool_approval_assessment`. The down migration refuses to run while a row has a summary,
-as `migrations/039_add_protected_resource_discovery.down.sql` does for its data
-([data-model.md](data-model.md)). The domain service validates the limits of API-003 before it
-stores the value. The two storage adapters store and return it with explicit columns. An
-idempotent create request for an existing pending approval does not change the stored summary
-(FR-037).
+Withdrawn on 2026-11-26 (D-16). The feature stores no assessment data in the broker and adds no
+migration.
 
-**Rationale**: The summary belongs to one approval, has no identity of its own, and is not a
-query condition. The repository has no code generation for API types, thus the DTO, the OpenAPI
-document, and `web/src/types/approval.ts` change by hand.
+## D-10 — Withdrawn: the approval page gets one application component
 
-**Alternatives considered**: A child table for findings adds joins for data that the system
-always reads as one unit.
+Withdrawn on 2026-11-26 (D-16). The approval page does not change.
 
-## D-10 — The approval page gets one application component
-
-**Decision**: A new component `AssessmentSummary` in `web/src/components/approvals/` shows the
-recommendation text, the findings, and the fixed notice. `ApprovalReviewPage` puts it between the
-request summary and the technical details. The component shows only fixed product texts and the
-statements from the API.
-
-**Rationale**: The component is specific to approvals. The design system needs no new universal
-component.
-
-**Alternatives considered**: An addition to `ApprovalRequestSummary` mixes operator statements
-with the policy description.
-
-## D-11 — The catalog and the evaluation record are YAML files that the service reads at startup
+## D-11 — The question set file and the evaluation record are YAML files that the service reads at startup
 
 **Decision**: ExtProc reads the two files one time at startup with strict decoding. Unknown keys,
 a missing required key, or a file larger than 1 MiB stop the startup. The service does not read
-the files again while it operates.
+the files again while it operates. The default question set is an embedded file with the same
+format, and the same loader reads it (D-17).
 
 **Rationale**: A fingerprint must be stable while the service operates. A startup error shows a
 mistake at once (FR-028).
@@ -545,7 +524,57 @@ An operator must measure the latency of the model and set `request_timeout` to a
 **Alternatives considered**: A total deadline for the assessment duplicates the deadlines of its
 steps.
 
-## Verification record
+## D-16 — The approver sees the description and the risk level of the policy, and no new element
+
+**Decision**: The feature adds no approver-facing element. The policy derives the existing
+`approval_context.description` and `approval_context.risk_level` from the answers. ExtProc sends
+the two values to the broker in the existing fields of the create request. The broker, its API,
+its database, and the approval page do not change.
+
+The earlier design had a list of findings with operator-written statements, a recommendation, a
+fixed notice, and an assessment summary that the broker stored. The stakeholder rejected it on
+2026-11-26.
+
+**Rationale**: An approver reads one statement, not a list. That statement must agree with the
+policy decision, thus it is a part of the policy result. The policy result already has it: the
+description, with the risk level. The model returns only numbers, thus no model text can get to
+the approver.
+
+**Consequences**:
+
+- The feature needs no migration, no OpenAPI change, no web component, and no browser test.
+- The approval page does not show that a model contributed to the two values. It shows no notice for a failed assessment. The policy sees the assessment status and selects the description for that case.
+- The system cannot make sure that a description is a constant text. A policy can format an argument value or an answer value into it, as it can today. The authoring rules and the example policy use constant texts (FR-039, SR-008).
+- The answering model and the question set fingerprint of a call that waits for a person are only in the audit record of ExtProc. The approval record does not have them.
+
+**Alternatives considered**: A new result field for one statement duplicates the description. A
+finding list from the policy keeps a second text channel to the approver and all broker changes.
+
+## D-17 — The organization values and the disclosure settings are ExtProc configuration, and the product has a default question set
+
+**Decision**: The organization values and the disclosure settings are keys of the ExtProc
+configuration under `authorization.assessment`. The feature has no catalog file. The ExtProc
+binary contains the default question set of the spec as an embedded YAML file. The optional key
+`questions_file` names a file that replaces the full default set. The contract is in
+[contracts/assessment-files.md](contracts/assessment-files.md).
+
+**Rationale**: The organization values are deployment configuration, as the endpoint and the
+model are. One configuration file is easier to operate than two. With a default set, an operator
+enables the feature without writing a question, and the project can measure and publish results
+for one known set (FR-053).
+
+**Consequences**:
+
+- A policy refers to the default questions by name. The names are part of the product contract for one release.
+- A release that changes a default question changes the question set fingerprint of each deployment that uses the default set. Automatic approval then stops until a new evaluation run. The release notes must state the change.
+- The smoke test showed two default questions that need work with the tested model: `persistent_effect` and `definition_addresses_assessor` ([decision-model-research.md](decision-model-research.md), "Smoke test with a local model"). The tuning run of the task list can change them. The spec then changes with them.
+
+**Alternatives considered**: A separate catalog file for the organization values, the questions,
+and the disclosure settings. The stakeholder rejected it on 2026-11-26: the name suggests a list
+of servers, and the organization values belong to the normal configuration. A set of questions
+that each operator must write gives no default and no common measured result.
+
+## Verification record## Verification record
 
 The verification ran on 2026-11-24 on macOS (arm64) with Docker Engine 29.5.2 and
 `testcontainers-go` v0.44.0. The test files stay in the repository.
@@ -569,5 +598,4 @@ These subjects were not tested:
 - A hosted decision model. The smoke test used one local model only. The answers, the latency, and the `model` value of the OpenAI and TypeSafe services are not known.
 - The `model` value as a version check. The local server returned the requested name `winnow:e4b`, not a versioned identifier. A provider that does the same hides a change of weights from the model condition of FR-041. The operator documentation must state this.
 - MCP servers other than `mcp-go`, listings larger than 70 KB, and event streams with more than one event.
-- The Playwright suite with the assessment. The plan changes the browser cases (see [plan.md](plan.md)).
 - The measured results of the example policy on the starter case set. The spec requires them before publication, and they need a real model.

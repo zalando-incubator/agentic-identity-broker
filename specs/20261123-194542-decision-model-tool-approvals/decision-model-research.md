@@ -129,7 +129,7 @@ OWASP recommends a cryptographic hash of the complete reviewed definition. OWASP
 
 Four controls apply to the tool definition from a server:
 
-- The broker puts the definition in a separate section and does not show it to the approver.
+- The system puts the definition in a separate section and does not send it to the broker.
 - A policy rule must apply to the call.
 - The evaluation record must include the tool context fingerprint, which covers the tool definition. If the definition changes, the evaluation record no longer matches.
 - The example policy uses a question that checks whether the definition text addresses the reviewer.
@@ -182,9 +182,9 @@ If thresholds depend on a version, TypeSafe recommends a versioned identifier. R
 These examples use `drive.share_file` on `google-drive-mcp`, as in the Brennenstuhl essay and the specification.
 The configuration, payloads, and answer values here illustrate this feature. The answer values are not measurements.
 
-### E-01 — The text that the operator writes once
+### E-01 — The organization values and one default question
 
-The organization description defines “outside the organization” for these questions (R-10). The operator supplies the same question set for each assessed call.
+The organization description defines “outside the organization” for these questions (R-10). The operator writes it once in the service configuration. The product supplies the question, and the same question set applies to each assessed call.
 
 ```yaml
 organization:
@@ -198,7 +198,6 @@ questions:
     instructions: "Does the call in `call` give access or data to a party outside the organization in `organization`?"   # R-04: one condition; R-12: sections named
     yes_when: "A recipient, grantee, or destination is not in `organization.internal_domains`, is public, or cannot be identified."   # R-05: boundary cases
     no_when: "Every recipient, grantee, and destination is in `organization.internal_domains`, or the call has none."
-    statement: "Gives access or data to a party outside the organization"   # for the approver; not sent to the model
 ```
 
 ### E-02 — Question wording: incorrect and correct
@@ -269,7 +268,7 @@ These are example OpenAI answer objects. The policy states and thresholds are ex
 | `{"type": "predicate", "name": "leaves_organization", "probability": 0.01}` | answered | Yes, if all other conditions are true |
 | `{"type": "refusal", "name": "leaves_organization"}` | refused | No (R-18) |
 | No entry with that name | missing | No |
-| `{"type": "predicate", "name": "leaves_organization", "probability": 0.4}` | answered, between the thresholds | No. The finding is "unclear" (R-16) |
+| `{"type": "predicate", "name": "leaves_organization", "probability": 0.4}` | answered, between the thresholds | No. The value is in the uncertain band (R-16) |
 
 ## Additional observations
 
@@ -284,7 +283,7 @@ These are example OpenAI answer objects. The policy states and thresholds are ex
 On 2026-11-24, ExtProc was not part of this test. A test client sent the request of Journey 1,
 step 6, to agentgateway `v1.7.0`. The gateway translated it to System One and sent it to a local
 `winnow:e4b` model. That model is a Gemma 4 E4B fine-tune with 7.5B parameters in Q8_0 on
-llama.cpp, with a TypeSafe-compatible API. The questions had the full catalog criteria of the
+llama.cpp, with a TypeSafe-compatible API. The questions had the full criteria of the
 spec. The test sent three calls three times each. Only the call arguments differed. At that
 time, the `tool` section had one more field, `"written_by": "server"`. The spec removed the field
 on 2026-11-26. The answer values below are for the request with that field.

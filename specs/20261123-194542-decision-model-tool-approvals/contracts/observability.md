@@ -18,7 +18,7 @@ log record, span, or metric contains these items:
 - An argument value or an argument name
 - The assessment context or a part of it
 - Text from a tool definition
-- Question text, criteria, or statements
+- Question text or criteria
 - The request body or the response body of the model request
 - The credential for the decision endpoint.
 
@@ -36,8 +36,8 @@ Two outputs are not signals of this contract, because the operator configures th
 |---|---|---|---|
 | `assessment.tool_call.assessed` | INFO | ExtProc, one time for each assessed call (FR-060) | See the table that follows |
 | `assessment.tool_definition.changed` | INFO | ExtProc, if a listing changes a known definition (FR-063) | `target_server_name`, `previous_tool_context`, `tool_context`, and `tool_name` under D-12 |
-| `assessment.evaluation_record.mismatched` | ERROR | ExtProc at startup, if the question set of the record differs from the catalog | `question_set`, `evaluated_question_set` |
-| `assessment.catalog.loaded` | INFO | ExtProc at startup | `question_set`, `question_count`, `mode` |
+| `assessment.evaluation_record.mismatched` | ERROR | ExtProc at startup, if the question set of the record differs from the question set of the service | `question_set`, `evaluated_question_set` |
+| `assessment.question_set.loaded` | INFO | ExtProc at startup | `question_set`, `question_count`, `question_source` (`default` or `file`), `mode` |
 
 Attributes of `assessment.tool_call.assessed`:
 
@@ -90,7 +90,6 @@ constructor.
 | `extproc.assessment.tool_definitions` | Gauge | `{definition}` | none | The number of definitions in the store |
 | `extproc.assessment.tool_definition.changes` | Counter | `{change}` | none | One time for each changed definition |
 | `extproc.assessment.listings` | Counter | `{listing}` | `assessment.listing_result` | One time for each observed `tools/list` response |
-| `extproc.assessment.policy_result.removed` | Counter | `{entry}` | `assessment.removed_kind` | One time for each finding or recommendation that the system removes from a policy result |
 
 Attribute values:
 
@@ -100,7 +99,6 @@ Attribute values:
 | `assessment.outcome` | `automatic_approval`, `human_review`, `denied` |
 | `assessment.evaluated` | `true`, `false` |
 | `assessment.listing_result` | `stored`, `too_large`, `not_parsed`, `ignored` |
-| `assessment.removed_kind` | `finding`, `recommendation` |
 
 The number of attribute combinations is constant. A target server name and a tool name are not
 metric attributes.

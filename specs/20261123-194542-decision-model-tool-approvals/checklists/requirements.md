@@ -41,16 +41,21 @@
   in plain language.
 - **Examples.** All YAML and JSON blocks parse. The OPA library of the repository evaluated the
   policy excerpt against the inputs of journeys 1 to 3. The results agree with the journeys. The
-  renderer made the three wireframes from their sources.
+  spec has no wireframe, because the feature changes no page.
 - **No clarification markers.** The assumptions record each decision that has more than one
   possible answer. The section "Decisions to review first" lists the most important decisions.
 - **Revisions.** On 2026-11-23, three revisions changed the first draft. First, the model gets
   the tool definitions that the servers list, and the operator describes no tools. Second,
   disclosure became one deployment-wide setting, and entries for each server became optional
   exceptions. Third, all prose obeys the Simple English rules of the project skill.
-- **Revision of 2026-11-26.** The catalog has no entry for a server or a tool. The optional
-  exceptions, the server description, and the replacement tool description are removed, because
-  an operator cannot maintain metadata about externally managed servers.
+- **Revisions of 2026-11-26.** The stakeholder narrowed the scope. First, the configuration has
+  no entry for a server or a tool: the optional exceptions, the server description, and the
+  replacement tool description are removed, because an operator cannot maintain metadata about
+  externally managed servers. Second, the approver sees no new element: the policy derives the
+  existing description and risk level from the answers, and the broker, its API, its database,
+  and the approval page do not change. Third, the organization values and the disclosure
+  settings are keys of the service configuration, and the product has a default question set.
+  The spec has no catalog file.
 - **Language.** The prose uses the structural rules of Simplified Technical English in the
   pragmatic mode. Each clause of a Given/When/Then scenario counts as one sentence. Code,
   identifiers, quoted source text, and interface text did not change.
@@ -65,5 +70,6 @@ These decisions change the scope or the security model:
 - If the deployment-wide setting permits it, the system sends argument values of all servers to the decision endpoint.
 - The system does not send the static policy risk level to the model.
 - An automatic approval creates no approval record. It is visible only in the audit log.
-- The approver can see a `routine` recommendation.
+- The approver sees only the description and the risk level of the policy. The page does not show that a model contributed to them.
+- The product has a default question set. A release that changes a default question stops automatic approval until a new evaluation run.
 - Automatic approval requires the evaluation record of User Story 5.

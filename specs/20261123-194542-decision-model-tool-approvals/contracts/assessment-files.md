@@ -1,6 +1,6 @@
-# Contract: Configuration, Catalog, Evaluation Record, and Evaluation Run
+# Contract: Configuration, Question Set, Evaluation Record, and Evaluation Run
 
-**Feature**: [spec.md](../spec.md) | **Decisions**: [research.md](../research.md) D-08, D-11
+**Feature**: [spec.md](../spec.md) | **Decisions**: [research.md](../research.md) D-08, D-11, D-17
 
 **Approval status**: Draft. The stakeholder must approve this contract before implementation
 (API-006).
@@ -21,22 +21,43 @@ change.
 | `authorization.assessment.request_timeout` | duration | `500ms` | More than 0, maximum `2s`. |
 | `authorization.assessment.max_context_bytes` | integer | `16384` | 1,024 to 262,144. |
 | `authorization.assessment.max_listing_bytes` | integer | `1048576` | 1,024 to 8,388,608. For a larger `tools/list` response, ExtProc removes the stored definitions of that server (D-02). |
-| `authorization.assessment.catalog_file` | path | none | Required while enabled. |
+| `authorization.assessment.organization.name` | string | none | Required while enabled. Maximum 200 characters. |
+| `authorization.assessment.organization.description` | string | none | Required while enabled. Maximum 1,000 characters. |
+| `authorization.assessment.organization.internal_domains` | list of strings | none | Required while enabled. 1 to 50 entries. Each entry is a lowercase DNS name. |
+| `authorization.assessment.disclosure.arguments` | string | none | Required while enabled. `all` or `none`. There is no default. |
+| `authorization.assessment.disclosure.withhold` | list of name patterns | empty | Optional. Maximum 100 entries. |
+| `authorization.assessment.questions_file` | path | none | Optional. Without it, ExtProc uses the default question set (section 2). |
 | `authorization.assessment.auto_approval.evaluation_record_file` | path | none | Required in the `auto_approve` mode. Optional in the `recommend` mode. In that mode, ExtProc reads it if it is set, and `would_auto_approve` uses it (FR-044). Without it, `would_auto_approve` is always false. |
+
+The schema has no key for an individual target server or tool (FR-016). ExtProc decodes the
+`assessment` part strictly: an unknown key stops the startup.
 
 Path values obey the existing rule for `authorization.policy.config_file`: no `..` segment, and
 the path must be a file that exists at startup. A directory is not permitted, because each value
 names one file.
 
 The documentation and the examples change in these files: `docs/configuration.md`,
-`examples/config/extproc-tool-assessment.yaml`, `examples/config/assessment-catalog.yaml`,
+`examples/config/extproc-tool-assessment.yaml`, `examples/config/assessment-questions.yaml`,
 `examples/config/README.md`, `configs/config.extproc.docker.yaml`, and the configuration table in
 `internal/extproc/AGENTS.md`.
 
-## 2. Catalog file
+## 2. Question set
 
-The format is YAML. The fields and their rules are in [data-model.md](../data-model.md). The full
-example is in [spec.md](../spec.md), Journey 1, step 2.
+### Default question set
+
+The ExtProc binary contains the default question set of [spec.md](../spec.md), Journey 1, step 2,
+as an embedded file: `internal/extproc/assessment/default_questions.yaml`. ExtProc uses it if
+`questions_file` is not set. `examples/config/assessment-questions.yaml` is a copy of it, and a
+test makes sure that the two files are equal.
+
+A change to a default question changes the question set fingerprint of each deployment that uses
+the default set. The release notes must state such a change, because automatic approval stops
+until a new evaluation run (SC-010).
+
+### Question set file
+
+The format is YAML with one key, `questions`. The fields and their rules are in
+[data-model.md](../data-model.md). A file replaces the full default set.
 
 ExtProc rejects the file at startup in these cases:
 
@@ -45,12 +66,12 @@ ExtProc rejects the file at startup in these cases:
 - A question name that is not unique
 - A placeholder in a question text, a criterion, a level label, or a level description
 - A text that is longer than its limit in [data-model.md](../data-model.md)
-- A question set with more than 16 questions
+- A question set with no question or with more than 16 questions
 - A `predicate` question without `yes_when` or `no_when`
 - A `score` question with fewer than 2 levels or more than 10 levels.
 
 The error message names the question or the key. At startup, ExtProc writes the question set
-fingerprint to the log.
+fingerprint and the source of the set (`default` or `file`) to the log.
 
 ## 3. Evaluation record file
 
@@ -66,8 +87,8 @@ tool_contexts:
 ```
 
 In the `auto_approve` mode, ExtProc rejects a missing or invalid file at startup. If the
-`question_set` value differs from the catalog, ExtProc starts and writes an error record. No call
-then proceeds automatically (SC-010). A changed catalog is a normal change and not an invalid
+`question_set` value differs from the fingerprint of the service, ExtProc starts and writes an error record. No call
+then proceeds automatically (SC-010). A changed question or organization value is a normal change and not an invalid
 file. The calls wait for a person until a new evaluation run.
 
 ## 4. Case file
@@ -110,7 +131,8 @@ extproc-token-exchange assessment evaluate
     [--parallel <number>]                                  (default: 4, maximum: 32)
 ```
 
-The command uses the catalog, the model settings, and the policy from the configuration file. It
+The command uses the organization values, the disclosure settings, the question set, the model
+settings, and the policy of the configuration file. It
 ignores `mode` and an existing evaluation record. It does not require that
 `evaluation_record_file` exists. It sets `input.assessment.evaluated` to `true` for each case
 (D-08). It starts no gRPC server, calls no tool, and sends no request to the broker.
