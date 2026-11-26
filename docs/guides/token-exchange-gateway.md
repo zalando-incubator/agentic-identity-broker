@@ -280,9 +280,6 @@ When the consent UI opens, connect the mock provider.
 Then grant **Claude Code** access.
 The broker uses the Vite development proxy to identify the user as `dev@example.com`.
 
-After a host wakes from sleep, tool calls can fail briefly while ExtProc renews its own credential.
-ExtProc rejects an expired credential until renewal succeeds; it does not send that credential to the broker.
-
 ### Use a sample-client token
 
 1. Open `http://localhost:9002/`.
