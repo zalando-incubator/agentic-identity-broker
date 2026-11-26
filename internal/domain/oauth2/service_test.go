@@ -2099,6 +2099,7 @@ func TestBuildConsentURL_AlwaysProducesSessionToken(t *testing.T) {
 }
 
 func TestHandleAuthorizationConsentLogReasons(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
 	for _, tc := range []struct {
 		name      string
 		included  bool
@@ -2108,6 +2109,9 @@ func TestHandleAuthorizationConsentLogReasons(t *testing.T) {
 		reason    string
 	}{
 		{name: "included session missing", included: true, event: "oauth2.delegated_session.unusable", reason: "session_missing"},
+		{name: "included session requires reauthentication", included: true, session: &storage.UserSession{AccessTokenExpiresAt: &past}, event: "oauth2.delegated_session.unusable", reason: "reauthentication_required"},
+		{name: "mandatory session missing", mandatory: true, event: "oauth2.mandatory_requirement.not_met", reason: "session_not_found"},
+		{name: "mandatory session requires reauthentication", mandatory: true, session: &storage.UserSession{AccessTokenExpiresAt: &past}, event: "oauth2.mandatory_requirement.not_met", reason: "reauthentication_required"},
 		{name: "mandatory scope mismatch", mandatory: true, session: &storage.UserSession{Scope: []string{"read"}}, event: "oauth2.mandatory_requirement.not_met", reason: "scope_mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2149,6 +2153,13 @@ func TestHandleAuthorizationConsentLogReasons(t *testing.T) {
 			assert.Equal(t, tc.event, event["event"])
 			assert.Equal(t, tc.reason, event["reason"])
 			assert.Equal(t, serviceID.String(), event["service_id"])
+			if tc.reason == "scope_mismatch" {
+				assert.Equal(t, []any{"write"}, event["required_scopes"])
+				assert.Equal(t, []any{"read"}, event["actual_scopes"])
+			} else {
+				assert.NotContains(t, event, "required_scopes")
+				assert.NotContains(t, event, "actual_scopes")
+			}
 		})
 	}
 }

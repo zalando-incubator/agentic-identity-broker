@@ -67,6 +67,7 @@ func TestCheckConsent(t *testing.T) {
 		{name: "mandatory service needs a connection", mandatory: true, want: ports.ConsentMandatorySessionMissing, calls: 1},
 		{name: "mandatory session needs reauthentication", mandatory: true, session: &storage.UserSession{AccessTokenExpiresAt: &past}, want: ports.ConsentMandatorySessionUnusable, calls: 1},
 		{name: "mandatory service lacks required scope", mandatory: true, session: &storage.UserSession{Scope: []string{"read"}}, want: ports.ConsentMandatoryScopeInsufficient, calls: 1},
+		{name: "selected mandatory session lacks required scope", declared: true, included: true, mandatory: true, session: &storage.UserSession{Scope: []string{"read"}}, want: ports.ConsentMandatoryScopeInsufficient, calls: 1},
 		{name: "refreshable selected mandatory session is ready", declared: true, included: true, mandatory: true, secondSet: true, session: &storage.UserSession{Scope: []string{"read", "write"}, AccessTokenExpiresAt: &past, EncryptedRefreshToken: []byte("encrypted")}, calls: 1},
 		{name: "unselected optional service does not block", optional: true},
 		{name: "repository failure is not consent", grantError: assert.AnError, want: ports.ConsentGrantLookupFailed, wantError: assert.AnError},
@@ -110,8 +111,12 @@ func TestCheckConsent(t *testing.T) {
 			assert.Equal(t, tc.want, got.Reason)
 			assert.Equal(t, tc.calls, store.calls[serviceID])
 			assert.Zero(t, store.calls[optionalID])
-			if tc.want == ports.ConsentPermissionSetUndeclared {
-				assert.Equal(t, permissionSetID, got.PermissionSetID)
+			if tc.want == ports.ConsentMandatoryScopeInsufficient {
+				assert.Equal(t, []string{"write"}, got.RequiredScopes)
+				assert.Equal(t, []string{"read"}, got.SessionScopes)
+			} else {
+				assert.Nil(t, got.RequiredScopes)
+				assert.Nil(t, got.SessionScopes)
 			}
 			if tc.calls > 0 && tc.want != "" {
 				assert.Equal(t, serviceID, got.ServiceID)

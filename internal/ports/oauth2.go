@@ -293,12 +293,14 @@ const (
 	ConsentSessionLookupFailed        ConsentReason = "session_lookup_failed"
 )
 
-// ConsentStatus carries a credential-free reason and the affected entity.
+// ConsentStatus carries a credential-free reason and the affected service.
+// RequiredScopes and SessionScopes are set only for ConsentMandatoryScopeInsufficient.
 // A non-nil error always fails closed, regardless of the reason.
 type ConsentStatus struct {
-	Reason          ConsentReason
-	ServiceID       id.ServiceID
-	PermissionSetID id.PermissionSetID
+	Reason         ConsentReason
+	ServiceID      id.ServiceID
+	RequiredScopes []string
+	SessionScopes  []string
 }
 
 // ConsentChecker checks whether a human needs the agent consent page after

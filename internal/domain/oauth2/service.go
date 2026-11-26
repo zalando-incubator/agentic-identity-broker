@@ -248,16 +248,18 @@ func (s *AuthorizationService) HandleAuthorization(ctx context.Context, req *por
 		}
 	case ports.ConsentMandatorySessionMissing, ports.ConsentMandatorySessionUnusable, ports.ConsentMandatoryScopeInsufficient:
 		if s.logger != nil {
-			reason := "session_not_found"
+			attrs := []any{"event", "oauth2.mandatory_requirement.not_met", "agent_id", agent.ID,
+				"service_id", consentStatus.ServiceID}
 			switch consentStatus.Reason {
 			case ports.ConsentMandatorySessionUnusable:
-				reason = "reauthentication_required"
+				attrs = append(attrs, "reason", "reauthentication_required")
 			case ports.ConsentMandatoryScopeInsufficient:
-				reason = "scope_mismatch"
+				attrs = append(attrs, "reason", "scope_mismatch",
+					"required_scopes", consentStatus.RequiredScopes, "actual_scopes", consentStatus.SessionScopes)
+			default:
+				attrs = append(attrs, "reason", "session_not_found")
 			}
-			s.logger.WarnContext(ctx, "mandatory requirement not met",
-				"event", "oauth2.mandatory_requirement.not_met", "agent_id", agent.ID,
-				"service_id", consentStatus.ServiceID, "reason", reason)
+			s.logger.WarnContext(ctx, "mandatory requirement not met", attrs...)
 		}
 	default:
 		if s.logger != nil {

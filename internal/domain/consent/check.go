@@ -34,7 +34,7 @@ func CheckConsent(
 		if !slices.ContainsFunc(agent.PermissionSets, func(declared storage.AgentPermissionSetEntry) bool {
 			return declared.PermissionSetID == entry.PermissionSetID
 		}) {
-			return ports.ConsentStatus{Reason: ports.ConsentPermissionSetUndeclared, PermissionSetID: entry.PermissionSetID}, nil
+			return ports.ConsentStatus{Reason: ports.ConsentPermissionSetUndeclared}, nil
 		}
 	}
 
@@ -89,7 +89,12 @@ func CheckConsent(
 		}
 		for _, scope := range requirement.RequiredScopes {
 			if !slices.Contains(session.Scope, scope) {
-				return ports.ConsentStatus{Reason: ports.ConsentMandatoryScopeInsufficient, ServiceID: requirement.ServiceID}, nil
+				return ports.ConsentStatus{
+					Reason:         ports.ConsentMandatoryScopeInsufficient,
+					ServiceID:      requirement.ServiceID,
+					RequiredScopes: slices.Clone(requirement.RequiredScopes),
+					SessionScopes:  slices.Clone(session.Scope),
+				}, nil
 			}
 		}
 	}
