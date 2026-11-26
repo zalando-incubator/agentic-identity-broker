@@ -355,9 +355,11 @@ for.
 
 ## R16 — Storage parity (SC-008)
 
-**Decision**: One shared repository contract test (create, scoped reads, uniqueness, rename,
-version preconditions, delete, count) runs against the memory adapter as a unit test and against
-PostgreSQL under the `integration` build tag. The E2E scenarios whose outcome depends on store
+**Decision**: One shared repository contract (create, scoped reads, uniqueness, rename, version
+preconditions, delete, count) lives in `tests/integration/storage/contract/`. It runs against the
+memory adapter in the self-contained integration suite and against PostgreSQL under the
+`integration` build tag. Adapter packages cannot share `_test.go` code, and `tests/` is where
+AGENTS.md puts shared test helpers. The E2E scenarios whose outcome depends on store
 semantics (User Story 1 Scenario 5, User Story 3 Scenarios 7 and 9, User Story 5 Scenario 5) keep
 one `It()` each, labelled `docker`, with both store cases inside, as feature
 `055-agent-external-id-upsert` did. All other scenarios run on the memory store.

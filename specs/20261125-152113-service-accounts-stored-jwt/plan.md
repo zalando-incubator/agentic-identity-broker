@@ -219,7 +219,9 @@ tests/
 ├── e2e/fixtures/service_account.go                     # signed, unsigned, expiring tokens; requests
 ├── e2e/helpers/service_account.go                      # PUT/DELETE with If-Match, credential-absence matcher
 ├── integration/migrations/service_accounts_migration_test.go
-├── integration/storage/infra/service_account_test.go   # shared repository contract on PostgreSQL
+├── integration/storage/contract/service_account_repository.go # shared repository contract
+├── integration/storage/service_account_repository_test.go    # contract on the memory store
+├── integration/storage/infra/service_account_test.go         # contract on PostgreSQL
 └── integration/service_account_encryption_test.go      # service-context isolation (SR-001)
 ```
 
@@ -402,8 +404,12 @@ error messages, list contents. No `XIt`, `PIt`, `Skip()` or red-phase comments.
   owning service's, audit records and keys per the observability contract, credential and its
   segments absent from the log buffer.
 - `internal/domain/thirdparty/service_test.go`: service deletion refused while accounts exist.
-- `internal/adapters/storage/memory/service_account_repository_test.go`: the shared repository
-  contract; concurrent creates and updates under `-race`.
+- `internal/adapters/storage/memory/service_account_repository_test.go`: adapter-specific
+  behaviour (deep copies in and out, service-existence check); concurrent creates and updates
+  under `-race`.
+- `tests/integration/storage/service_account_repository_test.go` (self-contained,
+  `just test-integration`): the shared repository contract from
+  `tests/integration/storage/contract/` on the memory store.
 - `internal/adapters/http/handlers/admin/service_accounts_handler_test.go`: operator required
   before any read; identifier resolution; `If-Match` parsing; body limit and unknown members;
   status, `Location`, `ETag`; error mapping; credential absent from responses, log buffer and
