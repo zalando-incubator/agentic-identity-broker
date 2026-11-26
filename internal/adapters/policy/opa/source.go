@@ -99,6 +99,11 @@ func NewImpersonationPolicySource(cfg ports.ImpersonationOPAEngineConfig, decisi
 		err = &configError{field: "policy", reason: reasonInvalidDocument}
 	}
 	if err != nil {
+		reason := "bootstrap_invalid"
+		if cfg.Policy.ConfigFile == "" {
+			reason = "local_bundle_invalid"
+		}
+		s.telemetry.startupFailed(reason, "", time.Since(s.started))
 		s.Stop(context.Background())
 		return nil, err
 	}

@@ -134,3 +134,17 @@ func TestLocalBundleRejections(t *testing.T) {
 		assert.Less(t, time.Since(start), time.Second)
 	})
 }
+
+func TestInvalidEngineConfigurationLogsStartupFailure(t *testing.T) {
+	for reason, policy := range map[string]ports.ImpersonationOPAPolicySource{
+		"bootstrap_invalid":    {ConfigFile: filepath.Join(t.TempDir(), "missing.yaml")},
+		"local_bundle_invalid": {Path: filepath.Join(t.TempDir(), "missing")},
+	} {
+		var logs bytes.Buffer
+		_, err := NewImpersonationPolicySource(ports.ImpersonationOPAEngineConfig{Policy: policy},
+			[]ports.ImpersonationPolicyDecisionRef{governedDecision}, admitAll, slog.New(slog.NewJSONHandler(&logs, nil)))
+		require.Error(t, err)
+		assert.Contains(t, logs.String(), `"event":"oauth2_server.impersonation_policy.startup_failed"`)
+		assert.Contains(t, logs.String(), `"reason":"`+reason+`"`)
+	}
+}

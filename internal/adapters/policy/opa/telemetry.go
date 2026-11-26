@@ -78,8 +78,11 @@ const (
 type downloadErrorKind string
 
 const (
-	downloadHTTPStatus    downloadErrorKind = "http_status"
-	downloadTransport     downloadErrorKind = "transport"
+	// downloadHTTPStatus is set when the bundle service answered with an error status.
+	downloadHTTPStatus downloadErrorKind = "http_status"
+	// downloadTransport is set when the request failed before a response.
+	downloadTransport downloadErrorKind = "transport"
+	// downloadInvalidBundle is set when OPA downloaded the bundle but could not activate it.
 	downloadInvalidBundle downloadErrorKind = "invalid_bundle"
 )
 
