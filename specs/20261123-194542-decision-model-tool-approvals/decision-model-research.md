@@ -240,9 +240,9 @@ Separate sections for different sources (R-10 to R-15). The tool description is 
   "tool": {
     "name": "drive.share_file",
     "description": "Share a file with a user, group, or domain. The grantee gets access at once and receives a notification email.",
-    "arguments": {"grantee_domain": {"type": "string", "description": "Email domain of the grantee."}}
+    "inputSchema": {"properties": {"grantee_domain": {"type": "string", "description": "Email domain of the grantee."}}}
   },
-  "call": {"arguments": {"role": "editor", "grantee_domain": "thirdparty.example.com"}}
+  "call": {"name": "drive.share_file", "arguments": {"role": "editor", "grantee_domain": "thirdparty.example.com"}}
 }
 ```
 

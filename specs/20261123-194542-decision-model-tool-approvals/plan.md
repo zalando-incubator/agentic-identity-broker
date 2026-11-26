@@ -182,9 +182,9 @@ The tests do not exist at this time. All cases use the ExtProc suite with the br
 | US1.1 | External editor share: the tool double gets no call. The create request at the broker double has `risk_level: critical` and the description "Share a Drive file with a party outside the organization". |
 | US1.2 | Internal reader share in the `recommend` mode: the create request has `risk_level: low` and the description "Share a Drive file inside the organization". |
 | US1.3 | Assessment disabled: the model double gets no request, and the create request equals the request of today byte for byte. |
-| US2.1 | One model request with the default questions, the organization values, the server name, the listed definition, and the value of each supplied argument. |
+| US2.1 | One model request with the default questions, the organization values, the server name, the listed definition, and the tool name and the arguments as the agent sent them. |
 | US2.2 | The request body has no principal, agent identifier, session identifier, credential, risk level, policy description, or other tool. |
-| US2.3 | An undescribed argument is absent from the request, the count is 1, and the call waits in each mode. |
+| US2.3 | Arguments that make the context larger than the limit: no model request, and the call waits in each mode. |
 | US2.4 | A server without a listing: no model request, and the create request equals the request of today. |
 | US2.5 | Two requests with equal bytes for the questions and the first three sections. The injected text is only in `call`. |
 | US2.6 | Startup fails for an invalid question in the configuration and for a missing organization value. The error names the question or the key. |
@@ -253,9 +253,9 @@ assertions on the supported image, so that a passing run proves them:
 Unit tests come first for each of these subjects:
 
 - The questions: the default value equals the questions of the spec and of the example file and obeys each rule, a list in the configuration replaces the full default list, and each invalid question stops the startup.
-- The listing parser: event-stream bodies with one or more events, JSON bodies, pages, a result with unknown fields, an error result, a size at the limit and one byte more, and bodies that are not valid. A tool without an input schema, and a schema without described properties.
+- The listing parser: event-stream bodies with one or more events, JSON bodies, pages, a result with unknown fields, an error result, a size at the limit and one byte more, and bodies that are not valid. A tool without an input schema.
 - The store: the latest definition applies, the limit, the change report, the removal of all definitions of a server after a listing that ExtProc cannot read, and the marker for an oversized definition.
-- The context builder: the value of each described argument, sorted map keys, oversized values, undescribed arguments, absent empty lists, and a constant byte sequence for equal input. A call without arguments, and a tool without described arguments (each argument is undescribed).
+- The context builder: the tool definition and the arguments without a selection or a change, an argument that the input schema does not list, sorted map keys, a context at the size limit and one byte more, and a constant byte sequence for equal input. A call without arguments.
 - The answer validation: each status of D-04, the tolerance of 0.01, level entries in a different sequence, a missing or duplicate level `value`, a wrong level `label`, and each invalid `model` value.
 - The fingerprints: each field of the canonical documents changes the value, and key sequence does not.
 - The decision parser and the system rules of [contracts/policy-assessment.md](contracts/policy-assessment.md): the `approval_context` of an `allow` result after a downgrade, and the fallback to the first result after an error in the second evaluation.

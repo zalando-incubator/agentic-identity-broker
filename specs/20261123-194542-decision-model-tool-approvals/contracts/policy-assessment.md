@@ -35,10 +35,6 @@ The input never contains approval records (FR-034).
     "tool": {
       "context": "tc-<64 hexadecimal characters>"
     },
-    "context": {
-      "oversized_arguments": [],
-      "undescribed_argument_count": 0
-    },
     "answers": {
       "leaves_organization": {"type": "predicate", "status": "answered", "probability": 0.99},
       "persistent_effect": {
@@ -60,7 +56,6 @@ The input never contains approval records (FR-034).
 | `question_set` | fingerprint | Always present. |
 | `evaluated` | boolean | True only if the evaluation record contains the model, the question set, and the tool context. |
 | `tool.context` | fingerprint | See the table of keys for each status. |
-| `context.*` | a list and a number | See the table of keys for each status. If `context` is present, each of its two fields is present. An empty list is `[]`, and the count is a number. |
 | `answers` | map with the question name as the key | Always present, with one entry for each question of the question set. If no response arrived, each entry has the status `missing`. |
 | `answers.*.status` | `answered`, `refused`, `missing`, `invalid` | Always present in an entry. |
 | `answers.*.probability` | number from 0 to 1 | Only for an answered `predicate`. |
@@ -71,12 +66,12 @@ A higher value always shows more risk (FR-027).
 
 Keys for each status (FR-031, FR-033):
 
-| Status | `model` | `tool` | `context` | `answers` |
-|---|---|---|---|---|
-| `definition_missing`, `context_too_large` | absent | absent | absent | each entry `missing` |
-| `timeout`, `unavailable` | absent | present | present | each entry `missing` |
-| `incomplete` | present if the response has a valid `model` value | present | present | the validated state of each entry |
-| `complete` | present | present | present | each entry `answered` |
+| Status | `model` | `tool` | `answers` |
+|---|---|---|---|
+| `definition_missing`, `context_too_large` | absent | absent | each entry `missing` |
+| `timeout`, `unavailable` | absent | present | each entry `missing` |
+| `incomplete` | present if the response has a valid `model` value | present | the validated state of each entry |
+| `complete` | present | present | each entry `answered` |
 
 `status`, `question_set`, and `evaluated` are present for each status. A policy must read
 `status` first. In Rego, a comparison with an absent key is undefined, and a comparison with `0`

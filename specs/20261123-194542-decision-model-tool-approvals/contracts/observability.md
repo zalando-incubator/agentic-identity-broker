@@ -52,7 +52,7 @@ Attributes of `assessment.tool_call.assessed`:
 | `outcome` | `automatic_approval`, `human_review`, or `denied` |
 | `auto_approval_rule` | The rule name from the policy, if one applies |
 | `would_auto_approve` | Boolean. True in the `recommend` mode if all other conditions of FR-041 are true (FR-044) |
-| `unmet_condition` | For an `allow` result that did not proceed: `mode`, `rule_missing`, `status`, `model`, `question_set`, `tool_context`, `arguments`, or `denial` |
+| `unmet_condition` | For an `allow` result that did not proceed: `mode`, `rule_missing`, `status`, `model`, `question_set`, `tool_context`, or `denial` |
 | `model`, `evaluated_model` | The answering model. The model of the evaluation record, if the two differ |
 | `question_set`, `tool_context` | The two fingerprints |
 | `answers` | A group with the question name as the key. The value is the probability, or the list of level probabilities, or the answer state if no value exists |

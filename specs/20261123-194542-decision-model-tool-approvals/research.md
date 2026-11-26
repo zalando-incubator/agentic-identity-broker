@@ -155,10 +155,12 @@ gateway configuration used the `llm` section with two `custom` providers.
 | A question without an answer from System One | The answer is absent. The System One API has no refusal. ExtProc thus sees "missing", which gives the status `incomplete`. |
 | One instance for MCP and decisions | Yes. One `v1.7.0` instance served the `llm` models and a `binds` route. All existing agentgateway suites of this repository pass on `v1.7.0` (D-14). |
 
-At the time of these cases and of the smoke test, the `tool` section of the request had one more
-field: `"written_by": "server"`. The spec removed that field on 2026-11-26 (D-02). The cases were
+At the time of these cases and of the smoke test, the context had a different form. The `tool`
+section had the field `"written_by": "server"` and only the schema entries of the supplied
+arguments, and the `call` section had no `file_id` value. The spec changed the context on
+2026-11-26 (D-02, D-17). The cases were
 not run again after the change, because no container runtime was available. The gateway does not
-interpret the text of an `input_text` part, thus the transport results do not depend on the field.
+interpret the text of an `input_text` part, thus the transport results do not depend on the form.
 
 The OpenAI reference documents `input_json` for user messages, and its guide says the model
 renders it as text. The gateway parser of `v1.7.0` does not know the part. Thus, the text form is
@@ -593,12 +595,16 @@ revision is a hypothesis, and these controls apply:
 - The project changes questions only with the tuning part of the case set and publishes results only from the validation part (FR-053).
 - The project measures with each model that it can reach, and it names each model with its results. A result for one model does not apply to a different model (R-19, R-20).
 
-**Argument values**: The system sends the value of each described argument of each assessed
-call. The feature has no setting that withholds values. Two settings were parts of the design
+**Argument values**: The system sends the tool name and the arguments of each assessed call as
+the agent sent them, and the tool definition as the server listed it. It does not filter,
+select, or change them. The feature has no setting that withholds values. Two settings were parts of the design
 until 2026-11-26, and the stakeholder removed them. A list of argument names whose values the
 system does not send needs the argument names of externally managed tools, and an operator
 cannot maintain them. A switch between "all values" and "no values" has no use, because the
-model cannot answer without the arguments.
+model cannot answer without the arguments. A rule that sent only the arguments of the input
+schema, and a limit for one argument value, were also parts of the design until that date. The
+stakeholder removed them: the model must see the call that a person sees. One limit stays, for
+the size of the full context.
 
 Issue #206 says: "Remote assessment must not implicitly forward the full argument map." The
 spec does not follow this sentence to the letter. The explicit decision is the key `enabled`,
