@@ -101,6 +101,14 @@ listing. An active `tools/list` request from ExtProc needs credentials for each 
 A catalog of tool descriptions by the operator is not practical for hundreds of servers. The
 stakeholder rejected it. The fallbacks of the first version of this decision are not necessary.
 
+An optional replacement description for one tool was a part of this decision until 2026-11-26.
+The stakeholder rejected it for the same reason. MCP servers have their own owners and their own
+release cycles. A description in the configuration of the operator couples that configuration to
+each change of a server, and the operator cannot keep the two in agreement. Thus, the catalog has
+no key for a tool, and the `tool` section has no author field: the server is always the author,
+and the framing text states it. If an operator does not trust the definitions of a server, the
+operator excludes the server (`assess: false`) or writes no automatic approval rule for its tools.
+
 ## D-03 — The decision request is plain JSON in the Decisions shape, with the context as text
 
 **Decision**: ExtProc sends `POST <endpoint>` with a JSON body in the OpenAI Decisions shape. It
@@ -136,6 +144,11 @@ gateway configuration used the `llm` section with two `custom` providers.
 | `refusal` from an OpenAI-format upstream | Arrives at the client as `{"type": "refusal", "name": "<question>"}`. |
 | A question without an answer from System One | The answer is absent. The System One API has no refusal. ExtProc thus sees "missing", which gives the status `incomplete`. |
 | One instance for MCP and decisions | Yes. One `v1.7.0` instance served the `llm` models and a `binds` route. All existing agentgateway suites of this repository pass on `v1.7.0` (D-14). |
+
+At the time of these cases and of the smoke test, the `tool` section of the request had one more
+field: `"written_by": "server"`. The spec removed that field on 2026-11-26 (D-02). The cases were
+not run again after the change, because no container runtime was available. The gateway does not
+interpret the text of an `input_text` part, thus the transport results do not depend on the field.
 
 The OpenAI reference documents `input_json` for user messages, and its guide says the model
 renders it as text. The gateway parser of `v1.7.0` does not know the part. Thus, the text form is

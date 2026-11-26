@@ -43,7 +43,9 @@ The source is the catalog file. ExtProc reads it one time at startup (D-11).
 | `arguments` | as in `disclosure` | Optional. It replaces the deployment-wide argument setting for this server. |
 | `withhold` | as in `disclosure` | Optional. Its names apply in addition to the deployment-wide names. An exception cannot remove a deployment-wide name. An empty list changes nothing. |
 | `description` | string | Optional. Maximum 500 characters. |
-| `tools.<tool name>.description` | string | Optional. Maximum 2,000 characters. It replaces the description from the server. |
+
+An exception has no key for a tool. The operator cannot describe, correct, or replace a tool
+definition (FR-013).
 
 ### Tool Definition
 
@@ -56,7 +58,6 @@ The source is a `tools/list` result as the client sees it through the gateway (D
 | `description` | string | Optional. If the listing has none, the `tool` section of the context has no description. |
 | `input_schema` | JSON object | Optional. The system uses only the entries in `properties`. |
 | `annotations` | JSON object | Optional. The system keeps only the four hint values of the MCP specification that the listing contains. It adds no default hint value. |
-| `written_by` | `server` or `operator` | `operator` if an exception replaces the description. |
 | `tool_context` | fingerprint | Calculated when the definition or the catalog changes (D-06). |
 
 The store keeps a maximum of 10,000 definitions. One definition has a maximum of 16 KiB of
@@ -73,7 +74,7 @@ ExtProc builds this document for one call and discards it after the call (SR-007
 |---|---|
 | `organization` | `name`, `description`, `internal_domains` |
 | `server` | `name`, and `description` if an exception supplies it |
-| `tool` | `written_by`, `name`, `description`, `annotations`, and `arguments` with the schema entry of each supplied and described argument |
+| `tool` | `name`, `description`, `annotations`, and `arguments` with the schema entry of each supplied and described argument |
 | `call` | `arguments`, `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count` |
 
 Rules:
@@ -91,7 +92,7 @@ Rules:
 | `status` | enumeration | One value of D-04. |
 | `model` | string | The `model` value of the response. Absent in the policy input if no response arrived. |
 | `question_set` | fingerprint | From the catalog. It does not include `statement` (FR-029). |
-| `tool.written_by`, `tool.context` | string, fingerprint | Absent in the policy input for `excluded`, `definition_missing`, and `context_too_large`. |
+| `tool.context` | fingerprint | Absent in the policy input for `excluded`, `definition_missing`, and `context_too_large`. |
 | `evaluated` | boolean | True if the evaluation record contains the model, the question set, and the tool context. |
 | `context` | flags | `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count`. Absent in the policy input for `excluded`, `definition_missing`, and `context_too_large`. |
 | `answers.<name>.status` | enumeration | `answered`, `refused`, `missing`, or `invalid`. Each catalog question has an entry for each assessment status. Without a response, the value is `missing`. |

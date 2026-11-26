@@ -33,7 +33,6 @@ The input never contains approval records (FR-034).
     "question_set": "qs-<64 hexadecimal characters>",
     "evaluated": false,
     "tool": {
-      "written_by": "server",
       "context": "tc-<64 hexadecimal characters>"
     },
     "context": {
@@ -61,7 +60,6 @@ The input never contains approval records (FR-034).
 | `model` | string | The model that the response names. Absent if no response arrived. |
 | `question_set` | fingerprint | Always present. |
 | `evaluated` | boolean | True only if the evaluation record contains the model, the question set, and the tool context. |
-| `tool.written_by` | `server`, `operator` | See the table of keys for each status. |
 | `tool.context` | fingerprint | See the table of keys for each status. |
 | `context.*` | two lists and a number | See the table of keys for each status. If `context` is present, each of its three fields is present. An empty list is `[]`, and the count is a number. |
 | `answers` | map with the question name as the key | Always present, with one entry for each question of the catalog. If no response arrived, each entry has the status `missing`. |

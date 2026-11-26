@@ -239,7 +239,6 @@ Separate sections for different sources (R-10 to R-15). The tool description is 
   "organization": {"name": "Example Corp", "internal_domains": ["example.com"]},
   "server": {"name": "google-drive-mcp"},
   "tool": {
-    "written_by": "server",
     "name": "drive.share_file",
     "description": "Share a file with a user, group, or domain. The grantee gets access at once and receives a notification email.",
     "arguments": {"grantee_domain": {"type": "string", "description": "Email domain of the grantee."}}
@@ -286,7 +285,9 @@ On 2026-11-24, ExtProc was not part of this test. A test client sent the request
 step 6, to agentgateway `v1.7.0`. The gateway translated it to System One and sent it to a local
 `winnow:e4b` model. That model is a Gemma 4 E4B fine-tune with 7.5B parameters in Q8_0 on
 llama.cpp, with a TypeSafe-compatible API. The questions had the full catalog criteria of the
-spec. The test sent three calls three times each. Only the call arguments differed.
+spec. The test sent three calls three times each. Only the call arguments differed. At that
+time, the `tool` section had one more field, `"written_by": "server"`. The spec removed the field
+on 2026-11-26. The answer values below are for the request with that field.
 
 | Call | `leaves_organization` | `changes_access` | `persistent_effect` levels 0/1/2 | `addresses_assessor` | `definition_addresses_assessor` |
 |---|---|---|---|---|---|

@@ -53,7 +53,7 @@ Each journey uses the values of the journeys in [spec.md](spec.md).
 
 ## Evidence and limits
 
-- Map each of the 28 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
+- Map each of the 27 scenario identifiers to one `It`, as the table in [plan.md](plan.md) shows.
 - Keep the screenshots of the three page states under `tests/e2e/screenshots/`.
 - The case for SC-003 and the signal test are in their own files. They are not acceptance scenarios.
 - Copy the verification record of [research.md](research.md) into the ADR. The cases in `tests/e2e/extproc/assessment_gateway_verification_test.go`, `tests/e2e/extproc/assessment_decision_endpoint_verification_test.go`, and `tests/e2e/approval_api_test.go` stay in the suites.
