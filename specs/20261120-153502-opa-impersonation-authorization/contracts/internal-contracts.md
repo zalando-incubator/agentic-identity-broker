@@ -99,9 +99,9 @@ type ImpersonationPolicySource interface {
 // with, per rule name, whether that rule's decision rule exists. The adapter sets the flag to true
 // only when ast.Compiler.GetRulesExact(data.<package>.<decision>) on the candidate's broker-owned
 // compiler returns at least one rule; a value only in data documents or only rules nested below
-// the ref yields false (decision_undefined). A non-nil error rejects the whole
+// the ref yields false (decision_absent). A non-nil error rejects the whole
 // candidate; ImpersonationPolicyAdmissionError names the first failing rule for diagnostics.
-type ImpersonationPolicyAdmission func(decisionDefined map[string]bool) error
+type ImpersonationPolicyAdmission func(decisionPresent map[string]bool) error
 
 type ImpersonationPolicyAdmissionError struct {
 	Rule string
@@ -238,7 +238,7 @@ type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
   (the rule's `evaluation_timeout`), runs the rule's prepared query, and parses the decision
   (contract § 3).
 - Admission flags: for each decision reference, `GetRulesExact` on the candidate's broker-owned
-  compiler for `data.<package>.<decision>`; at least one rule means defined.
+  compiler for `data.<package>.<decision>`; at least one rule means present.
 - The adapter imports no other adapter and nothing from `internal/extproc`.
 
 ## 5. Builder and handler

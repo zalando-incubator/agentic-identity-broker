@@ -208,7 +208,7 @@ A raw `sub` or extracted principal equal to another registered agent's UUID stay
 cross-agent request. CEL rules keep their startup reference and field-binding checks. Documentation
 and examples show a policy constraining each value above.
 
-A candidate is admitted only if every OPA rule's decision is defined. Otherwise the whole candidate
+A candidate is admitted only if every OPA rule's decision rule exists. Otherwise the whole candidate
 is rejected for all rules, the rejection names the first failing rule, and the previous admitted
 revision stays active for every rule. Every admitted snapshot must itself contain all configured
 bundles. At startup, a usable subset is not admitted; if the subsequent complete candidate is

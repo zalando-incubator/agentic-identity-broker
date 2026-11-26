@@ -101,7 +101,7 @@ rule:                        # oauth2_authorization_server.impersonation.rules[<
           - admission, rule absent — data.<package>.<decision> must resolve to at least one rule in the
             candidate's broker-owned compiler by exact rule lookup (ast.Compiler.GetRulesExact on that
             ref); a value only in data documents, or only rules nested below the ref, does not satisfy
-            it and the candidate is rejected with decision_undefined
+            it and the candidate is rejected with decision_absent
           - evaluation, undefined at runtime — a decision rule that exists but yields no value for a
             request is a terminal 500 server_error, never a deny; policies SHOULD define a default
       evaluation_timeout:

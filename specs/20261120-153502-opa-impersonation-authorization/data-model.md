@@ -79,7 +79,7 @@ A CEL rule has one static revision built from its compiled predicate. It keeps t
 
 ## State transitions (shared OPA engine)
 
-A candidate is admitted only if every OPA rule's decision is defined; a rejection applies to all
+A candidate is admitted only if every OPA rule's decision rule exists; a rejection applies to all
 rules.
 
 ```mermaid
@@ -95,8 +95,8 @@ stateDiagram-v2
     Stopped --> [*]
 ```
 
-Candidate rejection reasons: `compile_failed`, `prohibited_builtin`, `decision_undefined`,
-`snapshot_failed`, `bundles_incomplete`. `decision_undefined` means no rule matches the decision ref by
+Candidate rejection reasons: `compile_failed`, `prohibited_builtin`, `decision_absent`,
+`snapshot_failed`, `bundles_incomplete`. `decision_absent` means no rule matches the decision ref by
 exact rule lookup in the candidate's compiler; a decision that exists but is undefined for a request
 is the runtime `invalid` outcome above. No partial initial snapshot is admitted even if it evaluates successfully;
 completeness of an earlier candidate cannot be combined with historical activation of other bundles.
@@ -131,7 +131,7 @@ sequenceDiagram
 | Term | Definition |
 | --- | --- |
 | **Impersonation Policy Engine** | The engine one impersonation rule selects for its authorization decision: `cel` or `opa`. |
-| **Policy/Data Revision** | An immutable, all-configured-bundle admitted snapshot of the shared OPA engine's compiled policy and data, with a broker admission identifier distinct from operator labels. Admitted only if every OPA rule's decision is defined. Each request uses one revision for all its OPA rules. |
+| **Policy/Data Revision** | An immutable, all-configured-bundle admitted snapshot of the shared OPA engine's compiled policy and data, with a broker admission identifier distinct from operator labels. Admitted only if every OPA rule's decision rule exists. Each request uses one revision for all its OPA rules. |
 | **Impersonation OPA Engine** | The one OPA runtime (`impersonation.opa`) shared by every OPA rule, loading either managed bundles through a Policy Bootstrap or a local bundle directory read at startup. |
 | **Policy Bootstrap** | The contained OPA-native configuration file of the Impersonation OPA Engine, limited to `services`, `bundles`, `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin, with no OPA-native local-file references. |
 

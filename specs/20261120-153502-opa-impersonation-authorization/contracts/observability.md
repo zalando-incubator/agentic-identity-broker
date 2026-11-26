@@ -49,7 +49,7 @@ client and are not instrumented.
 
 | Name | Kind | Unit | Attributes | Changes when |
 | --- | --- | --- | --- | --- |
-| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
+| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_absent`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
 | `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | none | Read per export: seconds since the shared active revision was admitted; no point before the first admission |
 | `tokenexchange.impersonation.opa.bundle.downloads` | Counter | `{download}` | `bundle` (configured bundle-name set); `outcome` (`success`, `failure`) | Each completed bundle download attempt reported by OPA's bundle status listener in managed mode |
 | `tokenexchange.impersonation.opa.bundle.download.age` | Observable gauge (Float64) | `s` | `bundle` (configured bundle-name set) | Read per export: seconds since that bundle's last successful download (`bundle.Status.LastSuccessfulDownload`); no point for a bundle before its first success; managed mode only |
@@ -69,7 +69,7 @@ constructor errors are logged once at `Warn`.
 | Message | `event` | Level | Attributes |
 | --- | --- | --- | --- |
 | `impersonation policy revision admitted` | `oauth2_server.impersonation_policy.revision_admitted` | Info | `policy_revision`, `policy_admission_id`, `bundle_count`, `rule_count`, `duration_ms` |
-| `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule` (first failing rule, for `decision_undefined` only), `policy_revision`, `reason` (closed set above), `error_kind`; for `prohibited_builtin` also `builtin` (built-in name) |
+| `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule` (first failing rule, for `decision_absent` only), `policy_revision`, `reason` (closed set above), `error_kind`; for `prohibited_builtin` also `builtin` (built-in name) |
 | `impersonation policy not ready` | `oauth2_server.impersonation_policy.startup_failed` | Error | `reason` (`timeout`, `bootstrap_invalid`, `local_bundle_invalid`), `rule` (last rejecting rule, when known), `duration_ms` |
 | `impersonation policy loaded from local bundle` | `oauth2_server.impersonation_policy.local_mode` | Info | `policy_revision`, `file_count`; once at startup in local mode. Message states that policy and data change only on restart (spec clarification 2026-11-24) |
 | `impersonation policy bundle download failed` | `oauth2_server.impersonation_policy.bundle_download_failed` | Warn | `bundle`, `error_kind` (`http_status`, `transport`, `invalid_bundle`); at most once per minute per bundle while failures last; never URL, response body, or credentials |

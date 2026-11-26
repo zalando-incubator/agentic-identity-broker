@@ -168,7 +168,10 @@ Implementation of the exceptional modes requires approval of ADR-OPA.
   readiness then needs the same bundle, so replicas crash-loop until it is withdrawn. Mitigation:
   documented sizing and `size_limit_bytes`.
 - Bundle transport and signing are operator choices; the broker accepts `http` services and unsigned
-  bundles, and documentation recommends `https` and signing.
+  bundles, and documentation recommends `https` and signing. Constitution Principle I ("security
+  features MUST be enabled by default") is read as covering broker controls, not the operator's
+  trusted bundle distribution channel, consistent with ExtProc's OPA handling under ADR
+  `028-opa-extproc-authorization`. Signing cannot be on by default without operator-supplied keys.
 - Inline bootstrap credentials require a restart to rotate. The contained token-file plugin covers
   one bearer token per bootstrap; mTLS client certificates and OPA-native file credentials stay
   unsupported rather than reopened outside containment.

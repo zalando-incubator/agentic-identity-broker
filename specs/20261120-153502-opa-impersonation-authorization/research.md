@@ -200,7 +200,7 @@ factory; the adapter calls it for every candidate (initial and update), and it r
 candidate unless every OPA rule's decision rule exists (R11). Exists means that
 `ast.Compiler.GetRulesExact` on the candidate's broker-owned compiler returns at least one rule for
 `data.<package>.<decision>`; a value only in data documents, or only rules nested below the ref, is
-`decision_undefined` (revised 2026-11-26). A decision rule that exists but yields no value for a
+`decision_absent` (revised 2026-11-26). A decision rule that exists but yields no value for a
 request is not an admission question: it is a terminal runtime failure (R9). CEL rules keep their existing inline
 startup checks in `cel.go` unchanged. The service reads one engine revision per request, before the
 first rule, and uses it for every OPA rule's decision. The binding requirements of the original
@@ -348,7 +348,7 @@ Validation for impersonation rules: `type` is `cel` or `opa`; the selected block
 other block must be empty; `cel.evaluation_timeout` and `opa.evaluation_timeout` keep the
 `10ms`–`5s` range. `package` must be a dot-separated Rego package path; `decision` a single Rego
 identifier. The `package` default mirrors ExtProc's `aib.extproc.authz` default; a bundle that does
-not define it fails admission (`decision_undefined`), so the default never allows by itself.
+not define it fails admission (`decision_absent`), so the default never allows by itself.
 
 **Rationale**: FR-009 keeps OPA out of ordinary third-party exchange. A dedicated type avoids adding
 OPA settings to `token_exchange.authorization`. The reserved fields were never documented, so their
@@ -365,7 +365,7 @@ FR-009). Extend the shared struct with usable impersonation keys (adds unused ke
 **Decision**: All OPA rules share one engine configured under `impersonation.opa`: one SDK instance
 (or one local bundle), one store, and one active revision. Each rule names only its decision
 (`package`, `decision`, `evaluation_timeout`). A candidate revision is admitted only if every OPA
-rule's decision is defined (all-or-nothing). A request
+rule's decision rule exists (all-or-nothing). A request
 reads the active revision once, before the first rule, and uses it for every OPA rule it evaluates.
 The engine stops on broker shutdown and on startup failure.
 
