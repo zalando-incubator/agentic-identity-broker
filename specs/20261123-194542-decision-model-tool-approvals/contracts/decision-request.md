@@ -1,6 +1,6 @@
 # Contract: Request to the Decision Endpoint
 
-**Feature**: [spec.md](../spec.md) | **Decisions**: [research.md](../research.md) D-03, D-04, D-06, D-14
+**Feature**: [spec.md](../spec.md) | **Decisions**: [research.md](../research.md) D-03, D-04, D-14
 
 **Approval status**: Draft. The stakeholder must approve this contract before implementation
 (API-006). The Docker cases of D-03 tested this contract against agentgateway `v1.7.0` with an
@@ -70,7 +70,7 @@ ExtProc accepts only the status 200 with a JSON body of a maximum of 256 KiB.
 
 | Body field | Use |
 |---|---|
-| `model` | The answering model. ExtProc compares it with the evaluation record. agentgateway returns the value of the provider without a change. |
+| `model` | The answering model. ExtProc gives it to the policy and writes it to the audit record. agentgateway returns the value of the provider without a change. |
 | `answers[]` | ExtProc finds each answer by its `name`. The list sequence is not important. |
 | `answers[].type` | `predicate`, `score`, or `refusal`. A different type makes the answer invalid. |
 | `predicate.probability` | A number from 0 to 1. |
@@ -93,20 +93,3 @@ ExtProc ignores unknown body fields. The status mapping is in [research.md](../r
 | Request size | The context has a maximum of `max_context_bytes`. A larger context is not sent. |
 | Parallel requests | One request for each assessed call. A limit of 64 requests in progress applies for each instance. If the limit is reached, the status is `unavailable`. |
 | Storage | ExtProc discards the context and the response body after the call (SR-007). |
-
-## 5. Content of the question set fingerprint
-
-The canonical document for `question_set` has these values:
-
-- The format version `1`
-- The framing text and the name of the input encoding (`input_text`)
-- The `organization` section
-- Each question in the sequence of the set, with each field that the model receives: `name`, `type`, `instructions`, `yes_when`, `no_when`, and `levels`.
-
-A question has no other field (FR-025).
-
-The canonical document for `tool_context` has these values:
-
-- The format version `1`
-- The target server name
-- The tool definition as the context shows it: name, description, input schema, and annotations.

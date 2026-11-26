@@ -127,14 +127,13 @@ OWASP recommends a cryptographic hash of the complete reviewed definition. OWASP
 *Consequence*: The broker uses the tool definition from the server as context (R-10), not as proof of behavior. The following controls are project rules.
 *Support*: strong. We read the MCP tool specification, the MCP annotations article, and the OWASP cheat sheet in full. These sources do not endorse this automatic approval policy.
 
-Four controls apply to the tool definition from a server:
+Three controls apply to the tool definition from a server:
 
 - The system puts the definition in a separate section and does not send it to the broker.
 - A policy rule must apply to the call.
-- The evaluation record must include the tool context fingerprint, which covers the tool definition. If the definition changes, the evaluation record no longer matches.
 - The example policy uses a question that checks whether the definition text addresses the reviewer.
 
-A fingerprint does not detect false claims or a behavior change behind an unchanged definition.
+No control detects a false claim or a behavior change behind an unchanged definition. The system also does not stop automatic approval after a changed definition (research.md, D-18).
 
 ### D. How to read answers
 
@@ -169,12 +168,12 @@ The preprints report the following results. These results are not measurements o
 
 Tang and Zheng recommend separate data to select and evaluate thresholds. Evaluation on the selection data does not establish the miss rate on new data.
 In a separate study, Anthropic's full two-stage pipeline missed 17% of 52 real overeager actions. It blocked 0.4% of benign actions in real traffic.
-*Consequence*: Automatic approval needs labeled, held-out tool calls that represent production. The evaluation uses the production versions of the model, questions, and context. The evaluation reports an upper bound on the false-approval rate, not mean accuracy alone.
+*Consequence*: An operator who writes an automatic approval rule needs labeled, held-out tool calls that represent production, and an upper bound on the false-approval rate, not mean accuracy alone. The feature does not supply this measurement. It is out of scope (research.md, D-18). The decision logs of the policy engine contain the calls and the answers for that work.
 *Support*: strong. We read TypeSafe's *System One* and Anthropic's engineering report in full. We read the Sharma, Wu and Lim, Li, Xu, Brom, and Tang and Zheng preprints in full (weak support for individual measurements).
 
 **R-20 — Version changes can change model answers.** TypeSafe says that `jev-latest` tracks stable releases and that the response identifies the version that answered.
 If thresholds depend on a version, TypeSafe recommends a versioned identifier. Reveneau recommends rerunning a fixed adversarial set after changes to questions, thresholds, or models.
-*Consequence*: The broker records the evaluated model identifier and fingerprints. If the evaluated combination no longer matches, the broker stops automatic approval. A person then decides.
+*Consequence*: The policy input contains the answering model that the response names, and a policy can require one name. The feature has no other stop after a changed model or question (research.md, D-18).
 *Support*: strong. We read TypeSafe's *Models* specification for alias behavior in full. We also read the third-party Reveneau guide in full for its regression-test advice.
 
 ## Worked examples

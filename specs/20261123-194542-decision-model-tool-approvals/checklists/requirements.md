@@ -57,7 +57,8 @@
   questions are keys of the service configuration, and the product has a default question set.
   The spec has no catalog file. Fourth, the system always sends the arguments of a call as
   the agent sent them and the tool definition as the server listed it, and no setting withholds
-  or filters them.
+  or filters them. Fifth, User Story 5 and each measurement are out of scope: the feature has no
+  evaluation run, no case set, no evaluation record, and no fingerprint.
 - **Language.** The prose uses the structural rules of Simplified Technical English in the
   pragmatic mode. Each clause of a Given/When/Then scenario counts as one sentence. Code,
   identifiers, quoted source text, and interface text did not change.
@@ -73,5 +74,5 @@ These decisions change the scope or the security model:
 - The system does not send the static policy risk level to the model.
 - An automatic approval creates no approval record. It is visible only in the audit log.
 - The approver sees only the description and the risk level of the policy. The page does not show that a model contributed to them.
-- The product has a default question set. A release that changes a default question stops automatic approval until a new evaluation run.
-- Automatic approval requires the evaluation record of User Story 5.
+- The product has a default question set. No model measured the default questions. A release that changes a default question changes the answers, and the release notes must state it.
+- The feature measures no model, no question, and no policy. It has no evaluation run and no evaluation record. Automatic approval needs only the mode, a named policy rule, and a complete assessment. The operator is responsible for the thresholds.

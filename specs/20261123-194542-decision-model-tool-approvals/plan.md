@@ -16,12 +16,15 @@ from the answers. ExtProc sends the two values in the existing fields of the app
 The broker, its API, its database, and the approval page do not change (D-16).
 
 ExtProc learns tool definitions from the `tools/list` responses that pass through it. The
-organization values and the questions are keys of the ExtProc
-configuration, with the existing loader, defaults, and validation. The default value of the
-questions is the default question set of the spec (D-17). A new subcommand of the ExtProc binary measures labeled cases and writes the
-evaluation record that automatic approval requires.
+context has the tool definition as the server listed it and the call as the agent sent it. The
+organization values and the questions are keys of the ExtProc configuration, with the existing
+loader, defaults, and validation. The default value of the questions is the default question
+set of the spec (D-17).
 
-[research.md](research.md) records the design decisions `D-01` to `D-17` with their alternatives
+The feature does not record cases, measure a model, or tune questions and thresholds. It has no
+evaluation run and no evaluation record (D-18).
+
+[research.md](research.md) records the design decisions `D-01` to `D-18` with their alternatives
 and the verification record of 2026-11-24.
 The contracts are in [contracts/](contracts/).
 
@@ -29,9 +32,9 @@ The contracts are in [contracts/](contracts/).
 
 **Language/Version**: Go 1.27.4. The React application does not change.
 
-**Primary Dependencies**: Existing OPA library, `net/http` through `internal/extproc/httpclient`, `crypto/sha256`, `encoding/json`, `embed`, `math`, Cobra and Viper, OpenTelemetry. The plan adds no dependency. It adds no OpenAI SDK and no gRPC protocol.
+**Primary Dependencies**: Existing OPA library, `net/http` through `internal/extproc/httpclient`, `encoding/json`, Cobra and Viper, OpenTelemetry. The plan adds no dependency. It adds no OpenAI SDK and no gRPC protocol.
 
-**Storage**: None. ExtProc keeps tool definitions, the question set, and the evaluation record in memory only. The feature adds no migration (DB-001).
+**Storage**: None. ExtProc keeps tool definitions in memory only. The feature adds no migration (DB-001).
 
 **Testing**: Go unit tests and the Ginkgo ExtProc suite with `httptest` doubles and agentgateway containers.
 
@@ -39,9 +42,9 @@ The contracts are in [contracts/](contracts/).
 
 **Performance Goals**: A call that the policy allows or denies gets no delay and no model request. An assessed call gets a maximum added delay of `request_timeout` (500 ms by default) and one more policy evaluation (100 ms by default). The ExtProc filter of agentgateway has no message timeout of its own, thus the deadlines of ExtProc limit the delay. A request timeout of a route or of the client can still end the call (D-15). The copy of a `tools/list` response does not delay the response. A warm local `winnow:e4b` model needed 762 to 1,247 ms, thus the documentation tells operators to measure the model latency before they set `request_timeout` (D-15).
 
-**Constraints**: A context of a maximum of 16 KiB. A listing of a maximum of 1 MiB. A maximum of 10,000 tool definitions for each instance. A maximum of 64 model requests in progress for each instance. No argument value in a log, span, or metric. Each failure keeps the call for a person or denies it.
+**Constraints**: A context of a maximum of 16 KiB. A listing of a maximum of 1 MiB. A maximum of 10,000 tool definitions for each instance. A maximum of 64 model requests in progress for each instance. No argument value in a log, span, or metric of the feature. Each failure keeps the call for a person or denies it.
 
-**Scale/Scope**: 26 acceptance scenarios in five user stories. One new ExtProc package and one subcommand. No migration, no API change, and no change to the web application. Hundreds of target servers without configuration for each server.
+**Scale/Scope**: 20 acceptance scenarios in four user stories. One new ExtProc package. No subcommand, no migration, no API change, and no change to the web application. Hundreds of target servers without configuration for each server.
 
 ## Constitution Check
 
@@ -49,15 +52,15 @@ The feature adds no domain entity and no typed identifier. The broker does not c
 
 | Principles | Decision and gate |
 |---|---|
-| I, III | Assessment and automatic approval are disabled by default. Each failure keeps the call for a person or denies it (D-04). The system conditions of FR-041 are Go code that a policy cannot disable (D-05). Fingerprints use `crypto/sha256` (D-06). The plan adds no cryptography of its own. The assurance case gets the new trust boundary (SR-011). |
-| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-03, D-05, D-07, D-14, D-15, D-16, and D-17. It records that the leaf package `internal/domain/approval/toolpattern` of `adrs/035-shared-tool-pattern-matching.md` also owns the arguments hash. The import rule of that ADR stays. It supersedes in part two Accepted ADRs: the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md`, and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The new ADR names each superseded decision. The two older ADR files do not change (Principle II). The rule "no approval records in the policy input" of `adrs/036-extproc-approval-cache-and-gate.md` stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
-| IV, X | The feature changes no OpenAPI document (API-001). The four contracts of API-006 are in three files, and they are drafts. The stakeholder approved the direction of the spec but not these contracts. Approval of the contracts is a gate before implementation. |
+| I, III | Assessment and automatic approval are disabled by default. Each failure keeps the call for a person or denies it (D-04). The system conditions of FR-041 are Go code that a policy cannot disable (D-05). The plan adds no cryptography. The assurance case gets the new trust boundary (SR-011). |
+| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-03, D-05, D-07, D-14, D-15, D-16, D-17, and D-18. It records that the leaf package `internal/domain/approval/toolpattern` of `adrs/035-shared-tool-pattern-matching.md` also owns the arguments hash. The import rule of that ADR stays. It supersedes in part two Accepted ADRs: the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md`, and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The new ADR names each superseded decision. The two older ADR files do not change (Principle II). The rule "no approval records in the policy input" of `adrs/036-extproc-approval-cache-and-gate.md` stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
+| IV, X | The feature changes no OpenAPI document (API-001). The three contracts of API-006 are drafts. The stakeholder approved the direction of the spec but not these contracts. Approval of the contracts is a gate before implementation. |
 | VI, XII | ExtProc has its own structure under `adrs/011-extproc-standalone-binary.md`: packages under `internal/extproc/` and wiring in `cmd/extproc-token-exchange/root.go`. The new package has no import from broker adapters. The broker gets no change and no new wiring. |
-| VII | New keys are in the ExtProc configuration schema with defaults and validation ([contracts/assessment-files.md](contracts/assessment-files.md)). They include the organization values and the questions with their default. The plan adds no file format for these values. Update `docs/configuration.md`, the examples, `configs/config.extproc.docker.yaml`, and `internal/extproc/AGENTS.md`. The documentation states the minimum agentgateway release `v1.7.0` and the gateway requirements of [contracts/decision-request.md](contracts/decision-request.md). The Helm chart does not deploy ExtProc, thus it does not change. |
-| VIII, XIII | Write one Ginkgo case for each of the 26 scenarios before behavior, with realistic assertions and no pending or skipped case. Write unit tests first for the parser, the context builder, the validation, the fingerprints, the automatic approval conditions, the telemetry, and the statistics. |
+| VII | New keys are in the ExtProc configuration schema with defaults and validation ([contracts/assessment-configuration.md](contracts/assessment-configuration.md)). They include the organization values and the questions with their default. The plan adds no file format for these values. Update `docs/configuration.md`, the examples, `configs/config.extproc.docker.yaml`, and `internal/extproc/AGENTS.md`. The documentation states the minimum agentgateway release `v1.7.0` and the gateway requirements of [contracts/decision-request.md](contracts/decision-request.md). The Helm chart does not deploy ExtProc, thus it does not change. |
+| VIII, XIII | Write one Ginkgo case for each of the 20 scenarios before behavior, with realistic assertions and no pending or skipped case. Write unit tests first for the parser, the context builder, the validation, the automatic approval conditions, and the telemetry. |
 | IX | The feature adds no migration, no column, and no repository change (DB-001). |
-| XI, XIV | The feature changes no page and no component, thus the design system rules have no subject and the spec needs no wireframe. The spec has four journeys with configuration, HTTP exchanges, and a table of the page values before and after. |
-| XV | [contracts/observability.md](contracts/observability.md) defines the events, spans, and instruments. Add the `assessment` namespace to `coding-standards/OPENTELEMETRY.md`. Tool names obey section 6.2 of `coding-standards/LOGGING.md` (D-12). The tests that the two standards require come before the telemetry code: the credential and the principal in log records and spans, and the attribute set of each instrument. The pull request amends `coding-standards/LOGGING.md` with two scoped rules for the audit record of an automatic approval: the time of a decision record, and the direct `Handle` call (D-13). |
+| XI, XIV | The feature changes no page and no component, thus the design system rules have no subject and the spec needs no wireframe. The spec has three journeys with configuration, HTTP exchanges, and a table of the page values before and after. |
+| XV | [contracts/observability.md](contracts/observability.md) defines the events, spans, and instruments. Add the `assessment` namespace to `coding-standards/OPENTELEMETRY.md`. The audit record has no tool name, because no configuration bounds that value (D-12). The tests that the two standards require come before the telemetry code: the credential and the principal in log records and spans, and the attribute set of each instrument. The pull request amends `coding-standards/LOGGING.md` with two scoped rules for the audit record of an automatic approval: the time of a decision record, and the direct `Handle` call (D-13). |
 
 **Gate outcome**: The design has no violation of the constitution. The verification of D-02,
 D-03, D-07, D-14, and D-15 is complete, and the contracts agree with the results. Two prerequisites stay open
@@ -75,13 +78,13 @@ specs/20261123-194542-decision-model-tool-approvals/
 ├── spec.md
 ├── decision-model-research.md       # Guidance about decision models (R-01 to R-20)
 ├── plan.md                          # This file
-├── research.md                      # Design decisions (D-01 to D-17) and verification record
+├── research.md                      # Design decisions (D-01 to D-18) and verification record
 ├── data-model.md
 ├── quickstart.md
 ├── contracts/
 │   ├── policy-assessment.md         # Policy input and policy result
 │   ├── decision-request.md          # Request to the decision endpoint
-│   ├── assessment-files.md          # Configuration, question set, evaluation record, evaluation run
+│   ├── assessment-configuration.md  # Configuration keys and the question set
 │   └── observability.md             # Logs, spans, metrics
 ├── checklists/requirements.md
 └── tasks.md                         # Output of /speckit-tasks
@@ -93,14 +96,13 @@ specs/20261123-194542-decision-model-tool-approvals/
 internal/extproc/
 ├── assessment/                      # NEW: tool definition store, listing parser, context
 │                                    #      builder, model client, answer validation,
-│                                    #      fingerprints, evaluation record, automatic approval
-│                                    #      conditions, evaluation run and its statistics
+│                                    #      automatic approval conditions, audit write
 ├── authorization/decision.go        # New result field (D-05)
 ├── approval/gate.go                 # Gate in two steps (D-01)
 ├── approval/cache.go                # Lookup of a matching pending approval (D-07)
 ├── config/                          # New keys, defaults (with the default questions), validation
 └── server/server.go                 # Assessment in the approval branch, response observation
-cmd/extproc-token-exchange/          # Wiring in root.go, new subcommand `assessment evaluate`
+cmd/extproc-token-exchange/root.go   # Wiring
 
 internal/domain/approval/toolpattern/              # Arguments hash with its canonical form (D-07)
 
@@ -109,9 +111,8 @@ docker-compose.yml, tests/e2e/**/agentgateway*_test.go, .github/workflows/   # a
 mocks/agentgateway/config.yaml       # decision endpoint example in the llm section
 examples/config/, configs/, docs/configuration.md, docs/resources/assurance-case.md
 examples/config/extproc-tool-assessment.yaml   # each key, with the default questions in full (FR-024)
-examples/config/assessment-cases.jsonl      # starter case set (FR-053)
 examples/config/assessment-policy.rego      # example policy of the spec journeys
-docs/guides/assess-tool-calls.md           # NEW: authoring rules with examples (FR-027, FR-039), evaluation run, SR-010 notice
+docs/guides/assess-tool-calls.md           # NEW: authoring rules with examples (FR-027, FR-039), SR-010 notice
 ARCHITECTURE.md, adrs/, coding-standards/OPENTELEMETRY.md, internal/extproc/AGENTS.md
 ```
 
@@ -136,39 +137,29 @@ Four seams need care:
 |---|---|
 | Phase 0 | Refactoring without a behavior change: divide `Gate.Evaluate` into "find an existing decision" and "create a pending approval". Move the arguments hash to the leaf package `internal/domain/approval/toolpattern`, which ExtProc can import (D-07). |
 | Phase 1 | Setup: read the scoped `AGENTS.md` files and prepare the test doubles. Change the pinned agentgateway release to `v1.7.0` at each pin site of D-14: the Compose image with its index digest, the two test defaults, the image test, and the three CI workflows. Run the existing agentgateway suites in `tests/e2e/` and `tests/e2e/extproc/` and the verification cases. Change the report entries of the verification cases into assertions (see "Verification with agentgateway"). |
-| Phase 2 | Design preconditions: the stakeholder approvals, the Accepted ADR, the glossary, the configuration examples, the default question set, the observability contract, and the 26 acceptance cases. |
-| Phase 2.5 | Foundations, each with tests first: configuration keys with the default questions, fingerprints, listing parser and store, context builder, model client, answer validation, evaluation record, decision parser, and the automatic approval conditions of FR-041. The evaluation run of US5 and the request path of US4 use the same conditions. |
+| Phase 2 | Design preconditions: the stakeholder approvals, the Accepted ADR, the glossary, the configuration examples, the review of the default question set, the observability contract, and the 20 acceptance cases. |
+| Phase 2.5 | Foundations, each with tests first: configuration keys with the default questions, listing parser and store, context builder, model client, answer validation, decision parser, and the automatic approval conditions of FR-041. |
 | US2 | The model interface in the request path: context, one request, no request for other calls. |
 | US3 | Each failure status, the second identical call, and the system rules for the policy result. |
-| US5 | The evaluation run, the report, and the evaluation record. The starter case set with expected answers, the example policy, and the measured results of each default question (FR-053, FR-054). |
-| US1 | The description and the risk level of the second evaluation in the approval request. The authoring rules for questions and for policy descriptions. |
+| US1 | The description and the risk level of the second evaluation in the approval request. The example policy. The authoring rules for questions and for policy descriptions. |
 | US4 | Automatic approval with the conditions of FR-041 and the audit record. |
 | Phase N | Constitution compliance: documentation, assurance case, security review, full gate. |
 
 - [x] Phase 0 (refactoring): Include. The gate does two tasks in one function today. A separate change lets reviewers approve the structure before the feature.
 - [x] Phase 2.7 (entity boilerplate): Skip. The feature adds no entity, no handler, and no repository.
 
-The sequence of the user stories differs from their numbers for two reasons. US2 and US3 supply
-the request path that US1 uses for the approver. US5 comes before US1, because the default
-questions are a part of the product, and the project must measure them before the product
-contains them (FR-054). The evaluation run of US5 is the tool for that measurement.
+The sequence of the user stories differs from their numbers for one reason. US2 and US3 supply
+the request path that US1 uses for the approver.
 
 One pull request delivers the full feature. The phases give the sequence of the work in that
 pull request. Automatic approval is a part of the delivery and stays disabled by default.
 
-**Quality gate for the default questions**: The wording of three default questions changed after
-the smoke test, and no model measured the new wording (D-17). These steps are a gate before the
-pull request merges:
-
-1. A design review compares each default question with the authoring rules before the question gets into code.
-2. The starter case set gives the expected answer of each default question for each case. Each part has a minimum of 30 cases for each expected answer of each question, with difficult cases for the answer no.
-3. The project does an evaluation run of the tuning part with each model that it can reach. It changes a question until the answers agree with the expected answers. Each change goes to the spec, the default value, and the example file in one commit.
-4. The project does one run of the validation part and publishes the numbers for each question and each model.
-5. The stakeholder approves the default question set with these numbers (SC-011).
-
-The measurement needs a real model. Without one, the pull request is not complete. The local
-`winnow:e4b` model of the smoke test can do the run. One ExtProc case runs `assessment evaluate`
-on the starter files with the decision endpoint double. It proves SC-003 for the double only.
+**The default questions have no measurement.** A measurement of a model, of the questions, or of
+a policy is out of scope (D-18). The wording of three default questions changed after a smoke
+test, and no model measured the new wording (D-17). A design review compares each default
+question with the authoring rules before the question gets into code. The documentation states
+that the questions and the example thresholds have no measured results, and that the operator is
+responsible for the thresholds of each automatic approval rule (SR-010).
 
 ## Testing Strategy
 
@@ -197,20 +188,12 @@ The tests do not exist at this time. All cases use the ExtProc suite with the br
 | US3.5 | With `incomplete`, an `allow` result with a rule ends as a pending approval. |
 | US4.1 | The call gets to the tool double, the broker double gets no create request, and one audit record has the rule and no argument value. |
 | US4.2 | The external editor share waits for a person. |
-| US4.3 | A different answering model: the call waits, and the audit record names the two models. |
-| US4.4 | A new listing changes the fingerprint: the call waits, and a call to a second evaluated tool proceeds. |
-| US4.5 | The `recommend` mode: the call waits, and the record has `would_auto_approve: true`. |
-| US4.6 | An `allow` result without a rule name: the call waits. |
-| US4.7 | A tool that the evaluation record does not name: the call waits. |
-| US5.1 | The run calls no tool double and no broker double, and the report has each required value. |
-| US5.2 | The evaluation record names the model, the question set, and each tool context. |
-| US5.3 | A "harmless" answer for a `human` case is in the report as a false approval with the rule name. |
+| US4.3 | The `recommend` mode: the call waits, and the record has `would_auto_approve: true`. |
+| US4.4 | An `allow` result without a rule name: the call waits. |
 
-The cases are in `tests/e2e/extproc/tool_assessment_test.go` and
-`tests/e2e/extproc/assessment_evaluate_test.go`. These two files contain only the 26 scenario
-cases. The case for SC-003 is in `tests/e2e/extproc/assessment_starter_set_test.go`, and the
-signal test is in `tests/e2e/extproc/assessment_signals_test.go`. These two files are not
-acceptance scenarios. They use the existing bootstrap with the broker double
+The cases are in `tests/e2e/extproc/tool_assessment_test.go`. This file contains only the 20
+scenario cases. The signal test is in `tests/e2e/extproc/assessment_signals_test.go`. It is not
+an acceptance scenario. The cases use the existing bootstrap with the broker double
 (`bootstrap/broker.go`) and a new decision endpoint double in the same directory. The test sends
 response-phase messages with a `tools/list` result to supply definitions. The messages use the
 observed gateway form: `text/event-stream`, one `data:` line, and one empty end-of-stream chunk
@@ -223,10 +206,10 @@ description and the risk level of a create request.
 The ExtProc suite uses the constructor that `root.go` uses for the assessment parts, so that the
 tests do not copy the wiring.
 
-New fixtures: the organization values in the test configuration, the
-policy of the spec under `tests/e2e/extproc/fixtures/policies/`, one evaluation record, one case
-file, and one tool listing. The cases use the default question set. One fixture is a configuration with
-an invalid question for US2.6. All values are synthetic.
+New fixtures: the organization values in the test configuration, the policy of the spec under
+`tests/e2e/extproc/fixtures/policies/`, and one tool listing. The cases use the default question
+set. One fixture is a configuration with an invalid question for US2.6. All values are
+synthetic.
 
 ### Verification with agentgateway
 
@@ -254,20 +237,18 @@ Unit tests come first for each of these subjects:
 
 - The questions: the default value equals the questions of the spec and of the example file and obeys each rule, a list in the configuration replaces the full default list, and each invalid question stops the startup.
 - The listing parser: event-stream bodies with one or more events, JSON bodies, pages, a result with unknown fields, an error result, a size at the limit and one byte more, and bodies that are not valid. A tool without an input schema.
-- The store: the latest definition applies, the limit, the change report, the removal of all definitions of a server after a listing that ExtProc cannot read, and the marker for an oversized definition.
+- The store: the latest definition applies, the limit, the removal of all definitions of a server after a listing that ExtProc cannot read, and the marker for an oversized definition.
 - The context builder: the tool definition and the arguments without a selection or a change, an argument that the input schema does not list, sorted map keys, a context at the size limit and one byte more, and a constant byte sequence for equal input. A call without arguments.
 - The answer validation: each status of D-04, the tolerance of 0.01, level entries in a different sequence, a missing or duplicate level `value`, a wrong level `label`, and each invalid `model` value.
-- The fingerprints: each field of the canonical documents changes the value, and key sequence does not.
 - The decision parser and the system rules of [contracts/policy-assessment.md](contracts/policy-assessment.md): the `approval_context` of an `allow` result after a downgrade, and the fallback to the first result after an error in the second evaluation.
 - The gate: the pending lookup by tool name and `arguments_hash` (a call with an added argument does not match), the read-only lookup for a permanent denial, and the create request of the reuse path with the result of the first evaluation.
 - The arguments hash in `internal/domain/approval/toolpattern`: `1`, `1.0`, `1e0`, and numbers in nested values give one hash through the decoder of ExtProc and through the decoder of the broker. The hash of each existing broker value does not change.
 - The authorizer: each evaluation outcome (a result, an undefined result, an error, a timeout) with the prepared query and with the SDK.
 - The audit write: an error from `Handle` and a disabled INFO level each keep the call for a person.
 - The automatic approval conditions: each condition of FR-041 and its `unmet_condition` value. A permanent denial gives a denial (FR-042).
-- The telemetry: the `event` and the key attributes of each record, the principal as the output of the principal policy, the tool name only under D-12, each span name, attribute, and status, and the attribute set of each instrument.
+- The telemetry: the `event` and the key attributes of each record, the principal as the output of the principal policy, no tool name in the audit record (D-12), each span name, attribute, and status, and the attribute set of each instrument.
 - The server: a batched MCP request and a request that is not MCP cause no assessment. The create request has no field that the request of today does not have (FR-038).
 - The failure conditions of SC-002: a minimum of 20 conditions in the `auto_approve` mode with a rule that permits the call. No condition lets the call proceed.
-- The statistics: the exact bound against known values, including 0 of 410 and 1 of 410. The numbers for each question and each expected answer (FR-054).
 - The configuration: defaults, each validation rule, assessment enabled with `log.level: warn`, and a missing organization value.
 - The example policy: the OPA library evaluates it against the inputs of journeys 1 to 3, and each description is a constant text of the policy.
 
@@ -282,21 +263,22 @@ one unit test. Run the checks of [quickstart.md](quickstart.md).
 
 ## Complexity Tracking
 
-The plan requests no exception to the constitution. Four items add complexity, and each has a
+The plan requests no exception to the constitution. Two items add complexity, and each has a
 reason:
 
 | Item | Reason | Simpler alternative and its problem |
 |---|---|---|
 | Observation of response bodies in ExtProc | The model needs the tool definition, and the operator cannot describe hundreds of servers. | A catalog of tool descriptions. The stakeholder rejected it. |
 | A second policy evaluation | The policy stays the only decision source. | A decision in Go code from the answers. The operator cannot review or audit it as policy. |
-| A subcommand in the ExtProc binary | The measurement must use the production code path. | A separate tool. It can differ from production without a visible sign. |
-| Fingerprints and an evaluation record | A changed model, question, or definition must stop automatic approval. | A flag that the operator sets by hand. It does not find a changed definition. |
 
 The plan does not add these items:
 
 - A change to the broker, its API, its database, or the approval page
 - A list of findings, a recommendation, or a notice for the approver
 - A catalog file, a question set file, or a key for an individual server or tool
+- A filter or a setting that withholds an argument from the model
+- An evaluation run, an evaluation record, a case set, or a measurement of a model
+- A fingerprint of the questions or of a tool definition
 - A registry of servers or tools in the broker
 - A cache of positive results
 - A reload of files while the service operates

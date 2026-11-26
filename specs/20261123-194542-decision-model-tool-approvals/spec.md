@@ -124,68 +124,42 @@ Make sure that each call results in a pending approval.
 
 ### User Story 4 - Let Harmless Calls Proceed Under a Named Rule (Priority: P2)
 
-Olivia measured the model on her tool calls (User Story 5). She enables automatic approval. She
-supplies the evaluation record of her measurement. The record names the tools that she measured.
+Olivia enables automatic approval. Her policy contains a rule for a reader share in the
+organization that the owner can undo. The rule has a name. If a call satisfies the rule, the
+policy returns `allow` with that name. The agent then continues, and Alice gets no request. An
+audit record names the rule and the answers.
 
-Her policy contains a rule for a reader share in the organization that the owner can undo. If a
-call satisfies the rule, the agent continues and Alice gets no request. An audit record names the
-rule and the answers.
+A named rule is a policy rule that puts its name into the policy result (`auto_approval.rule`).
+Only a result with a rule name lets a call proceed without a person. The name tells an auditor
+which rule let the call proceed.
 
 **Why this priority**: This story gives the decrease in approval requests that the issue asks for.
-It depends on stories 1 to 3 and on the evaluation record of story 5. A model can be wrong with
-high confidence, and that risk stays (R-19).
+It depends on stories 1 to 3. A model can be wrong with high confidence, and that risk stays
+(R-19). The product does not measure the model. Olivia selects the thresholds of each rule and is
+responsible for them.
 
-**Independent Test**: Enable automatic approval with an evaluation record and a rule. Send an
-internal reader share. Make sure that the call gets to the tool without an approval. Send an
-external editor share. Make sure that the call waits for a person.
+**Independent Test**: Enable automatic approval with a rule. Send an internal reader share. Make
+sure that the call gets to the tool without an approval. Send an external editor share. Make sure
+that the call waits for a person.
 
 **Acceptance Scenarios**:
 
-1. **Given** automatic approval mode, a matching evaluation record, and the rule `internal_reversible_share`, **When** the agent shares a file with an `example.com` colleague as reader and all answers satisfy the rule, **Then** the system forwards the call to the tool without an elicitation. The broker creates no pending approval. One audit record names the rule, the answering model, the two fingerprints, and each answer value. The audit record contains no argument value.
+1. **Given** automatic approval mode and the rule `internal_reversible_share`, **When** the agent shares a file with an `example.com` colleague as reader and all answers satisfy the rule, **Then** the system forwards the call to the tool without an elicitation. The broker creates no pending approval. One audit record names the rule, the answering model, and each answer value. The audit record contains no argument value.
 2. **Given** the same setup, **When** the agent shares a file with `thirdparty.example.com` as editor, **Then** the call does not satisfy the rule. The call waits for a person, as in User Story 1.
-3. **Given** the same setup, **When** the response names an answering model that is not the model in the evaluation record, **Then** the call waits for a person. The audit record names the two models.
-4. **Given** the same setup, **When** the server lists `drive.share_file` with a changed description and the agent sends the internal reader share again, **Then** the model request contains the new description. The evaluation record does not contain the new tool context fingerprint, and the call waits for a person. Calls to other evaluated tools can still proceed.
-5. **Given** recommendation mode, **When** the policy returns `allow` with a rule name after the assessment, **Then** the call waits for a person. The audit record shows that the rule approves this call in automatic approval mode.
-6. **Given** automatic approval mode, **When** the policy returns `allow` after the assessment without a rule name, **Then** the call waits for a person.
-7. **Given** automatic approval mode and a tool on a different server that the evaluation record does not name, **When** a call to that tool satisfies a rule, **Then** the call waits for a person.
-
----
-
-### User Story 5 - Measure Before Enabling Automation (Priority: P2)
-
-Olivia has a file of recorded and constructed tool calls. Each call has a label: a person must
-see the call, or automatic approval is permitted. She also has the tool listings of her servers,
-as the servers return them.
-
-She sends the cases through the same context, questions, model, and policy that production uses.
-The run calls no tool. The report gives the number of calls that skip a person. It lists each
-case with the label `human` that a rule approves automatically. The run also writes an evaluation
-record that names the measured items.
-
-**Why this priority**: Without a measurement, an operator cannot select thresholds or estimate
-the false-approval rate (R-16, R-19). Automatic approval requires the evaluation record.
-Recommendation mode operates without it.
-
-**Independent Test**: Do an evaluation run on the starter case set with a test double. Make sure
-that the report and the evaluation record are correct.
-
-**Acceptance Scenarios**:
-
-1. **Given** a case file with labeled tool calls and the tool listings of the target servers, **When** Olivia starts the evaluation run, **Then** the run calls no tool and creates no approval. The report gives the outcome and the answers for each case. The report gives the share of calls that skip a person. It gives the number and the rate of false approvals with a 95% upper bound.
-2. **Given** the same run, **When** the run completes, **Then** it writes an evaluation record. The record names the answering model, the question set fingerprint, and the tool context fingerprint of each tool in the cases.
-3. **Given** the starter case set, in which the external shares and their adversarial variants have the label `human`, **When** the test double of the model answers "harmless" for a `human` case with the role `reader`, for example the look-alike domain share, **Then** the report lists that case as a false approval. The report names the rule that approved the case. The external editor share is not a false approval with each answer, because the example rule accepts only the role `reader`.
+3. **Given** recommendation mode, **When** the policy returns `allow` with a rule name after the assessment, **Then** the call waits for a person. The audit record shows that the rule approves this call in automatic approval mode.
+4. **Given** automatic approval mode, **When** the policy returns `allow` after the assessment without a rule name, **Then** the call waits for a person.
 
 ---
 
 ### Edge Cases
 
-- **The tool description from a server is wrong, vague, or misleading.** The answers can be wrong for each call of that tool. The evaluation record must name the tool, and a policy rule must apply to the call. The operator measures the tool with labeled cases. One question finds description text that addresses a reviewer. The tool context fingerprint shows each change. The operator cannot correct or replace the description, because the server owns it. If the operator does not trust a server, the operator writes no automatic approval rule for its tools.
-- **A server changes a tool definition after the evaluation.** The tool context fingerprint changes. Automatic approval stops for that tool until a new evaluation record names the new fingerprint. Recommendations continue with the new definition.
+- **The tool description from a server is wrong, vague, or misleading.** The answers can be wrong for each call of that tool. A call proceeds automatically only if a policy rule applies to it. One question finds description text that addresses a reviewer. The operator cannot correct or replace the description, because the server owns it. If the operator does not trust a server, the operator writes no automatic approval rule for its tools.
+- **A server changes a tool definition.** The next listing replaces the stored definition, and the model gets the new definition for the next call. Automatic approval does not stop (SR-010).
 - **The instance saw no tool listing after it started.** The instance knows no definition. Calls wait for a person without an assessment until a listing passes through the gateway.
-- **Two listings from one server describe the same tool differently.** The latest listing applies. Automatic approval applies only while the fingerprint is in the evaluation record.
+- **Two listings from one server describe the same tool differently.** The latest listing applies.
 - **The agent sends an argument that the input schema of the tool does not list.** The system sends the arguments as the agent sent them, thus the model gets this argument too. The question `addresses_assessor` applies to its value.
 - **A listing does not contain a description, an input schema, or annotations for a tool.** The feature requires only the tool name. The `tool` section does not contain an absent field, and the system adds no default value.
-- **Two target servers on different routes list a tool with the same name.** Approvals identify a call by the tool name without the target server, as before this feature. The second call can thus get the pending approval of the first call with its description (FR-008, SR-010). Automatic approval is not affected, because the evaluation record names the target server.
+- **Two target servers on different routes list a tool with the same name.** Approvals identify a call by the tool name without the target server, as before this feature. The second call can thus get the pending approval of the first call with its description (FR-008, SR-010).
 - **The second policy evaluation has an error or a timeout.** The system uses the first result, and the call waits for a person. A denial that the policy returns stays a denial.
 - **A tool definition or the full context is larger than the size limit.** The system sends no model request. The status is `context_too_large`, and the call waits for a person.
 - **The agent sends many calls with different arguments.** Each call is a new assessment. Each call that does not satisfy a rule becomes a pending approval. The existing limits for pending approvals and for the creation rate apply.
@@ -198,8 +172,7 @@ that the report and the evaluation record are correct.
 - **The broker is not available at the time of the pending approval.** The system denies the call, as before this feature.
 - **Batched MCP requests and requests that are not MCP.** The system does not assess them. The current behavior applies.
 - **A decision for the call arrives during the assessment.** If the call can proceed automatically and the system knows a permanent denial at that time, the system denies the call. A call that waits for a person keeps the behavior of today: the approval state of the last read applies, and no call proceeds without that person.
-- **A required evaluation record is missing, not readable, or invalid.** Startup fails.
-- **The model alias moves to a new release.** If the response names the new model, that model is not in the evaluation record. Automatic approval stops until the operator evaluates the new model. If the endpoint returns the alias of the request, the system cannot find the change (SR-010).
+- **The model alias moves to a new release.** The policy input contains the answering model that the response names, and a policy can require one name. If the endpoint returns the alias of the request, a policy cannot find the change (SR-010).
 
 ## Concrete Example Journeys *(mandatory)*
 
@@ -211,9 +184,7 @@ the server `google-drive-mcp`. agentgateway also gives access to decision models
 `https://broker.example.com`.
 
 All times are 2026-11-23 UTC. All identifiers, tokens, and probabilities are synthetic. The
-examples show the first eight characters of each fingerprint. Real fingerprints have 64
-hexadecimal characters. In an HTTP body, `...` marks the shortened value. The thresholds in the
-policy are examples. An evaluation must supply the real thresholds (R-16).
+thresholds in the policy are examples. The operator must select the real thresholds (R-16).
 
 The decision request and its response use the Decisions shape that agentgateway documents. The
 wire encoding of the context is in `contracts/decision-request.md`. The section structure and the
@@ -287,15 +258,12 @@ questions:                           # fixed text; never contains call data
     no_when: "The text describes what the tool does, what its arguments mean, and how to call it. Instructions for the caller about the use of the tool are not a yes."
 ```
 
-At startup, the service reports the question set fingerprint `qs-3f9a1c2e`. The fingerprint
-includes the organization values of step 1.
-
 An operator can replace the full set with the key `authorization.assessment.questions` in the
 configuration of step 1 (see Configuration Requirements). This journey uses the default set.
 
 Three of the five questions got new wording on 2026-11-26, because a smoke test showed weak
-answers for them ([research.md](research.md), D-17). No model measured the new wording at this
-time. The project measures each default question before the feature merges (FR-054).
+answers for them ([research.md](research.md), D-17). No model measured the new wording. A
+measurement of the questions is out of scope of this spec.
 
 The table shows the reader and the purpose of each field.
 
@@ -450,9 +418,8 @@ exchange passes through the gateway without a change. The result contains this e
 }
 ```
 
-The policy decision point keeps this definition for `google-drive-mcp`. This definition gives the
-tool context fingerprint `tc-8c21e0b7`. Olivia wrote none
-of this text.
+The policy decision point keeps this definition for `google-drive-mcp`. Olivia wrote none of
+this text.
 
 **Step 5 — 10:15:00: the agent asks to share a file with an outside party**
 
@@ -629,11 +596,6 @@ The policy receives the assessment as an addition to its existing input (excerpt
   "assessment": {
     "status": "complete",
     "model": "jev-1.14.0",
-    "question_set": "qs-3f9a1c2e",
-    "evaluated": false,
-    "tool": {
-      "context": "tc-8c21e0b7"
-    },
     "answers": {
       "leaves_organization": {"type": "predicate", "status": "answered", "probability": 0.99},
       "changes_access": {"type": "predicate", "status": "answered", "probability": 0.96},
@@ -735,7 +697,7 @@ to a party outside the organization. With only the static description, she sees 
 file" at a fixed risk level. Olivia wrote only the organization values. She
 wrote no question and nothing about this server or this tool.
 
-### Journey 2 — An internal reader share proceeds under a named rule (US1.2, US4.1, US4.5)
+### Journey 2 — An internal reader share proceeds under a named rule (US1.2, US4.1, US4.3)
 
 **Step 1 — Configuration change (other values as in Journey 1)**
 
@@ -743,20 +705,6 @@ wrote no question and nothing about this server or this tool.
 authorization:
   assessment:
     mode: "auto_approve"             # a named policy rule can let a call proceed
-    auto_approval:
-      evaluation_record_file: "/etc/extproc/assessment/evaluation-record.yaml"
-```
-
-The evaluation record is the output of Journey 4. It names the tools that Olivia measured. If
-the record does not name a tool, the system never approves that tool automatically.
-
-```yaml
-format: 1
-model: "jev-1.14.0"                  # a different answering model stops automation
-question_set: "qs-3f9a1c2e"          # changed questions or organization text stop automation
-tool_contexts:                       # a changed tool definition stops automation for that tool
-  google-drive-mcp:
-    drive.share_file: "tc-8c21e0b7"
 ```
 
 **Step 2 — 11:02:10: the agent asks to share a file with a colleague as reader**
@@ -822,8 +770,8 @@ The call proceeds, thus the system does not use the `approval_context`.
 Variant (US1.2): In the recommendation mode, the call waits for Alice. The pending approval has
 the risk level `low` and the description "Share a Drive file inside the organization".
 
-The evaluation record contains the answering model, the question set fingerprint, and the tool
-context fingerprint. The system forwards the call to `google-drive-mcp`. The agent receives the
+The mode is `auto_approve`, the result names a rule, and the assessment is complete. The system
+forwards the call to `google-drive-mcp`. The agent receives the
 tool result. The broker creates no pending approval, and Alice gets no request.
 
 **Step 5 — 11:02:10: the audit record**
@@ -837,13 +785,10 @@ tool result. The broker creates no pending approval, and Alice gets no request.
   "outcome": "automatic_approval",
   "auto_approval_rule": "internal_reversible_share",
   "target_server_name": "google-drive-mcp",
-  "tool_name": "drive.share_file",
   "agent_id": "550e8400-e29b-41d4-a716-446655440000",
   "arguments_ref": "sha256:9b1f4c7e...",
   "assessment_status": "complete",
   "model": "jev-1.14.0",
-  "question_set": "qs-3f9a1c2e",
-  "tool_context": "tc-8c21e0b7",
   "answers": {
     "leaves_organization": 0.01,
     "changes_access": 0.97,
@@ -858,13 +803,13 @@ The record also identifies the principal in the form that the logging standard r
 contains no argument value and no context text. `contracts/observability.md` sets the field names
 in agreement with `coding-standards/LOGGING.md`.
 
-Variant (US4.5): With `mode: "recommend"`, the same call waits for Alice. The record then
+Variant (US4.3): With `mode: "recommend"`, the same call waits for Alice. The record then
 contains `"outcome": "human_review"` and `"would_auto_approve": true`.
 
 **Observable result**: The colleague can read the file. The agent session continued without a
 stop. An auditor can find the rule and the answers that let the call proceed.
 
-### Journey 3 — The model does not answer, and Alice decides as before (US3.1, US4.3, US4.4)
+### Journey 3 — The model does not answer, and Alice decides as before (US3.1)
 
 **Step 1 — 11:30:00: the agent sends the reader share of Journey 2 for a different file**
 
@@ -887,76 +832,9 @@ The technical details show the tool name and all arguments.
 The existing approve request applies without a change. The agent sends the call again, and the
 call proceeds.
 
-Variant (US4.3): The model answers in time, but the response contains `"model": "jev-1.15.0"`,
-because an alias moved. The evaluation record names `jev-1.14.0`. The call waits for Alice, and
-the audit record names the two models.
-
-Variant (US4.4): An update of `google-drive-mcp` changes the description of `drive.share_file`.
-The new description is "Share a file. Also grants access to everyone in the grantee's domain."
-The model request contains the new description. The tool context fingerprint becomes
-`tc-41d7a9f0`, and the evaluation record does not contain it. Reader shares wait for Alice until
-Olivia evaluates the tool again. Their description and risk level come from the answers for the
-new definition.
-
-**Observable result**: A failed assessment, or an assessment without an evaluation, causes one
+**Observable result**: A failed assessment causes one
 approval request, as before this feature. It never approves a call, and it never prevents the
 decision of Alice.
-
-### Journey 4 — Olivia measures before she enables automation (US5.1, US5.2, US5.3)
-
-**Step 1 — Olivia prepares labeled cases and the tool listings**
-
-`cases.jsonl` (excerpt):
-
-```json
-{"id": "share-external-editor", "expect": "human", "target_server_name": "google-drive-mcp", "tool_name": "drive.share_file", "arguments": {"file_id": "f1", "role": "editor", "grantee_domain": "thirdparty.example.com", "transfer_ownership": false}}
-{"id": "share-internal-reader", "expect": "automatic_ok", "target_server_name": "google-drive-mcp", "tool_name": "drive.share_file", "arguments": {"file_id": "f2", "role": "reader", "grantee_domain": "example.com", "transfer_ownership": false}}
-{"id": "share-lookalike-domain", "expect": "human", "target_server_name": "google-drive-mcp", "tool_name": "drive.share_file", "arguments": {"file_id": "f3", "role": "reader", "grantee_domain": "example.com.attacker.test", "transfer_ownership": false}}
-```
-
-The tool listing of `google-drive-mcp` is the unmodified `tools/list` result in a file, as the
-client receives it through the gateway. It contains the entry of Journey 1, step 4.
-
-**Step 2 — Olivia starts the evaluation run**
-
-The run uses the production configuration, question set, and policy, the case file, and the tool
-listing. The run sends one model request for each case. It calls no tool and creates no approval.
-
-**Step 3 — The report**
-
-```text
-question set: qs-3f9a1c2e    model: jev-1.14.0    cases: 640 (human: 410, automatic_ok: 230)
-tool contexts: google-drive-mcp/drive.share_file tc-8c21e0b7 (640 cases)
-
-calls that skip a person:   188 of 640 (29.4%)
-false approvals:              1 of 410 (0.24%, 95% upper bound 1.15%)
-  share-lookalike-domain      rule internal_reversible_share   leaves_organization 0.02
-missed automation:           43 of 230 (18.7%)
-incomplete assessments:       6 of 640
-
-cases:
-  share-external-editor    human         human_review         leaves_organization 0.99  changes_access 0.96  ...
-  share-internal-reader    automatic_ok  automatic_approval   internal_reversible_share  leaves_organization 0.01  ...
-  share-lookalike-domain   human         automatic_approval   internal_reversible_share  leaves_organization 0.02  ...
-  ...
-
-evaluation record written: evaluation-record.yaml
-```
-
-The report has one line for each case: the identifier, the label, the outcome, the rule name if
-one applies, and each answer. This example shows three of the 640 lines, and `...` marks the
-values that it omits.
-
-**Step 4 — Olivia uses the report**
-
-The look-alike domain shows that the model is not reliable for domain comparisons. Olivia moves
-that comparison into a deterministic policy condition (R-09). She starts the run again and gets
-no false approval in 410 cases (95% upper bound 0.73%). She accepts that bound for reader shares.
-She deploys the evaluation record of Journey 2.
-
-**Observable result**: Before a call skips a person, Olivia knows the measured false-approval
-rate and its bound. The measurement applies to her calls, her questions, the tool definition of
-the server, and her model.
 
 ## Requirements *(mandatory)*
 
@@ -1003,8 +881,7 @@ The requirements for the context are:
 - **FR-019**: The context MUST NOT contain an item from the list "The system never sends these items to the model" (R-11, R-14).
 - **FR-020**: The system MUST apply a size limit to the tool definition and to the full context. The system MUST NOT send an oversized definition or context. The call then waits for a person (R-11).
 - **FR-021**: If the system knows no definition of the tool, it MUST NOT request an assessment.
-- **FR-022**: For the same configuration, question set, tool definition, and call, the context MUST have identical content and sequence, so that the evaluation run and the service send the same text for the same call. The sequence of the sections MUST be `organization`, `server`, `tool`, `call`. The keys of each map inside a section MUST be in sorted sequence.
-- **FR-023**: The system MUST calculate a tool context fingerprint for each tool. The fingerprint MUST include all content about that tool that can change an answer. This content is the tool definition. Each change to this content MUST change the fingerprint (R-15, R-20).
+- **FR-022**: For the same configuration, question set, tool definition, and call, the context MUST have identical content and sequence. The sequence of the sections MUST be `organization`, `server`, `tool`, `call`. The keys of each map inside a section MUST be in sorted sequence.
 
 **Typed questions**
 
@@ -1013,14 +890,13 @@ The requirements for the context are:
 - **FR-026**: The question text, the criteria, and the level descriptions MUST be fixed text of the question set. The system MUST NOT put call data, tool definitions, policy output, or other runtime values into them. The system MUST compose the question text for the model from the question fields in one fixed, documented sequence (R-13).
 - **FR-027**: The project MUST publish authoring rules for a question set, and the default question set MUST obey them. The rules MUST require that a higher value shows more risk: yes shows that the risk property is present, and the first scale level has the least risk. The rules MUST require one observable condition for each question, positive wording, and explicit boundary cases. The rules MUST require that the highest scale level includes "cannot be determined", and MUST prohibit arithmetic, counts, and date comparisons (R-04, R-05, R-07, R-09). The project MUST give one correct question and one incorrect question for each rule. The documentation MUST include an annotated organization description and question set.
 - **FR-028**: If a question lacks a required field or a question name is not unique, the system MUST reject the configuration at startup. The system MUST also reject a configuration in which a set or a scale is larger than its limits. It MUST reject a configuration in which a question text, a criterion, a level label, or a level description contains a placeholder for runtime data or is longer than its limit. It MUST reject a configuration in which an organization value or the deployment-wide argument setting is missing. The error MUST name the question or the setting. The default question set MUST obey the same rules.
-- **FR-029**: The system MUST calculate a question set fingerprint from the organization section, the questions with their sequence, and the request framing. The fingerprint includes each question field that the model receives. Each change to this content MUST change the fingerprint (R-06, R-20).
 
 **Answers and policy input**
 
 - **FR-030**: The system MUST validate each answer. The name and the type MUST agree with a question. A probability MUST be between 0 and 1. A scale MUST have one probability for each level, and the total MUST be 1 in a documented tolerance.
 - **FR-031**: In the policy input, each question MUST have one of these states: answered, refused, missing, or invalid (R-18). If no response arrived, the state of each question is missing.
 - **FR-032**: The assessment MUST have exactly one status: `complete`, `incomplete`, `timeout`, `unavailable`, `context_too_large`, or `definition_missing`. The status is `complete` only if each question has a valid answer.
-- **FR-033**: The policy input MUST contain the status, and the state and the values of each question. It MUST contain the full distribution of each scale. It MUST contain the answering model that the response names and the two fingerprints. It MUST state whether the combination is in the evaluation record (R-17, R-20). The contract MUST state for each status which keys are present.
+- **FR-033**: The policy input MUST contain the status, and the state and the values of each question. It MUST contain the full distribution of each scale. It MUST contain the answering model that the response names (R-17, R-20). The contract MUST state for each status which keys are present.
 - **FR-034**: The policy input for an assessment MUST NOT contain approval records.
 
 **Human review**
@@ -1040,30 +916,20 @@ Conditions for automatic approval:
 | The mode is `auto_approve`. | Configuration |
 | The policy result after the assessment is `allow` and names a rule. | Policy |
 | The assessment status is `complete`. | Assessment |
-| The evaluation record contains the answering model, the question set fingerprint, and the tool context fingerprint. | Evaluation record |
 | No permanent denial applies to the call. | Existing human decisions |
 
-- **FR-040**: Automatic approval MUST be disabled by default. It MUST require an explicit mode setting and an evaluation record. If the evaluation record does not name a tool, the system MUST NOT approve calls to that tool automatically.
+- **FR-040**: Automatic approval MUST be disabled by default. It MUST require an explicit mode setting.
 - **FR-041**: The system MUST let a call proceed without human approval only if all conditions in the table "Conditions for automatic approval" are true.
 - **FR-042**: If the policy result is `allow` and one condition of FR-041 is false, the system MUST use `approval_required` as the result. The condition for a permanent denial is the exception. If a permanent denial applies, the system MUST deny the call (SR-003).
 - **FR-043**: A policy MUST NOT be able to disable a condition of FR-041.
 - **FR-044**: In recommendation mode, the system MUST record each call that satisfies all conditions of FR-041 apart from the mode. The system MUST keep each such call for human approval.
 - **FR-045**: A call that proceeds under FR-041 MUST NOT create an approval record and MUST NOT change an existing approval record.
 
-**Evaluation**
-
-- **FR-050**: The system MUST supply an evaluation run for labeled tool calls from the operator. The run MUST use the context, the question set, the configured model, and the policy as production uses them. The run MUST NOT call a tool or create an approval. The run MUST take tool definitions from unmodified tool listings, as the client receives them through the gateway. The run MUST build the policy input with the input builder of production. A case MUST be able to supply each value that production takes from the request: the HTTP request values, the session, and the permission context. The run MUST use documented fixed values for absent values and MUST show their use in the report.
-- **FR-051**: For each case, the evaluation report MUST give the outcome and the answers. The report MUST give the share of cases that skip a person. It MUST give the number and the rate of false approvals with a 95% upper bound. It MUST give the number of incomplete assessments and each answering model that a response named. It MUST give the question set fingerprint and the tool context fingerprints (R-19). For cases that give expected answers, it MUST give the numbers of FR-054.
-- **FR-052**: The evaluation run MUST write an evaluation record. The record names the answering model, the question set fingerprint, and the tool context fingerprint of each tool in the cases. If the responses named more than one model, or no response named a model, the run MUST NOT write a record.
-- **FR-053**: The project MUST publish a starter case set with a label for each case. The set MUST contain the calls from issue #206, dangerous counterexamples, and adversarial argument variants. The set MUST have two fixed parts: a tuning part and a validation part. The project MUST publish a false-approval rate and its bound only from the validation part, which is not used to change questions or thresholds (R-16).
-- **FR-054**: The project MUST measure each default question on its own before the product contains it, and again before a change of its wording. Each case of the starter case set MUST give the expected answer of each default question: yes or no, or the level. Each part of the set MUST contain a minimum of 30 cases for each expected answer of each default question. These cases MUST include difficult cases for the answer no, for example a tool description with instructions for the caller and an argument value with instructions for a recipient. For each question, the evaluation report MUST give the number of cases with each expected answer and the number of these cases in which the model gave the expected answer. The project MUST publish these numbers from the validation part, with the name of each measured model. The stakeholder MUST approve the default question set with these numbers (R-16, R-19).
-
 **Audit and observability**
 
-- **FR-060**: The system MUST write one audit record for each assessed call. The record MUST contain the outcome, the status, and the applicable rule name. It MUST contain the answering model, the two fingerprints, and the values of each answer. It MUST contain the target server, the agent, and the principal. It MUST contain the tool name if the logging standard permits it. It MUST contain a reference to the arguments that does not reveal them.
-- **FR-061**: The audit records, other log records, spans, and metrics that the system writes for an assessment MUST NOT contain argument values, the context, tool definition text, question text, or credentials. The decision logs of the policy engine and the reason texts of a policy are outputs that the operator configures. The documentation MUST tell the operator how to keep assessment data out of them (SR-010).
+- **FR-060**: The system MUST write one audit record for each assessed call. The record MUST contain the outcome, the status, and the applicable rule name. It MUST contain the answering model and the values of each answer. It MUST contain the target server, the agent, and the principal. It MUST NOT contain the tool name, because no configuration bounds that value (`coding-standards/LOGGING.md`, section 6.2). It MUST contain a reference to the arguments that does not reveal them.
+- **FR-061**: The audit records, other log records, spans, and metrics that the system writes for an assessment MUST NOT contain argument values, the context, tool definition text, question text, or credentials. The decision logs of the policy engine and the reason texts of a policy are outputs that the operator configures. The decision logs contain the policy input, with the arguments and the assessment, and the policy result. The documentation MUST state this content (SR-010).
 - **FR-062**: The operator MUST be able to monitor the number of assessments by outcome and by status. The operator MUST be able to monitor the duration of model requests. A metric MUST NOT contain a principal.
-- **FR-063**: If the definition of a tool changes for a target server, the system MUST report the change to the operator. The report MUST contain the old and the new tool context fingerprint. The report MUST NOT contain the definition text.
 
 ### Domain Model *(if applicable - document before API or database design)*
 
@@ -1077,8 +943,7 @@ erDiagram
         list internalDomains
     }
     QuestionSet {
-        string source
-        string questionSetFingerprint
+        list questions
     }
     AssessmentQuestion {
         string name
@@ -1089,14 +954,10 @@ erDiagram
         string targetServerName
         string toolName
         string description
-        string toolContextFingerprint
     }
     Assessment {
         string status
         string answeringModel
-        string questionSetFingerprint
-        string toolContextFingerprint
-        bool evaluated
     }
     Answer {
         string questionName
@@ -1104,17 +965,11 @@ erDiagram
         float probability
         list levelProbabilities
     }
-    EvaluationRecord {
-        string model
-        string questionSetFingerprint
-        list toolContextFingerprints
-    }
     QuestionSet ||--|{ AssessmentQuestion : "contains"
     OrganizationContext ||--o{ Assessment : "gives context to"
     QuestionSet ||--o{ Assessment : "asks"
     ToolDefinition ||--o{ Assessment : "gives context to"
     Assessment ||--o{ Answer : "contains"
-    EvaluationRecord ||--o{ ToolDefinition : "names evaluated"
 ```
 
 **Activity / Flow Diagram**:
@@ -1164,16 +1019,12 @@ sequenceDiagram
 - **Tool Definition**: The data that an MCP server lists for one tool: name, description, input schema, and annotations. It is a claim of the server about the tool. The policy decision point learns it from tool listings. The broker does not store it.
 - **Assessment Context**: The document that the model receives for one call. It contains the Organization Context, the Tool Definition, and the tool name and the arguments of the call.
 - **Assessment Question**: A named, typed question with fixed text. A higher value shows more risk. It has no text for the approver.
-- **Question Set Fingerprint**: A value that identifies the exact Organization Context, questions, and request framing.
-- **Tool Context Fingerprint**: A value that identifies the exact Tool Definition for one tool on one target server.
 - **Answer**: The validated result for one question, with a state and its probabilities.
-- **Assessment**: The status and the answers for one call, with the answering model, the two fingerprints, and the context flags. It is evidence for the policy. The approver does not see it.
+- **Assessment**: The status and the answers for one call, with the answering model. It is evidence for the policy. The approver does not see it.
 - **Automatic Approval**: The outcome in which a named policy rule lets a call proceed without a person.
-- **Evaluation Record**: The output of an evaluation run. It names the model, the Question Set Fingerprint, and the measured Tool Context Fingerprints. Automatic approval requires it.
 
 **Domain Events** (state changes of business significance):
 - **ToolCallAssessed**: An assessment attempt ended with a status and an outcome. The outcome is automatic approval, human review, or denial.
-- **ToolDefinitionChanged**: A target server listed a tool with a definition that is different from the known definition.
 
 *Add all domain terms to the glossary in `ARCHITECTURE.md`.*
 
@@ -1193,7 +1044,6 @@ in agreement with `adrs/011-extproc-standalone-binary.md`. The Helm chart does n
 - **authorization.assessment.max_listing_bytes**: An integer. The default is `1048576`. The system does not learn definitions from a larger tool listing.
 - **authorization.assessment.organization.name**, **.description**, **.internal_domains**: The Organization Context. The three values are required while the feature is enabled. The system sends them to the model with each assessed call.
 - **authorization.assessment.questions**: The question set, as a list. The default is the default question set of this spec (Journey 1, step 2). A list in the configuration replaces the full default set.
-- **authorization.assessment.auto_approval.evaluation_record_file**: The path of the Evaluation Record. It is required in the `auto_approve` mode.
 
 The keys use the existing configuration loader of the service: the YAML file, the `EXTPROC_` environment variables for single values, the defaults in code, and the validation at startup. The feature adds no file format of its own for these values. The configuration has no key for an individual target server or tool (FR-016).
 
@@ -1205,7 +1055,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
 
 - **API-001**: The feature MUST NOT change `api/enduser/openapi.yaml`. The request that creates a pending approval keeps its fields, and the approval responses keep their fields.
 - **API-005**: The Admin API does not change. The broker gets no registry of MCP servers or tools.
-- **API-006**: Before implementation, the planning phase MUST define four contracts. These are the assessment input of the policy, the extended policy result, the request to the decision endpoint, and the Evaluation Record. The extended policy result has one new field: `auto_approval.rule`. Stakeholders MUST approve the contracts (Principle X).
+- **API-006**: Before implementation, the planning phase MUST define three contracts. These are the assessment input of the policy, the extended policy result, and the request to the decision endpoint. The extended policy result has one new field: `auto_approval.rule`. Stakeholders MUST approve the contracts (Principle X).
 
 ### Database Requirements *(if applicable)*
 
@@ -1223,10 +1073,11 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **SR-007**: After it processes the call, the system MUST NOT keep the context or the raw model response. FR-061 gives the rule for logs, spans, and metrics.
 - **SR-008**: The approver sees one description and one risk level. The two values come from the policy result, as before this feature. The system adds no approver text of its own. A policy can put an argument value or an answer value into its description. The system cannot prevent this, as it cannot today. Thus, the authoring rules and the published example policy MUST use only constant description texts (FR-039). The broker shows the description as plain text, as before this feature.
 - **SR-009**: The audit record of FR-060 MUST exist for each assessed call. If the system cannot write the record, the call MUST NOT proceed by automatic approval.
-- **SR-010**: The documentation MUST state the residual risks. A model can be wrong with high confidence. Injected argument text can move probabilities. A server can describe a tool falsely with a description that does not change. Thus, the operator must evaluate only tools of trusted servers and must write automatic approval rules only for these tools. Retention at a remote model provider is a deployment decision of the operator. The documentation MUST also state these risks:
-  - The evaluation record does not identify the policy. A new policy bundle can change a rule or a threshold while `evaluated` stays true. The operator must do a new evaluation run before a changed policy goes to production.
-  - An endpoint that returns the model alias of the request hides a new model release from the model condition. For automatic approval, the operator must configure a model name that identifies one release.
-  - The decision logs of the policy engine contain the full policy input, which includes the arguments and the assessment. A policy can also write argument values into its reasons. The operator must mask the assessment and the arguments in decision logs and must not write such values into reasons.
+- **SR-010**: The documentation MUST state these residual risks:
+  - A model can be wrong with high confidence. Injected argument text can move probabilities. A server can describe a tool falsely.
+  - The product does not measure a model, a question, or a policy. The operator selects the thresholds of each automatic approval rule and is responsible for its false-approval rate. The operator must write automatic approval rules only for tools of trusted servers.
+  - A changed tool definition, a changed question, or a changed model changes the answers. The system does not stop automatic approval after such a change. A policy can require one answering model name. An endpoint that returns the model alias of the request hides a new model release.
+  - The decision logs of the policy engine contain the policy input, which includes the arguments and the assessment, and the policy result. A policy can also write argument values into its reasons. The operator decides who can read these logs and whether to mask a part of them. Retention at a remote model provider is also a decision of the operator.
   - An approval identifies a call by the tool name without the target server. If two servers on different routes list one tool name, a pending approval and its description can apply to the call of the other server.
   - While assessment is enabled, the decision endpoint gets the full arguments of each assessed call. This includes a secret that a tool takes as an argument. The feature has no setting that withholds values. The operator must use an endpoint that can receive these values, for example a model inside the deployment.
   - The approval page does not show that a model contributed to the description and the risk level. A wrong answer can give a description that is wrong for the call. The approver must read the technical details, which show all arguments.
@@ -1237,9 +1088,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **Organization Context**: The name, the description, and the internal domains of the organization, from the service configuration.
 - **Question Set**: The typed questions for each assessed call. The product supplies the default set, and an operator can replace it in the configuration.
 - **Tool Definition**: The listing of one tool by its server. The policy decision point knows it while the service operates.
-- **Assessment**: The evidence for one call: the status, the answers, the answering model, and the two fingerprints. It exists only while the system processes the call.
-- **Evaluation Record**: The measured model, question set, and tool contexts. Automatic approval requires it.
-- **Evaluation Case**: A labeled tool call for the evaluation run.
+- **Assessment**: The evidence for one call: the status, the answers, and the answering model. It exists only while the system processes the call.
 
 *Add all domain concepts to the glossary in `ARCHITECTURE.md` (Constitution Principle V).*
 
@@ -1248,38 +1097,33 @@ The keys use the existing configuration loader of the service: the YAML file, th
 ### Measurable Outcomes
 
 - **SC-001**: For 100% of the assessed calls that wait for a person, the pending approval has the description and the risk level of the policy result after the assessment. With the example policy, the external share and the internal share of the journeys get different descriptions and different risk levels. The approval request has no new field.
-- **SC-002**: A test of a minimum of 20 different failure conditions of the model interaction lets 0 calls proceed without a person. The conditions include timeout, refusal, missing answer, malformed answer, out-of-range value, wrong model, changed tool definition, missing definition, and oversized content.
-- **SC-003**: With the published example rule and thresholds, the external editor share from issue #206 waits for a person. Each adversarial variant in the starter case set also waits for a person.
+- **SC-002**: A test of a minimum of 20 different failure conditions of the model interaction lets 0 calls proceed without a person. The conditions include timeout, refusal, missing answer, malformed answer, out-of-range value, missing definition, and oversized content.
 - **SC-004**: Calls that the policy allows or denies without an assessment get no delay and cause no model request.
 - **SC-005**: The assessment delays a call that proceeds by automatic approval by a maximum of the configured request timeout plus one policy evaluation timeout. The defaults are 500 ms and 100 ms.
-- **SC-006**: For 100% of calls that proceed by automatic approval, one audit record contains the rule name, the answers, the model, and the two fingerprints. No record contains an argument value.
-- **SC-007**: From one evaluation run, an operator can find the share of calls that skip a person. The operator can also find the false-approval rate with its upper bound. The run calls no tool.
+- **SC-006**: For 100% of calls that proceed by automatic approval, one audit record contains the rule name, the answers, and the model. No record contains an argument value.
 - **SC-008**: An operator can enable assessment for all target servers with the default question set and without configuration for an individual server, tool, or argument. This includes servers that the operator adds later.
 - **SC-009**: A reviewer can state the data that leaves the deployment for an assessed call without knowledge of a server: the organization values, the target server name, the tool definition, and the tool name and the arguments of the call. The system sends no other data of the request.
-- **SC-010**: A change of the answering model that the response names, of the organization values, of a question, or of a tool definition stops automatic approval for the related tools. This is true for 100% of tested changes. Automatic approval starts again only with a new evaluation record.
-- **SC-011**: For each version of the default question set, the published results give for each default question and each measured model the number of validation cases with each expected answer and the number with the expected answer of the model. No default question is in the product without these results and the approval of the stakeholder.
 
 ## Assumptions
 
 - **Integration target.** The decision endpoint uses the Decisions contract of agentgateway. agentgateway does the provider routing, the provider authentication, and the translation to System One models. agentgateway `v1.7.0` is the first release with this contract. The policy decision point is the ExtProc service with its embedded policy engine (`adrs/028-opa-extproc-authorization.md`).
 - **The gateway can see tool listings.** Today, the policy decision point sees only tool calls and does not examine responses. A Docker test on 2026-11-24 showed that agentgateway `v1.5.0` and `v1.7.0` send the `tools/list` response body to ExtProc on the stream of the request. The client gets the response without a change. agentgateway `v1.5.0` removes `nextCursor`, thus only `v1.7.0` shows all pages. On a route with two or more MCP targets, the gateway adds the target name as a prefix to each tool name. The definition key uses the name as the client sees it.
 - **Each instance keeps definitions in memory.** After a start, a tool has no definition until a listing passes through that instance. During that time, calls to the tool wait for a person. It is out of scope to share definitions between instances or to store them.
-- **A definition from a server is context, not fact.** A server can put hostile text into a definition or change it (R-15). The spec accepts definitions from servers, because a description of each tool by the operator is not practical. Four controls apply. The definition is in the separate `tool` section. The Evaluation Record must contain the tool context fingerprint. A policy rule must apply to the call. One question finds description text that addresses a reviewer.
+- **A definition from a server is context, not fact.** A server can put hostile text into a definition or change it (R-15). The spec accepts definitions from servers, because a description of each tool by the operator is not practical. Three controls apply. The definition is in the separate `tool` section. A policy rule must apply to the call. One question finds description text that addresses a reviewer.
 - **The operator maintains no metadata about servers or tools.** MCP servers have their own owners and their own release cycles. A description of a server or a tool in the configuration of the operator couples that configuration to each change of each server, and the operator cannot keep the two in agreement. Thus, the configuration has no key that describes a server, or that describes, corrects, or replaces a tool definition. The model gets the target server name from the gateway and the tool definition from the server. The configuration also has no setting for an individual server, because each such entry needs maintenance when servers change. The operator cannot exclude one server from assessment. If the operator does not trust the definitions of a server, the operator writes no automatic approval rule for its tools. If the data of one server must not go to the decision endpoint, the policy must not send its calls to approval, or the operator must not enable assessment.
 - **The approver sees no new element.** The stakeholder decided on 2026-11-26 that the approver gets one statement, and that this statement is a part of the policy result. The existing description and the existing risk level are that statement. A list of findings, a recommendation, a notice about the assessment, and a stored assessment summary are out of scope. Thus, the broker, its API, its database, and the approval page do not change.
-- **The product has default questions.** This spec defines the default question set (Journey 1, step 2), and the service contains it. An operator can replace it in the configuration. A product release that changes a default question changes the question set fingerprint. Automatic approval then stops until a new evaluation run, and the release notes must state the change. The project measures each default question before the product contains it, and the stakeholder approves the set with the results (FR-054). If the tuning run of the project changes a default question, this spec changes with it.
+- **The product has default questions.** This spec defines the default question set (Journey 1, step 2), and the service contains it. An operator can replace it in the configuration. A policy refers to the questions by name. No model measured the default questions, and three of them got new wording after a smoke test ([research.md](research.md), D-17).
 - **The organization values and the questions are service configuration.** They are keys of the ExtProc configuration and use its existing loader, defaults, and validation. A separate file for them is out of scope.
 - **The model always gets the arguments as the agent sent them.** The system does not filter, select, or change an argument. A filter needs rules about the input schema of each tool, and it hides data from the model that a person sees. The questions are about the effect of one call, and the arguments show that effect. Without them, the model cannot answer. Thus, the feature has no setting that withholds argument values: the operator enables assessment, or does not. Issue #206 says that remote assessment must not forward the full argument map implicitly, and it asks which argument fields can leave the deployment. The stakeholder decided on 2026-11-26 that the key `enabled` is the explicit decision, and that the arguments can leave as the agent sent them. The documentation states what the system sends (SR-006). A model inside the deployment keeps the values in the organization.
-- **The policy and the Evaluation Record show the trust in a server.** A trust flag for a server does not exist. A call proceeds automatically only if a policy rule applies to it and the Evaluation Record names its tool.
+- **The policy shows the trust in a server.** A trust flag for a server does not exist. A call proceeds automatically only if a policy rule applies to it.
 - **Model names.** OpenAI documents `gpt-6-luna` as the model for the Decisions API. The spec uses the term "the configured decision model". Model names are configuration values.
 - **The system does not send the static risk level to the model.** The example in the issue includes the policy risk level in the model input. This spec excludes it, because it is not evidence about the call and the policy has it (R-11). The policy can derive the risk level from the answers.
-- **One question set for all tools.** A question set for each tool is out of scope. A single set keeps the evaluation simple.
+- **One question set for all tools.** A question set for each tool is out of scope.
 - **Two question types.** Choice questions without a sequence are out of scope, because their answers depend on option names and option sequence (R-06).
 - **Automatic approval creates no approval record.** The audit record is a structured log record at the policy decision point, as for existing authorization decisions. A history of automatically approved calls for the user in the broker is out of scope. Thus, the broker creates no record for calls that need no person. The read of the approval state before an assessment still applies to these calls. The issue proposes this design.
-- **The Evaluation Record does not include the policy.** A change to an automatic approval rule or threshold needs a new evaluation run. The operator is responsible for that run. This is also true if the policy engine gets policy bundles while the service operates. SR-010 names this risk.
-- **The product does not judge the false-approval rate.** The evaluation run reports the rate. The operator decides whether the rate is permitted for a rule.
+- **Measurement is out of scope.** The product does not record cases, measure a model, or tune questions and thresholds. It has no evaluation run and no evaluation record. The policy input contains the call and the answers, and the policy result follows from them. Thus, the decision logs of the policy engine show the input and the result, if the operator enables these logs. An operator can use the logs for an analysis outside the product. That analysis is not a part of this spec.
 - **The system does not cache positive results.** The system assesses each call that can proceed automatically. It remembers only the outcome "waits for a person" of FR-008.
-- **The product has no default thresholds and no default policy.** The values in the journeys are examples. The project must publish the example policy with measured results on the validation part of the starter case set.
+- **The product has no default thresholds and no default policy.** The values in the journeys are examples. The operator selects the thresholds.
 - **Text and structured arguments only.** The system does not interpret image content or file content in arguments. A large value makes the context larger than the size limit, and the call then waits for a person.
 - **Existing approval behavior does not change.** Statuses, persistence scopes, pattern matching, rate limits, endpoint authentication, and the elicitation response stay the same. Specs 020, 024, and 026 put automatic approval out of scope. This spec adds it.
 - **A new ADR is necessary.** The planning phase must add an ADR for four subjects. These are the assessment at the policy decision point, the use of tool definitions from servers, the outbound decision request, and the extended policy contract.

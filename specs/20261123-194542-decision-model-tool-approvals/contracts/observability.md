@@ -1,6 +1,6 @@
 # Contract: Observability (logs, metrics, traces)
 
-**Feature**: [spec.md](../spec.md) FR-060 to FR-063, SR-007, SR-009 | **Decisions**: [research.md](../research.md) D-12, D-13
+**Feature**: [spec.md](../spec.md) FR-060 to FR-062, SR-007, SR-009 | **Decisions**: [research.md](../research.md) D-12, D-13
 
 Operators make alerts and audits from these names. After release, a new name for an event, a
 span, an instrument, or an attribute is a breaking change.
@@ -22,12 +22,12 @@ log record, span, or metric contains these items:
 - The request body or the response body of the model request
 - The credential for the decision endpoint.
 
-A tool name is in a signal only if the evaluation record names the tool (D-12). A principal is
+A tool name is in no signal of the feature, because no configuration bounds that value (D-12). A principal is
 never in a metric.
 
 Two outputs are not signals of this contract, because the operator configures them:
 
-- The decision logs of OPA. If the OPA configuration enables them, OPA writes the full input of each evaluation. For the second evaluation, the input contains `assessment` and `mcp.arguments`. The operator must mask `/input/assessment` and `/input/mcp/arguments` with the decision log mask of OPA.
+- The decision logs of OPA. If the OPA configuration enables them, OPA writes the full input and the result of each evaluation. For the second evaluation, the input contains `assessment` and `mcp.arguments`. Thus, these logs show the call, the answers, and the decision, and an operator can use them for an analysis outside the product. The operator decides who can read them and whether to mask a part of them.
 - The `reasons` of a policy result. The existing record "opa authorization decision" contains them without a change. A policy must not write argument values or assessment data into its reasons.
 
 ## Structured log events
@@ -35,9 +35,7 @@ Two outputs are not signals of this contract, because the operator configures th
 | `event` | Level | Written by | Attributes |
 |---|---|---|---|
 | `assessment.tool_call.assessed` | INFO | ExtProc, one time for each assessed call (FR-060) | See the table that follows |
-| `assessment.tool_definition.changed` | INFO | ExtProc, if a listing changes a known definition (FR-063) | `target_server_name`, `previous_tool_context`, `tool_context`, and `tool_name` under D-12 |
-| `assessment.evaluation_record.mismatched` | ERROR | ExtProc at startup, if the question set of the record differs from the question set of the service | `question_set`, `evaluated_question_set` |
-| `assessment.question_set.loaded` | INFO | ExtProc at startup | `question_set`, `question_count`, `mode` |
+| `assessment.question_set.loaded` | INFO | ExtProc at startup | `question_count`, `mode` |
 
 Attributes of `assessment.tool_call.assessed`:
 
@@ -46,15 +44,13 @@ Attributes of `assessment.tool_call.assessed`:
 | `principal` | The principal through the principal policy of the logging standard |
 | `agent_id` | The typed agent identifier |
 | `target_server_name` | From the gateway metadata |
-| `tool_name` | Only under D-12 |
 | `arguments_ref` | `sha256:` and the arguments hash of the shared leaf package (D-07) |
 | `assessment_status` | A status of D-04 |
 | `outcome` | `automatic_approval`, `human_review`, or `denied` |
 | `auto_approval_rule` | The rule name from the policy, if one applies |
 | `would_auto_approve` | Boolean. True in the `recommend` mode if all other conditions of FR-041 are true (FR-044) |
-| `unmet_condition` | For an `allow` result that did not proceed: `mode`, `rule_missing`, `status`, `model`, `question_set`, `tool_context`, or `denial` |
-| `model`, `evaluated_model` | The answering model. The model of the evaluation record, if the two differ |
-| `question_set`, `tool_context` | The two fingerprints |
+| `unmet_condition` | For an `allow` result that did not proceed: `mode`, `rule_missing`, `status`, or `denial` |
+| `model` | The answering model |
 | `answers` | A group with the question name as the key. The value is the probability, or the list of level probabilities, or the answer state if no value exists |
 | `duration_ms` | The duration of the model request |
 
@@ -68,7 +64,7 @@ for each evaluation.
 
 | Span name | Kind | Parent | Attributes |
 |---|---|---|---|
-| `extproc.assessment` | Internal | The span of the request | `assessment.status`, `assessment.outcome`, `assessment.evaluated` |
+| `extproc.assessment` | Internal | The span of the request | `assessment.status`, `assessment.outcome` |
 
 The feature adds no client span. The outbound client of ExtProc (`internal/telemetryhttp`)
 already starts the client span `http.request` for each request. For the model request, that span
@@ -88,7 +84,6 @@ constructor.
 | `extproc.assessment.requests` | Counter | `{assessment}` | `assessment.status`, `assessment.outcome` | One time for each assessed call |
 | `extproc.assessment.model_request.duration` | Histogram | `s` | `assessment.status` | One time for each model request |
 | `extproc.assessment.tool_definitions` | Gauge | `{definition}` | none | The number of definitions in the store |
-| `extproc.assessment.tool_definition.changes` | Counter | `{change}` | none | One time for each changed definition |
 | `extproc.assessment.listings` | Counter | `{listing}` | `assessment.listing_result` | One time for each observed `tools/list` response |
 
 Attribute values:
@@ -97,7 +92,6 @@ Attribute values:
 |---|---|
 | `assessment.status` | The six statuses of D-04 |
 | `assessment.outcome` | `automatic_approval`, `human_review`, `denied` |
-| `assessment.evaluated` | `true`, `false` |
 | `assessment.listing_result` | `stored`, `too_large`, `not_parsed`, `ignored` |
 
 The number of attribute combinations is constant. A target server name and a tool name are not
@@ -107,7 +101,6 @@ Useful signals for an operator:
 
 - A high share of `timeout` or `unavailable` shows a problem with the decision endpoint.
 - A high share of `definition_missing` after a start shows that agents do not list tools through this instance.
-- Each `assessment.tool_definition.changed` event for an evaluated tool needs a new evaluation run.
 - The share of `would_auto_approve` in the `recommend` mode estimates the effect of the `auto_approve` mode.
 
 ## Broker

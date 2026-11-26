@@ -59,7 +59,6 @@ The source is a `tools/list` result as the client sees it through the gateway (D
 | `description` | string | Optional. If the listing has none, the `tool` section of the context has no description. |
 | `input_schema` | JSON object | Optional. The system keeps it as the server listed it and sends it without a selection or a change. |
 | `annotations` | JSON object | Optional. The system keeps the object as the server listed it. It adds no default hint value. |
-| `tool_context` | fingerprint | Calculated when the definition changes (D-06). |
 
 The store keeps a maximum of 10,000 definitions. One definition has a maximum of 16 KiB of
 canonical JSON. If the store is full, it removes the definition with the oldest listing time. A
@@ -80,7 +79,7 @@ ExtProc builds this document for one call and discards it after the call (SR-007
 
 Rules:
 
-- The sections have the sequence of the table, and the fields of a section have the sequence of its row. The keys of each map inside a section are in sorted sequence. This is the output of the Go JSON encoder for a map, thus the service and the evaluation run give the same text for the same call (FR-022).
+- The sections have the sequence of the table, and the fields of a section have the sequence of its row. The keys of each map inside a section are in sorted sequence. This is the output of the Go JSON encoder for a map (FR-022).
 - `call.arguments` is the `arguments` object of the `tools/call` request. The system does not remove, select, or change an argument (FR-016). A call without arguments has an empty object.
 - The full context has a maximum of `max_context_bytes`.
 - A field of the `tool` section is absent if the listing does not have it (FR-012).
@@ -91,23 +90,9 @@ Rules:
 |---|---|---|
 | `status` | enumeration | One value of D-04. |
 | `model` | string | The `model` value of the response. Absent in the policy input if no response arrived. |
-| `question_set` | fingerprint | From the Organization Context, the Question Set, and the request framing (FR-029). |
-| `tool.context` | fingerprint | Absent in the policy input for `definition_missing` and `context_too_large`. |
-| `evaluated` | boolean | True if the evaluation record contains the model, the question set, and the tool context. |
 | `answers.<name>.status` | enumeration | `answered`, `refused`, `missing`, or `invalid`. Each question of the set has an entry for each assessment status. Without a response, the value is `missing`. |
 | `answers.<name>.probability` | number | Only for an answered `predicate`. |
 | `answers.<name>.probabilities`, `score`, `confidence` | list, number, number | Only for an answered `score`. The list has one value for each level. |
-
-### Evaluation Record
-
-The source is the evaluation run (D-08). ExtProc reads it one time at startup.
-
-| Field | Type | Rules |
-|---|---|---|
-| `format` | integer | Required. The value is `1`. |
-| `model` | string | Required. |
-| `question_set` | fingerprint | Required. |
-| `tool_contexts.<target server name>.<tool name>` | fingerprint | Required. A minimum of one entry. |
 
 ## Broker types
 
@@ -118,7 +103,7 @@ and the risk level of the policy result in the existing fields (FR-035, FR-038).
 
 | Data | Lifetime |
 |---|---|
-| Organization Context, Question Set, Evaluation Record | From startup to stop of the ExtProc process |
+| Organization Context, Question Set | From startup to stop of the ExtProc process |
 | Tool Definition | From a listing to the next listing of that tool, or to removal from the full store |
 | Assessment Context, Assessment, raw model response | One tool call |
 

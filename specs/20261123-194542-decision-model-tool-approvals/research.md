@@ -6,21 +6,22 @@
 
 This document records the design decisions of the planning phase. The guidance about decision
 models is in [decision-model-research.md](decision-model-research.md) (`R-01` to `R-20`). This
-document refers to its own decisions as `D-01` to `D-17`.
+document refers to its own decisions as `D-01` to `D-18`.
 
 The first version of this document used the code of this repository and published documentation
 only. On 2026-11-24, Docker tests against agentgateway `v1.5.0` and `v1.7.0` replaced the
 assumptions of D-02, D-03, and D-07 with observed results. Each decision states its evidence. The
 section "Verification record" at the end gives the commands and the test files.
 
-On 2026-11-26, the stakeholder narrowed the scope. D-16 and D-17 record the two decisions. D-09
-and D-10 are withdrawn. D-02, D-05, D-07, and D-11 changed with them.
+On 2026-11-26, the stakeholder narrowed the scope. D-16, D-17, and D-18 record the decisions.
+D-06, D-08, D-09, D-10, and D-11 are withdrawn. D-02, D-03, D-05, D-07, and D-12 changed with
+them.
 
 ## D-01 — The assessment runs in the request-body phase of ExtProc
 
 **Decision**: ExtProc assesses a call in the `approval_required` branch of `processRequestBody`
 (`internal/extproc/server/server.go:589-607`). A new package `internal/extproc/assessment/`
-contains the context builder, the model client, the answer validation, and the fingerprints. The
+contains the context builder, the model client, and the answer validation. The
 sequence for one call is:
 
 1. ExtProc evaluates the policy without an assessment.
@@ -59,7 +60,7 @@ ExtProc removes all stored definitions of a target server if a listing response 
 response is not usable with an error status, a content encoding, an oversized body, or a body
 that ExtProc cannot parse. Calls to the tools of that server then have the status
 `definition_missing` until a valid listing arrives. Thus, a
-listing that ExtProc cannot read never keeps an old definition that matches the evaluation record.
+listing that ExtProc cannot read never keeps an old definition in use.
 A single definition larger than its limit replaces the stored entry with a marker. A call to that
 tool then has the status `context_too_large`.
 
@@ -92,9 +93,9 @@ two targets on one route apart, and the names in `tools/list` and in `tools/call
 
 **Risks**:
 
-- Definitions apply to all users of one instance. A server can return a different listing for each user. The latest listing applies. The fingerprint condition and the change report (FR-063) limit this risk.
-- If an operator adds a second target to a route, the tool names of the first target get a prefix. Each tool of that route then has no definition and no evaluation record entry until a new listing and a new evaluation run. The calls wait for a person.
-- On a route with two or more MCP targets, the target server name is the `mcp_server` value of the route. It is not the name of one server. The `server` section of the context and the keys of the evaluation record thus name the route. The verification case "two targets on one route" used `mcp_server: 'workspace-mcp'` for two servers.
+- Definitions apply to all users of one instance. A server can return a different listing for each user. The latest listing applies, and the system does not report a change (D-18).
+- If an operator adds a second target to a route, the tool names of the first target get a prefix. Each tool of that route then has no definition until a new listing, and a policy rule for the old tool name does not apply. The calls wait for a person.
+- On a route with two or more MCP targets, the target server name is the `mcp_server` value of the route. It is not the name of one server. The `server` section of the context thus names the route. The verification case "two targets on one route" used `mcp_server: 'workspace-mcp'` for two servers.
 - After a start, an instance knows no definitions.
 - The tests used `mcp-go` servers only. A server that sends the result as an event stream with other events before the result was not tested. The parser looks for the response with the request identifier and thus does not depend on the event sequence.
 
@@ -125,8 +126,8 @@ configuration has no key for a server or a tool, and the status `excluded` does 
 uses the existing `internal/extproc/httpclient` package and adds no SDK dependency. The input is
 one user message with two `input_text` parts. The first part is the fixed framing. The second
 part is the context as compact JSON text. The sections keep the sequence of FR-022. Inside a section,
-the keys of a map are sorted, as the Go JSON encoder writes them. The sequence has one purpose:
-the service and the evaluation run send the same text for the same call. The contract is in [contracts/decision-request.md](contracts/decision-request.md).
+the keys of a map are sorted, as the Go JSON encoder writes them. Thus, the same call always
+gives the same text. The contract is in [contracts/decision-request.md](contracts/decision-request.md).
 
 ExtProc sends no second attempt after an error. The deadline of the request is `request_timeout`.
 ExtProc reads the credential file for each request and sends the value as a bearer token. TLS
@@ -168,20 +169,19 @@ the only form that works for the two upstream formats.
 
 **Rationale**: The request has a fixed shape and the response has four answer shapes. A
 hand-written client is small and keeps the dependency set stable. A file read for each request
-lets the operator replace a mounted credential without a restart. One request form for the two
-upstream formats keeps one question set fingerprint for both.
+lets the operator replace a mounted credential without a restart. One request form serves the two
+upstream formats.
 
 **Consequences**:
 
-- The input encoding `input_text` is part of the question set fingerprint (D-06).
 - The limits of `input_json` (256 KiB, 32 levels, 10,000 values) do not apply. The context limit of 16 KiB applies.
-- The `model` field of the request names a model entry of the gateway. The answering model is the `model` field of the response. Its value comes from the provider. An OpenAI response can name `gpt-6-luna` without a version. Then a model change behind that name is not visible to the model condition of FR-041. The tests did not call OpenAI, thus this behavior is not known.
+- The `model` field of the request names a model entry of the gateway. The answering model is the `model` field of the response. Its value comes from the provider. An OpenAI response can name `gpt-6-luna` without a version. Then a model change behind that name is not visible to a policy that requires one model name. The tests did not call OpenAI, thus this behavior is not known.
 - The gateway route for decisions must not have the ExtProc policy. Otherwise, ExtProc gets its own model request.
 
 **Alternatives considered**: The `openai-go` SDK adds a large dependency for one request type. A
 direct System One client removes the common contract that the issue prefers. An `input_json` part
 works only for OpenAI-format upstreams. A setting that selects the part for each upstream adds a
-configuration key and a second fingerprint for one question set.
+configuration key.
 
 ## D-04 — One status results from each assessment attempt
 
@@ -253,28 +253,10 @@ authorization decision" occurs two times for an assessed call.
 **Alternatives considered**: A second policy package for the second evaluation divides one
 decision between two documents.
 
-## D-06 — Fingerprints are full SHA-256 values of canonical JSON
+## D-06 — Withdrawn: fingerprints are full SHA-256 values of canonical JSON
 
-**Decision**: A fingerprint is the SHA-256 value of a canonical JSON document, as 64 hexadecimal
-characters with a prefix: `qs-` or `tc-`. The document starts with a format version. The
-canonical form is the Go `encoding/json` output of a generic value: sorted keys, no HTML escapes,
-and numbers as the source wrote them.
-
-The examples in the spec show eight characters to keep them short. Real values have 64
-characters. In an HTTP body of the spec, `...` marks the shortened value (Principle XIV).
-
-The canonical document of the question set contains each field of each question, because the
-model receives each field (FR-029, [contracts/decision-request.md](contracts/decision-request.md)
-section 5).
-
-**Rationale**: A short value lets a server search for a second definition with the same
-fingerprint. The standard library supplies the hash (Principle III).
-
-**Consequence**: A new format version changes all fingerprints. The operator must then do a new
-evaluation run.
-
-**Alternatives considered**: RFC 8785 canonical JSON needs a new dependency. Its extra precision
-is not necessary, because the same binary calculates all values.
+Withdrawn on 2026-11-26 (D-18). The feature has no fingerprint of the questions or of a tool
+definition.
 
 ## D-07 — The broker state finds a second identical call
 
@@ -331,45 +313,9 @@ instances and is fresh after the read.
 that then proceed automatically. This is against FR-045. A memory of outcomes in each instance
 does not satisfy FR-008 for two or more instances.
 
-## D-08 — The evaluation run is the first subcommand of the ExtProc binary
+## D-08 — Withdrawn: the evaluation run is the first subcommand of the ExtProc binary
 
-**Decision**: The ExtProc binary gets the subcommand `assessment evaluate`. It uses the same
-packages as the service for the question set, the context, the model request, the policy, and the
-conditions of FR-041. It reads the service configuration, a case file, and one tool listing file
-for each server. It writes a report and an evaluation record. The contract is in
-[contracts/assessment-files.md](contracts/assessment-files.md).
-
-The run calculates the 95% upper bound as an exact one-sided Clopper–Pearson bound. It uses the
-`math` package and adds no dependency.
-
-**Rationale**: One code path for production and for the measurement is the purpose of the run
-(FR-050). The binary has only a root command today (`cmd/extproc-token-exchange/root.go:33`). The
-subcommand must not change the behavior of the root command.
-
-**Consequence**: `RegisterFlags` (`internal/extproc/config/loader.go:56`) registers local flags
-on the command that it gets. The root command calls it (`root.go:354`), and a subcommand does not
-inherit these flags. Thus, the subcommand calls `RegisterFlags` for itself and then
-`LoadWithCommand`. `Validate` requires the full service configuration, including the `oauth2`
-keys. The run thus uses the configuration file of the service without a change. The subcommand
-does not require that `evaluation_record_file` exists, because the run writes that file.
-
-The run builds the policy input of each case with the production input builder. A case can
-supply the request values and the context values of the production input, and the run uses
-documented defaults for absent values ([contracts/assessment-files.md](contracts/assessment-files.md) section 4).
-
-The subcommand has the flag `--config` and loads the configuration in a mode that does not
-examine `evaluation_record_file`. `Load` reads the configuration path from `config_path` today
-(`internal/extproc/config/loader.go:121`).
-
-The starter case set has a tuning part and a validation part. The project changes questions and
-thresholds only with the tuning part. It publishes the false-approval rate and its bound only
-from the validation part (R-16, FR-053).
-
-The run sets `input.assessment.evaluated` to `true` for each case. Thus, a policy rule that
-requires `evaluated` applies in the run as it will apply in production after the record exists.
-
-**Alternatives considered**: A separate binary doubles the release and container work. A test
-helper is not usable by operators.
+Withdrawn on 2026-11-26 (D-18). The feature has no evaluation run and no subcommand.
 
 ## D-09 — Withdrawn: the broker stores the summary in one JSON column
 
@@ -380,32 +326,24 @@ migration.
 
 Withdrawn on 2026-11-26 (D-16). The approval page does not change.
 
-## D-11 — The evaluation record is a YAML file that the service reads at startup
+## D-11 — Withdrawn: the evaluation record is a YAML file that the service reads at startup
 
-**Decision**: ExtProc reads the evaluation record one time at startup with strict decoding. An
-unknown key, a missing required key, or a file larger than 1 MiB stops the startup. The service
-does not read the file again while it operates. The questions and the organization values
-are not in a file of their own. They are keys of the service configuration
-(D-17).
+Withdrawn on 2026-11-26 (D-18). The feature has no evaluation record. The questions and the
+organization values are keys of the service configuration (D-17).
 
-**Rationale**: A fingerprint must be stable while the service operates. A startup error shows a
-mistake at once (FR-028).
+## D-12 — The audit record has no tool name
 
-**Alternatives considered**: A reload while the service operates changes fingerprints between
-two calls and makes the audit trail difficult to read.
-
-## D-12 — The audit record obeys the logging standard for tool names
-
-**Decision**: The audit record `assessment.tool_call.assessed` always contains the target server
-name and the tool context fingerprint. It contains the tool name only if the evaluation record
-names the tool. The contract is in [contracts/observability.md](contracts/observability.md).
+**Decision**: The audit record `assessment.tool_call.assessed` contains the target server name,
+the rule name, the answering model, the answers, and a reference to the arguments. It does not
+contain the tool name. The contract is in [contracts/observability.md](contracts/observability.md).
 
 **Rationale**: `coding-standards/LOGGING.md` section 6.2 permits a tool name only if
-configuration bounds it. The evaluation record is configuration. The target server name comes
-from the gateway configuration. Each automatic approval has a tool in the evaluation record, thus
-its audit record always contains the tool name.
+configuration bounds it. The tool name of a call comes from the agent, and no configuration of
+the feature lists tools. The target server name comes from the gateway configuration, and the
+rule name comes from the policy of the operator.
 
-**Consequence**: FR-060 of the spec changes to agree with this decision.
+**Consequence**: An auditor finds the tool of an automatic approval through the rule name, or
+through the decision log of the policy engine, which has the full policy input.
 
 **Existing deviation**: The existing record "opa authorization decision"
 (`internal/extproc/authorization/authorizer.go:323-332`) logs `tool_name` from the request for
@@ -548,7 +486,7 @@ the approver.
 - The feature needs no migration, no OpenAPI change, no web component, and no browser test.
 - The approval page does not show that a model contributed to the two values. It shows no notice for a failed assessment. The policy sees the assessment status and selects the description for that case.
 - The system cannot make sure that a description is a constant text. A policy can format an argument value or an answer value into it, as it can today. The authoring rules and the example policy use constant texts (FR-039, SR-008).
-- The answering model and the question set fingerprint of a call that waits for a person are only in the audit record of ExtProc. The approval record does not have them.
+- The answering model of a call that waits for a person is only in the audit record of ExtProc and in the decision log of the policy engine. The approval record does not have it.
 
 **Alternatives considered**: A new result field for one statement duplicates the description. A
 finding list from the policy keeps a second text channel to the approver and all broker changes.
@@ -562,17 +500,16 @@ in `validate.go`. The key `questions` is a list, as `rules` is in the impersonat
 of the broker. Its default value is the default question set of the spec. A list in the
 configuration replaces the full default list. The feature has no catalog file, no question set
 file, and no file format of its own for these values. The contract is in
-[contracts/assessment-files.md](contracts/assessment-files.md).
+[contracts/assessment-configuration.md](contracts/assessment-configuration.md).
 
 **Rationale**: The values are deployment configuration, as the endpoint and the model are. One
 configuration file with one loader is easier to operate than two. With a default set, an operator
-enables the feature without writing a question, and the project can measure and publish results
-for one known set (FR-054).
+enables the feature without writing a question.
 
 **Consequences**:
 
 - A policy refers to the default questions by name. The names are part of the product contract for one release.
-- A release that changes a default question changes the question set fingerprint of each deployment that uses the default set. Automatic approval then stops until a new evaluation run. The release notes must state the change.
+- A release that changes a default question changes the answers of each deployment that uses the default set. The thresholds of a policy can then be wrong. The release notes must state the change (SR-010).
 - The existing loader ignores a key that the schema does not have. Thus, a wrong key name does not stop the startup, as for each other key of the service.
 
 **Quality of the default questions**: The smoke test of 2026-11-24 showed weak answers for three
@@ -588,12 +525,8 @@ local model"). On 2026-11-26, the spec changed their wording:
 `leaves_organization` and `changes_access` gave clear answers and did not change.
 
 No model measured the new wording. A container without a model wrote this revision. Thus, the
-revision is a hypothesis, and these controls apply:
-
-- The project measures each default question on its own, with expected answers for each case and a minimum number of cases for each answer (FR-054). The cases include difficult cases for the answer no.
-- The evaluation run and this measurement are parts of the same pull request as the feature. The pull request does not merge with a default question that has no published results and no approval of the stakeholder (SC-011).
-- The project changes questions only with the tuning part of the case set and publishes results only from the validation part (FR-053).
-- The project measures with each model that it can reach, and it names each model with its results. A result for one model does not apply to a different model (R-19, R-20).
+revision is a hypothesis. A measurement of the questions is out of scope (D-18), and the
+documentation states that the default questions have no measured results.
 
 **Argument values**: The system sends the tool name and the arguments of each assessed call as
 the agent sent them, and the tool definition as the server listed it. It does not filter,
@@ -614,9 +547,35 @@ deployment keeps the values in the organization.
 **Alternatives considered**: A separate catalog file or a question set file. The stakeholder
 rejected the two on 2026-11-26: the service has one configuration approach, and the name
 "catalog" suggests a list of servers. A set of questions that each operator must write gives no
-default and no common measured result.
+default.
 
-## Verification record## Verification record
+## D-18 — Measurement is out of scope, and automatic approval has no evaluation record
+
+**Decision**: The feature does not record cases, measure a model, or tune questions and
+thresholds. It has no evaluation run, no case set, no evaluation record, and no fingerprint. A
+call proceeds automatically if four conditions are true: the mode is `auto_approve`, the policy
+result is `allow` with a rule name, the assessment status is `complete`, and no permanent denial
+applies (FR-041).
+
+**Rationale**: The stakeholder decided this on 2026-11-26. The model answers are an input of the
+policy. Thus, the decision logs of the policy engine already show the call, the answers, and the
+decision, if the operator enables these logs. An operator can use them for an analysis and for
+tuning outside the product. The product does not need a second mechanism for that work.
+
+**Consequences**:
+
+- The operator selects the thresholds of each automatic approval rule and is responsible for its false-approval rate. The product gives no number for that rate.
+- A changed tool definition, a changed question, or a changed model changes the answers. The system does not stop automatic approval after such a change, and it does not report the change. A policy can require one answering model name, because the policy input has that name.
+- The default questions and the example thresholds have no measured results. The documentation states this (SR-010).
+- The record of the `recommend` mode stays: it shows that a rule approves a call in the `auto_approve` mode (FR-044). An operator can count these records before the change of the mode.
+
+**Alternatives considered**: An evaluation run on the production code path with a labeled case
+set, an evaluation record with fingerprints of the questions and of each tool definition, and a
+measured default question set. This design was a part of the feature until 2026-11-26. It gives
+a measured false-approval rate and a stop after each change, and it adds a subcommand, three
+file formats, and a case set that the project must maintain.
+
+## Verification record
 
 The verification ran on 2026-11-24 on macOS (arm64) with Docker Engine 29.5.2 and
 `testcontainers-go` v0.44.0. The test files stay in the repository.
@@ -638,6 +597,5 @@ see the values.
 These subjects were not tested:
 
 - A hosted decision model. The smoke test used one local model only. The answers, the latency, and the `model` value of the OpenAI and TypeSafe services are not known.
-- The `model` value as a version check. The local server returned the requested name `winnow:e4b`, not a versioned identifier. A provider that does the same hides a change of weights from the model condition of FR-041. The operator documentation must state this.
+- The `model` value as a version check. The local server returned the requested name `winnow:e4b`, not a versioned identifier. A provider that does the same hides a change of weights from a policy that requires one model name. The operator documentation must state this.
 - MCP servers other than `mcp-go`, listings larger than 70 KB, and event streams with more than one event.
-- The measured results of the example policy on the starter case set. The spec requires them before publication, and they need a real model.

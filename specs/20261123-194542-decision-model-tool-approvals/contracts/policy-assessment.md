@@ -30,11 +30,6 @@ The input never contains approval records (FR-034).
   "assessment": {
     "status": "complete",
     "model": "jev-1.14.0",
-    "question_set": "qs-<64 hexadecimal characters>",
-    "evaluated": false,
-    "tool": {
-      "context": "tc-<64 hexadecimal characters>"
-    },
     "answers": {
       "leaves_organization": {"type": "predicate", "status": "answered", "probability": 0.99},
       "persistent_effect": {
@@ -52,10 +47,7 @@ The input never contains approval records (FR-034).
 | Field | Values | Rules |
 |---|---|---|
 | `status` | `complete`, `incomplete`, `timeout`, `unavailable`, `context_too_large`, `definition_missing` | Always present. |
-| `model` | string | The model that the response names. Absent if no response arrived. |
-| `question_set` | fingerprint | Always present. |
-| `evaluated` | boolean | True only if the evaluation record contains the model, the question set, and the tool context. |
-| `tool.context` | fingerprint | See the table of keys for each status. |
+| `model` | string | The model that the response names. Absent if no response arrived. A policy can require one model name. |
 | `answers` | map with the question name as the key | Always present, with one entry for each question of the question set. If no response arrived, each entry has the status `missing`. |
 | `answers.*.status` | `answered`, `refused`, `missing`, `invalid` | Always present in an entry. |
 | `answers.*.probability` | number from 0 to 1 | Only for an answered `predicate`. |
@@ -66,14 +58,14 @@ A higher value always shows more risk (FR-027).
 
 Keys for each status (FR-031, FR-033):
 
-| Status | `model` | `tool` | `answers` |
-|---|---|---|---|
-| `definition_missing`, `context_too_large` | absent | absent | each entry `missing` |
-| `timeout`, `unavailable` | absent | present | each entry `missing` |
-| `incomplete` | present if the response has a valid `model` value | present | the validated state of each entry |
-| `complete` | present | present | each entry `answered` |
+| Status | `model` | `answers` |
+|---|---|---|
+| `definition_missing`, `context_too_large` | absent | each entry `missing` |
+| `timeout`, `unavailable` | absent | each entry `missing` |
+| `incomplete` | present if the response has a valid `model` value | the validated state of each entry |
+| `complete` | present | each entry `answered` |
 
-`status`, `question_set`, and `evaluated` are present for each status. A policy must read
+`status` is present for each status. A policy must read
 `status` first. In Rego, a comparison with an absent key is undefined, and a comparison with `0`
 or `[]` is not.
 
