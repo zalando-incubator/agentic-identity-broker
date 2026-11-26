@@ -8,8 +8,8 @@ and final evidence audits are not declared complete. Container-backed results ar
 
 The supplied approval is mjungsbluth's 2026-11-08 approval of all 15 items at
 https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6708996503.
-Implementation records this in ADRs 049, 050, approved ADR 050 Revision 1 and DEC-006's evidence record.
-The local `origin/main` tree contains neither ADR 049 nor ADR 050; Revision 1 is a pre-merge revision,
+Implementation records this in ADRs 20261106-141214-service-session-recovery-return, 20261106-141214-virtual-service-scopes, approved ADR 20261107-143056-virtual-service-scopes-revision-1 and DEC-006's evidence record.
+The local `origin/main` tree contains neither ADR 20261106-141214-service-session-recovery-return nor ADR 20261106-141214-virtual-service-scopes; Revision 1 is a pre-merge revision,
 not an amendment of a default-branch ADR. The feature-local ADR revision becomes a reference pointer.
 The specification and plan are unchanged.
 

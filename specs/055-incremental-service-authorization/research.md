@@ -107,7 +107,7 @@ Transient results never write an unusability marker.
 **Proposed (DEC-003)**: Definitive provider refresh rejection stays persisted through merged
 [ADR 046](../../adrs/046-observed-refresh-token-rejection.md)'s observed rejection,
 `UserSession.RefreshRejectedAt` with `requires_reauthentication`, with no schema change. (Before
-ADR 046 merged, the #271 marker reused `refresh_token_expires_at`.) ADR 049 records this behavior and retires ADR 044's stale "leaves the stored session unchanged" clause.
+ADR 046 merged, the #271 marker reused `refresh_token_expires_at`.) ADR 20261106-141214-service-session-recovery-return records this behavior and retires ADR 044's stale "leaves the stored session unchanged" clause.
 Every consumer reads the same row: consent, the session list and detail, tool exchange, and the
 background refresh and sweep. Reconnect precedence and update-only termination stay as ADR 038 and
 the `WithLockedSession` contract define them (FR-018).
@@ -326,7 +326,7 @@ The path keeps the UUID, and the return page uses the emitted scope identifier. 
 same-origin `redirect_uri` validation already accepts this target. The callback appends its
 existing `service_id` and `success` parameters. Grant-denial links remain `<public URL>/agents/<id>`.
 
-**Proposed (ADR-RECOVERY)**: Draft [ADR 049](./adrs/049-service-session-recovery-return.md) replaces
+**Proposed (ADR-RECOVERY)**: Draft [ADR 20261106-141214-service-session-recovery-return](./adrs/20261106-141214-service-session-recovery-return.md) replaces
 two clauses of ADR 044: the fixed `/sessions` return clause and the "leaves stored session
 unchanged" clause. It keeps every other ADR 044 protection. ADR 044 is not edited.
 
@@ -441,5 +441,5 @@ was rejected because it is a backward-incompatible Admin API change outside this
 - `anyDelegatedSessionUnusable` does not try a refresh for granted services that were not
   requested. Changing it would alter unrelated authorization behavior. The maintainer can decide
   whether to file an issue.
-- ADR 044's stale rejected-session clause is corrected by ADR 049 as part of this feature, so no
+- ADR 044's stale rejected-session clause is corrected by ADR 20261106-141214-service-session-recovery-return as part of this feature, so no
   separate issue is needed.

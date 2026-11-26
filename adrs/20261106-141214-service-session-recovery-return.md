@@ -1,4 +1,4 @@
-# ADR 049: Service-Specific Session Recovery Return
+# Service-Specific Session Recovery Return
 
 **Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6857846872)
 **Date**: 2026-10-29

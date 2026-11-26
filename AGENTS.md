@@ -209,16 +209,16 @@ See Principle II in `.specify/memory/constitution.md`.
 | 041 | `adrs/041-oauth2-client-secret-file-overrides.md` | Explicit stored/filesystem credentials and established client identity |
 | 042 | `adrs/042-agent-allowlisted-private-use-redirect-uris.md` | Private-use (custom-scheme) redirect URIs only when the Agent allowlists them; CIMD also needs the document entry |
 | 043 | `adrs/043-inbound-cimd-private-key-jwt.md` | Inbound CIMD client assertion validation, replay protection, and refresh authentication strength |
-| 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions/<identifier>` return URI under `049-service-session-recovery-return` (current canonical ID or UUID) |
+| 044 | `adrs/044-service-specific-session-recovery-url.md` | Recoverable session `error_uri` starts resolved service OAuth2 with encoded same-origin `/sessions/<identifier>` return URI under `20261106-141214-service-session-recovery-return` (current canonical ID or UUID) |
 | 044 | `adrs/044-client-registration-independent-of-authentication.md` | Independent static/CIMD registration and token-endpoint method, keyless CIMD public clients, guarded migrations |
 | 045 | `adrs/045-agent-subject-impersonation.md` | Signed self-agent issuance without user delegation; target-derived subject; configurable third-party detection |
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
 | 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc grant-context resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
-| 049 | `adrs/049-service-session-recovery-return.md` | Service-page recovery return (`/sessions/<identifier>`); rejected sessions follow ADR 046 (Feature 055) |
-| 050 | `adrs/050-virtual-service-scopes.md` | Virtual service scopes, shared usability/coverage in `domain/servicescope/` and immutable refresh assurance (Feature 055) |
-| 050 Revision 1 | `adrs/050-virtual-service-scopes-revision-1.md` | Proxy refresh pre-forward syntax/existence/eligibility checks; dot-segment canonical-ID limitation deferred to #446 |
-| 050 Revision 2 | `adrs/050-virtual-service-scopes-revision-2.md` | Optional `aib.tokenexchange.resource_metadata_url` challenge field; body-path grant-context denial adds the service-scope `insufficient_scope` challenge; local impersonation applies virtual-scope checks (agent subjects rejected) |
+| 20261106-141214 | `adrs/20261106-141214-service-session-recovery-return.md` | Service-page recovery return (`/sessions/<identifier>`); rejected sessions follow ADR 046 (Feature 055) |
+| 20261106-141214 | `adrs/20261106-141214-virtual-service-scopes.md` | Virtual service scopes, shared usability/coverage in `domain/servicescope/` and immutable refresh assurance (Feature 055) |
+| 20261107-143056 | `adrs/20261107-143056-virtual-service-scopes-revision-1.md` | Proxy refresh pre-forward syntax/existence/eligibility checks; dot-segment canonical-ID limitation deferred to #446 |
+| 20261122-103452 | `adrs/20261122-103452-virtual-service-scopes-revision-2.md` | Optional `aib.tokenexchange.resource_metadata_url` challenge field; body-path grant-context denial adds the service-scope `insufficient_scope` challenge; local impersonation applies virtual-scope checks (agent subjects rejected) |
 
 ## Domain Glossary
 

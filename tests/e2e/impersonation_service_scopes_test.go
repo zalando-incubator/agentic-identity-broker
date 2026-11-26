@@ -16,7 +16,7 @@ import (
 
 // US4 S5 from specs/055-incremental-service-authorization/spec.md: impersonation mints local broker
 // tokens, so the Virtual Service Scope rules (FR-002, FR-003, FR-020) apply to it as they do to
-// authorization and local refresh (050-virtual-service-scopes-revision-2).
+// authorization and local refresh (20261122-103452-virtual-service-scopes-revision-2).
 var _ = Describe("Impersonation with Virtual Service Scopes", func() {
 	var (
 		journey *incrementalJourney
@@ -74,6 +74,7 @@ var _ = Describe("Impersonation with Virtual Service Scopes", func() {
 		Expect(body).ToNot(HaveKey("access_token"))
 	}
 
+	// US4 S5 from specs/055-incremental-service-authorization/spec.md
 	It("mints a covered, usable service scope in its requested form", func() {
 		journey.usableGitHub()
 		for _, scope := range []string{journey.githubScope(), journey.scopeURL(journey.cast.GitHub.ID.String())} {
@@ -84,6 +85,7 @@ var _ = Describe("Impersonation with Virtual Service Scopes", func() {
 		}
 	})
 
+	// US4 S5 from specs/055-incremental-service-authorization/spec.md
 	DescribeTable("rejects a service scope that authorization would reject, minting nothing",
 		func(identifier func() string) {
 			journey.usableGitHub()
@@ -94,10 +96,12 @@ var _ = Describe("Impersonation with Virtual Service Scopes", func() {
 		Entry("eligible service the user's grant does not cover", func() string { return "jira" }),
 	)
 
+	// US4 S5 from specs/055-incremental-service-authorization/spec.md
 	It("rejects a covered service without a usable session", func() {
 		expectInvalidScope(impersonate(journey.principal, journey.githubScope()))
 	})
 
+	// US4 S5 from specs/055-incremental-service-authorization/spec.md
 	It("never grants a service scope to an agent subject", func() {
 		journey.usableGitHub()
 		expectInvalidScope(impersonate(journey.cast.Agent.ID.String(), journey.githubScope()))

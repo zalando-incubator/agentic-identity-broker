@@ -11,7 +11,7 @@
 # denial for a service named by the concurrent exchange also carries the
 # insufficient_scope challenge with that service's scope and the route's optional
 # aib.tokenexchange.resource_metadata_url
-# (adrs/050-virtual-service-scopes-revision-2.md). Grant context requires
+# (adrs/20261122-103452-virtual-service-scopes-revision-2.md). Grant context requires
 # authorization.enabled. Disabled mode (the default) is unchanged.
 
 grpc:

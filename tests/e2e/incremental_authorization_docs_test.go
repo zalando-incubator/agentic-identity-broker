@@ -76,6 +76,7 @@ var _ = Describe("Incremental Service Authorization Operator Guide", func() {
 				if server, ok := parsed["server"].(map[string]any); ok {
 					publicURL := server["enduser"].(map[string]any)["public_url"].(string)
 					Expect(parsed["oauth2_authorization_server"]).To(HaveKey("mode"))
+					challenges := 0
 					for _, challenge := range fencedBlocks(document, "http") {
 						for _, line := range strings.Split(challenge, "\n") {
 							if !strings.HasPrefix(line, "WWW-Authenticate:") {
@@ -87,8 +88,10 @@ var _ = Describe("Incremental Service Authorization Operator Guide", func() {
 							recovery, err := url.Parse(attributes["error_uri"])
 							Expect(err).NotTo(HaveOccurred())
 							Expect(recovery.Query().Get("redirect_uri")).To(Equal(attributes["scope"]))
+							challenges++
 						}
 					}
+					Expect(challenges).To(BeNumerically(">", 0), "the guide must show at least one challenge example")
 					brokerConfig = true
 				}
 			}

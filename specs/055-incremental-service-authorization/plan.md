@@ -45,9 +45,9 @@ UUID (FR-019).
 
 Two ADRs record the decisions, and one Proposed revision draft amends the second:
 
-- [ADR 048](../../adrs/048-service-session-recovery-return.md) partially supersedes ADR 044.
-- [ADR 049](../../adrs/049-virtual-service-scopes.md) introduces virtual scopes.
-- [ADR 049 Revision 1](./adrs/049-virtual-service-scopes-revision-1.md) (Proposed) adds proxy-refresh
+- [ADR 20261106-141214-service-session-recovery-return](../../adrs/20261106-141214-service-session-recovery-return.md) partially supersedes ADR 044.
+- [ADR 20261106-141214-virtual-service-scopes](../../adrs/20261106-141214-virtual-service-scopes.md) introduces virtual scopes.
+- [ADR 20261107-143056-virtual-service-scopes-revision-1](./adrs/20261107-143056-virtual-service-scopes-revision-1.md) (Proposed) adds proxy-refresh
   pre-forward validation and records the dot-segment limitation.
 
 ## Maintainer decisions — 2026-11-22
@@ -90,9 +90,9 @@ Validation: test-first audit/handler regressions, shared reason tests, `just che
 The [selected proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7040265475) limits this remediation to F1, F2, F3, F4, F6 and F7. It does not expand functional behavior or resolve F5.
 
 - Inject the builder logger into `TokenOutcomeService` through its constructor. `Proxy` emits scope-refusal audits with the existing domain `scopeRejectionReason` and error-kind constants. Remove the adapter reason taxonomy and duplicate audits; preserve HTTP responses and `oauth2.token_proxy` status/attributes. Domain tests own audit classification, and handler tests exercise the real domain service to assert exactly one safe audit plus the unchanged span/response.
-- Align the gateway guide, service-management guide, `initiateOAuth2Flow` description and root ADR index row with `049-service-session-recovery-return`: encoded same-origin `/sessions/<identifier>` using the current canonical ID or UUID fallback. The gateway example includes `scope`; optional valid `resource_metadata` remains supported, and `realm` is not supplied.
+- Align the gateway guide, service-management guide, `initiateOAuth2Flow` description and root ADR index row with `20261106-141214-service-session-recovery-return`: encoded same-origin `/sessions/<identifier>` using the current canonical ID or UUID fallback. The gateway example includes `scope`; optional valid `resource_metadata` remains supported, and `realm` is not supplied.
 - Wrap PostgreSQL `CreateSuccessor` with `startStorageSpan` and a named error return. Document `storage.create_successor.refresh_token_session` and the existing `oauth2.token_proxy` refusal values/status in `contracts/observability.md`. No metric, instrumentation scope or namespace is added.
-- Document Grant Coverage and the domain/log-to-consent-API usability mapping in the architecture glossary, and index the already accepted `050-virtual-service-scopes-revision-1`. No ADR is accepted or revised by this remediation.
+- Document Grant Coverage and the domain/log-to-consent-API usability mapping in the architecture glossary, and index the already accepted `20261107-143056-virtual-service-scopes-revision-1`. No ADR is accepted or revised by this remediation.
 
 Validation uses test-first domain audit and storage-span regressions, `just check`, `just test`, `just test-integration`, and complete backend/frontend feature acceptance journeys. Container-backed validation remains assigned to pushed-commit container tests.
 
@@ -170,12 +170,12 @@ browser execution evidence; there are now 16 sign-off items, including ADR-SCOPE
 | DEC-002 | Decision | Proxy refresh strips virtual scopes and forwards the upstream outcome unchanged. It applies no post-response usability check and does not attest to usability. | specs/055-incremental-service-authorization/spec.md:706; specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161 |
 | DEC-003 | Decision | Definitive provider refresh rejection stays persisted through merged ADR 046's observed rejection (`UserSession.RefreshRejectedAt`, `requires_reauthentication`) as the single unusability state for all consumers, with no schema change. Transient failures never write it. | specs/055-incremental-service-authorization/research.md:80-122 |
 | DEC-004 | Decision | Schema change: migration `048_add_service_scope_bindings` adds nullable `service_scope_bindings JSONB` to codes and refresh sessions. Code bindings lie within granted `Scope`; refresh bindings remain an immutable assurance set even after durable scope narrowing. Successors inherit the map exactly and cannot widen predecessor `Scope`. | specs/055-incremental-service-authorization/data-model.md:97-131; specs/055-incremental-service-authorization/data-model.md:147-173 |
-| ADR-RECOVERY | ADR | ADR 048. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records ADR 046's persisted rejection. It supersedes only those two ADR 044 clauses. | adrs/048-service-session-recovery-return.md:1-105; specs/055-incremental-service-authorization/contracts/enduser-api.md:318-325 |
-| ADR-SCOPES | ADR | ADR 049. Virtual Service Scope semantics, shared effective-scope usability, candidate consent checks, protected post-Save re-entry, durable local narrowing with immutable assurance bindings, proxy boundaries, identity pinning and non-advertisement. | adrs/049-virtual-service-scopes.md:1-104 |
+| ADR-RECOVERY | ADR | ADR 20261106-141214-service-session-recovery-return. Recovery `error_uri` returns to `/sessions/<identifier>`. The ADR records ADR 046's persisted rejection. It supersedes only those two ADR 044 clauses. | adrs/20261106-141214-service-session-recovery-return.md:1-105; specs/055-incremental-service-authorization/contracts/enduser-api.md:318-325 |
+| ADR-SCOPES | ADR | ADR 20261106-141214-virtual-service-scopes. Virtual Service Scope semantics, shared effective-scope usability, candidate consent checks, protected post-Save re-entry, durable local narrowing with immutable assurance bindings, proxy boundaries, identity pinning and non-advertisement. | adrs/20261106-141214-virtual-service-scopes.md:1-104 |
 | API-PROXY-REFRESH-VALIDATION | API | Before forwarding a proxy-mode refresh whose `scope` carries a broker-prefixed token, validate syntax, resolve the agent through the existing client resolution, and check service existence and eligibility. Malformed, unknown and ineligible scopes return `400 invalid_scope` (`requested service scope is not permitted`); lookup failure returns `500 server_error`; neither calls upstream. Ordinary-scope-only requests keep their existing path. No provider-usability check and no veto of upstream responses or rotation. | specs/055-incremental-service-authorization/contracts/enduser-api.md:128-161; specs/055-incremental-service-authorization/spec.md:125-136 |
 | DEC-005 | Decision | Scope dropped: the canonical IDs `.` and `..` are accepted as a known defect. No UUID fallback for their scopes, service pages or recovery links, and no change to canonical-ID validation in this feature; issue #446 restricts them. | specs/055-incremental-service-authorization/spec.md:137-146; specs/055-incremental-service-authorization/contracts/virtual-service-scope.md:65-71; specs/055-incremental-service-authorization/research.md:421-439 |
-| ADR-SCOPES-REV1 | ADR | ADR 049 Revision 1 draft. Decision 6 gains proxy-refresh pre-forward validation (API-PROXY-REFRESH-VALIDATION); Consequences and Alternatives record the dot-segment limitation (DEC-005). Implementation applies it to `adrs/049-virtual-service-scopes.md` after approval. | adrs/049-virtual-service-scopes-revision-1.md:23-62 |
-| ADR-SCOPES-REV2 | ADR | `adrs/050-virtual-service-scopes-revision-2.md` (Accepted; approved by mjungsbluth on 2026-11-25 and applied to ADR 050). Records the optional `aib.tokenexchange.resource_metadata_url` route field and challenge placement, the `insufficient_scope` challenge added to body-path grant-context denials that the concurrent exchange attributes to a service (denial body unchanged), and local impersonation applying the virtual-scope checks (agent subjects rejected; narrows merged ADR `032-impersonation-requires-user-delegation`'s scope-intersection non-goal for virtual scopes only). | adrs/050-virtual-service-scopes-revision-2.md |
+| ADR-SCOPES-REV1 | ADR | ADR 20261107-143056-virtual-service-scopes-revision-1 draft. Decision 6 gains proxy-refresh pre-forward validation (API-PROXY-REFRESH-VALIDATION); Consequences and Alternatives record the dot-segment limitation (DEC-005). Implementation applies it to `adrs/20261106-141214-virtual-service-scopes.md` after approval. | adrs/20261107-143056-virtual-service-scopes-revision-1.md:23-62 |
+| ADR-SCOPES-REV2 | ADR | `adrs/20261122-103452-virtual-service-scopes-revision-2.md` (Accepted; approved by mjungsbluth on 2026-11-25 and applied to ADR 20261106-141214-virtual-service-scopes). Records the optional `aib.tokenexchange.resource_metadata_url` route field and challenge placement, the `insufficient_scope` challenge added to body-path grant-context denials that the concurrent exchange attributes to a service (denial body unchanged), and local impersonation applying the virtual-scope checks (agent subjects rejected; narrows merged ADR `032-impersonation-requires-user-delegation`'s scope-intersection non-goal for virtual scopes only). | adrs/20261122-103452-virtual-service-scopes-revision-2.md |
 | DEC-006 | Decision | Proposed one-time exception for missing contemporaneous compiling semantic-red execution evidence for the original US1 S4/US2 S2 browser journeys only. Require retrospective pre-behavior sensitivity evidence and current complete green/browser/screenshot/accessibility/full-gate evidence; do not claim historical test-first execution or waive new revision TDD. | specs/055-incremental-service-authorization/validation-evidence.md:29-65 |
 
 The approved API items also cover these mechanical consequences:
@@ -218,7 +218,7 @@ The approved API items also cover these mechanical consequences:
 |---|---|---|
 | Security-first | Pass | All new checks fail closed. Eligibility is never widened by a scope. The JWE and the bindings pin identity. Origins come from configuration only. Challenge values are validated. Transient failures are distinct from definitive ones. Audit logging is structured and contains no credentials (SR-005). |
 | Architecture docs | Pass | Update the `ARCHITECTURE.md` sections on OAuth2 server mode, token exchange recovery, consent, ExtProc challenge, and session management. Also update the glossary, the ADR index, and the versioning note. |
-| ADRs | Pass with precondition | ADR 048 (ADR-RECOVERY) and ADR 049 (ADR-SCOPES) are in `adrs/` with recorded approval; the feature-local files are pointers. ADR 049 Revision 1 (ADR-SCOPES-REV1) is a Proposed draft in this feature's `adrs/`. After approval, implementation applies it to `adrs/049-virtual-service-scopes.md` and records the approval there. ADR 044 is not edited. |
+| ADRs | Pass with precondition | ADR 20261106-141214-service-session-recovery-return (ADR-RECOVERY) and ADR 20261106-141214-virtual-service-scopes (ADR-SCOPES) are in `adrs/` with recorded approval; the feature-local files are pointers. ADR 20261107-143056-virtual-service-scopes-revision-1 (ADR-SCOPES-REV1) is a Proposed draft in this feature's `adrs/`. After approval, implementation applies it to `adrs/20261106-141214-virtual-service-scopes.md` and records the approval there. ADR 044 is not edited. |
 | Library-first security | Pass | No new cryptography. The design reuses the JWE token service, fosite, and PKCE. |
 | Zalando guidelines | Pass | Additive fields use snake_case and nullable objects. The new route is a resource read. Errors follow the existing handler error shape. |
 | End-user API docs | Pass | Update `docs/api/enduser-api.md` and `docs/reference/token-exchange.md`. Add `docs/guides/incremental-authorization.md` (FR-017) and link it from `docs/guides/token-exchange-gateway.md`. |
@@ -258,9 +258,9 @@ specs/055-incremental-service-authorization/
 │   ├── extproc-challenge.md       # ExtProc metadata field and challenge delta
 │   └── observability.md           # Feature-owned log contracts and safety evidence
 ├── adrs/
-│   ├── 048-service-session-recovery-return.md   # Pointer to accepted ADR 048
-│   ├── 049-virtual-service-scopes.md            # Pointer to accepted ADR 049
-│   └── 049-virtual-service-scopes-revision-1.md # Proposed revision (ADR-SCOPES-REV1)
+│   ├── 20261106-141214-service-session-recovery-return.md   # Pointer to accepted ADR 20261106-141214-service-session-recovery-return
+│   ├── 20261106-141214-virtual-service-scopes.md            # Pointer to accepted ADR 20261106-141214-virtual-service-scopes
+│   └── 20261107-143056-virtual-service-scopes-revision-1.md # Proposed revision (ADR-SCOPES-REV1)
 ├── wireframes/                    # Spec Wireloom renders (existing)
 ├── checklists/requirements.md
 └── tasks.md                       # Created by /speckit-tasks
@@ -377,7 +377,7 @@ domain imports stay narrow. Handlers stay thin. ExtProc changes stay inside
    no code change (DEC-005). The operator guide documents the limitation and issue #446.
 8. **Token exchange and ExtProc** ([contracts/extproc-challenge.md](./contracts/extproc-challenge.md)):
    The broker adds `scope` to recoverable errors after service resolution, and changes the
-   recovery return target (ADR 048). ExtProc decodes `scope`, reads the optional metadata field,
+   recovery return target (ADR 20261106-141214-service-session-recovery-return). ExtProc decodes `scope`, reads the optional metadata field,
    and appends validated attributes.
 9. **Session page** ([contracts/enduser-api.md §7](./contracts/enduser-api.md#7-get-apithird-partysessionsservice-service-session-detail-api-session-detail)):
    A domain read, `OAuth2SessionService.GetServiceSessionDetail(principal, identifier)`, resolves

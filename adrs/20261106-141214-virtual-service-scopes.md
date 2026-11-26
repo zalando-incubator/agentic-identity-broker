@@ -1,4 +1,4 @@
-# ADR 050: Virtual Service Scopes for Incremental Authorization
+# Virtual Service Scopes for Incremental Authorization
 
 **Status**: Accepted (approved by mjungsbluth on 2026-11-13: https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6857846872; Revision 2 approved by mjungsbluth on 2026-11-25)
 **Date**: 2026-10-29
@@ -164,11 +164,11 @@ services.
 
 ## References
 
-- [Approved Revision 1](050-virtual-service-scopes-revision-1.md) (proxy pre-forward validation and dot-segment limitation).
-- [Approved Revision 2](050-virtual-service-scopes-revision-2.md) (ExtProc challenge metadata, grant-context denial challenge and local impersonation; approved by mjungsbluth on 2026-11-25).
+- [Approved Revision 1](20261107-143056-virtual-service-scopes-revision-1.md) (proxy pre-forward validation and dot-segment limitation).
+- [Approved Revision 2](20261122-103452-virtual-service-scopes-revision-2.md) (ExtProc challenge metadata, grant-context denial challenge and local impersonation; approved by mjungsbluth on 2026-11-25).
 
 - Feature 055 [spec](../specs/055-incremental-service-authorization/spec.md), [research](../specs/055-incremental-service-authorization/research.md) R1–R8, [data model](../specs/055-incremental-service-authorization/data-model.md),
   and [contracts](../specs/055-incremental-service-authorization/contracts/).
 - [ADR 014](014-oauth2-server-mode.md), [ADR 016](016-authorization-session-anti-spoofing.md),
   [ADR 036 (ExtProc metadata input)](036-extproc-metadata-token-exchange-input.md),
-  [ADR 049](049-service-session-recovery-return.md).
+  [ADR 20261106-141214-service-session-recovery-return](20261106-141214-service-session-recovery-return.md).

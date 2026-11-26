@@ -401,7 +401,7 @@ func TestGrantContext_BodyPathPrecedence(t *testing.T) {
 
 // A consent denial for a service that the concurrent exchange names adds the disabled-mode
 // insufficient_scope challenge to the denial, so the agent can reauthorize
-// (adrs/050-virtual-service-scopes-revision-2.md).
+// (adrs/20261122-103452-virtual-service-scopes-revision-2.md).
 func TestGrantContext_BodyPathConsentDenialOffersServiceScopeChallenge(t *testing.T) {
 	const serviceScope = "https://broker.example.com/sessions/github"
 	const metadataURL = "https://gateway.example.com/.well-known/oauth-protected-resource/mcp"

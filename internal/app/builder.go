@@ -793,7 +793,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		WithDiscoveryTokenHTTPClient(discoveryTokenClient).
 		WithCredentialFileReader(credentialfile.New())
 
-	// Virtual Service Scopes (ADR 050) share one resolver and evaluator across authorization,
+	// Virtual Service Scopes (ADR 20261106-141214-virtual-service-scopes) share one resolver and evaluator across authorization,
 	// local issuance, impersonation and consent.
 	var serviceScopes *servicescope.Resolver
 	var serviceScopeEvaluator *servicescope.Evaluator

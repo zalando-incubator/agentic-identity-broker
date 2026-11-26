@@ -1,15 +1,15 @@
-# ADR 050 Revision 2 — ExtProc Challenge Metadata, Grant-Context Denial Challenge and Local Impersonation
+# Virtual Service Scopes Revision 2 — ExtProc Challenge Metadata, Grant-Context Denial Challenge and Local Impersonation
 
 **Status**: Accepted (approved by mjungsbluth on 2026-11-25)
 **Date**: 2026-11-22
-**Revises**: [`050-virtual-service-scopes`](050-virtual-service-scopes.md), introduced and accepted in this pull request.
+**Revises**: [`20261106-141214-virtual-service-scopes`](20261106-141214-virtual-service-scopes.md), introduced and accepted in this pull request.
 Under Principle II, the same pull request may revise it before merge. The changes below are
-applied to `adrs/050-virtual-service-scopes.md`, which records the approval, as for
-[`050-virtual-service-scopes-revision-1`](050-virtual-service-scopes-revision-1.md).
+applied to `adrs/20261106-141214-virtual-service-scopes.md`, which records the approval, as for
+[`20261107-143056-virtual-service-scopes-revision-1`](20261107-143056-virtual-service-scopes-revision-1.md).
 
 ## Context
 
-`050-virtual-service-scopes` Decision 7 says that clients learn virtual scopes from the token-exchange `scope` error
+`20261106-141214-virtual-service-scopes` Decision 7 says that clients learn virtual scopes from the token-exchange `scope` error
 member, "which the gateway copies into its `insufficient_scope` challenge, or from operator route
 configuration". Feature 055 implemented this in ExtProc with two decisions that no accepted ADR
 records:
@@ -19,12 +19,12 @@ records:
   attribute. [`036-extproc-metadata-token-exchange-input`](036-extproc-metadata-token-exchange-input.md) lists only `subject_token`
   and `resource_uri` in that namespace. [`044-service-specific-session-recovery-url`](044-service-specific-session-recovery-url.md)
   keeps "ExtProc response status, headers, and body rules" unchanged, and
-  [`049-service-session-recovery-return`](049-service-session-recovery-return.md) leaves that clause binding.
+  [`20261106-141214-service-session-recovery-return`](20261106-141214-service-session-recovery-return.md) leaves that clause binding.
 - **Grant-context mode.** With the [`048-authzen-delegation-pip`](048-authzen-delegation-pip.md) grant-context resolver
   enabled, a delegation denial takes precedence over the exchange error (`048-authzen-delegation-pip` §4). ExtProc
   returned the plain 403 `access_denied` JSON with the consent URL and no `WWW-Authenticate`
   header. A service that the grant does not cover therefore produced a challenge in the default
-  mode but none in grant-context mode, although `050-virtual-service-scopes`'s Context and Decision 7 name "the grant
+  mode but none in grant-context mode, although `20261106-141214-virtual-service-scopes`'s Context and Decision 7 name "the grant
   does not cover it" as a case the challenge must repair.
 
 The AuthZEN denial carries only an allowlisted grant detail (`reason_admin.code`) and the agent
@@ -35,7 +35,7 @@ broker's exchange error carries `access_denied`, the same consent URL as `error_
 resolved service's virtual `scope`. On the header-only path, ExtProc resolves before any exchange
 and calls exchange only after policy allows.
 
-- **Local impersonation.** `050-virtual-service-scopes` Decision 3 names authorization, consent,
+- **Local impersonation.** `20261106-141214-virtual-service-scopes` Decision 3 names authorization, consent,
   local issuance and token exchange as consumers of `internal/domain/servicescope/`, but local-mode
   impersonation was not one of them. It checked each requested scope only against the target
   Agent's `allowed_scopes` and copied the scopes into the minted token. With an unrestricted Agent
@@ -43,7 +43,7 @@ and calls exchange only after policy allows.
   rejected valid ones, contrary to this ADR's Consequences, which exempt virtual scopes from the
   allow list.
 
-## Changes to `050-virtual-service-scopes`
+## Changes to `20261106-141214-virtual-service-scopes`
 
 ### Decisions 3 and 4 (Local impersonation)
 
@@ -136,7 +136,7 @@ with:
   of the same namespace. Its two required inputs and their handling do not change.
 - [`044-service-specific-session-recovery-url`](044-service-specific-session-recovery-url.md): its clause that ExtProc response
   headers remain unchanged is superseded only for the `scope` and `resource_metadata` challenge
-  attributes and for the grant-context denial challenge above. `049-service-session-recovery-return`'s statement that every other
+  attributes and for the grant-context denial challenge above. `20261106-141214-service-session-recovery-return`'s statement that every other
   `044-service-specific-session-recovery-url` decision remains binding is read with this exception. Status, bodies and URL
   elicitation of existing responses do not change, and ExtProc still forwards the broker
   `error_uri` unchanged.

@@ -76,7 +76,7 @@ func (s *Server) resolveGrantContext(ctx context.Context, logger *slog.Logger, s
 // grantContextFailureResponse maps a resolution failure to the client response: 403 with the
 // consent URL for a denial, otherwise 503. A denial also carries the disabled-mode
 // insufficient_scope challenge when the concurrent body-path exchange names the service
-// (adrs/050-virtual-service-scopes-revision-2.md); the header-only path passes no exchange error.
+// (adrs/20261122-103452-virtual-service-scopes-revision-2.md); the header-only path passes no exchange error.
 func (s *Server) grantContextFailureResponse(ctx context.Context, err, exchangeErr error, resourceMetadata *structpb.Value) (*extprocv3.ProcessingResponse, Diagnostic) {
 	var denied *grantcontext.DeniedError
 	if !errors.As(err, &denied) {

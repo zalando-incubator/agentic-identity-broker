@@ -19,7 +19,7 @@ const claimServiceScopeBindings = "service_scope_bindings"
 
 const descriptionServiceScopeNotPermitted = "requested service scope is not permitted"
 
-// WithServiceScopes enables Virtual Service Scopes (ADR 050): they bypass the per-client
+// WithServiceScopes enables Virtual Service Scopes (ADR 20261106-141214-virtual-service-scopes): they bypass the per-client
 // allow-list, must carry a Service-Scope Binding and are revalidated on code exchange.
 func (p *Provider) WithServiceScopes(resolver *servicescope.Resolver, evaluator *servicescope.Evaluator) *Provider {
 	p.serviceScopes = resolver

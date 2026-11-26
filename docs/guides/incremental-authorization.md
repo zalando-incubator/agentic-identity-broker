@@ -2,8 +2,8 @@
 
 Use this guide to let an MCP client recover a tool call that failed because one broker-managed
 third-party service is not usable, without a silent reauthorization loop. The design is recorded in
-[ADR 049](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/049-service-session-recovery-return.md) and
-[ADR 050](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/050-virtual-service-scopes.md).
+[ADR 20261106-141214-service-session-recovery-return](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/20261106-141214-service-session-recovery-return.md) and
+[ADR 20261106-141214-virtual-service-scopes](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/adrs/20261106-141214-virtual-service-scopes.md).
 
 Every configured service has a broker-only **Virtual Service Scope**:
 
