@@ -204,12 +204,12 @@ func (h *saHandlerHarness) assertNoCredential(t *testing.T, responses ...*httpte
 	for _, span := range h.spans.Ended() {
 		spanText.WriteString(span.Name() + span.Status().Description)
 		for _, attribute := range span.Attributes() {
-			spanText.WriteString(attribute.Value.Emit())
+			spanText.WriteString(attribute.Value.String())
 		}
 		for _, event := range span.Events() {
 			spanText.WriteString(event.Name)
 			for _, attribute := range event.Attributes {
-				spanText.WriteString(attribute.Value.Emit())
+				spanText.WriteString(attribute.Value.String())
 			}
 		}
 	}
