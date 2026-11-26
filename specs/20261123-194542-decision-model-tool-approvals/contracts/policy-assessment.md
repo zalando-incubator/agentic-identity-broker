@@ -36,7 +36,6 @@ The input never contains approval records (FR-034).
       "context": "tc-<64 hexadecimal characters>"
     },
     "context": {
-      "withheld_arguments": [],
       "oversized_arguments": [],
       "undescribed_argument_count": 0
     },
@@ -61,7 +60,7 @@ The input never contains approval records (FR-034).
 | `question_set` | fingerprint | Always present. |
 | `evaluated` | boolean | True only if the evaluation record contains the model, the question set, and the tool context. |
 | `tool.context` | fingerprint | See the table of keys for each status. |
-| `context.*` | two lists and a number | See the table of keys for each status. If `context` is present, each of its three fields is present. An empty list is `[]`, and the count is a number. |
+| `context.*` | a list and a number | See the table of keys for each status. If `context` is present, each of its two fields is present. An empty list is `[]`, and the count is a number. |
 | `answers` | map with the question name as the key | Always present, with one entry for each question of the question set. If no response arrived, each entry has the status `missing`. |
 | `answers.*.status` | `answered`, `refused`, `missing`, `invalid` | Always present in an entry. |
 | `answers.*.probability` | number from 0 to 1 | Only for an answered `predicate`. |

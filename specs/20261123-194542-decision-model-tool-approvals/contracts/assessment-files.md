@@ -24,7 +24,6 @@ change.
 | `authorization.assessment.organization.name` | string | none | Required while enabled. Maximum 200 characters. |
 | `authorization.assessment.organization.description` | string | none | Required while enabled. Maximum 1,000 characters. |
 | `authorization.assessment.organization.internal_domains` | list of strings | none | Required while enabled. 1 to 50 entries. Each entry is a lowercase DNS name. |
-| `authorization.assessment.disclosure.arguments` | string | none | Required while enabled. `all` or `none`. There is no default. |
 | `authorization.assessment.questions` | list of questions | the default question set (section 2) | 1 to 16 entries. A list in the configuration replaces the full default list. |
 | `authorization.assessment.auto_approval.evaluation_record_file` | path | none | Required in the `auto_approve` mode. Optional in the `recommend` mode. In that mode, ExtProc reads it if it is set, and `would_auto_approve` uses it (FR-044). Without it, `would_auto_approve` is always false. |
 
@@ -128,7 +127,7 @@ extproc-token-exchange assessment evaluate
     [--parallel <number>]                                  (default: 4, maximum: 32)
 ```
 
-The command uses the organization values, the disclosure settings, the question set, the model
+The command uses the organization values, the question set, the model
 settings, and the policy of the configuration file. It
 ignores `mode` and an existing evaluation record. It does not require that
 `evaluation_record_file` exists. It sets `input.assessment.evaluated` to `true` for each case

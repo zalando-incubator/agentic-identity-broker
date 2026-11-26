@@ -53,9 +53,10 @@
   replacement tool description are removed, because an operator cannot maintain metadata about
   externally managed servers. Second, the approver sees no new element: the policy derives the
   existing description and risk level from the answers, and the broker, its API, its database,
-  and the approval page do not change. Third, the organization values and the disclosure
-  settings are keys of the service configuration, and the product has a default question set.
-  The spec has no catalog file.
+  and the approval page do not change. Third, the organization values and the
+  questions are keys of the service configuration, and the product has a default question set.
+  The spec has no catalog file. Fourth, the system always sends the values of the described
+  arguments, and no setting withholds them.
 - **Language.** The prose uses the structural rules of Simplified Technical English in the
   pragmatic mode. Each clause of a Given/When/Then scenario counts as one sentence. Code,
   identifiers, quoted source text, and interface text did not change.
@@ -67,7 +68,7 @@
 These decisions change the scope or the security model:
 
 - The model gets the tool definition that the MCP server lists. A Docker test of agentgateway `v1.5.0` and `v1.7.0` showed that ExtProc gets the `tools/list` response (research.md D-02).
-- If the deployment-wide setting permits it, the system sends argument values of all servers to the decision endpoint.
+- While assessment is enabled, the system sends the value of each described argument of each assessed call to the decision endpoint. No setting withholds a value. Issue #206 asks for an explicit decision about argument disclosure, and the key `enabled` is that decision.
 - The system does not send the static policy risk level to the model.
 - An automatic approval creates no approval record. It is visible only in the audit log.
 - The approver sees only the description and the risk level of the policy. The page does not show that a model contributed to them.

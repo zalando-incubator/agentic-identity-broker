@@ -21,14 +21,6 @@ reads it one time at startup.
 | `description` | string | Required while assessment is enabled. Maximum 1,000 characters. |
 | `internal_domains` | list of strings | Required while assessment is enabled. 1 to 50 entries. Each entry is a lowercase DNS name. |
 
-### Disclosure
-
-The source is the ExtProc configuration: `authorization.assessment.disclosure` (D-17).
-
-| Field | Type | Rules |
-|---|---|---|
-| `arguments` | `all` or `none` | Required while assessment is enabled. No default. |
-
 The configuration has no key for an individual server or tool. The operator cannot describe a
 server, and cannot describe, correct, or replace a tool definition (FR-011, FR-013, FR-016).
 
@@ -84,16 +76,16 @@ ExtProc builds this document for one call and discards it after the call (SR-007
 | `organization` | `name`, `description`, `internal_domains` |
 | `server` | `name` |
 | `tool` | `name`, `description`, `annotations`, and `arguments` with the schema entry of each supplied and described argument |
-| `call` | `arguments`, `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count` |
+| `call` | `arguments`, `oversized_arguments`, `undescribed_argument_count` |
 
 Rules:
 
 - The sections have the sequence of the table, and the fields of a section have the sequence of its row. The keys of each map inside a section are in sorted sequence. This is the output of the Go JSON encoder for a map, thus the service and the evaluation run give the same text for the same call (FR-022).
-- With the disclosure setting `none`, `call.arguments` is absent, and `withheld_arguments` has the name of each supplied and described argument. With the setting `all`, `withheld_arguments` is empty.
+- `call.arguments` has the value of each supplied and described argument, apart from an oversized value. No setting withholds a value (FR-016).
 - One argument value has a maximum of 4 KiB of canonical JSON and a maximum of 8 levels. A larger value is oversized.
 - The full context has a maximum of `max_context_bytes`.
-- The names in `withheld_arguments` and `oversized_arguments` are names that the definition describes.
-- In the model context, an empty `withheld_arguments` or `oversized_arguments` list is absent. `undescribed_argument_count` is always present. In the policy input, the key `context` is present only for the statuses that [contracts/policy-assessment.md](contracts/policy-assessment.md) section 2 lists. If it is present, each of the three fields is present.
+- The names in `oversized_arguments` are names that the definition describes.
+- In the model context, an empty `oversized_arguments` list is absent. `undescribed_argument_count` is always present. In the policy input, the key `context` is present only for the statuses that [contracts/policy-assessment.md](contracts/policy-assessment.md) section 2 lists. If it is present, each of the two fields is present.
 
 ### Assessment and Answer
 
@@ -104,7 +96,7 @@ Rules:
 | `question_set` | fingerprint | From the Organization Context, the Question Set, and the request framing (FR-029). |
 | `tool.context` | fingerprint | Absent in the policy input for `definition_missing` and `context_too_large`. |
 | `evaluated` | boolean | True if the evaluation record contains the model, the question set, and the tool context. |
-| `context` | flags | `withheld_arguments`, `oversized_arguments`, `undescribed_argument_count`. Absent in the policy input for `definition_missing` and `context_too_large`. |
+| `context` | flags | `oversized_arguments`, `undescribed_argument_count`. Absent in the policy input for `definition_missing` and `context_too_large`. |
 | `answers.<name>.status` | enumeration | `answered`, `refused`, `missing`, or `invalid`. Each question of the set has an entry for each assessment status. Without a response, the value is `missing`. |
 | `answers.<name>.probability` | number | Only for an answered `predicate`. |
 | `answers.<name>.probabilities`, `score`, `confidence` | list, number, number | Only for an answered `score`. The list has one value for each level. |
@@ -129,7 +121,7 @@ and the risk level of the policy result in the existing fields (FR-035, FR-038).
 
 | Data | Lifetime |
 |---|---|
-| Organization Context, Disclosure, Question Set, Evaluation Record | From startup to stop of the ExtProc process |
+| Organization Context, Question Set, Evaluation Record | From startup to stop of the ExtProc process |
 | Tool Definition | From a listing to the next listing of that tool, or to removal from the full store |
 | Assessment Context, Assessment, raw model response | One tool call |
 

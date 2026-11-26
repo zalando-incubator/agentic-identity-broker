@@ -116,7 +116,7 @@ operator writes no automatic approval rule for its tools.
 
 On the same date, the stakeholder rejected an optional `servers` part of the configuration. It had
 exceptions for one server: no assessment, or a different disclosure. Each entry for a server
-needs maintenance when servers change. The disclosure settings now apply to each server, the
+needs maintenance when servers change. No setting applies to one server, the
 configuration has no key for a server or a tool, and the status `excluded` does not exist.
 
 ## D-03 — The decision request is plain JSON in the Decisions shape, with the context as text
@@ -382,8 +382,8 @@ Withdrawn on 2026-11-26 (D-16). The approval page does not change.
 
 **Decision**: ExtProc reads the evaluation record one time at startup with strict decoding. An
 unknown key, a missing required key, or a file larger than 1 MiB stops the startup. The service
-does not read the file again while it operates. The questions, the organization values, and the
-disclosure settings are not in a file of their own. They are keys of the service configuration
+does not read the file again while it operates. The questions and the organization values
+are not in a file of their own. They are keys of the service configuration
 (D-17).
 
 **Rationale**: A fingerprint must be stable while the service operates. A startup error shows a
@@ -551,9 +551,9 @@ the approver.
 **Alternatives considered**: A new result field for one statement duplicates the description. A
 finding list from the policy keeps a second text channel to the approver and all broker changes.
 
-## D-17 — The organization values, the disclosure settings, and the questions are ExtProc configuration, and the product has a default question set
+## D-17 — The organization values and the questions are ExtProc configuration, and the product has a default question set
 
-**Decision**: The organization values, the disclosure settings, and the questions are keys of the
+**Decision**: The organization values and the questions are keys of the
 ExtProc configuration under `authorization.assessment`. They use the existing approach of
 `internal/extproc/config/`: the schema in `config.go`, the defaults in `loader.go`, and the rules
 in `validate.go`. The key `questions` is a list, as `rules` is in the impersonation configuration
@@ -593,11 +593,17 @@ revision is a hypothesis, and these controls apply:
 - The project changes questions only with the tuning part of the case set and publishes results only from the validation part (FR-053).
 - The project measures with each model that it can reach, and it names each model with its results. A result for one model does not apply to a different model (R-19, R-20).
 
-**Disclosure**: The disclosure settings have one key, `arguments`, with the values `all` and
-`none`. A list of argument names whose values the system does not send was a part of the design
-until 2026-11-26. The stakeholder removed it, because an operator cannot maintain the argument
-names of externally managed tools. With `all`, the value of each described argument goes to the
-decision endpoint (SR-010).
+**Argument values**: The system sends the value of each described argument of each assessed
+call. The feature has no setting that withholds values. Two settings were parts of the design
+until 2026-11-26, and the stakeholder removed them. A list of argument names whose values the
+system does not send needs the argument names of externally managed tools, and an operator
+cannot maintain them. A switch between "all values" and "no values" has no use, because the
+model cannot answer without the arguments.
+
+Issue #206 says: "Remote assessment must not implicitly forward the full argument map." The
+spec does not follow this sentence to the letter. The explicit decision is the key `enabled`,
+and the documentation states what the system sends (SR-006, SR-010). A model inside the
+deployment keeps the values in the organization.
 
 **Alternatives considered**: A separate catalog file or a question set file. The stakeholder
 rejected the two on 2026-11-26: the service has one configuration approach, and the name
