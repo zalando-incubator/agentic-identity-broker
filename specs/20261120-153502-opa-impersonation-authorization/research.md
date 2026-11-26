@@ -415,7 +415,7 @@ published" from "downloads failing", because a failed download produces no candi
 ## R13 — Superseding ADR (**Sign-off: ADR-OPA**)
 
 **Decision**: One new ADR, drafted as
-[adr-20261121-061324-opa-impersonation-authorization.md](adr-20261121-061324-opa-impersonation-authorization.md).
+[adrs/20261121-061324-opa-impersonation-authorization.md](../../adrs/20261121-061324-opa-impersonation-authorization.md).
 It partly supersedes ADR `009-cel-for-authorization-policies` (OPA is no longer reserved for
 impersonation rules) and, for OPA rules only, supersedes ADR `031-unverified-subject-unsigned-jwt`
 controls 3–4, ADR `034-audience-absent-impersonation-credentials` control 3, and ADR

@@ -496,6 +496,21 @@ Omitting `allowed_subject_categories` means `[human]`; signed exact-target colli
 ./agentic-identity-broker --config ./examples/config/impersonation-agent-subject.yaml
 ```
 
+### `impersonation-opa.yaml` — OPA Governance Policies for Impersonation Rules
+
+Complete local-mode configuration for [the OPA impersonation feature](../../specs/20261120-153502-opa-impersonation-authorization/spec.md) ([ADR `20261121-061324-opa-impersonation-authorization`](../../adrs/20261121-061324-opa-impersonation-authorization.md)). Each rule selects `authorization.type: cel` or `opa`; every OPA rule shares the one engine under `oauth2_authorization_server.impersonation.opa`. The example shows a governed signed rule, an unverified-subject rule, an audience-absent rule, and a later CEL rule.
+
+- `impersonation.opa.policy.config_file` — managed bundles through the restricted bootstrap [`opa/impersonation/bootstrap.yaml`](opa/impersonation/bootstrap.yaml), with the `aib_bearer_token_file` credential plugin that re-reads a mounted token before every bundle request
+- `impersonation.opa.policy.path` — local bundle directory [`opa/impersonation/local/`](opa/impersonation/local/) (`governance.rego`, `data.json`, `.manifest`), read once at startup
+- `impersonation.opa.startup_timeout` — readiness bound (default `30s`, `1s`–`5m`)
+- `rules[].authorization.opa` — `package` (default `aib.broker.impersonation`), `decision` (default `result`), and `evaluation_timeout` (default `100ms`, `10ms`–`5s`); no other key is accepted
+
+Every policy defines a `default` decision: an undefined decision is a terminal `500`, not a deny. [`opa/impersonation/exceptional-modes.rego`](opa/impersonation/exceptional-modes.rego) shows policies that constrain `context.subject_token.sub`, `context.subject_token.email`, and an audience-absent role's token map, because on OPA rules the policy is the only control on those values.
+
+```bash
+./agentic-identity-broker --config ./examples/config/impersonation-opa.yaml
+```
+
 ### `trust-anchor-local-jwks.yaml` — Inline and File-Based Trust Anchor Key Sets
 
 Complete, loadable `local`-mode configuration in which three trust anchors take their public verification keys from configuration instead of a remote `jwks_uri` or issuer discovery. No outbound request is made for those keys.

@@ -215,6 +215,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
 | 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc grant-context resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
+| 20261121-061324 | `adrs/20261121-061324-opa-impersonation-authorization.md` | OPA selectable per impersonation rule in one shared engine; broker-admitted revisions; restricted bootstrap and built-ins; no static binding checks on OPA rules; partly supersedes ADRs 009, 031, 034, 045 for OPA rules |
 
 ## Domain Glossary
 
@@ -225,9 +226,14 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Agent** | AI agent with optional client ID and client metadata document URLs. |
 | **External ID** | Optional nonempty, globally unique Agent governance identifier, matched literally; collection PUT reconciles by it without changing UUID identity. |
 | **Agent Reconciliation** | Reconcile is the canonical term for applying an Agent definition by External ID while preserving UUID identity; upsert and create-or-update are aliases for this operation. The `ReconcileUnchanged` outcome means no-op/replay: no write or mutation audit, with stored timestamps preserved. |
-| **Subject Category** | `agent` only for a raw `sub` exactly equal to the audience-selected target UUID that is signed and verified, or unverified with a predicate binding `subject_token.sub`; another registered agent's UUID is a rejected cross-agent request; otherwise `human`. |
+| **Subject Category** | `agent` only for a raw `sub` exactly equal to the audience-selected target UUID that is signed and verified, or unverified on an OPA rule or with a CEL predicate binding `subject_token.sub`; another registered agent's UUID is a rejected cross-agent request; otherwise `human`. |
 | **Allowed Subject Categories** | Per-rule eligibility list; omission means `[human]`. Classification is independent of eligibility. |
-| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. |
+| **Agent-Subject Token** | Impersonated broker token from self-agent issuance: reserved `sub == agent_id == target UUID`, no category claim. Detected by the boolean CEL detector `agent_subject_expression` (a replacement must reference `subject_token.sub`); rejected by third-party exchange and subject-token approval authentication before human-state access. The detector is unrelated to the issuance binding controls, which apply to CEL rules only. |
+| **Impersonation Rule** | Ordered first-match rule with per-role validation and exactly one authorization: a CEL predicate or an OPA decision (`authorization.type`). |
+| **Impersonation Policy Engine** | The engine one impersonation rule selects: `cel` or `opa`. Not the shared OPA runtime. |
+| **Impersonation OPA Engine** | The one OPA runtime (`impersonation.opa`) shared by every OPA rule: managed bundles through a Policy Bootstrap, or a local bundle directory read at startup. |
+| **Policy/Data Revision** | Immutable admitted snapshot of every configured bundle, with a broker `policy_admission_id` distinct from manifest labels; admitted only if every OPA rule's decision rule exists; one per request for all OPA rules. |
+| **Policy Bootstrap** | Contained OPA bootstrap file limited to `services`, `bundles`, `keys`, `labels`, and the `aib_bearer_token_file` plugin; no OPA-native local-file references. |
 | **ThirdpartyOAuth2Service** | External OAuth2 provider with credentials and scopes. |
 | **UserGrant** | User delegation of permission sets to an agent. One per user-agent pair. |
 | **AuthorizationSessionClaims** | JWE-sealed authorization context with a 10-minute TTL. |

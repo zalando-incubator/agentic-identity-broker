@@ -174,6 +174,45 @@ Publish each replacement pair together through fresh immutable targets. Never mo
 
 Authorization initiation reads only the client-ID file. Metadata reads resolve neither file. Same-client secret rotation requires no restart or registration update. A changed client ID requires new connections for old codes or sessions. Provider validity overlap remains an operator responsibility, not an uninterrupted-rotation guarantee.
 
+### OPA Impersonation Policies
+
+Impersonation rules can select `authorization.type: opa` instead of `cel`. Every OPA rule shares the one engine under `broker.oauth2AuthorizationServer.impersonation.opa`, which the chart copies verbatim (snake_case) like the rest of the `impersonation` block. Its `policy` sets exactly one of `config_file` (an OPA bootstrap file for managed bundles) and `path` (a local bundle directory read once at startup); `startup_timeout` bounds readiness (default `30s`). Each OPA rule sets only `authorization.opa.{package,decision,evaluation_timeout}`. The schema rejects a rule that mixes `cel` and `opa` blocks. See `examples/config/impersonation-opa.yaml`.
+
+Mount the bootstrap, a local bundle, and a bundle token file with the existing volume inputs; no chart value is added for them, and they share no mount with the trust directory. Each file is read through its own directory: relative Kubernetes `..data` links work, and links that leave the directory fail. A token file mounted from a Secret rotates without a restart; inline bootstrap credentials need a restart.
+
+```yaml
+broker:
+  oauth2AuthorizationServer:
+    impersonation:
+      audience_prefix: https://broker.example.com/impersonation
+      opa:
+        policy:
+          config_file: /etc/broker/opa/bootstrap.yaml
+      rules:
+        - name: governed-inventory
+          # roles and trusted_issuers as for CEL rules
+          authorization:
+            type: opa
+            opa:
+              package: company.impersonation
+  extraVolumes:
+    - name: opa-bootstrap
+      configMap:
+        name: broker-opa-bootstrap
+    - name: opa-bundle-token
+      secret:
+        secretName: broker-opa-bundle-token
+  extraVolumeMounts:
+    - name: opa-bootstrap
+      mountPath: /etc/broker/opa
+      readOnly: true
+    - name: opa-bundle-token
+      mountPath: /var/run/secrets/opa-bundle
+      readOnly: true
+```
+
+The bootstrap's `plugins.aib_bearer_token_file.path` then names `/var/run/secrets/opa-bundle/token`. ExtProc configuration is not part of this chart.
+
 ### Key Configuration Parameters
 
 | Parameter | Description | Default |
@@ -224,9 +263,9 @@ Authorization initiation reads only the client-ID file. Metadata reads resolve n
 | `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMinRefetchInterval` | Minimum interval between refetches for an unknown key ID | `5m` |
 | `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetMaxBytes` | Maximum key-set response size in bytes | `65536` |
 | `broker.oauth2AuthorizationServer.cimd.clientAuthentication.keySetFetchTimeout` | Key-set HTTP request timeout | `5s` |
-| `broker.oauth2AuthorizationServer.impersonation.rules[].allowed_subject_categories` | Optional case-sensitive distinct list of 1–2 `human`/`agent` strings. Omission alone means human-only; empty, null, unknown, duplicate or wrong-shaped values fail startup. Signed exact-target subjects are agent-category and ineligible on human-only rules even with delegation. Unsigned subjects remain human, even when agent is listed. See `examples/config/impersonation-agent-subject.yaml`. | `[human]` when omitted |
+| `broker.oauth2AuthorizationServer.impersonation.rules[].allowed_subject_categories` | Optional case-sensitive distinct list of 1–2 `human`/`agent` strings. Omission alone means human-only; empty, null, unknown, duplicate or wrong-shaped values fail startup. Signed exact-target subjects are agent-category and ineligible on human-only rules even with delegation. An unsigned exact-target subject is agent-category on an OPA rule, and on a CEL rule only when the predicate binds `subject_token.sub`. See `examples/config/impersonation-agent-subject.yaml`. | `[human]` when omitted |
 | `broker.tokenExchange.claimExtraction.agentSubjectExpression` | Optional replacing CEL boolean over validated `subject_token`. Empty/omitted uses `has(subject_token.sub) && has(subject_token.agent_id) && subject_token.sub == subject_token.agent_id`. Matches (including equal-claim human/external tokens) reject before human-state access. Compile/static-type errors and expressions that do not reference `subject_token.sub` fail startup; runtime errors/timeouts/non-boolean results fail closed. Overrides must keep matching broker agent tokens, for example by retaining the default as a disjunct. A non-matching override that references `sub` removes categorical rejection and protection against access to same-text human credentials. See `docs/configuration.md`. | `""` |
-| `broker.oauth2AuthorizationServer.impersonation` | RFC 8693 user impersonation (signed or unverified subject). Only valid in `local` mode. Omitted when unset. Subtree keys use the broker config's snake_case names (`audience_prefix`, `rules[].{name,roles,trusted_issuers,authorization}`). `audience_prefix` is routing-only: a request appends one target agent's canonical lower-case UUID or `canonical_id`, both resolving to the same registered target; its UUID supplies minted `agent_id` and local-policy `agent.*`; local `tokenClaimsExpression` alone controls emitted `aud`. | _unset_ |
+| `broker.oauth2AuthorizationServer.impersonation` | RFC 8693 user impersonation (signed or unverified subject). Only valid in `local` mode. Omitted when unset. Subtree keys use the broker config's snake_case names (`audience_prefix`, `opa`, `rules[].{name,roles,trusted_issuers,authorization}`); see [OPA Impersonation Policies](#opa-impersonation-policies). `audience_prefix` is routing-only: a request appends one target agent's canonical lower-case UUID or `canonical_id`, both resolving to the same registered target; its UUID supplies minted `agent_id` and local-policy `agent.*`; local `tokenClaimsExpression` alone controls emitted `aud`. | _unset_ |
 | `broker.tokenExchange.clientAssertion.issuerUri` | External IdP issuer for privileged-gateway client assertions. Required in local mode when token exchange, approval authentication, or any client-assertion key source is configured; empty defaults to the proxy upstream issuer in proxy/hybrid mode. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksUri` | Explicit client-assertion JWKS endpoint; empty discovers it from the issuer. | `""` |
 | `broker.tokenExchange.clientAssertion.jwksMinRefresh` | Minimum client-assertion JWKS refresh interval (Go duration); empty defaults to `15m`. | `""` |

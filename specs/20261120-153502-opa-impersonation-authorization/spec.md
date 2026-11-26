@@ -37,7 +37,7 @@ Planning resolved the items this specification left to design. Each is pending t
 - Startup bound: the configuration table adds `impersonation.opa.startup_timeout` (default `30s`, range `1s`–`5m`; originally per rule, moved to the shared engine on 2026-11-24). Reason: FR-003 requires a bounded startup interval and this specification deferred its setting to planning (approval item API-CFG; research [R7](research.md#r7--startup-readiness-bound-sign-off-api-cfg)).
 - Bootstrap scope: FR-003's OPA-native bootstrap accepts only the `services`, `bundles`, `keys`, and `labels` keys, plus the broker's `aib_bearer_token_file` credential plugin (added 2026-11-24). Reason: decision logs, status, and discovery could export claim-bearing input or reconfigure OPA at runtime, contrary to SR-003 and SR-006 (approval item API-BOOT; research [R3](research.md#r3--bootstrap-configuration-subset-sign-off-api-boot)).
 - Input envelope: FR-005's Envoy-compatible fields are fixed in [contracts/policy-input-decision.md](contracts/policy-input-decision.md), including `parsed_path` and `parsed_query`, `host` and `scheme` taken from the configured end-user public URL, and removal of credential headers. Reason: SR-003 and Scenario 2.2 require a raw-credential-excluded but sensitive input that callers cannot shape into identity (approval item API-INPUT; research [R8](research.md#r8--policy-input-construction-sign-off-api-input)).
-- SR-005 mechanism (withdrawn 2026-11-25, see below): binding evidence was to be computed from the reachable decision graph of each candidate revision. The proposed ADR [adr-20261121-061324-opa-impersonation-authorization.md](adr-20261121-061324-opa-impersonation-authorization.md) partly supersedes the CEL-specific controls for OPA rules. Network prohibition (FR-012) removes every nondeterministic OPA built-in except `time.now_ns`. Reason: FR-012 requires a reviewable mechanism before implementation (approval items ADR-OPA, DEC-BUILTINS; research [R4](research.md#r4--prohibiting-policy-time-networking-sign-off-dec-builtins), [R13](research.md#r13--superseding-adr-sign-off-adr-opa)).
+- SR-005 mechanism (withdrawn 2026-11-25, see below): binding evidence was to be computed from the reachable decision graph of each candidate revision. The proposed ADR [adrs/20261121-061324-opa-impersonation-authorization.md](../../adrs/20261121-061324-opa-impersonation-authorization.md) partly supersedes the CEL-specific controls for OPA rules. Network prohibition (FR-012) removes every nondeterministic OPA built-in except `time.now_ns`. Reason: FR-012 requires a reviewable mechanism before implementation (approval items ADR-OPA, DEC-BUILTINS; research [R4](research.md#r4--prohibiting-policy-time-networking-sign-off-dec-builtins), [R13](research.md#r13--superseding-adr-sign-off-adr-opa)).
 
 ### Remediation decisions (Proposed)
 
@@ -661,7 +661,7 @@ the response is Journey 1 Step 4's `200` result with `act.sub` `automation-worke
 
 ## Alternatives Considered
 
-Research and the proposed ADR record each alternative in full; see the ADR's [Alternatives Considered](adr-20261121-061324-opa-impersonation-authorization.md#alternatives-considered).
+Research and the proposed ADR record each alternative in full; see the ADR's [Alternatives Considered](../../adrs/20261121-061324-opa-impersonation-authorization.md#alternatives-considered).
 
 | Alternative | Rejected because |
 | --- | --- |
@@ -679,7 +679,7 @@ Research and the proposed ADR record each alternative in full; see the ADR's [Al
 
 ## Risks & Mitigations
 
-The proposed ADR's [Consequences](adr-20261121-061324-opa-impersonation-authorization.md#consequences) list further trade-offs.
+The proposed ADR's [Consequences](../../adrs/20261121-061324-opa-impersonation-authorization.md#consequences) list further trade-offs.
 
 | Risk | Impact | Mitigation |
 | --- | --- | --- |

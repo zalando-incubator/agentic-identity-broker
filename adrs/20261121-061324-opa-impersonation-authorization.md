@@ -1,12 +1,11 @@
 # ADR 20261121-061324: OPA Authorization for Broker Impersonation Rules
 
 **Date**: 2026-11-21
-**Status**: Proposed
+**Status**: Accepted (approved by mjungsbluth on 2026-11-26: https://github.com/zalando-incubator/agentic-identity-broker/pull/546#issuecomment-7197425049)
 **Feature**: `20261120-153502-opa-impersonation-authorization` (issue #518, PR #546)
-**Final location**: `adrs/20261121-061324-opa-impersonation-authorization.md` (moved by the first implementation task after approval)
 **Supersedes (in part)**:
-- [`009-cel-for-authorization-policies`](../../adrs/009-cel-for-authorization-policies.md): the reservation of `opa` for broker authorization, for impersonation rules only.
-- [`031-unverified-subject-unsigned-jwt`](../../adrs/031-unverified-subject-unsigned-jwt.md) compensating controls 3 and 4, [`034-audience-absent-impersonation-credentials`](../../adrs/034-audience-absent-impersonation-credentials.md) compensating control 3, and [`045-agent-subject-impersonation`](../../adrs/045-agent-subject-impersonation.md) decision 2a's binding requirement: for rules that select OPA only, these controls do not apply (decision 5). CEL rules keep them.
+- [`009-cel-for-authorization-policies`](009-cel-for-authorization-policies.md): the reservation of `opa` for broker authorization, for impersonation rules only.
+- [`031-unverified-subject-unsigned-jwt`](031-unverified-subject-unsigned-jwt.md) compensating controls 3 and 4, [`034-audience-absent-impersonation-credentials`](034-audience-absent-impersonation-credentials.md) compensating control 3, and [`045-agent-subject-impersonation`](045-agent-subject-impersonation.md) decision 2a's binding requirement: for rules that select OPA only, these controls do not apply (decision 5). CEL rules keep them.
 
 ## Context
 
