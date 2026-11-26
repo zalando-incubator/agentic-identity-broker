@@ -1,6 +1,6 @@
 //go:build !unix
 
-package jwks
+package fscontain
 
 import "os"
 

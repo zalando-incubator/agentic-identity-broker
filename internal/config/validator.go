@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/impersonation"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/servermode"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
@@ -72,6 +74,9 @@ func Validate(cfg *ports.Config) error {
 
 	if err := validateTokenExchangeConfig(&cfg.TokenExchange, &cfg.Security); err != nil {
 		return err
+	}
+	if err := tokenexchange.ValidateAuthorizationType(cfg.TokenExchange.Authorization); err != nil {
+		return formatValidationError("token_exchange.authorization.type", cfg.TokenExchange.Authorization.Type, "'cel'", err)
 	}
 	clientAssertion := &cfg.TokenExchange.ClientAssertion
 	issuerURI := clientAssertion.IssuerURI
@@ -1047,6 +1052,7 @@ func validateImpersonationConfig(cfg *ports.ImpersonationConfig, mode servermode
 	}
 
 	seenNames := make(map[string]bool)
+	opaRules := false
 	for i := range cfg.Rules {
 		rule := &cfg.Rules[i]
 		rbase := fmt.Sprintf("%s.rules[%d]", base, i)
@@ -1057,9 +1063,78 @@ func validateImpersonationConfig(cfg *ports.ImpersonationConfig, mode servermode
 			return formatValidationError(rbase+".name", rule.Name, "unique rule name across rules", nil)
 		}
 		seenNames[rule.Name] = true
+		opaRules = opaRules || rule.Authorization.Type == "opa"
 		if err := validateImpersonationRule(rule, rbase, security); err != nil {
 			return err
 		}
+	}
+	return validateImpersonationOPAEngine(&cfg.OPA, opaRules, base+".opa")
+}
+
+// validateImpersonationOPAEngine checks the shared OPA engine block on its raw values: it is
+// required when a rule selects OPA and must be absent or empty otherwise. Defaults apply at use.
+func validateImpersonationOPAEngine(engine *ports.ImpersonationOPAEngineConfig, opaRules bool, field string) error {
+	if !opaRules {
+		if *engine != (ports.ImpersonationOPAEngineConfig{}) {
+			return formatValidationError(field, "", "absent or empty when no rule selects authorization.type \"opa\"", nil)
+		}
+		return nil
+	}
+	if *engine == (ports.ImpersonationOPAEngineConfig{}) {
+		return formatValidationError(field, "", "required when a rule selects authorization.type \"opa\"", nil)
+	}
+	configFile, path := engine.Policy.ConfigFile, engine.Policy.Path
+	if (configFile == "") == (path == "") {
+		return formatValidationError(field+".policy", "", "exactly one of policy.config_file and policy.path", nil)
+	}
+	if configFile != "" && !filepath.IsAbs(configFile) {
+		return formatValidationError(field+".policy.config_file", "", "an absolute path", nil)
+	}
+	if path != "" && !filepath.IsAbs(path) {
+		return formatValidationError(field+".policy.path", "", "an absolute path", nil)
+	}
+	if t := engine.StartupTimeout; t != 0 && (t < time.Second || t > 5*time.Minute) {
+		return formatValidationError(field+".startup_timeout", t.String(), "a duration between 1s and 5m", nil)
+	}
+	return nil
+}
+
+var regoIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// validateImpersonationAuthorization checks that a rule selects exactly one engine block.
+func validateImpersonationAuthorization(rule *ports.ImpersonationRuleConfig, rbase string) error {
+	prefix := fmt.Sprintf("%s (%s).authorization", rbase, rule.Name)
+	auth := rule.Authorization
+	switch auth.Type {
+	case "cel":
+		if auth.OPA != (ports.ImpersonationRuleOPADecision{}) {
+			return formatValidationError(prefix+".opa", "", "empty when authorization.type is \"cel\"", nil)
+		}
+		if auth.CEL.Expression == "" {
+			return formatValidationError(rbase+".authorization.cel.expression", "", "non-empty CEL authorization expression", nil)
+		}
+		if t := auth.CEL.EvaluationTimeout; t != 0 && (t < 10*time.Millisecond || t > 5*time.Second) {
+			return formatValidationError(rbase+".authorization.cel.evaluation_timeout", t.String(), "a duration between 10ms and 5s", nil)
+		}
+	case "opa":
+		if auth.CEL != (ports.CELAuthorizationConfig{}) {
+			return formatValidationError(prefix+".cel", "", "empty when authorization.type is \"opa\"", nil)
+		}
+		if pkg := auth.OPA.Package; pkg != "" {
+			for _, segment := range strings.Split(pkg, ".") {
+				if !regoIdentifier.MatchString(segment) {
+					return formatValidationError(prefix+".opa.package", pkg, "a dot-separated Rego package path", nil)
+				}
+			}
+		}
+		if decision := auth.OPA.Decision; decision != "" && !regoIdentifier.MatchString(decision) {
+			return formatValidationError(prefix+".opa.decision", decision, "a Rego identifier", nil)
+		}
+		if t := auth.OPA.EvaluationTimeout; t != 0 && (t < 10*time.Millisecond || t > 5*time.Second) {
+			return formatValidationError(prefix+".opa.evaluation_timeout", t.String(), "a duration between 10ms and 5s", nil)
+		}
+	default:
+		return formatValidationError(prefix+".type", auth.Type, "'cel' or 'opa'", nil)
 	}
 	return nil
 }
@@ -1146,15 +1221,9 @@ func validateImpersonationRule(rule *ports.ImpersonationRuleConfig, rbase string
 		}
 	}
 
-	// CR-005: exactly one CEL authorization predicate.
-	if rule.Authorization.Type != "cel" {
-		return formatValidationError(rbase+".authorization.type", rule.Authorization.Type, "'cel'", nil)
-	}
-	if rule.Authorization.CEL.Expression == "" {
-		return formatValidationError(rbase+".authorization.cel.expression", "", "non-empty CEL authorization expression", nil)
-	}
-	if t := rule.Authorization.CEL.EvaluationTimeout; t != 0 && (t < 10*time.Millisecond || t > 5*time.Second) {
-		return formatValidationError(rbase+".authorization.cel.evaluation_timeout", t.String(), "a duration between 10ms and 5s", nil)
+	// CR-005: exactly one authorization engine block.
+	if err := validateImpersonationAuthorization(rule, rbase); err != nil {
+		return err
 	}
 
 	return validateImpersonationTrustedIssuers(rule, rbase, security)

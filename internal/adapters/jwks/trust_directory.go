@@ -2,21 +2,19 @@ package jwks
 
 import (
 	"errors"
-	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/trustanchor"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/fscontain"
 )
 
 // TrustDirectory reads key-set files strictly beneath security.trust_material_dir. It holds the
-// directory open through os.Root, which resolves every path component relative to the
+// directory open through fscontain, which resolves every path component relative to the
 // directory and refuses any component that leaves it, including absolute symbolic links.
 type TrustDirectory struct {
 	configured string
-	root       *os.Root
+	dir        *fscontain.Dir
 }
 
 // OpenTrustDirectory validates dir and holds it open for contained file access.
@@ -24,27 +22,19 @@ func OpenTrustDirectory(dir string) (*TrustDirectory, error) {
 	if err := trustanchor.ValidateTrustDirectory(dir); err != nil {
 		return nil, err
 	}
-	invalid := &trustanchor.Error{
-		Category: trustanchor.CategoryInvalidTrustDirectory,
-		Detail:   map[string]string{trustanchor.DetailDir: dir},
-	}
-	resolved, err := filepath.EvalSymlinks(dir)
-	if err != nil || filepath.Clean(resolved) == string(filepath.Separator) {
-		return nil, invalid
-	}
-	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
-		return nil, invalid
-	}
-	root, err := os.OpenRoot(resolved)
+	contained, err := fscontain.OpenDir(dir)
 	if err != nil {
-		return nil, invalid
+		return nil, &trustanchor.Error{
+			Category: trustanchor.CategoryInvalidTrustDirectory,
+			Detail:   map[string]string{trustanchor.DetailDir: dir},
+		}
 	}
-	return &TrustDirectory{configured: filepath.Clean(dir), root: root}, nil
+	return &TrustDirectory{configured: filepath.Clean(dir), dir: contained}, nil
 }
 
 // ReadFile reads the regular file at the absolute path, which must lie beneath the trust
 // directory. The containment check, the regular-file check, and the read use one descriptor,
-// and the read is bounded to trustanchor.MaxKeySetBytes plus one byte.
+// and the read is bounded to trustanchor.MaxKeySetBytes.
 func (d *TrustDirectory) ReadFile(path string) ([]byte, error) {
 	if !trustanchor.Contains(d.configured, path) {
 		return nil, d.fileError(trustanchor.CategoryOutsideTrustDirectory, path)
@@ -54,32 +44,19 @@ func (d *TrustDirectory) ReadFile(path string) ([]byte, error) {
 		return nil, d.fileError(trustanchor.CategoryOutsideTrustDirectory, path)
 	}
 
-	file, err := d.root.OpenFile(rel, openFlags, 0)
+	doc, err := d.dir.ReadFile(rel, trustanchor.MaxKeySetBytes)
 	if err != nil {
+		if fscontain.ReasonOf(err) == fscontain.ReasonFileTooLarge {
+			return nil, &trustanchor.Error{Category: trustanchor.CategoryTooLarge}
+		}
 		return nil, d.fileError(classifyOpenError(err), path)
-	}
-	defer func() { _ = file.Close() }()
-
-	info, err := file.Stat()
-	if err != nil {
-		return nil, d.fileError(trustanchor.CategoryUnreadable, path)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, d.fileError(trustanchor.CategoryNotRegularFile, path)
-	}
-	doc, err := io.ReadAll(io.LimitReader(file, trustanchor.MaxKeySetBytes+1))
-	if err != nil {
-		return nil, d.fileError(trustanchor.CategoryUnreadable, path)
-	}
-	if len(doc) > trustanchor.MaxKeySetBytes {
-		return nil, &trustanchor.Error{Category: trustanchor.CategoryTooLarge}
 	}
 	return doc, nil
 }
 
 // Close releases the directory handle.
 func (d *TrustDirectory) Close() error {
-	return d.root.Close()
+	return d.dir.Close()
 }
 
 func (d *TrustDirectory) fileError(category trustanchor.Category, path string) error {
@@ -89,15 +66,21 @@ func (d *TrustDirectory) fileError(category trustanchor.Category, path string) e
 	}
 }
 
-// classifyOpenError maps an os.Root open error to a category. os.Root reports a path that leaves
-// the root with an unexported error, so its stable message is matched.
+// classifyOpenError maps a containment failure, or a raw os.Root open error, to its trust-anchor
+// category.
 func classifyOpenError(err error) trustanchor.Category {
-	switch {
-	case strings.Contains(err.Error(), "path escapes from parent"):
-		return trustanchor.CategoryOutsideTrustDirectory
-	case errors.Is(err, fs.ErrNotExist):
-		return trustanchor.CategoryNotFound
-	default:
-		return trustanchor.CategoryUnreadable
+	reason := fscontain.ReasonOf(err)
+	if reason == "" {
+		reason = fscontain.ClassifyOpenError(err)
 	}
+	switch reason {
+	case fscontain.ReasonEscapingLink:
+		return trustanchor.CategoryOutsideTrustDirectory
+	case fscontain.ReasonNotRegular:
+		return trustanchor.CategoryNotRegularFile
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return trustanchor.CategoryNotFound
+	}
+	return trustanchor.CategoryUnreadable
 }

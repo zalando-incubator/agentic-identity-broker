@@ -56,7 +56,7 @@ domain/
   consent/         Agent delegation and grant management
   encryption/      Encryption errors and branch-key subject types
   id/              Strongly typed entity IDs
-  impersonation/   Local-mode delegated token issuance
+  impersonation/   Local-mode delegated token issuance with CEL or OPA rule authorization
   jwe/             Encrypted token service
   jwtauth/         JWT authentication and claim extraction
   model/           Shared domain entities and value objects
@@ -80,6 +80,7 @@ ports/             Port contracts; read the `.go` files before editing
   cimd.go           CIMD fetch and client-resolution contracts
   cimd_client.go    Outbound CIMD key, metadata, and assertion contracts
   config.go         ConfigPort and Config
+  impersonation_policy.go  ImpersonationPolicySource and revisions
   encryption.go     EncryptionPort and branch-key contracts
   jwks.go           JWKSPort and JWKSHealthPort
   jwks_publisher.go JWKSPublisherPort and publisher health contracts
@@ -106,6 +107,7 @@ adapters/
     upstream/      Upstream OAuth2 proxy integration
   jwks/            JWKS fetcher, published-JWKS, static (inline), and file key-set adapters
   jwtauth/         JWT authenticator
+  policy/opa/      Shared impersonation OPA engine and broker-admitted policy revisions
   storage/
     factory.go     Backend selection from configuration
     memory/        In-memory storage
@@ -117,6 +119,7 @@ app/
   handlers.go      AdminHandlers + EnduserHandlers struct definitions
 
 config/            Broker configuration adapter
+fscontain/         Contained file reads through os.Root, shared by the jwks and policy/opa adapters
 telemetryhttp/     Credential-free outbound HTTP instrumentation
 testutil/          Adapter-backed test helpers, not for domain tests
 ptr/               Pointer helper
@@ -194,5 +197,6 @@ Keep adapter records in adapter packages.
 | OAuth2 | `OAuth2Service`, `OAuth2ModeConfig` | `ports/oauth2*.go` |
 | OAuth2 Server | Signing-key and credential contracts | `ports/oauth2server.go` |
 | CEL | `CELCompilerPort` | `ports/cel.go` |
+| Impersonation Policy | `ImpersonationPolicySource` | `ports/impersonation_policy.go` |
 | Outbound CIMD | Key lifecycle, readiness, metadata, and assertion interfaces | `ports/cimd_client.go` |
 | Upstream Token Proxy | `OAuth2TokenProxy` | `ports/oauth2_token_proxy.go` |

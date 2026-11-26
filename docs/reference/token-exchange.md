@@ -307,7 +307,8 @@ Recovery values are diagnostic recommendations, not instructions for automatic r
 
 Missing resources are malformed requests. Rejected subject/client credentials are authentication failures.
 Conflicting resource values use `request_validation` / `request_malformed` diagnostics while returning `invalid_target`; no registration lookup has occurred. `resource_unregistered` means a lookup found no configured service.
-CEL false is authorization denial. CEL compilation or configuration failure is a configuration error.
+CEL false and an OPA `deny` are authorization denial. CEL compilation or configuration failure is a configuration error.
+An invalid OPA decision (`opa_decision_invalid`) is a configuration error; an OPA evaluation failure (`opa_evaluation_failed`) is an infrastructure failure.
 Missing agents and ambiguous registered resources are configuration errors. Unavailable repositories and JWKS retrieval are infrastructure failures.
 
 Missing or unusable consent grants remain authorization denial with `reconsent` targeting `consent`.
@@ -470,15 +471,17 @@ audience, expiry, not-before time, signature, and asymmetric algorithm allow lis
 The unverified-subject profile is a broker extension. A matching rule declares
 `verification: none`. It accepts an unsigned `alg:none` JWT as `subject_token`. It rejects
 signed JWSs on this path. It does not allow unsigned client assertions, actors, or signed
-subjects. A signed client assertion and the subject-binding CEL predicate authorize
-caller-provided claims. The predicate must bind `subject_token.email` before the broker
-issues an email claim.
+subjects. A signed client assertion and the rule's authorization authorize caller-provided
+claims. On a CEL rule the predicate must reference `subject_token`, and must bind
+`subject_token.email` before the broker issues an email claim. On an OPA rule there is no such
+static check: the policy is the only control on the caller-asserted subject and email
+([OPA impersonation policies](#opa-impersonation-policies)).
 
 ### Category eligibility
 
-`allowed_subject_categories` is rule-local: omission means `[human]`; `[agent]` permits only agents and `[human, agent]` permits both (either order). A request is agent-category only when its signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target UUID. An unsigned subject with that exact `sub` is agent-category only when the rule's authorization predicate binds `subject_token.sub`. A `sub` or extracted subject principal that is another registered agent's canonical UUID is rejected on every rule, without human fallback. Other subjects are human. No aliases, UUID normalization, principal-expression mapping or request category input selects agent issuance. Signed equality is ineligible on human-only/omitted rules even with active same-text delegation. Ineligibility falls through, and no eligible rule returns generic `403 access_denied` (`impersonation not permitted`) without `error_uri`.
+`allowed_subject_categories` is rule-local: omission means `[human]`; `[agent]` permits only agents and `[human, agent]` permits both (either order). A request is agent-category only when its signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target UUID. An unsigned subject with that exact `sub` is agent-category on an OPA rule, and on a CEL rule only when the predicate binds `subject_token.sub`. A `sub` or extracted subject principal that is another registered agent's canonical UUID is rejected on every rule, without human fallback. Other subjects are human. No aliases, UUID normalization, principal-expression mapping or request category input selects agent issuance. Signed equality is ineligible on human-only/omitted rules even with active same-text delegation. Ineligibility falls through, and no eligible rule returns generic `403 access_denied` (`impersonation not permitted`) without `error_uri`.
 
-Every principal extraction and CEL authorization remains mandatory. Eligible agents skip delegation and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and delegation principal. Missing/expired delegation is terminal `403 access_denied` with the established target consent `error_uri`; verifier failure is `500 server_error` without one. A denied human never retries as agent. Unsigned rules may list `agent`, but it has no effect; ADR 031 controls remain intact.
+Every principal extraction and the rule's authorization remain mandatory. Eligible agents skip delegation and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and delegation principal. Missing/expired delegation is terminal `403 access_denied` with the established target consent `error_uri`; verifier failure is `500 server_error` without one. A denied human never retries as agent. On a CEL rule without the `subject_token.sub` binding, listing `agent` has no effect for unsigned subjects; ADR 031 controls remain intact.
 
 ### Response and errors
 
@@ -512,8 +515,107 @@ The event records `invalid_request` and the resolved target, without unvalidated
 Separate token-exchange diagnostic fields distinguish missing and expired grants.
 The event excludes routing audiences, issuer URLs, free-form failure categories, credentials, issued access tokens, and signing keys.
 
+Rules decided by OPA add `authorization_engine` (`cel` or `opa`), and for OPA
+`policy_revision` and `policy_admission_id`, which identify the deciding policy revision even
+when bundle manifest revisions are empty or reused.
+
 See [Configuration](/docs/configuration) and
 `examples/config/impersonation.yaml` for operator setup and examples.
+
+### OPA impersonation policies
+
+Each rule selects `authorization.type: cel` or `opa`. Every OPA rule decides through one engine
+configured under `oauth2_authorization_server.impersonation.opa` ([configuration](../configuration.md#opa-impersonation-policies),
+`examples/config/impersonation-opa.yaml`). OPA replaces only the rule's authorization
+predicate. Credential validation, audience absence, category eligibility, cross-agent
+rejection, user delegation, scope checks, and minting still apply, in the same order.
+
+**Decision.** The rule's decision `data.<package>.<decision>` (default
+`data.aib.broker.impersonation.result`) must be exactly one object with a string `action`:
+
+| Decision | Effect | Diagnostic |
+| --- | --- | --- |
+| `{"action": "allow"}` | The rule matches; delegation and minting continue | — |
+| `{"action": "deny"}` | The rule does not match; later rules are tried. No match returns `403 access_denied` (`token exchange is not authorized`) | `client_authorization/client_policy_denied` |
+| Undefined, non-object, missing or other `action` (including `approval_required`) | `500 server_error`; later rules are not tried | `client_authorization/opa_decision_invalid` |
+| Evaluation error, strict built-in error, timeout, cancellation | `500 server_error`; later rules are not tried | `client_authorization/opa_evaluation_failed` |
+
+Other members such as `reasons` are ignored and never returned or logged. **Every policy needs
+a `default` decision.** A decision that is undefined for a request is a terminal `500`, not a
+deny, and it also stops later rules. ExtProc treats the same documents differently (undefined
+is a deny there, and `approval_required` starts an approval), so a bundle shared with ExtProc
+puts impersonation decisions in a package of their own.
+
+**Input.** The input is Envoy-compatible: `attributes.request.http` (`method`, `path`,
+`protocol`, `headers` with lower-case names and repeated values joined with `, `, and `host`
+and `scheme` from `server.enduser.public_url`), `version`, `parsed_path`, `parsed_query`, and
+`parsed_body`, plus `truncated_body: false`, `type: "impersonation"`, and `context`:
+
+| `input.context` member | Value |
+| --- | --- |
+| `client_assertion`, `actor_token`, `subject_token` | The validated claims, the same maps as the CEL variables. An unsigned subject's claims are caller-asserted |
+| `subject_unverified` | `true` only for `verification: none` |
+| `request` | `resource` (always `""`), `grant_type`, `scope`, `agent_id`, as the CEL `request` |
+| `agent` | The resolved target Agent: `id`, and `canonical_id` and `external_id` when set (omitted otherwise) |
+
+`parsed_body` is the parsed form without `client_assertion`, `actor_token`, `subject_token`,
+`client_secret`, `refresh_token`, `code`, and `code_verifier`, and `null` for any other
+content type. The `authorization`, `proxy-authorization`, and `cookie` headers are removed.
+**Other headers, `parsed_query`, and `parsed_body` are unvalidated caller data**: base identity
+and target decisions on `context`, which only validated values populate. ExtProc's grant-context
+members (`principal`, `resource`, `grant`, `permission_sets`, `granted_permission_sets*`,
+`agent_session_id`) are never present, because the policy runs before delegation.
+
+**Built-ins.** Policies compile without the nondeterministic built-ins `http.send`,
+`net.lookup_ip_addr`, `opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign`,
+`io.jwt.encode_sign_raw`, `json.verify_schema`, and `json.match_schema`. `time.now_ns` and
+`io.jwt.decode_verify` remain available. A call anywhere in a bundle, even in a rule no
+decision reaches, rejects the revision before it activates, so the call never runs. `print` is
+disabled. Governance data reaches the policy only through bundles.
+
+**Exceptional credential modes.** On an OPA rule the broker does not check which token maps the
+policy reads. The operator's policy is the only control on:
+
+- an unsigned subject (`verification: none`): constrain `context.subject_token`, including
+  `email` when `email_expression` mints it, and `sub` when the rule allows agents. An unsigned
+  `sub` equal to the target UUID is agent category; comparing it with `context.agent.id`
+  restricts nothing, so compare it with the agents the client may represent;
+- each role with `audience_requirement: absent`: constrain that role's token map.
+
+The signature, issuer, lifetime, and absence of `aud` of signed roles are still verified, and
+another registered agent's UUID is still a rejected cross-agent request.
+`examples/config/opa/impersonation/exceptional-modes.rego` shows each case.
+
+**Rule order.** Rules stay first-match: after an explicit OPA deny a later rule can still
+authorize the request, so apply a universal governance restriction to every rule that could
+permit the request. A request that falls through N OPA rules can wait up to the sum of their
+`evaluation_timeout` values. Every OPA rule of one request decides on the same revision.
+
+**Managed revisions.** After each bundle activation the broker builds a candidate revision from
+the activated policy and data, checks the built-ins, requires every configured bundle in the
+same snapshot, and admits it only if every OPA rule's decision rule exists. Admission is
+all-or-nothing for all OPA rules. A rejected candidate, a failed download, or an unreadable
+token keeps the last admitted revision, with no maximum age, so policy can grow stale while
+updates fail. A rejected bundle blocks updates of other bundles until it is republished,
+because every later candidate contains it. Each broker instance activates updates on its own
+polling schedule. Admitted revisions apply to the next request; issued tokens are not revoked.
+The broker's revision telemetry, not OPA's bundle status, is authoritative for the active
+revision: alert on the `rejected` outcome of `tokenexchange.impersonation_opa.revisions` and on
+failing `tokenexchange.impersonation_opa.bundle_downloads`, and watch
+`tokenexchange.impersonation_opa.revision_age` and `tokenexchange.impersonation_opa.bundle_download_age`.
+
+**Memory.** The broker holds governance data about twice (OPA's store and the active revision),
+plus a third copy briefly while it builds a candidate. Every instance loads the same bundles,
+so an oversized bundle can exhaust memory on every instance at once and crash-loop the fleet.
+Bound bundles with `bundles.<name>.size_limit_bytes`.
+
+**Bundle transport.** Bundles decide token issuance. Use `https` services and signed bundles
+with verification keys. The broker does not require either.
+
+**Cancellation.** A caller that disconnects during evaluation stops authorization without
+issuance or fallthrough. The broker records the `canceled` outcome on the
+`tokenexchange.impersonation.opa_evaluate` span of that request; the disconnected caller
+receives no response.
 
 
 ## Agent-subject boundary
@@ -532,6 +634,8 @@ A non-empty override **replaces the default entirely**. A configured expression 
 | --- | --- | --- | --- |
 | `subject_category_ineligible` | `client_authorization` | `impersonation` | Rule fall-through; no match is generic `403 access_denied`, no `error_uri` |
 | `subject_category_unsupported` | `identity_resolution` | `third_party` | `403 access_denied`, no `error_uri` |
+| `opa_decision_invalid` | `client_authorization` | `impersonation` | `500 server_error`; later rules are not tried |
+| `opa_evaluation_failed` | `client_authorization` | `impersonation` | `500 server_error`; later rules are not tried |
 
 See the [token-endpoint request/claims/denial examples](../api/enduser-api.md#agent-subject-token-exchange), [concepts](../concepts/token-exchange.md#agent-subject-boundary), [configuration](../configuration.md#agent-subject-detection-for-third-party-exchange), and [detector example](../../examples/config/token-exchange.yaml).
 

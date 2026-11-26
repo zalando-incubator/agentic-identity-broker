@@ -2,6 +2,9 @@
 package bootstrap
 
 import (
+	"context"
+	"sync"
+
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -16,4 +19,41 @@ func NewInMemoryTracerProvider() (*sdktrace.TracerProvider, *tracetest.SpanRecor
 		sdktrace.WithSampler(sdktrace.AlwaysSample()),
 	)
 	return tp, recorder
+}
+
+// SpanStartSignal is a span processor that closes Started when the first span with the given
+// name starts. Tests use it to act while an operation is in progress, without fixed sleeps.
+type SpanStartSignal struct {
+	name    string
+	once    sync.Once
+	Started chan struct{}
+}
+
+// NewSpanStartSignal signals the start of the named span.
+func NewSpanStartSignal(name string) *SpanStartSignal {
+	return &SpanStartSignal{name: name, Started: make(chan struct{})}
+}
+
+func (s *SpanStartSignal) OnStart(_ context.Context, span sdktrace.ReadWriteSpan) {
+	if span.Name() == s.name {
+		s.once.Do(func() { close(s.Started) })
+	}
+}
+
+func (s *SpanStartSignal) OnEnd(sdktrace.ReadOnlySpan) {}
+
+func (s *SpanStartSignal) Shutdown(context.Context) error { return nil }
+
+func (s *SpanStartSignal) ForceFlush(context.Context) error { return nil }
+
+// NewSignalingTracerProvider is NewInMemoryTracerProvider plus a start signal for spanName.
+func NewSignalingTracerProvider(spanName string) (*sdktrace.TracerProvider, *tracetest.SpanRecorder, *SpanStartSignal) {
+	recorder := tracetest.NewSpanRecorder()
+	signal := NewSpanStartSignal(spanName)
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithSpanProcessor(signal),
+		sdktrace.WithSpanProcessor(recorder),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	return tp, recorder, signal
 }

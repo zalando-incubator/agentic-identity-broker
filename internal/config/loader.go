@@ -4,11 +4,15 @@ package config
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -702,9 +706,17 @@ func (l *Loader) validateSecurePattern(value string) error {
 func unmarshalConfig(v *viper.Viper) (ports.Config, error) {
 	var cfg ports.Config
 	if err := v.Unmarshal(&cfg, func(c *mapstructure.DecoderConfig) {
-		c.DecodeHook = mapstructure.ComposeDecodeHookFunc(rejectNumericDurationHook(), rejectNonSequenceSubjectCategoriesHook(), c.DecodeHook)
+		c.DecodeHook = mapstructure.ComposeDecodeHookFunc(rejectNumericDurationHook(), rejectNonSequenceSubjectCategoriesHook(), rejectUnsupportedRuleOPAKeysHook(), c.DecodeHook)
 		c.DecodeNil = true
 	}); err != nil {
+		var keyErr *unsupportedRuleOPAKeyError
+		if errors.As(err, &keyErr) {
+			return ports.Config{}, &config.ConfigError{
+				Field:    impersonationRuleField(v, err.Error()) + ".authorization.opa." + keyErr.key,
+				Expected: "unset; engine settings belong under oauth2_authorization_server.impersonation.opa",
+				Err:      keyErr,
+			}
+		}
 		return ports.Config{}, &config.ConfigError{
 			Expected: "valid configuration structure",
 			Err:      err,
@@ -733,6 +745,70 @@ func rejectNonSequenceSubjectCategoriesHook() mapstructure.DecodeHookFuncType {
 		}
 		return data, nil
 	}
+}
+
+// unsupportedRuleOPAKeyError names a key under a rule's authorization.opa other than package,
+// decision, and evaluation_timeout.
+type unsupportedRuleOPAKeyError struct{ key string }
+
+func (e *unsupportedRuleOPAKeyError) Error() string {
+	return "unsupported key " + e.key + "; engine settings belong under impersonation.opa"
+}
+
+// rejectUnsupportedRuleOPAKeysHook rejects every key of a rule's authorization.opa block other
+// than the three decision keys, before the typed decode would drop it.
+func rejectUnsupportedRuleOPAKeysHook() mapstructure.DecodeHookFuncType {
+	decisionType := reflect.TypeOf(ports.ImpersonationRuleOPADecision{})
+	return func(from reflect.Type, to reflect.Type, data any) (any, error) {
+		if to != decisionType {
+			return data, nil
+		}
+		values, ok := data.(map[string]any)
+		if !ok {
+			return data, nil
+		}
+		keys := make([]string, 0, len(values))
+		for key := range values {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			switch key {
+			case "package", "decision", "evaluation_timeout":
+			default:
+				return nil, &unsupportedRuleOPAKeyError{key: key}
+			}
+		}
+		return data, nil
+	}
+}
+
+var impersonationRuleIndex = regexp.MustCompile(`oauth2_authorization_server\.impersonation\.rules\[(\d+)\]`)
+
+// impersonationRuleField returns the indexed "rules[<i>] (<name>)" field of the decode error.
+func impersonationRuleField(v *viper.Viper, decodeErr string) string {
+	const base = "oauth2_authorization_server.impersonation.rules"
+	match := impersonationRuleIndex.FindStringSubmatch(decodeErr)
+	if match == nil {
+		return base
+	}
+	index, err := strconv.Atoi(match[1])
+	if err != nil {
+		return base
+	}
+	field := fmt.Sprintf("%s[%d]", base, index)
+	value := reflect.ValueOf(v.Get(configutil.Key("oauth2_authorization_server", "impersonation", "rules")))
+	if value.Kind() == reflect.Slice && index < value.Len() {
+		item := reflect.ValueOf(value.Index(index).Interface())
+		if item.Kind() == reflect.Map {
+			if name := item.MapIndex(reflect.ValueOf("name")); name.IsValid() {
+				if text, ok := name.Interface().(string); ok {
+					field += " (" + text + ")"
+				}
+			}
+		}
+	}
+	return field
 }
 
 func rejectNumericDurationHook() mapstructure.DecodeHookFuncType {

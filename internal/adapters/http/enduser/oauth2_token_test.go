@@ -2925,3 +2925,63 @@ func TestTokenExchangeEarlyAndImpersonationObservationsHaveNoAuthorization(t *te
 		})
 	}
 }
+
+type capturingImpersonationService struct {
+	request *impersonation.Request
+	audit   impersonation.AuditRecord
+}
+
+func (s *capturingImpersonationService) ResolveTarget(context.Context, []string) (*impersonation.Target, bool, error) {
+	return &impersonation.Target{Agent: &storage.Agent{ID: id.NewAgentID()}}, true, nil
+}
+
+func (s *capturingImpersonationService) Impersonate(_ context.Context, req *impersonation.Request, _ *impersonation.Target) (*impersonation.Outcome, error) {
+	s.request = req
+	err := tokenexchange.NewAccessDeniedError("denied")
+	return &impersonation.Outcome{Audit: s.audit}, err
+}
+
+func TestOAuth2TokenHandler_PassesTransportFactsToImpersonation(t *testing.T) {
+	const credential = "SYNTHETIC-CREDENTIAL"
+	service := &capturingImpersonationService{audit: impersonation.AuditRecord{
+		Outcome: "access_denied", SelectedRule: "governed", AuthorizationEngine: "opa",
+		PolicyRevision: "impersonation=r1", PolicyAdmissionID: "instance-7",
+	}}
+	logs := newTokenEndpointLogCaptureHandler(slog.LevelInfo)
+	handler := &OAuth2TokenHandler{Impersonation: service, Logger: slog.New(logs)}
+	body := "grant_type=" + url.QueryEscape(tokenexchange.TokenExchangeGrantType) +
+		"&audience=https%3A%2F%2Fbroker%2Fimpersonation%2Fx&scope=read&resource=" +
+		"&client_assertion_type=" + url.QueryEscape(tokenexchange.JWTBearerType) + "&client_assertion=" + credential +
+		"&actor_token_type=" + url.QueryEscape("urn:ietf:params:oauth:token-type:jwt") + "&actor_token=" + credential +
+		"&subject_token_type=" + url.QueryEscape("urn:ietf:params:oauth:token-type:jwt") + "&subject_token=" + credential
+	req := httptest.NewRequest(http.MethodPost, "/oauth2/token?trace=1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Add("X-Tenant", "acme")
+	req.Header.Add("X-Tenant", "blue")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	require.NotNil(t, service.request)
+	attrs := service.request.HTTP
+	assert.Equal(t, http.MethodPost, attrs.Method)
+	assert.Equal(t, "/oauth2/token", attrs.Path)
+	assert.Equal(t, "trace=1", attrs.RawQuery)
+	assert.Equal(t, "HTTP/1.1", attrs.Protocol)
+	assert.Equal(t, "application/x-www-form-urlencoded", attrs.ContentType)
+	assert.Equal(t, []string{"acme", "blue"}, attrs.Headers["X-Tenant"])
+	assert.Equal(t, []string{""}, attrs.Form["resource"], "the form is copied before omitted-value normalization")
+	assert.Equal(t, []string{"read"}, attrs.Form["scope"])
+
+	require.NotEmpty(t, *logs.records)
+	record := (*logs.records)[0]
+	assert.Equal(t, "impersonation.decision.recorded", record.attrs["event"])
+	assert.Equal(t, "opa", record.attrs["authorization_engine"])
+	assert.Equal(t, "impersonation=r1", record.attrs["policy_revision"])
+	assert.Equal(t, "instance-7", record.attrs["policy_admission_id"])
+	for _, logged := range *logs.records {
+		for _, value := range logged.attrs {
+			assert.NotContains(t, fmt.Sprint(value), credential)
+		}
+	}
+}

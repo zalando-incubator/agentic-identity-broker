@@ -29,7 +29,7 @@ func TestAgentSubjectRequiresEveryPrincipalExtraction(t *testing.T) {
 				verifier := &recordingDelegationVerifier{status: ports.UserDelegationActive}
 				svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 					return configurableJWKSProvider{set: keyset}, nil
-				}, stubAgentRepository{}, mint, 0, nil, verifier, "https://broker.example.com")
+				}, stubAgentRepository{}, mint, 0, nil, verifier, "https://broker.example.com", nil, "")
 				require.NoError(t, err)
 				target := testTarget()
 				builder := jwt.NewBuilder().Issuer("https://idp.example.com").Audience([]string{"aud"}).Subject(target.Agent.ID.String()).Expiration(time.Now().Add(time.Hour))

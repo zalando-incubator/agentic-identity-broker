@@ -87,11 +87,11 @@ func newImpersonationHeaderHandler(t *testing.T) (*OAuth2TokenHandler, *handlerI
 				"subject":          {ExpectedAudience: "aud", PrincipalExpression: "subject_token.sub"},
 			},
 			TrustedIssuers: []ports.TrustedTokenIssuerConfig{{IssuerURI: "https://issuer.example.com", AllowedAlgorithms: []string{"ES256"}, SignsRoles: []string{"client_assertion", "actor", "subject"}}},
-			Authorization:  ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
+			Authorization:  ports.ImpersonationAuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
 		}},
 	}, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return handlerJWKSProvider{}, nil
-	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com")
+	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com", nil, "")
 	require.NoError(t, err)
 	return &OAuth2TokenHandler{Impersonation: service}, issuer, target
 }
@@ -122,11 +122,11 @@ func newScopedImpersonationHandler(t *testing.T) (*OAuth2TokenHandler, *handlerI
 				"subject":          {ExpectedAudience: "aud", PrincipalExpression: "subject_token.sub"},
 			},
 			TrustedIssuers: []ports.TrustedTokenIssuerConfig{{IssuerURI: "https://issuer.example.com", AllowedAlgorithms: []string{"ES256"}, SignsRoles: []string{"client_assertion", "actor", "subject"}}},
-			Authorization:  ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
+			Authorization:  ports.ImpersonationAuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}},
 		}},
 	}, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return handlerJWKSProvider{set: keySet}, nil
-	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com")
+	}, handlerAgentRepository{agent: target}, issuer, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com", nil, "")
 	require.NoError(t, err)
 	return &OAuth2TokenHandler{Impersonation: service}, issuer, target, signingKey
 }
@@ -330,10 +330,10 @@ func TestHandleTokenExchange_RejectsInvalidTargets(t *testing.T) {
 				handler, _, _ = newImpersonationHeaderHandler(t)
 				handler.Impersonation, _ = impersonation.NewService(&ports.ImpersonationConfig{
 					AudiencePrefix: "https://broker.example.com/impersonation",
-					Rules:          []ports.ImpersonationRuleConfig{{Name: "rule", Roles: map[string]ports.ImpersonationRoleConfig{"client_assertion": {ExpectedAudience: "aud", PrincipalExpression: "client_assertion.sub"}, "actor": {ExpectedAudience: "aud", PrincipalExpression: "actor_token.sub"}, "subject": {ExpectedAudience: "aud", PrincipalExpression: "subject_token.sub"}}, TrustedIssuers: []ports.TrustedTokenIssuerConfig{{IssuerURI: "https://issuer.example.com", AllowedAlgorithms: []string{"ES256"}, SignsRoles: []string{"client_assertion", "actor", "subject"}}}, Authorization: ports.AuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}}}},
+					Rules:          []ports.ImpersonationRuleConfig{{Name: "rule", Roles: map[string]ports.ImpersonationRoleConfig{"client_assertion": {ExpectedAudience: "aud", PrincipalExpression: "client_assertion.sub"}, "actor": {ExpectedAudience: "aud", PrincipalExpression: "actor_token.sub"}, "subject": {ExpectedAudience: "aud", PrincipalExpression: "subject_token.sub"}}, TrustedIssuers: []ports.TrustedTokenIssuerConfig{{IssuerURI: "https://issuer.example.com", AllowedAlgorithms: []string{"ES256"}, SignsRoles: []string{"client_assertion", "actor", "subject"}}}, Authorization: ports.ImpersonationAuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}}}},
 				}, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 					return handlerJWKSProvider{}, nil
-				}, handlerAgentRepository{}, &handlerIssuer{}, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com")
+				}, handlerAgentRepository{}, &handlerIssuer{}, 0, nil, handlerDelegationVerifier{}, "https://broker.example.com", nil, "")
 				require.NotNil(t, handler.Impersonation)
 			}
 			form := url.Values{"grant_type": {tokenexchange.TokenExchangeGrantType}, "audience": {tc.audience}}

@@ -77,6 +77,7 @@ func (r requestContext) toMap() map[string]interface{} {
 // can enforce that a caller-controlled unverified-subject email is only minted when the predicate
 // binds subject_token.email, FR-006a).
 type authorizationProgram struct {
+	rule       string
 	program    cel.Program
 	references map[string]struct{}
 	binds      map[string]struct{}
@@ -129,20 +130,24 @@ func (p *authorizationProgram) Binds(variable, field string) bool {
 	return ok
 }
 
+func (p *authorizationProgram) label() string { return p.rule }
+
+func (p *authorizationProgram) engine() string { return engineCEL }
+
+// bindsSubjectField reports whether the predicate selects the field on subject_token.
+func (p *authorizationProgram) bindsSubjectField(field string) bool {
+	return p.Binds(celSubjectToken, field)
+}
+
 // evaluate runs the predicate against the credential claims. It fails closed on evaluation
 // error or timeout (FR-007).
-func (p *authorizationProgram) evaluate(
-	ctx context.Context,
-	clientAssertion, actorToken, subjectToken map[string]interface{},
-	subjectUnverified bool,
-	request requestContext,
-) (bool, error) {
+func (p *authorizationProgram) evaluate(ctx context.Context, in policyInputs) (bool, error) {
 	activation := map[string]interface{}{
-		celClientAssertion:   orEmptyMap(clientAssertion),
-		celActorToken:        orEmptyMap(actorToken),
-		celSubjectToken:      orEmptyMap(subjectToken),
-		celSubjectUnverified: subjectUnverified,
-		celRequest:           request.toMap(),
+		celClientAssertion:   orEmptyMap(in.clientClaims),
+		celActorToken:        orEmptyMap(in.actorClaims),
+		celSubjectToken:      orEmptyMap(in.subjectClaims),
+		celSubjectUnverified: in.subjectUnverified,
+		celRequest:           in.request,
 	}
 	out, err := evaluateWithTimeout(ctx, p.program, activation, p.timeout)
 	if err != nil {

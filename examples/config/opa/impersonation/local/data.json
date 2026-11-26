@@ -1,0 +1,9 @@
+{
+  "governance": {
+    "agents": {
+      "inventory-agent": {"status": "approved", "application": "inventory-api"},
+      "reporting-agent": {"status": "unregistered", "application": "reporting"}
+    },
+    "chat_bridge_agents": ["550e8400-e29b-41d4-a716-446655440000"]
+  }
+}

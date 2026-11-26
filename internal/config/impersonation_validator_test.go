@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,7 @@ func validImpersonationConfig() *ports.ImpersonationConfig {
 				AllowedAlgorithms: []string{"ES256", "RS256"},
 				SignsRoles:        []string{"client_assertion", "actor", "subject"},
 			}},
-			Authorization: ports.AuthorizationConfig{
+			Authorization: ports.ImpersonationAuthorizationConfig{
 				Type: "cel",
 				CEL:  ports.CELAuthorizationConfig{Expression: `client_assertion.sub == "gw"`},
 			},
@@ -136,9 +137,9 @@ func TestValidateImpersonationConfig_Rejections(t *testing.T) {
 			r.ExpectedAudience = ""
 			c.Rules[0].Roles["subject"] = r
 		}, "signs_roles"},
-		{"non-cel authorization", servermode.Local, func(c *ports.ImpersonationConfig) {
-			c.Rules[0].Authorization.Type = "opa"
-		}, "authorization.type"},
+		{"opa rule without the shared engine block", servermode.Local, func(c *ports.ImpersonationConfig) {
+			c.Rules[0].Authorization = ports.ImpersonationAuthorizationConfig{Type: "opa"}
+		}, "oauth2_authorization_server.impersonation.opa"},
 		{"empty authorization expression", servermode.Local, func(c *ports.ImpersonationConfig) {
 			c.Rules[0].Authorization.CEL.Expression = ""
 		}, "authorization.cel.expression"},
@@ -226,6 +227,77 @@ func TestValidateImpersonationConfig_AudienceRequirementAbsent(t *testing.T) {
 			configErr, ok := err.(*domconfig.ConfigError)
 			require.True(t, ok, "expected ConfigError, got %T", err)
 			assert.True(t, strings.HasSuffix(configErr.Field, tc.wantField), "field %q must end in %q", configErr.Field, tc.wantField)
+		})
+	}
+}
+
+func opaImpersonationConfig() *ports.ImpersonationConfig {
+	cfg := validImpersonationConfig()
+	cfg.Rules[0].Authorization = ports.ImpersonationAuthorizationConfig{Type: "opa"}
+	cfg.OPA = ports.ImpersonationOPAEngineConfig{Policy: ports.ImpersonationOPAPolicySource{ConfigFile: "/etc/broker/opa/bootstrap.yaml"}}
+	return cfg
+}
+
+func TestValidateImpersonationOPAEngine(t *testing.T) {
+	t.Run("an OPA rule with defaults and a shared engine is valid", func(t *testing.T) {
+		require.NoError(t, validateImpersonationConfig(opaImpersonationConfig(), servermode.Local, &ports.SecurityConfig{}))
+		cfg := opaImpersonationConfig()
+		cfg.OPA = ports.ImpersonationOPAEngineConfig{Policy: ports.ImpersonationOPAPolicySource{Path: "/opt/policy"}, StartupTimeout: 5 * time.Minute}
+		cfg.Rules[0].Authorization.OPA = ports.ImpersonationRuleOPADecision{Package: "company.impersonation_v2", Decision: "_result", EvaluationTimeout: 5 * time.Second}
+		require.NoError(t, validateImpersonationConfig(cfg, servermode.Local, &ports.SecurityConfig{}))
+	})
+	t.Run("a CEL-only configuration needs no engine and accepts an empty block", func(t *testing.T) {
+		cfg := validImpersonationConfig()
+		cfg.OPA = ports.ImpersonationOPAEngineConfig{}
+		require.NoError(t, validateImpersonationConfig(cfg, servermode.Local, &ports.SecurityConfig{}))
+	})
+
+	const rule = "oauth2_authorization_server.impersonation.rules[0] (internal-gateway).authorization"
+	for name, tc := range map[string]struct {
+		mutate func(*ports.ImpersonationConfig)
+		field  string
+	}{
+		"unknown engine":     {func(c *ports.ImpersonationConfig) { c.Rules[0].Authorization.Type = "rego" }, rule + ".type"},
+		"missing engine":     {func(c *ports.ImpersonationConfig) { c.Rules[0].Authorization.Type = "" }, rule + ".type"},
+		"both blocks on OPA": {func(c *ports.ImpersonationConfig) { c.Rules[0].Authorization.CEL.Expression = "true" }, rule + ".cel"},
+		"OPA block on CEL": {func(c *ports.ImpersonationConfig) {
+			c.Rules[0].Authorization = ports.ImpersonationAuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}, OPA: ports.ImpersonationRuleOPADecision{Decision: "result"}}
+		}, rule + ".opa"},
+		"missing engine block": {func(c *ports.ImpersonationConfig) { c.OPA = ports.ImpersonationOPAEngineConfig{} }, "oauth2_authorization_server.impersonation.opa"},
+		"populated engine block without an OPA rule": {func(c *ports.ImpersonationConfig) {
+			c.Rules[0].Authorization = ports.ImpersonationAuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}}
+		}, "oauth2_authorization_server.impersonation.opa"},
+		"only a startup timeout without an OPA rule": {func(c *ports.ImpersonationConfig) {
+			c.Rules[0].Authorization = ports.ImpersonationAuthorizationConfig{Type: "cel", CEL: ports.CELAuthorizationConfig{Expression: "true"}}
+			c.OPA = ports.ImpersonationOPAEngineConfig{StartupTimeout: time.Second}
+		}, "oauth2_authorization_server.impersonation.opa"},
+		"both policy sources": {func(c *ports.ImpersonationConfig) { c.OPA.Policy.Path = "/opt/policy" }, "oauth2_authorization_server.impersonation.opa.policy"},
+		"no policy source": {func(c *ports.ImpersonationConfig) {
+			c.OPA = ports.ImpersonationOPAEngineConfig{StartupTimeout: time.Second}
+		}, "oauth2_authorization_server.impersonation.opa.policy"},
+		"relative bootstrap": {func(c *ports.ImpersonationConfig) { c.OPA.Policy.ConfigFile = "bootstrap.yaml" }, "opa.policy.config_file"},
+		"relative bundle path": {func(c *ports.ImpersonationConfig) {
+			c.OPA.Policy = ports.ImpersonationOPAPolicySource{Path: "bundle"}
+		}, "opa.policy.path"},
+		"startup timeout too short": {func(c *ports.ImpersonationConfig) { c.OPA.StartupTimeout = 500 * time.Millisecond }, "opa.startup_timeout"},
+		"startup timeout too long":  {func(c *ports.ImpersonationConfig) { c.OPA.StartupTimeout = 6 * time.Minute }, "opa.startup_timeout"},
+		"empty package segment":     {func(c *ports.ImpersonationConfig) { c.Rules[0].Authorization.OPA.Package = "company..impersonation" }, rule + ".opa.package"},
+		"non-identifier package":    {func(c *ports.ImpersonationConfig) { c.Rules[0].Authorization.OPA.Package = "company.9x" }, rule + ".opa.package"},
+		"data prefix in package":    {func(c *ports.ImpersonationConfig) { c.Rules[0].Authorization.OPA.Package = "data/company" }, rule + ".opa.package"},
+		"invalid decision":          {func(c *ports.ImpersonationConfig) { c.Rules[0].Authorization.OPA.Decision = "result.allow" }, rule + ".opa.decision"},
+		"decision timeout too short": {func(c *ports.ImpersonationConfig) {
+			c.Rules[0].Authorization.OPA.EvaluationTimeout = time.Millisecond
+		}, rule + ".opa.evaluation_timeout"},
+		"decision timeout too long": {func(c *ports.ImpersonationConfig) {
+			c.Rules[0].Authorization.OPA.EvaluationTimeout = 6 * time.Second
+		}, rule + ".opa.evaluation_timeout"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := opaImpersonationConfig()
+			tc.mutate(cfg)
+			err := validateImpersonationConfig(cfg, servermode.Local, &ports.SecurityConfig{})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.field)
 		})
 	}
 }

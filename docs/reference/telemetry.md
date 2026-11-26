@@ -90,6 +90,7 @@ Error status: whether the span can end with status `Error`.
 | [`tokenexchange.exchange`](#tokenexchangeexchange) | Internal | `tokenexchange` | Yes | RFC 8693 token exchange request in the broker. |
 | [`tokenexchange.get_valid_access_token`](#tokenexchangeget_valid_access_token) | Internal | `tokenexchange` | No | Returns the access token of the session. Refreshes it during the request when it has expired, and starts a background refresh when it expires within the refresh lookahead. |
 | [`tokenexchange.impersonation`](#tokenexchangeimpersonation) | Internal | `tokenexchange` | Yes | RFC 8693 impersonation request in the broker. |
+| [`tokenexchange.impersonation.opa_evaluate`](#tokenexchangeimpersonationopa_evaluate) | Internal | `tokenexchange` | Yes | Evaluates one impersonation rule's OPA decision on the policy revision the request read before its first rule. An explicit deny lets later rules run; an invalid decision, an error, a timeout or a cancellation stops the request. |
 | [`tokenexchange.verify_agent_access`](#tokenexchangeverify_agent_access) | Internal | `tokenexchange` | Yes | Checks that the principal has an active grant for the agent. |
 
 ## Metrics
@@ -110,6 +111,10 @@ Error status: whether the span can end with status `Error`.
 | [`session_sweep_failed_total`](#session_sweep_failed_total) | Int64Counter | `{refresh}` | `oauth2session` | Admin sweep candidates that could not be refreshed |
 | [`session_sweep_refreshed_total`](#session_sweep_refreshed_total) | Int64Counter | `{refresh}` | `oauth2session` | Sessions refreshed and committed by an admin sweep |
 | [`session_sweep_skipped_total`](#session_sweep_skipped_total) | Int64Counter | `{refresh}` | `oauth2session` | Admin sweep candidates skipped because they were already refreshed or deleted |
+| [`tokenexchange.impersonation_opa.bundle_download_age`](#tokenexchangeimpersonation_opabundle_download_age) | Float64ObservableGauge | `s` | `tokenexchange` | Seconds since each impersonation policy bundle was last downloaded successfully |
+| [`tokenexchange.impersonation_opa.bundle_downloads`](#tokenexchangeimpersonation_opabundle_downloads) | Int64Counter | `{download}` | `tokenexchange` | Impersonation policy bundle download attempts by bundle and outcome |
+| [`tokenexchange.impersonation_opa.revision_age`](#tokenexchangeimpersonation_oparevision_age) | Float64ObservableGauge | `s` | `tokenexchange` | Seconds since the active impersonation policy revision was admitted |
+| [`tokenexchange.impersonation_opa.revisions`](#tokenexchangeimpersonation_oparevisions) | Int64Counter | `{revision}` | `tokenexchange` | Candidate impersonation policy revisions by outcome and reason |
 
 ## Span attributes
 
@@ -919,6 +924,18 @@ The `tokenexchange.exchange` span, renamed while it runs. It has the same attrib
 | `token_exchange.session.operation` | [`internal/domain/oauth2session.Operation`](#internaldomainoauth2sessionoperation) |
 | `token_exchange.session.status_code` | any `int` |
 
+### tokenexchange.impersonation.opa_evaluate
+
+Evaluates one impersonation rule's OPA decision on the policy revision the request read before its first rule. An explicit deny lets later rules run; an invalid decision, an error, a timeout or a cancellation stops the request.
+
+Started in `internal/adapters/policy/opa/revision.go`.
+
+| Attribute | Values |
+|---|---|
+| `error.type` | [`internal/adapters/policy/opa.evaluationErrorType`](#internaladapterspolicyopaevaluationerrortype) |
+| `impersonation.authorization.action` | [`internal/adapters/policy/opa.evaluationAction`](#internaladapterspolicyopaevaluationaction) |
+| `impersonation.rule` | any `string` |
+
 ### tokenexchange.verify_agent_access
 
 Checks that the principal has an active grant for the agent.
@@ -1058,6 +1075,38 @@ Created in `internal/domain/oauth2session/sweep.go`.
 |---|---|
 | `triggered_by` | `sweep` |
 
+### tokenexchange.impersonation_opa.bundle_download_age
+
+Created in `internal/adapters/policy/opa/telemetry.go`.
+
+| Attribute | Values |
+|---|---|
+| `bundle` | any `string` |
+
+### tokenexchange.impersonation_opa.bundle_downloads
+
+Created in `internal/adapters/policy/opa/telemetry.go`.
+
+| Attribute | Values |
+|---|---|
+| `bundle` | any `string` |
+| `outcome` | [`internal/adapters/policy/opa.downloadOutcome`](#internaladapterspolicyopadownloadoutcome) |
+
+### tokenexchange.impersonation_opa.revision_age
+
+Created in `internal/adapters/policy/opa/telemetry.go`.
+
+No attributes.
+
+### tokenexchange.impersonation_opa.revisions
+
+Created in `internal/adapters/policy/opa/telemetry.go`.
+
+| Attribute | Values |
+|---|---|
+| `outcome` | `admitted`, `rejected` |
+| `reason` | `none`, [`internal/adapters/policy/opa.revisionReason`](#internaladapterspolicyoparevisionreason) |
+
 ## Attributes
 
 | Attribute | Description |
@@ -1084,6 +1133,7 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `authorization.result_code` | How the policy evaluation ended: `ok` when the policy returned a supported action, otherwise the reason why it did not. |
 | `authorization.target_server_name` | Name of the MCP server that the request targets. |
 | `authorization.tool_name` | Name of the MCP tool that the request calls. |
+| `bundle` | Name of an impersonation policy bundle, from the bundles of the configured OPA bootstrap. |
 | `db.operation` | Name of the storage operation, such as `GetAgent`. |
 | `db.system` | Database that the storage call uses. |
 | `dry_run` | Whether the sweep is a dry run. |
@@ -1094,10 +1144,13 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `grant_context.cache` | Whether the permit came from ExtProc's permit cache (`hit`) or from a broker evaluation (`miss`). A request that waits for the evaluation of another request is a `miss`. |
 | `http.request.method` | HTTP method: an allowlisted method, `_OTHER` otherwise. |
 | `http.response.status_code` | HTTP status code of the response. On `extproc.client_assertion.refresh`, it is set only from an error response of the token endpoint, and is `0` otherwise. On `tokenexchange.access_evaluation`, it is set only on an `error` decision. |
+| `impersonation.authorization.action` | Outcome of the OPA decision. |
+| `impersonation.rule` | Name of the impersonation rule whose OPA decision the span evaluates, from the configured rule names. |
 | `impersonation.target_agent_id` | ID of the agent that the impersonation request names as its audience. |
 | `oauth2.refresh.outcome` | Result of the background refresh: `refreshed` when it stored new tokens, `not_due` when no refresh was needed or the session no longer exists, `failed` otherwise. |
 | `oauth2.refresh.triggered_by` | Always `background`, because a token exchange started the refresh. |
 | `outcome` | Result of the operation that the metric records. Each metric has its own values. |
+| `reason` | Why a candidate impersonation policy revision was rejected, or `none` when it was admitted. |
 | `refreshable` | Whether the stored session can be refreshed. |
 | `service_id` | Canonical ID of the service when one is set, otherwise its UUID. |
 | `storage.outcome` | Result of a storage call that failed in a way the caller handles: `not_found`, `conflict`, `validation` or `canceled`. Absent on success. The span status stays unset. |
@@ -1125,6 +1178,41 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `triggered_by` | Source of the refresh: `background` when a token exchange found the access token close to expiry, `sweep` when the admin session sweep refreshed the session. |
 
 ## Attribute values
+
+### internal/adapters/policy/opa.downloadOutcome
+
+| Value | Meaning |
+|---|---|
+| `failure` | Set when the download failed; the active revision stays and ages. |
+| `success` | Set when the bundle was downloaded or was unchanged. |
+
+### internal/adapters/policy/opa.evaluationAction
+
+| Value | Meaning |
+|---|---|
+| `allow` | Set when the decision allowed the request. |
+| `canceled` | Set when the caller canceled the request during evaluation. |
+| `deny` | Set when the decision explicitly denied the request; later rules still run. |
+| `error` | Set when evaluation failed or timed out; the request failed with server_error. |
+| `invalid` | Set when the decision was undefined, malformed, or an unsupported action; the request failed with server_error. |
+
+### internal/adapters/policy/opa.evaluationErrorType
+
+| Value | Meaning |
+|---|---|
+| `opa_decision_invalid` | Set when the decision was not exactly one allow or deny object. |
+| `opa_evaluation_failed` | Set when evaluation raised an error or timed out. |
+
+### internal/adapters/policy/opa.revisionReason
+
+| Value | Meaning |
+|---|---|
+| `bundles_incomplete` | Set when the candidate does not contain every configured bundle. |
+| `compile_failed` | Set when a module does not parse or compile; fix the policy and publish a new revision. |
+| `decision_absent` | Set when an OPA rule's decision rule does not exist in the candidate; the log names the first failing rule. |
+| `none` | Set on an admitted revision. |
+| `prohibited_builtin` | Set when a module calls a removed nondeterministic built-in such as http.send, even in a rule no decision reaches. |
+| `snapshot_failed` | Set when the candidate's policy or data cannot be read or prepared. |
 
 ### internal/domain/oauth2session.Dependency
 
@@ -1253,6 +1341,8 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `jwks_unavailable` | The broker could not fetch the signing keys that it needs to verify the subject token, an actor token or the client assertion. |
 | `jwt_configuration` | The token validation settings, such as issuers, audience or clock skew, are invalid, which stops the broker at startup instead of failing a request. |
 | `none` | The exchange or access evaluation succeeded, and broker spans and logs then leave out the failure detail. |
+| `opa_decision_invalid` | An impersonation rule's OPA decision was undefined for the request or was not exactly one allow or deny object. Give the policy a default decision. Later rules are not tried. |
+| `opa_evaluation_failed` | An impersonation rule's OPA policy failed, raised a built-in error, or timed out while it ran. The request fails without trying later rules. |
 | `provider_client_rejected` | The provider answered the refresh with `invalid_client` or `unauthorized_client`, so fix the client credentials or registration of the service. |
 | `provider_rejected` | The provider refused the refresh with a 4xx error that is neither a client rejection nor `invalid_grant`. |
 | `provider_response_invalid` | The provider answered the refresh with a success status but a malformed or oversized body, or one without an access token. |

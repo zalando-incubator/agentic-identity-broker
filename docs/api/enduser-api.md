@@ -35,7 +35,7 @@ See the [token endpoint contract](https://github.com/zalando-incubator/agentic-i
 
 In local mode, a privileged client can request a token for a registered agent acting for itself. The [canonical OpenAPI](../../api/enduser/openapi.yaml) defines the contract. Use the complete [agent-subject configuration](../../examples/config/impersonation-agent-subject.yaml) and [configuration reference](../configuration.md#subject-categories-and-self-agent-issuance).
 
-Classification is rule-local: the raw string `sub` must exactly equal the audience-selected target's canonical UUID, and the subject must be signed and verified or, for an unsigned (`verification: none`) subject, the rule's predicate must bind `subject_token.sub`. Everything else is human. There is no request category field. Aliases and alternate UUID spellings never select agent issuance, and a different registered agent's UUID is rejected without falling back to human delegation. The target must exist and existing scope limits still apply. Every credential validation, principal extraction and CEL authorization must succeed. The actor and client assertion always require signatures.
+Classification is rule-local: the raw string `sub` must exactly equal the audience-selected target's canonical UUID, and the subject must be signed and verified or, for an unsigned (`verification: none`) subject, the rule must be OPA-authorized or its CEL predicate must bind `subject_token.sub`. Without that CEL binding an unsigned exact-target subject remains human and needs human eligibility and delegation. On an OPA rule the policy is the only control on which agents a client may represent, so it must constrain `input.context.subject_token.sub`. Everything else is human. There is no request category field. Aliases and alternate UUID spellings never select agent issuance, and a different registered agent's UUID is rejected without falling back to human delegation. The target must exist and existing scope limits still apply. Every credential validation, principal extraction and the rule's authorization must succeed. The actor and client assertion always require signatures.
 
 | `allowed_subject_categories` | Human | Signed exact-target subject |
 | --- | --- | --- |
@@ -43,7 +43,20 @@ Classification is rule-local: the raw string `sub` must exactly equal the audien
 | `[agent]` | Ineligible | No human delegation required |
 | `[human, agent]` (either order) | Active delegation required | No human delegation required |
 
-Category-ineligible rules fall through. Missing/expired delegation for an authorized human is terminal, with the established consent `error_uri`; no automatic agent retry is allowed. Unsigned-subject rules may list `agent`, but unsigned subjects remain human and that entry has no effect.
+Category-ineligible rules fall through. Missing/expired delegation for an authorized human is terminal, with the established consent `error_uri`; no automatic agent retry is allowed. On a CEL rule whose predicate does not bind `subject_token.sub`, listing `agent` has no effect for unsigned subjects.
+
+### Policy decisions
+
+Each impersonation rule selects a CEL predicate or an operator-managed Open Policy Agent (OPA) policy (`authorization.type`). Selecting OPA never replaces credential validation, subject-category eligibility, cross-agent rejection, user delegation, scope checks, or local minting. A rule's policy either allows the request or explicitly denies it. An explicit denial makes the rule not match, and later rules are evaluated in order; if none matches, the response is `403 access_denied` (`token exchange is not authorized`) without `error_uri`. A policy that cannot produce a valid allow or deny decision, an evaluation error, or a timeout stops rule evaluation; later rules are not tried and no token is issued:
+
+```http
+HTTP/1.1 500 Internal Server Error
+Content-Type: application/json
+
+{"error":"server_error","error_description":"internal server error during token exchange"}
+```
+
+Policy-produced text is never returned. Request headers, including identity-looking headers, never replace the validated client, actor, or subject credentials that a policy evaluates. Caller cancellation stops authorization without issuance or later-rule fallback; a disconnected client receives no response. Policy updates apply to subsequent requests only; issued tokens are not revoked. See the [OPA policy reference](../reference/token-exchange.md#opa-impersonation-policies).
 
 ### Request and signed response
 

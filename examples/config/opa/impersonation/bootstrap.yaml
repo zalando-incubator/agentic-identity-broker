@@ -1,0 +1,44 @@
+# OPA bootstrap for broker impersonation rules (impersonation.opa.policy.config_file).
+#
+# Only services, bundles, keys, labels, and plugins.aib_bearer_token_file are accepted. Decision
+# logs, status, discovery, persistence, other plugins, file-reading credentials (token_path,
+# client_assertion_path, web-identity, profile, SSO), tls, client_tls, allow_insecure_tls, and
+# file:// bundle resources fail startup. Diagnostics name the key, never its value.
+# Use https and signed bundles: bundles decide token issuance.
+services:
+  governance:
+    url: https://policies.example.com
+    credentials:
+      # Re-reads the mounted token before every bundle request, so a rotated Secret applies
+      # without a restart. Inline `bearer: {token: ...}` also works but needs a restart to rotate.
+      plugin: aib_bearer_token_file
+
+plugins:
+  aib_bearer_token_file:
+    # Absolute path; read through the file's own directory, at most 64 KiB, whitespace trimmed.
+    # Relative Kubernetes Secret links (..data) work; links leaving the directory fail.
+    path: /var/run/secrets/opa-bundle/token
+    scheme: Bearer
+
+bundles:
+  impersonation:
+    service: governance
+    resource: bundles/impersonation.tar.gz
+    polling:
+      min_delay_seconds: 30
+      max_delay_seconds: 60
+    # Bound the bundle size: the broker holds governance data about twice in memory.
+    size_limit_bytes: 8388608
+    signing:
+      keyid: governance-signing
+
+keys:
+  governance-signing:
+    algorithm: RS256
+    key: |
+      -----BEGIN PUBLIC KEY-----
+      <PEM public key of the bundle signer>
+      -----END PUBLIC KEY-----
+
+labels:
+  app: agentic-identity-broker

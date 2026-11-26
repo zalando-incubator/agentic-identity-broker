@@ -14,9 +14,14 @@ Security is NON-NEGOTIABLE and MUST NOT be bypassed or made optional in this cod
   `alg:none` JWT carried under the RFC 8693 JWT token type. The exception NEVER applies to a
   client assertion, actor token, or a signed subject (a rule with `verification: jwks`). It
   requires all ADR 031 compensating controls: explicit per-rule opt-in; signature-verified client
-  assertion and actor; a startup-verified authorization predicate reference to `subject_token`; an
-  unverified email minted only when the predicate binds `subject_token.email`; fail-closed
-  evaluation and extraction; and credential-free structured audit events.
+  assertion and actor; for rules authorized by a CEL predicate, a startup-verified authorization
+  predicate reference to `subject_token` and an unverified email minted only when the predicate
+  binds `subject_token.email`; fail-closed evaluation and extraction; and credential-free
+  structured audit events. Rules authorized by an OPA policy under Accepted ADR
+  `20261121-061324-opa-impersonation-authorization` have no static predicate-reference or
+  email-binding check; the operator's policy is the only control on the caller-asserted subject
+  and email. The exception's scope (subject role only, local-mode impersonation, explicit
+  `verification: none`) is unchanged.
 - Encryption MUST NOT have accidental fallbacks to plaintext or weaker modes
 - Security controls MUST fail closed: if verification fails, the operation MUST abort
 - All security-critical operations MUST be auditable via structured logging that follows
@@ -837,4 +842,4 @@ Every feature's `tasks.md` file MUST include these mandatory sections from [task
 - Tasks MUST NOT include unrelated remediation or optional improvements; user-approved issue
   links MAY be recorded as future work, not as tasks for the current feature
 
-**Version**: 4.7.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-16
+**Version**: 4.8.0 | **Ratified**: 2025-12-14 | **Last Amended**: 2026-11-25

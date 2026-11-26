@@ -525,8 +525,10 @@ broker:
     # RFC 8693 user impersonation (signed or unverified subject). Only valid in "local" mode.
     # Disabled by default (nil): the impersonation block is omitted from the rendered
     # config unless set. Keys use the broker config's snake_case names and are copied
-    # verbatim into config.yaml. See examples/config/impersonation.yaml for a full
-    # annotated example.
+    # verbatim into config.yaml, including the shared OPA engine block `opa` and each rule's
+    # `authorization.opa` decision. See examples/config/impersonation.yaml for a full
+    # annotated example and examples/config/impersonation-opa.yaml for OPA rules. Mount the
+    # OPA bootstrap, local bundle, and bundle token files with extraVolumes/extraVolumeMounts.
     # impersonation:
     #   # CR-001: routing-only prefix. Requests append one target agent's canonical lower-case UUID or canonical_id.
     #   audience_prefix: "https://broker.example.com/impersonation"

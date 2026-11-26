@@ -919,6 +919,47 @@
                   "minLength": 1,
                   "description": "Routing-only HTTP(S) URI prefix. A request must append exactly one target agent's canonical lower-case UUID or canonical_id; this value never sets issued-token aud (CR-001)."
                 },
+                "opa": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "description": "Shared OPA engine for every rule with authorization.type 'opa'. Required when a rule selects OPA; absent or empty otherwise.",
+                  "properties": {
+                    "policy": {
+                      "type": "object",
+                      "description": "Exactly one of config_file (managed bundles through a restricted OPA bootstrap file) and path (local bundle directory read once at startup). Absolute paths, mounted through extraVolumes and extraVolumeMounts.",
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["config_file"],
+                          "properties": {
+                            "config_file": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "Absolute path of the OPA bootstrap file (services, bundles, keys, labels, plugins.aib_bearer_token_file only)"
+                            }
+                          }
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": ["path"],
+                          "properties": {
+                            "path": {
+                              "type": "string",
+                              "minLength": 1,
+                              "description": "Absolute path of a local OPA bundle directory; changes need a restart"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "startup_timeout": {
+                      "type": "string",
+                      "description": "Bound for the first admitted policy revision, in [1s,5m]; default 30s"
+                    }
+                  }
+                },
                 "rules": {
                   "type": "array",
                   "minItems": 1,
@@ -1104,32 +1145,69 @@
                       },
                       "authorization": {
                         "type": "object",
-                        "additionalProperties": false,
-                        "description": "CEL authorization predicate (token-exchange schema; CR-005)",
-                        "required": ["type", "cel"],
-                        "properties": {
-                          "type": {
-                            "type": "string",
-                            "enum": ["cel"],
-                            "description": "Authorization type; only 'cel' is supported"
-                          },
-                          "cel": {
+                        "description": "Exactly one engine: a CEL predicate (type cel, CR-005) or an OPA decision in the shared impersonation.opa engine (type opa)",
+                        "oneOf": [
+                          {
                             "type": "object",
                             "additionalProperties": false,
-                            "required": ["expression"],
+                            "required": ["type", "cel"],
                             "properties": {
-                              "expression": {
+                              "type": {
                                 "type": "string",
-                                "minLength": 1,
-                                "description": "CEL boolean predicate; compiled at startup"
+                                "const": "cel",
+                                "description": "CEL predicate authorization"
                               },
-                              "evaluation_timeout": {
+                              "cel": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": ["expression"],
+                                "properties": {
+                                  "expression": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "CEL boolean predicate; compiled at startup"
+                                  },
+                                  "evaluation_timeout": {
+                                    "type": "string",
+                                    "description": "CEL evaluation timeout in [10ms,5s]; default 100ms"
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": ["type"],
+                            "properties": {
+                              "type": {
                                 "type": "string",
-                                "description": "CEL evaluation timeout in [10ms,5s]; default 100ms"
+                                "const": "opa",
+                                "description": "OPA decision in the shared impersonation.opa engine"
+                              },
+                              "opa": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "properties": {
+                                  "package": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*$",
+                                    "description": "Rego package of the decision without the data. prefix; default aib.broker.impersonation"
+                                  },
+                                  "decision": {
+                                    "type": "string",
+                                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                    "description": "Rule name whose value is the decision document; default result"
+                                  },
+                                  "evaluation_timeout": {
+                                    "type": "string",
+                                    "description": "OPA decision timeout in [10ms,5s]; default 100ms"
+                                  }
+                                }
                               }
                             }
                           }
-                        }
+                        ]
                       }
                     }
                   }

@@ -1,0 +1,19 @@
+{
+  "name": "basic_post",
+  "request": {
+    "method": "POST",
+    "path": "/oauth2/token",
+    "raw_query": "",
+    "headers": {"content-type": "application/x-www-form-urlencoded", "user-agent": "gateway/1.0"}
+  },
+  "expected": {
+    "attributes.request.http": {
+      "method": "POST",
+      "headers": {"content-type": "application/x-www-form-urlencoded", "user-agent": "gateway/1.0"}
+    },
+    "parsed_path": ["oauth2", "token"],
+    "parsed_query": {}
+  },
+  "expected_path": {"broker": "/oauth2/token", "extproc": "/oauth2/token"},
+  "broker_excluded_headers": []
+}

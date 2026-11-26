@@ -12,6 +12,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/configutil"
 	domainconfig "github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/config"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/tokenexchange"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -1260,4 +1261,57 @@ func TestThirdPartyOAuth2ClientNameConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "  \t  ", cfg.ThirdPartyOAuth2.ClientName)
 	})
+}
+
+func unmarshalYAML(t *testing.T, document string) (ports.Config, error) {
+	t.Helper()
+	v := configutil.NewViper()
+	v.SetConfigType("yaml")
+	require.NoError(t, v.ReadConfig(strings.NewReader(document)))
+	return unmarshalConfig(v)
+}
+
+const opaRuleYAML = `oauth2_authorization_server:
+  impersonation:
+    rules:
+      - name: first
+        authorization: {type: cel, cel: {expression: "true"}}
+      - name: governed
+        authorization:
+          type: opa
+          opa:
+%s
+`
+
+func TestUnmarshalRejectsUnsupportedRuleOPAKeys(t *testing.T) {
+	for _, key := range []string{"policy_url: http://opa:8181", "policy_path: data.x", "policy: {path: /x}", "startup_timeout: 30s"} {
+		t.Run(key, func(t *testing.T) {
+			_, err := unmarshalYAML(t, fmt.Sprintf(opaRuleYAML, "            "+key))
+			require.Error(t, err)
+			name, _, _ := strings.Cut(key, ":")
+			assert.Contains(t, err.Error(), "oauth2_authorization_server.impersonation.rules[1] (governed).authorization.opa."+name)
+			assert.Contains(t, err.Error(), "engine settings belong under")
+			assert.NotContains(t, err.Error(), "http://opa:8181")
+		})
+	}
+}
+
+func TestUnmarshalAcceptsRuleOPADecisionWithoutDefaults(t *testing.T) {
+	cfg, err := unmarshalYAML(t, fmt.Sprintf(opaRuleYAML, "            package: company.impersonation\n            decision: result\n            evaluation_timeout: 200ms"))
+	require.NoError(t, err)
+	rule := cfg.OAuth2AuthServer.Impersonation.Rules[1]
+	assert.Equal(t, ports.ImpersonationRuleOPADecision{Package: "company.impersonation", Decision: "result", EvaluationTimeout: 200 * time.Millisecond}, rule.Authorization.OPA)
+
+	cfg, err = unmarshalYAML(t, fmt.Sprintf(opaRuleYAML, "            {}"))
+	require.NoError(t, err)
+	assert.Equal(t, ports.ImpersonationRuleOPADecision{}, cfg.OAuth2AuthServer.Impersonation.Rules[1].Authorization.OPA, "defaults apply at use")
+	assert.Equal(t, ports.ImpersonationOPAEngineConfig{}, cfg.OAuth2AuthServer.Impersonation.OPA)
+}
+
+func TestValidateRejectsOrdinaryExchangeOPA(t *testing.T) {
+	err := tokenexchange.ValidateAuthorizationType(ports.AuthorizationConfig{Type: "opa"})
+	require.Error(t, err)
+	assert.Equal(t, "token_exchange.authorization.type: OPA is supported only on impersonation rules", err.Error())
+	assert.NoError(t, tokenexchange.ValidateAuthorizationType(ports.AuthorizationConfig{Type: "cel"}))
+	assert.NoError(t, tokenexchange.ValidateAuthorizationType(ports.AuthorizationConfig{}))
 }

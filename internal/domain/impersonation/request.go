@@ -17,6 +17,21 @@ type Request struct {
 	RequestedTokenType string
 	Scope              string
 	Scopes             []string
+	// HTTP holds the transport facts of the token request for OPA rules. The handler sets it
+	// after ParseRequest.
+	HTTP RequestAttributes
+}
+
+// RequestAttributes are the transport facts of a token request. Form is the raw parsed body, taken
+// before omitted-value normalization; the domain removes credential-bearing parameters from it.
+type RequestAttributes struct {
+	Method      string
+	Path        string
+	RawQuery    string
+	Protocol    string
+	ContentType string
+	Headers     map[string][]string
+	Form        map[string][]string
 }
 
 // ParseRequest validates the impersonation form and returns a Request or an invalid_request

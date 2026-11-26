@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"runtime/pprof"
 	"strings"
 	"sync/atomic"
@@ -2205,4 +2206,49 @@ func TestBuilder_CIMDKeyStartupReadiness(t *testing.T) {
 			assert.Equal(t, metadata.ClientID, restoredMetadata.ClientID)
 		})
 	}
+}
+
+func opaBuilderConfig(t *testing.T, policy string) *ports.Config {
+	t.Helper()
+	bundle := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "policy.rego"), []byte(policy), 0o600))
+	cfg := trustAnchorTestConfig(newTrustDir(t))
+	cfg.OAuth2AuthServer.Impersonation = &ports.ImpersonationConfig{
+		AudiencePrefix: "https://broker.example.com/impersonation",
+		OPA:            ports.ImpersonationOPAEngineConfig{Policy: ports.ImpersonationOPAPolicySource{Path: bundle}, StartupTimeout: 2 * time.Second},
+		Rules: []ports.ImpersonationRuleConfig{{
+			Name: "governed",
+			Roles: map[string]ports.ImpersonationRoleConfig{
+				"client_assertion": {ExpectedAudience: "aud", PrincipalExpression: "client_assertion.sub"},
+				"actor":            {ExpectedAudience: "aud", PrincipalExpression: "actor_token.sub"},
+				"subject":          {ExpectedAudience: "aud", PrincipalExpression: "subject_token.sub"},
+			},
+			TrustedIssuers: []ports.TrustedTokenIssuerConfig{{
+				IssuerURI: "https://idp.example.com", JWKSURI: "https://idp.example.com/jwks.json",
+				AllowedAlgorithms: []string{"ES256"}, SignsRoles: []string{"client_assertion", "actor", "subject"},
+			}},
+			Authorization: ports.ImpersonationAuthorizationConfig{Type: "opa"},
+		}},
+	}
+	return cfg
+}
+
+func TestBuilderStartsAndStopsTheImpersonationPolicyEngine(t *testing.T) {
+	app, logs, err := buildTrustAnchorApp(t, opaBuilderConfig(t, "package aib.broker.impersonation\n\nimport rego.v1\n\ndefault result := {\"action\": \"deny\"}\n"))
+	require.NoError(t, err)
+	require.NotNil(t, app)
+	assert.Len(t, logs.records(t, "impersonation policy loaded from local bundle"), 1)
+	assert.Len(t, logs.records(t, "impersonation policy revision admitted"), 1)
+
+	_, logs, err = buildTrustAnchorApp(t, opaBuilderConfig(t, "package other\n\nimport rego.v1\n\nresult := 1\n"))
+	require.ErrorContains(t, err, "oauth2_authorization_server.impersonation.opa.startup_timeout")
+	require.ErrorContains(t, err, "decision_absent for rules[0] (governed)")
+	assert.Len(t, logs.records(t, "impersonation policy not ready"), 1)
+}
+
+func TestBuilderRejectsOrdinaryExchangeOPA(t *testing.T) {
+	cfg := trustAnchorTestConfig(newTrustDir(t))
+	cfg.TokenExchange.Authorization = ports.AuthorizationConfig{Type: "opa"}
+	_, _, err := buildTrustAnchorApp(t, cfg)
+	require.EqualError(t, err, "token_exchange.authorization.type: OPA is supported only on impersonation rules")
 }

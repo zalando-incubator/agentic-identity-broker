@@ -108,6 +108,9 @@ func NewTokenExchangeService(
 	if config == nil {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
+	if err := ValidateAuthorizationType(config.Authorization); err != nil {
+		return nil, err
+	}
 
 	return &TokenExchangeService{
 		jwtValidator:         jwtValidator,
@@ -119,6 +122,15 @@ func NewTokenExchangeService(
 		agentRepository:      agentRepository,
 		config:               config,
 	}, nil
+}
+
+// ValidateAuthorizationType rejects an explicit OPA selection for ordinary third-party exchange,
+// which has no OPA engine. OPA is supported only on impersonation rules.
+func ValidateAuthorizationType(cfg ports.AuthorizationConfig) error {
+	if cfg.Type == "opa" {
+		return errors.New("token_exchange.authorization.type: OPA is supported only on impersonation rules")
+	}
+	return nil
 }
 
 // GrantResolver returns the resolver for exchange steps 2–9a over this service's

@@ -1,0 +1,203 @@
+# OAuth2 User Impersonation with OPA Governance Policies (RFC 8693)
+#
+# Each impersonation rule selects exactly one authorization engine: a CEL predicate
+# (authorization.type: cel) or an Open Policy Agent decision (authorization.type: opa). Every OPA
+# rule shares one engine configured once under impersonation.opa. Selecting OPA never replaces
+# credential validation, subject-category eligibility, cross-agent rejection, user delegation,
+# scope checks, or local minting.
+#
+# Managed mode (policy.config_file) pulls policy and governance data bundles through a restricted
+# OPA bootstrap file (opa/impersonation/bootstrap.yaml) and activates updates without a restart.
+# Local mode (policy.path) reads a bundle directory once at startup (opa/impersonation/local/);
+# changing it needs a restart.
+#
+# Decisions: {"action": "allow"} matches the rule; {"action": "deny"} falls through to the next
+# rule. Anything else, an undefined decision, an evaluation error, or a timeout is a terminal
+# 500 server_error, and later rules are not tried. Every policy therefore needs a default.
+#
+# This example is a COMPLETE local-mode configuration. Replace the example trust URLs, mount the
+# bootstrap and its token file, and register the target Agents.
+
+# Logging
+log:
+  level: "info"
+  format: "json"
+
+# Dual-server architecture: end-user and admin on separate ports
+server:
+  enduser:
+    port: 8000
+    bind: "0.0.0.0"
+    public_url: "https://broker.example.com"
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+  admin:
+    port: 14000
+    bind: "0.0.0.0"
+    public_url: "https://broker.example.com:14000"
+    authentication:
+      preauth:
+        principal_header_name: "X-Remote-User"
+
+# Storage backend
+storage:
+  backend: "memory" # Use "postgres" for production
+
+# Encryption for signing key private material
+encryption:
+  memory:
+    # Base64-encoded 32-byte AES-256 key. Fixed dev key — never use in production.
+    # Generate a real one with: openssl rand -base64 32
+    raw_key: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+
+# Third-party OAuth2 token vault. jwe_signing_key is required to seal ephemeral state tokens;
+# impersonation does not use the vault but the broker requires this key to start.
+third_party_oauth2:
+  # Base64-encoded 32-byte key. Fixed dev key — never use in production.
+  jwe_signing_key: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+  state_token_ttl: "10m"
+  pkce_verifier_length: 32
+
+# OAuth2 authorization server configuration
+oauth2_authorization_server:
+  # Impersonation requires "local" mode; the broker mints its own tokens.
+  mode: "local"
+
+  # Local section: token issuance configuration (required in local mode).
+  local:
+    issuer_uri: "https://broker.example.com"
+    token_ttl: "1h"
+    # Existing local-token policy receives the audience-selected target as `agent` and owns aud.
+    token_claims_expression: |
+      principal.email == "" ? {"aud": "https://policy.example.com"} : {
+        "aud": "https://policy.example.com", "email": principal.email
+      }
+    signing_keys:
+      # Startup budget for initial signing-key bootstrap in local mode.
+      bootstrap_timeout: 90s
+
+  impersonation:
+    audience_prefix: "https://broker.example.com/impersonation"
+
+    # The one OPA engine shared by every OPA rule. Required when a rule selects OPA; when none
+    # does, omit it (or leave it {}).
+    opa:
+      policy:
+        # Exactly one of config_file (managed bundles) and path (local bundle directory).
+        # Both are absolute and are read through the file's own directory.
+        config_file: "/etc/agentic-identity-broker/opa/bootstrap.yaml"
+        # path: "/etc/agentic-identity-broker/opa/impersonation-bundle"
+      # Startup waits until a revision containing every configured bundle is admitted
+      # (default 30s, range 1s-5m); otherwise the broker does not start.
+      startup_timeout: "30s"
+
+    rules:
+      # -------- Rule 1: governed gateway (OPA, signed credentials) --------
+      - name: "governed-inventory"
+        allowed_subject_categories: [human]
+        roles:
+          client_assertion:
+            expected_audience: "https://broker.example.com/oauth2/token"
+            principal_expression: "client_assertion.sub"
+          actor:
+            expected_audience: "broker-impersonation"
+            principal_expression: "actor_token.sub"
+          subject:
+            expected_audience: "broker-impersonation"
+            principal_expression: "subject_token.sub"
+            email_expression: "has(subject_token.email) ? subject_token.email : ''"
+        trusted_issuers:
+          - issuer_uri: "https://identity.example.com"
+            jwks_uri: "https://identity.example.com/jwks.json"
+            allowed_algorithms: ["RS256"]
+            signs_roles: ["client_assertion", "actor", "subject"]
+        authorization:
+          type: opa
+          opa:
+            # data.company.impersonation.result in opa/impersonation/local/governance.rego.
+            # Defaults: package aib.broker.impersonation, decision result, evaluation_timeout 100ms.
+            package: "company.impersonation"
+            decision: "result"
+            evaluation_timeout: "100ms"
+
+      # -------- Rule 2: chat bridge (OPA, UNVERIFIED subject, ADR 031) --------
+      # On an OPA rule the broker does not check statically that the policy constrains the
+      # caller-asserted subject. The policy (opa/impersonation/exceptional-modes.rego) is the only
+      # control on subject_token.sub and subject_token.email. An unsigned sub equal to the target
+      # UUID is agent category here; another registered agent's UUID is always rejected.
+      - name: "chat-bridge"
+        allowed_subject_categories: [human, agent]
+        roles:
+          client_assertion:
+            expected_audience: "https://broker.example.com/oauth2/token"
+            principal_expression: "client_assertion.sub"
+          actor:
+            expected_audience: "broker-impersonation"
+            principal_expression: "actor_token.sub"
+          subject:
+            verification: "none"
+            principal_expression: "subject_token.sub"
+            # Minted when nonempty and the decision allows.
+            email_expression: "has(subject_token.email) ? subject_token.email : ''"
+        trusted_issuers:
+          - issuer_uri: "https://identity.example.com"
+            jwks_uri: "https://identity.example.com/jwks.json"
+            allowed_algorithms: ["RS256"]
+            signs_roles: ["client_assertion", "actor"]
+        authorization:
+          type: opa
+          opa:
+            package: "company.impersonation.exceptional"
+            decision: "unsigned_subject"
+
+      # -------- Rule 3: audience-less client assertion (OPA, CR-009) --------
+      # The policy must constrain context.client_assertion; the broker still verifies its
+      # signature, issuer, lifetime, and that it carries no aud.
+      - name: "audienceless-gateway"
+        roles:
+          client_assertion:
+            audience_requirement: absent
+            principal_expression: "client_assertion.sub"
+          actor:
+            expected_audience: "broker-impersonation"
+            principal_expression: "actor_token.sub"
+          subject:
+            expected_audience: "broker-impersonation"
+            principal_expression: "subject_token.sub"
+        trusted_issuers:
+          - issuer_uri: "https://idp.internal.example.com"
+            jwks_uri: "https://idp.internal.example.com/.well-known/jwks.json"
+            allowed_algorithms: ["ES256", "RS256"]
+            signs_roles: ["client_assertion", "actor", "subject"]
+        authorization:
+          type: opa
+          opa:
+            package: "company.impersonation.exceptional"
+            decision: "audienceless_client"
+
+      # -------- Rule 4: CEL fallback --------
+      # Rules are first-match: an explicit OPA deny above falls through to this rule. A universal
+      # governance restriction must therefore be applied to every rule that could permit the
+      # request. CEL rules keep their startup reference and binding checks.
+      - name: "break-glass-gateway"
+        roles:
+          client_assertion:
+            expected_audience: "https://broker.example.com/oauth2/token"
+            principal_expression: "client_assertion.sub"
+          actor:
+            expected_audience: "broker-impersonation"
+            principal_expression: "actor_token.sub"
+          subject:
+            expected_audience: "broker-impersonation"
+            principal_expression: "subject_token.sub"
+        trusted_issuers:
+          - issuer_uri: "https://identity.example.com"
+            jwks_uri: "https://identity.example.com/jwks.json"
+            allowed_algorithms: ["RS256"]
+            signs_roles: ["client_assertion", "actor", "subject"]
+        authorization:
+          type: cel
+          cel:
+            expression: 'client_assertion.sub == "break-glass" && actor_token.sub == "on-call"'
+            evaluation_timeout: "100ms"

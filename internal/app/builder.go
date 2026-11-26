@@ -35,6 +35,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwks"
 	jwtauthadapter "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/jwtauth"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/outboundhttp"
+	policyopa "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/policy/opa"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage"
 	postgresstorage "github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/postgres"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/telemetry"
@@ -140,6 +141,16 @@ func (a *App) addKeyFileHealth(components map[string]string) {
 		}
 	}
 	components["trust_anchor_key_files"] = string(state)
+}
+
+// newImpersonationPolicyFactory builds the shared impersonation OPA engine on demand; NewService
+// calls it only when a rule selects OPA.
+func (b *Builder) newImpersonationPolicyFactory() impersonation.PolicySourceFactory {
+	return func(cfg ports.ImpersonationOPAEngineConfig, decisions []ports.ImpersonationPolicyDecisionRef,
+		admit ports.ImpersonationPolicyAdmission,
+	) (ports.ImpersonationPolicySource, error) {
+		return policyopa.NewImpersonationPolicySource(cfg, decisions, admit, b.logger)
+	}
 }
 
 // chainShutdown runs stop before the previously registered shutdown.
@@ -380,6 +391,10 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			buildErr = abortBuild(app, buildErr)
 		}
 	}()
+
+	if err := tokenexchange.ValidateAuthorizationType(b.config.TokenExchange.Authorization); err != nil {
+		return nil, err
+	}
 
 	// T029: Initialize telemetry provider
 	// Per ADR-011: OTel provider wired at app layer, no port interface needed.
@@ -1251,10 +1266,11 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			}
 		}
 
-		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient, localProviders), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL)
+		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient, localProviders), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL, b.newImpersonationPolicyFactory(), b.config.Server.EndUser.PublicURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build impersonation service: %w", err)
 		}
+		app.chainShutdown(svc.Close)
 		impersonationService = svc
 		b.logger.Info("oauth2 impersonation enabled", "audience_prefix", impCfg.AudiencePrefix, "rules", len(impCfg.Rules))
 	}

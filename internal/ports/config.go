@@ -813,6 +813,45 @@ type ImpersonationConfig struct {
 	AudiencePrefix string `mapstructure:"audience_prefix"`
 	// Rules is a non-empty, ordered list evaluated first-match (CR-002, FR-004a).
 	Rules []ImpersonationRuleConfig `mapstructure:"rules"`
+	// OPA is the one OPA engine shared by every rule whose authorization type is "opa". It is
+	// required when a rule selects OPA and must be empty otherwise.
+	OPA ImpersonationOPAEngineConfig `mapstructure:"opa"`
+}
+
+// ImpersonationOPAEngineConfig is oauth2_authorization_server.impersonation.opa. Defaults are
+// applied at use, not by the loader.
+type ImpersonationOPAEngineConfig struct {
+	Policy ImpersonationOPAPolicySource `mapstructure:"policy"`
+	// StartupTimeout bounds readiness of the first admitted revision (default 30s, 1s-5m).
+	StartupTimeout time.Duration `mapstructure:"startup_timeout"`
+}
+
+// ImpersonationOPAPolicySource selects managed or local mode. Exactly one member is set.
+type ImpersonationOPAPolicySource struct {
+	// ConfigFile is the absolute path of the restricted OPA bootstrap file (managed bundles).
+	ConfigFile string `mapstructure:"config_file"`
+	// Path is the absolute path of a local bundle directory read once at startup.
+	Path string `mapstructure:"path"`
+}
+
+// ImpersonationAuthorizationConfig is one impersonation rule's authorization: exactly one of a
+// CEL predicate and an OPA decision.
+type ImpersonationAuthorizationConfig struct {
+	// Type is "cel" or "opa".
+	Type string                       `mapstructure:"type"`
+	CEL  CELAuthorizationConfig       `mapstructure:"cel"`
+	OPA  ImpersonationRuleOPADecision `mapstructure:"opa"`
+}
+
+// ImpersonationRuleOPADecision names one rule's decision in the shared OPA engine. Defaults are
+// applied at use, not by the loader.
+type ImpersonationRuleOPADecision struct {
+	// Package is the Rego package without the "data." prefix (default aib.broker.impersonation).
+	Package string `mapstructure:"package"`
+	// Decision is the rule in Package whose value is the decision document (default result).
+	Decision string `mapstructure:"decision"`
+	// EvaluationTimeout bounds one decision (default 100ms, 10ms-5s).
+	EvaluationTimeout time.Duration `mapstructure:"evaluation_timeout"`
 }
 
 // ImpersonationRuleConfig is a self-contained, atomically reviewable impersonation rule (CR-002/CR-003).
@@ -825,8 +864,8 @@ type ImpersonationRuleConfig struct {
 	Roles map[string]ImpersonationRoleConfig `mapstructure:"roles"`
 	// TrustedIssuers are the rule's trust anchors, each declaring which roles it may sign (CR-008).
 	TrustedIssuers []TrustedTokenIssuerConfig `mapstructure:"trusted_issuers"`
-	// Authorization is the rule's single CEL predicate, reusing the token-exchange schema (CR-005).
-	Authorization AuthorizationConfig `mapstructure:"authorization"`
+	// Authorization is the rule's single CEL predicate or OPA decision (CR-005).
+	Authorization ImpersonationAuthorizationConfig `mapstructure:"authorization"`
 }
 
 // ImpersonationRoleConfig declares role semantics once per role within a rule (data-model §1).
