@@ -26,6 +26,8 @@ var (
 	scopeSalesforceID = id.MustParseServiceID("880e8400-e29b-41d4-a716-446655440030")
 	scopeGithubSetID  = id.MustParsePermissionSetID("770e8400-e29b-41d4-a716-446655440001")
 	scopeJiraSetID    = id.MustParsePermissionSetID("770e8400-e29b-41d4-a716-446655440004")
+	// scopeRetiredSetID still exists and covers GitHub, but the agent no longer declares it.
+	scopeRetiredSetID = id.MustParsePermissionSetID("770e8400-e29b-41d4-a716-446655440099")
 )
 
 type scopeServices struct {
@@ -72,8 +74,9 @@ func (s scopePermissionSets) GetByIDs(_ context.Context, ids []id.PermissionSetI
 		return nil, s.err
 	}
 	sets := map[id.PermissionSetID]*storage.PermissionSet{
-		scopeGithubSetID: {ID: scopeGithubSetID, ServiceScopes: []storage.ServiceScope{{ServiceID: scopeGithubID, Scopes: []string{"repo"}, RequirementType: storage.RequirementTypeOptional}}},
-		scopeJiraSetID:   {ID: scopeJiraSetID, ServiceScopes: []storage.ServiceScope{{ServiceID: scopeJiraID, Scopes: []string{"read:jira-work"}, RequirementType: storage.RequirementTypeOptional}}},
+		scopeGithubSetID:  {ID: scopeGithubSetID, ServiceScopes: []storage.ServiceScope{{ServiceID: scopeGithubID, Scopes: []string{"repo"}, RequirementType: storage.RequirementTypeOptional}}},
+		scopeJiraSetID:    {ID: scopeJiraSetID, ServiceScopes: []storage.ServiceScope{{ServiceID: scopeJiraID, Scopes: []string{"read:jira-work"}, RequirementType: storage.RequirementTypeOptional}}},
+		scopeRetiredSetID: {ID: scopeRetiredSetID, ServiceScopes: []storage.ServiceScope{{ServiceID: scopeGithubID, Scopes: []string{"repo"}, RequirementType: storage.RequirementTypeOptional}}},
 	}
 	var result []*storage.PermissionSet
 	for _, setID := range ids {
@@ -127,6 +130,7 @@ type serviceScopeFixture struct {
 	categories     []string
 	agentSubject   bool
 	unconfigured   bool
+	selection      []storage.GrantedPermissionSetEntry
 }
 
 type serviceScopeResult struct {
@@ -150,7 +154,10 @@ func (f serviceScopeFixture) impersonate(t *testing.T, scope string) serviceScop
 	cfg.Rules[0].TrustedIssuers[0].AllowedAlgorithms = []string{"ES256"}
 	cfg.Rules[0].AllowedSubjectCategories = f.categories
 	issuer := &stubIssuer{}
-	verifier := &recordingDelegationVerifier{status: ports.UserDelegationActive, selection: githubOnlySelection()}
+	if f.selection == nil {
+		f.selection = githubOnlySelection()
+	}
+	verifier := &recordingDelegationVerifier{status: ports.UserDelegationActive, selection: f.selection}
 	svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 		return configurableJWKSProvider{set: keySet}, nil
 	}, stubAgentRepository{}, issuer, 0, nil, verifier, scopePublicURL+"/")
@@ -222,6 +229,7 @@ func TestImpersonate_VirtualServiceScopes(t *testing.T) {
 		{name: "service not eligible for the agent", scope: scopePublicURL + "/sessions/salesforce"},
 		{name: "service not covered by the user's grant", scope: scopePublicURL + "/sessions/jira"},
 		{name: "one invalid scope among valid ones", scope: "read " + github + " " + scopePublicURL + "/sessions/jira"},
+		{name: "malformed scope hiding an ordinary scope behind a tab", scope: github + "\twrite"},
 	} {
 		t.Run("rejects "+tc.name, func(t *testing.T) {
 			result := serviceScopeFixture{}.impersonate(t, tc.scope)
@@ -229,6 +237,12 @@ func TestImpersonate_VirtualServiceScopes(t *testing.T) {
 			assert.Equal(t, 1, result.verifier.calls)
 		})
 	}
+
+	t.Run("rejects a grant selecting a permission set the agent no longer declares", func(t *testing.T) {
+		selection := []storage.GrantedPermissionSetEntry{{PermissionSetID: scopeRetiredSetID, IncludedServiceIDs: []id.ServiceID{scopeGithubID}}}
+		result := serviceScopeFixture{selection: selection}.impersonate(t, github)
+		_ = requireRefused(t, result, tokenexchange.InvalidScopeError)
+	})
 
 	t.Run("rejects a covered service whose session is not usable", func(t *testing.T) {
 		for _, usability := range []servicescope.Usability{servicescope.UsabilityMissing, servicescope.UsabilityUnusableDefinitive} {

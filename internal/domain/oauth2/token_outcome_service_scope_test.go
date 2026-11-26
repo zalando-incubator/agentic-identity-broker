@@ -214,3 +214,33 @@ func TestTokenOutcomeServiceMissingAgentFailsClosed(t *testing.T) {
 		assert.Empty(t, proxy.forms)
 	}
 }
+
+// client_credentials has no user session to check, so it rejects every virtual scope instead of
+// stripping it (specs/055-incremental-service-authorization FR-002, API-LOCAL-SCOPES).
+func TestTokenOutcomeServiceRejectsVirtualScopesOnClientCredentials(t *testing.T) {
+	f := newRequestedFixture(t, nil, true)
+	agents := NewMockAgentRepository()
+	require.NoError(t, agents.Create(context.Background(), f.agent))
+	resolution, err := ports.NewTokenGrantResolution(f.agent.ID, ptr.To(id.ClientID("upstream-client")), storage.ProxyClient)
+	require.NoError(t, err)
+
+	for _, scope := range []string{requestedGitHub, "openid " + requestedGitHub, requestedGitHub + "/"} {
+		t.Run(scope, func(t *testing.T) {
+			proxy := &recordingTokenProxy{}
+			svc := NewTokenOutcomeService(proxy, nil, slog.New(slog.DiscardHandler)).WithServiceScopeStripping(requestedPublicURL).
+				WithServiceScopeValidation(agents, servicescope.NewResolver(f.services, requestedPermissionSets{}, requestedPublicURL))
+			form := url.Values{"grant_type": {"client_credentials"}, "scope": {scope}}
+			_, failure, err := svc.Proxy(context.Background(), form, "application/x-www-form-urlencoded", resolution)
+			require.Error(t, err)
+			assert.Equal(t, ports.TokenProxyScopeNotPermitted, failure)
+			assert.Empty(t, proxy.forms, "no upstream call")
+		})
+	}
+
+	proxy := &recordingTokenProxy{}
+	svc := NewTokenOutcomeService(proxy, nil, slog.New(slog.DiscardHandler)).WithServiceScopeStripping(requestedPublicURL)
+	_, _, err = svc.Proxy(context.Background(), url.Values{"grant_type": {"client_credentials"}, "scope": {"openid"}}, "application/x-www-form-urlencoded", resolution)
+	require.NoError(t, err)
+	require.Len(t, proxy.forms, 1)
+	assert.Equal(t, "openid", proxy.forms[0].Get("scope"))
+}

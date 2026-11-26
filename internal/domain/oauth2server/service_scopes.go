@@ -10,6 +10,7 @@ import (
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/oauth2/oidcscope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/servicescope"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 )
@@ -120,6 +121,13 @@ func narrowRefreshScope(req *fosite.AccessRequest, scope string) error {
 			narrowed = append(narrowed, value)
 		}
 	}
+	// Narrowing never drops the granted refresh scope: the successor refresh token is issued
+	// either way, and without it the next refresh would fail.
+	for _, value := range oidcscope.ReservedRefreshTokenScopes {
+		if slices.Contains(current, value) && !slices.Contains(narrowed, value) {
+			narrowed = append(narrowed, value)
+		}
+	}
 	req.GrantedScope = narrowed
 	return nil
 }
@@ -170,6 +178,9 @@ func (p *Provider) recheckBoundServices(ctx context.Context, req *fosite.AccessR
 	if err != nil {
 		return transient(refreshScopeGrantLookupFailed)
 	}
+	if servicescope.UndeclaredPermissionSet(agent, grant.GrantedPermissionSets) {
+		return refuse(firstScope, refreshScopePermissionSetUndeclared)
+	}
 	outcomes, err := p.serviceEvaluator.Evaluate(ctx, principal, agent, grant.GrantedPermissionSets, requested.ServiceIDs())
 	if err != nil {
 		return transient(refreshScopePermissionSetLookupFailed)
@@ -193,6 +204,7 @@ const (
 	refreshScopeServiceLookupFailed       refreshScopeReason    = "service_lookup_failed"
 	refreshScopeGrantLookupFailed         refreshScopeReason    = "grant_lookup_failed"
 	refreshScopePermissionSetLookupFailed refreshScopeReason    = "permission_set_lookup_failed"
+	refreshScopePermissionSetUndeclared   refreshScopeReason    = "permission_set_undeclared"
 	refreshScopeDefinitive                refreshScopeErrorKind = "definitive"
 	refreshScopeTransient                 refreshScopeErrorKind = "transient"
 )

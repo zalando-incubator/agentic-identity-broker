@@ -71,7 +71,7 @@ func (h *OAuth2AuthorizeHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		CodeChallenge:       query.Get("code_challenge"),
 		CodeChallengeMethod: query.Get("code_challenge_method"),
 		OriginalURL:         r.URL.String(),
-		Continuation:        httpctx.ParseContinuationParameter(query),
+		Continuation:        httpctx.ParseContinuationParameter(r.URL.RawQuery),
 	}
 
 	decision, err := h.Service.HandleAuthorization(r.Context(), authReq, principalValue)

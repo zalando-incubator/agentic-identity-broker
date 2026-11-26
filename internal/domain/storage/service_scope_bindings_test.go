@@ -33,6 +33,8 @@ func TestServiceScopeBindingsValidate(t *testing.T) {
 		{"key with malformed identifier", ServiceScopeBindings{githubScope + "/": githubServiceID}, githubScope + "/", true, false},
 		{"relative key", ServiceScopeBindings{"/sessions/github": githubServiceID}, "/sessions/github", true, false},
 		{"empty map", ServiceScopeBindings{}, "openid", true, true},
+		{"public URL path ending in /sessions", ServiceScopeBindings{"https://broker.example.com/sessions/sessions/github": githubServiceID}, "https://broker.example.com/sessions/sessions/github", true, true},
+		{"UUID form under a /sessions public URL path", ServiceScopeBindings{"https://broker.example.com/sessions/sessions/" + githubServiceID.String(): githubServiceID}, "https://broker.example.com/sessions/sessions/" + githubServiceID.String(), true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

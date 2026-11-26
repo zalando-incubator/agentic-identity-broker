@@ -39,10 +39,13 @@ func (b ServiceScopeBindings) Validate(scope string, keysWithinScope bool) error
 }
 
 func validBindingKey(key string) bool {
-	base, identifier, found := strings.Cut(key, "/sessions/")
-	if !found || strings.Contains(identifier, "/sessions/") {
+	// Identifiers never contain "/", so the last segment is the identifier even when the
+	// configured public URL path itself ends in /sessions.
+	cut := strings.LastIndex(key, "/sessions/")
+	if cut < 0 {
 		return false
 	}
+	base, identifier := key[:cut], key[cut+len("/sessions/"):]
 	origin, err := url.Parse(base)
 	if err != nil || origin.Host == "" || (origin.Scheme != "https" && origin.Scheme != "http") {
 		return false

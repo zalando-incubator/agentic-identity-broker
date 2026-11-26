@@ -32,10 +32,14 @@ var scopeGitHubID = id.MustParseServiceID("880e8400-e29b-41d4-a716-446655440010"
 type scopeServices struct {
 	services map[id.ServiceID]*model.ThirdpartyOAuth2ProviderEntity
 	calls    int
+	err      error
 }
 
 func (s *scopeServices) Get(_ context.Context, serviceID id.ServiceID) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
 	if service, ok := s.services[serviceID]; ok {
 		return service, nil
 	}
@@ -44,6 +48,9 @@ func (s *scopeServices) Get(_ context.Context, serviceID id.ServiceID) (*model.T
 
 func (s *scopeServices) GetByCanonicalID(_ context.Context, canonicalID string) (*model.ThirdpartyOAuth2ProviderEntity, error) {
 	s.calls++
+	if s.err != nil {
+		return nil, s.err
+	}
 	for _, service := range s.services {
 		if service.CanonicalID != nil && *service.CanonicalID == canonicalID {
 			return service, nil
@@ -153,6 +160,20 @@ func TestProviderVirtualServiceScopeIssuance(t *testing.T) {
 		assert.ErrorIs(t, err, ErrInvalidScope)
 	})
 
+	t.Run("a transient service lookup failure leaves the code exchangeable", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		code, err := f.authorize(t, "read "+githubScope, bindings)
+		require.NoError(t, err)
+		f.services.err = assert.AnError
+		_, err = f.exchange(code)
+		var rfcErr *RFC6749Error
+		require.ErrorAs(t, err, &rfcErr)
+		assert.Equal(t, "server_error", rfcErr.Code())
+		f.services.err = nil
+		_, err = f.exchange(code)
+		require.NoError(t, err, "the PKCE record must survive a failed bound-service check")
+	})
+
 	t.Run("PKCE and code replay protections still apply", func(t *testing.T) {
 		f := newServiceScopeFixture(t)
 		code, err := f.authorize(t, "read "+githubScope, bindings)
@@ -239,6 +260,21 @@ func TestProviderRefreshServiceScopeWidening(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "offline_access read", scopeless.Scope)
 	})
+
+	t.Run("narrowing keeps the granted refresh scope so the successor can refresh again", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		code, err := f.authorize(t, "read offline_access", nil)
+		require.NoError(t, err)
+		issued, err := f.exchange(code)
+		require.NoError(t, err)
+
+		narrowed, err := f.refresh(issued.RefreshToken, "read")
+		require.NoError(t, err)
+		assert.Equal(t, "read offline_access", narrowed.Scope)
+		again, err := f.refresh(narrowed.RefreshToken, "")
+		require.NoError(t, err)
+		assert.Equal(t, "read offline_access", again.Scope)
+	})
 }
 
 // Continuing local refresh assurance from specs/055-incremental-service-authorization
@@ -319,6 +355,18 @@ func TestProviderRefreshRechecksBoundServices(t *testing.T) {
 		grant, err := grants.FindByPrincipalAndAgent(context.Background(), id.Principal("user@example.com"), f.agent.ID)
 		require.NoError(t, err)
 		grant.GrantedPermissionSets[0].IncludedServiceIDs = nil
+		require.NoError(t, grants.Update(context.Background(), grant))
+		_, err = f.refresh(token, "")
+		requireRFC6749(t, err, "invalid_scope", unsatisfied)
+	})
+
+	t.Run("a grant selecting a permission set the agent no longer declares fails closed", func(t *testing.T) {
+		f := newServiceScopeFixture(t)
+		token := issue(t, f)
+		grants := f.provider.fositeStorage.verifier.(*testConsentVerifier).grants
+		grant, err := grants.FindByPrincipalAndAgent(context.Background(), id.Principal("user@example.com"), f.agent.ID)
+		require.NoError(t, err)
+		grant.GrantedPermissionSets = []dstorage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{scopeGitHubID}}}
 		require.NoError(t, grants.Update(context.Background(), grant))
 		_, err = f.refresh(token, "")
 		requireRFC6749(t, err, "invalid_scope", unsatisfied)
