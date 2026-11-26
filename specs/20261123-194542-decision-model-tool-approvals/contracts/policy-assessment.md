@@ -96,7 +96,7 @@ policy a second time and then uses the result of the first evaluation for each c
 |---|---|
 | `deny` | The system denies the call. |
 | `approval_required` | The system creates a pending approval with the description and the risk level of this result. |
-| `allow`, all conditions of FR-041 are true, and the local cache has no permanent denial of the tool | The call proceeds. The system writes the audit record first (D-13). |
+| `allow`, all conditions of FR-041 are true, and the local cache has no permanent denial of the tool | The call proceeds. |
 | `allow`, and the local cache has a permanent denial of the tool | The system denies the call (D-15). |
 | `allow`, and one condition of FR-041 is false | The system uses `approval_required`. The description and the risk level come from the `approval_context` of the `allow` result, or from the first evaluation if it has none. |
 | `ciba_required` or an unknown action | The system denies the call, as before this feature. |

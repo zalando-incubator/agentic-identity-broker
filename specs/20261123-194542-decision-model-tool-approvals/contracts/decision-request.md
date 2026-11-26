@@ -70,7 +70,7 @@ ExtProc accepts only the status 200 with a JSON body of a maximum of 256 KiB.
 
 | Body field | Use |
 |---|---|
-| `model` | The answering model. ExtProc gives it to the policy and writes it to the audit record. agentgateway returns the value of the provider without a change. |
+| `model` | The answering model. ExtProc gives it to the policy. agentgateway returns the value of the provider without a change. |
 | `answers[]` | ExtProc finds each answer by its `name`. The list sequence is not important. |
 | `answers[].type` | `predicate`, `score`, or `refusal`. A different type makes the answer invalid. |
 | `predicate.probability` | A number from 0 to 1. |

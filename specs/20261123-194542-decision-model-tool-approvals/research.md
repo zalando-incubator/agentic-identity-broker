@@ -14,7 +14,7 @@ assumptions of D-02, D-03, and D-07 with observed results. Each decision states 
 section "Verification record" at the end gives the commands and the test files.
 
 On 2026-11-26, the stakeholder narrowed the scope. D-16 to D-19 record the decisions.
-D-06, D-08, D-09, D-10, and D-11 are withdrawn. D-02, D-03, D-05, D-07, and D-12 changed with
+D-06, D-08, D-09, D-10, D-11, and D-13 are withdrawn. D-02, D-03, D-05, D-07, and D-12 changed with
 them.
 
 ## D-01 — The assessment runs in the request-body phase of ExtProc
@@ -214,7 +214,7 @@ control character.
 
 ExtProc reads a maximum of 256 KiB of a response.
 
-**Rationale**: Each status is one observable cause. The policy and the audit record can show the
+**Rationale**: Each status is one observable cause. The policy and its decision log can show the
 cause (FR-031, FR-032).
 
 **Alternatives considered**: One "failed" status hides the cause from the operator.
@@ -330,69 +330,38 @@ Withdrawn on 2026-11-26 (D-16). The approval page does not change.
 Withdrawn on 2026-11-26 (D-18). The feature has no evaluation record. The questions and the
 organization values are keys of the service configuration (D-17).
 
-## D-12 — The audit record has no tool name
+## D-12 — The feature writes no audit record of its own
 
-**Decision**: The audit record `assessment.tool_call.assessed` contains the target server name,
-the answering model, the answers, and a reference to the arguments. It does not
-contain the tool name. The contract is in [contracts/observability.md](contracts/observability.md).
+**Decision**: ExtProc writes no audit record for an assessed call and none for an automatic
+approval. The record of a call, of its answers, and of the result is the decision log of the
+policy engine. The feature needs no change of `coding-standards/LOGGING.md`.
 
-**Rationale**: `coding-standards/LOGGING.md` section 6.2 permits a tool name only if
-configuration bounds it. The tool name of a call comes from the agent, and no configuration of
-the feature lists tools. The target server name comes from the gateway configuration.
+**Rationale**: The stakeholder decided this on 2026-11-26. The answers are an input of the
+second policy evaluation. Thus, the decision log of that evaluation has the call, the answers,
+and the result. A second record with the same content adds a write that must not fail, a rule
+for the log level, and two changes of the logging standard.
 
-**Consequence**: An auditor finds the tool of an automatic approval through the record "opa
-authorization decision" of the same request, or through the decision log of the policy engine,
-which has the full policy input.
+**Consequences**:
+
+- The policy engine writes decision logs only if ExtProc uses an OPA configuration file that enables them. With a local policy path, ExtProc evaluates the policy without the engine service, and no decision log exists. The answers of an assessment are then in no record. The existing record "opa authorization decision" still has the action of each evaluation.
+- The decision log has the arguments of the call. Issue #206 asks for an audit record without sensitive arguments. The operator can mask `/input/mcp/arguments` in the configuration of the policy engine.
+- No signal of the feature has a tool name or a principal.
 
 **Existing deviation**: The existing record "opa authorization decision"
 (`internal/extproc/authorization/authorizer.go:323-332`) logs `tool_name` from the request for
-each decision. This value is not bounded by configuration. The record existed before section 6.2
-(added on 2026-11-02). This feature does not change that record. A separate issue must decide
-whether that record keeps the field.
+each decision. `coding-standards/LOGGING.md` section 6.2 permits a tool name only if
+configuration bounds it. The record existed before section 6.2 (added on 2026-11-02). This
+feature does not change that record. A separate issue must decide whether that record keeps the
+field.
 
-**Alternatives considered**: An exception to the logging standard needs an amendment of the
-standard (Principle XV) for no clear benefit. The behavior of the existing record is not a
-precedent, because it is older than the standard.
+**Alternatives considered**: An audit record of ExtProc for each assessed call, with the answers
+and without argument values. ExtProc wrote it before an automatic approval and kept the call for
+a person after a write error. This design was a part of the feature until 2026-11-26. It gives a
+record in each policy mode, and it adds the items of the rationale.
 
-## D-13 — An audit write error stops the automatic approval
+## D-13 — Withdrawn: an audit write error stops the automatic approval
 
-**Decision**: For an automatic approval, ExtProc writes the audit record before it forwards the
-call. It writes through the `Handle` method of the logger handler and reads the returned error.
-If the handler returns an error, the call waits for a person.
-
-While assessment is enabled, the configuration validation requires `log.level` `debug` or
-`info`. FR-060 requires the record for each assessed call in each mode, and a `warn` level loses
-it. Before each write for an automatic approval, ExtProc also calls `Enabled` for the INFO level.
-If it returns false, the call waits for a person.
-
-**Rationale**: SR-009 requires the record for each call that proceeds. The usual logger methods
-do not return an error.
-
-**Limits**: The ExtProc logger is `principalPolicyHandler` around the standard output handler,
-or around `multiHandler` with the standard output handler and the `otelslog` handler
-(`cmd/extproc-token-exchange/root.go:116-165`). `multiHandler.Handle` joins the errors of its
-handlers. The standard output handler returns a write error. The `otelslog` handler always
-returns `nil`, because the export is asynchronous. Thus, the check finds a failed write to
-standard output only. It does not find a failed export or a lost record after the write.
-
-`multiHandler.Handle` skips each handler that is not enabled for the level and then returns
-`nil` (`internal/adapters/telemetry/slog_handler.go:33-42`). With `log.level: warn`, an INFO
-audit record thus disappears without an error. The level rule above closes this gap.
-
-**Relation to the logging standard**: The record is an authorization decision record, not a
-mutation record. An automatic approval changes no stored state (FR-045). ExtProc writes the
-record at the time of the decision, as it writes the existing record "opa authorization
-decision". The rule "write the record after the mutation commits" in section 8 of
-`coding-standards/LOGGING.md` thus does not apply.
-
-Two parts of the standard need a scoped rule, and the pull request of the feature amends the
-standard with them (Principle XV). Section 1 requires a `*Context` logger method, and these
-methods return no error. The scoped rule permits a direct call of `Handler.Handle` with the
-request context for an audit record whose write error decides the action. Section 8 gets one
-sentence: a decision record is written at the time of the decision.
-
-**Alternatives considered**: A durable audit store is not part of this repository. The logging
-standard defines audit records as structured logs.
+Withdrawn on 2026-11-26 (D-12). The feature writes no audit record.
 
 ## D-14 — The deployment uses agentgateway `v1.7.0` for MCP and for decisions
 
@@ -434,8 +403,7 @@ Just before an automatic approval, ExtProc looks in its local approval cache for
 denial of the tool, with the rule of `Cache.Match` (`cache.go:297-301`). This lookup is a new
 function that only reads, because `Match` reserves a `once` approval. The cache gets new
 decisions through the existing sync during the
-assessment. If a denial matches, ExtProc denies the call, and the audit record has
-`unmet_condition: denial`. This check reads no data from the broker. Thus, the assessment adds a
+assessment. If a denial matches, ExtProc denies the call. This check reads no data from the broker. Thus, the assessment adds a
 maximum of the model deadline and one evaluation deadline to the path of today. SC-005 of the
 spec states this sum.
 
@@ -485,7 +453,7 @@ the approver.
 - The feature needs no migration, no OpenAPI change, no web component, and no browser test.
 - The approval page does not show that a model contributed to the two values. It shows no notice for a failed assessment. The policy sees the assessment status and selects the description for that case.
 - The system cannot make sure that a description is a constant text. A policy can format an argument value or an answer value into it, as it can today. The authoring rules and the example policy use constant texts (FR-039, SR-008).
-- The answering model of a call that waits for a person is only in the audit record of ExtProc and in the decision log of the policy engine. The approval record does not have it.
+- The answering model of a call that waits for a person is only in the decision log of the policy engine. The approval record does not have it.
 
 **Alternatives considered**: A new result field for one statement duplicates the description. A
 finding list from the policy keeps a second text channel to the approver and all broker changes.
@@ -566,8 +534,7 @@ tuning outside the product. The product does not need a second mechanism for tha
 - The operator selects the thresholds of each automatic approval rule and is responsible for its false-approval rate. The product gives no number for that rate.
 - A changed tool definition, a changed question, or a changed model changes the answers. The system does not stop automatic approval after such a change, and it does not report the change. A policy can require one answering model name, because the policy input has that name.
 - The default questions and the example thresholds have no measured results. The documentation states this (SR-010).
-- The policy result has no rule name. An earlier design required the field `auto_approval.rule` on an `allow` result, for the audit record. The stakeholder removed it: the decision log has the input and the result, and a policy can add a field of its own to the result. One limit applies. The policy engine writes decision logs only with an OPA configuration file that enables them. With a local policy path, it writes none, and the audit record of ExtProc is then the only record of the answers.
-- The record of the modes `shadow` and `guidance` stays: it shows that the policy lets a call proceed in the `auto_approve` mode (FR-044). An operator can count these records before the change of the mode.
+- The policy result has no rule name. An earlier design required the field `auto_approval.rule` on an `allow` result, for an audit record. The stakeholder removed it: the decision log has the input and the result, and a policy can add a field of its own to the result. One limit applies. The policy engine writes decision logs only with an OPA configuration file that enables them. With a local policy path, it writes none, and the answers are then in no record (D-12).
 
 **Alternatives considered**: An evaluation run on the production code path with a labeled case
 set, an evaluation record with fingerprints of the questions and of each tool definition, and a
@@ -583,7 +550,7 @@ separate `enabled` key.
 | Mode | Model request and second evaluation | Effect of the second evaluation |
 |---|---|---|
 | `disabled` (default) | No | None. The service operates as before this feature. |
-| `shadow` | Yes | None. The call gets the outcome, the description, and the risk level of the first evaluation. The audit record and the decision log show the answers and the second result. |
+| `shadow` | Yes | None. The call gets the outcome, the description, and the risk level of the first evaluation. The decision log shows the answers and the second result. |
 | `guidance` | Yes | The approver gets the description and the risk level of the second result. A denial of the second result denies the call. An `allow` result waits for a person. |
 | `auto_approve` | Yes | As `guidance`. An `allow` result also lets the call proceed, if the conditions of FR-041 are true. |
 
@@ -595,7 +562,7 @@ them.
 **Consequences**:
 
 - In the `shadow` mode, a call still waits for the model request and the second evaluation before ExtProc sends the approval request. Thus, the mode adds the delay of an assessment and changes no other result.
-- The `shadow` mode is useful only with a record of the answers. The audit record of ExtProc exists in each enabled mode. The decision log of the policy engine exists only with an OPA configuration file that enables it (D-18).
+- The `shadow` mode is useful only with a record of the answers. That record is the decision log of the policy engine, which exists only with an OPA configuration file that enables it (D-12). With a local policy path, the `shadow` mode has only the metrics of the feature.
 - The name `guidance` replaces the earlier name `recommend`.
 
 **Alternatives considered**: A Boolean key `enabled` with a second key for the mode. It permits

@@ -13,7 +13,7 @@ change.
 
 | Key | Type | Default | Validation |
 |---|---|---|---|
-| `authorization.assessment.mode` | string | `disabled` | `disabled`, `shadow`, `guidance`, or `auto_approve` (FR-009). Assessment is enabled if the mode is not `disabled`. An enabled mode requires `authorization.enabled` and `tool_approvals.enabled`. It requires `log.level` `debug` or `info`, because the audit record has the INFO level (FR-060, D-13). |
+| `authorization.assessment.mode` | string | `disabled` | `disabled`, `shadow`, `guidance`, or `auto_approve` (FR-009). Assessment is enabled if the mode is not `disabled`. An enabled mode requires `authorization.enabled` and `tool_approvals.enabled`. |
 | `authorization.assessment.endpoint` | URL | none | Required while assessment is enabled. HTTPS, or HTTP if `oauth2.tls.allow_http` is true. That development setting does not examine the host. With it, the context and the credential can go to each configured host without transport protection. |
 | `authorization.assessment.model` | string | none | Required while assessment is enabled. |
 | `authorization.assessment.credential_file` | path | none | Optional. The file has a maximum of 4 KiB. |
