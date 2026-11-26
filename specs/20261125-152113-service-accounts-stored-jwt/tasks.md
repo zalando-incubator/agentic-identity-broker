@@ -307,57 +307,57 @@ done.
 
 #### Design Phase Verification [MANDATORY]
 
-- [ ] T072 Verify every task above traces to a requirement, scenario, success criterion or binding constraint, and that no task hands out a credential, changes token exchange, binds an agent or changes the UI (Feature Scope; FR-024).
-- [ ] T073 Verify the six new terms are in the `ARCHITECTURE.md` glossary and the `AGENTS.md` glossary table (Principle V).
-- [ ] T074 Verify no file in `examples/config/` or `charts/agentic-identity-broker/` changed and none was needed (Principle VII).
-- [ ] T075 Verify `api/admin/openapi.yaml` holds the service-account operations at version `3.1.0` and that the PR description lists the API changes for the maintainer's review (Principles IV, X).
-- [ ] T076 Verify the schema design and migration `050` match `data-model.md` (Principle IX).
-- [ ] T077 Verify the three spec journeys link to their scenarios and agree with the merged contract, with decoded claims for T1, T2 and U and only synthetic tokens; no configuration, Wireloom or frontend journey applies (Principle XIV).
-- [ ] T078 Verify `tests/e2e/service_accounts_register_test.go` and `tests/e2e/service_accounts_lifecycle_test.go` hold one `It()` for each of the 31 scenarios of `spec.md`, as mapped in `plan.md`, written before implementation with concrete expectations, without `XIt`, `PIt`, `Skip()` or red-phase comments; red-run evidence is not required (Principle XIII).
-- [ ] T079 Verify the log events and storage spans match `contracts/observability.md`, no metric was added, and no new span attribute namespace was needed (Principle XV).
+- [X] T072 Verify every task above traces to a requirement, scenario, success criterion or binding constraint, and that no task hands out a credential, changes token exchange, binds an agent or changes the UI (Feature Scope; FR-024).
+- [X] T073 Verify the six new terms are in the `ARCHITECTURE.md` glossary and the `AGENTS.md` glossary table (Principle V).
+- [X] T074 Verify no file in `examples/config/` or `charts/agentic-identity-broker/` changed and none was needed (Principle VII).
+- [X] T075 Verify `api/admin/openapi.yaml` holds the service-account operations at version `3.1.0` and that the PR description lists the API changes for the maintainer's review (Principles IV, X).
+- [X] T076 Verify the schema design and migration `050` match `data-model.md` (Principle IX).
+- [X] T077 Verify the three spec journeys link to their scenarios and agree with the merged contract, with decoded claims for T1, T2 and U and only synthetic tokens; no configuration, Wireloom or frontend journey applies (Principle XIV).
+- [X] T078 Verify `tests/e2e/service_accounts_register_test.go` and `tests/e2e/service_accounts_lifecycle_test.go` hold one `It()` for each of the 31 scenarios of `spec.md`, as mapped in `plan.md`, written before implementation with concrete expectations, without `XIt`, `PIt`, `Skip()` or red-phase comments; red-run evidence is not required (Principle XIII).
+- [X] T079 Verify the log events and storage spans match `contracts/observability.md`, no metric was added, and no new span attribute namespace was needed (Principle XV).
 
 #### Implementation Phase Verification [MANDATORY]
 
 **Feature Scope**:
-- [ ] T080 Verify unrelated findings were reported to the user, not fixed, and that only user-approved issue URLs appear under `Future Work` in this file.
+- [X] T080 Verify unrelated findings were reported to the user, not fixed, and that only user-approved issue URLs appear under `Future Work` in this file.
 
 **API & Documentation** (Principles IV, X):
-- [ ] T081 [P] Verify the handler behaviour matches `api/admin/openapi.yaml` exactly: status codes, headers, members, messages, `If-Match` semantics.
-- [ ] T082 [P] Verify no `docs/api/` page is needed (admin-only change) and that `docs/guides/manage-agents-and-services.md` and `docs/reference/api.md` describe the operations.
+- [X] T081 [P] Verify the handler behaviour matches `api/admin/openapi.yaml` exactly: status codes, headers, members, messages, `If-Match` semantics.
+- [X] T082 [P] Verify no `docs/api/` page is needed (admin-only change) and that `docs/guides/manage-agents-and-services.md` and `docs/reference/api.md` describe the operations.
 
 **Architecture & Documentation** (Principle II):
-- [ ] T083 Verify `ARCHITECTURE.md` describes the entity, table, handler, domain service and Admin API `3.1.0`.
-- [ ] T084 [P] Verify `adrs/20261125-154231-service-accounts-stored-jwt.md` is Accepted, agrees with the code, and is listed in `ARCHITECTURE.md` §10 and `AGENTS.md`; no accepted ADR merged into main was deviated from.
+- [X] T083 Verify `ARCHITECTURE.md` describes the entity, table, handler, domain service and Admin API `3.1.0`.
+- [X] T084 [P] Verify `adrs/20261125-154231-service-accounts-stored-jwt.md` is Accepted, agrees with the code, and is listed in `ARCHITECTURE.md` §10 and `AGENTS.md`; no accepted ADR merged into main was deviated from.
 
 **Configuration** (Principle VII):
-- [ ] T085 [P] Verify no configuration parameter was added and nothing reads configuration outside `internal/ports/config.go`.
+- [X] T085 [P] Verify no configuration parameter was added and nothing reads configuration outside `internal/ports/config.go`.
 
 **Database & Persistence** (Principle IX):
-- [ ] T086 [P] Verify migration `050` is atomic, sequentially numbered, uses explicit columns, and has apply, rollback and reapply tests.
-- [ ] T087 [P] Verify the PostgreSQL repository is covered by the shared contract and its own integration tests, and both stores pass the same contract (SC-008).
-- [ ] T088 Verify the port has seven methods in `internal/ports/storage.go`, errors are `StorageError`, and the adapter exposes `ServiceAccounts()` (ADR 004).
+- [X] T086 [P] Verify migration `050` is atomic, sequentially numbered, uses explicit columns, and has apply, rollback and reapply tests.
+- [X] T087 [P] Verify the PostgreSQL repository is covered by the shared contract and its own integration tests, and both stores pass the same contract (SC-008).
+- [X] T088 Verify the port has seven methods in `internal/ports/storage.go`, errors are `StorageError`, and the adapter exposes `ServiceAccounts()` (ADR 004).
 
 **Security** (Principles I, III):
-- [ ] T089 Verify encryption is mandatory with no plaintext path, `alg: none` is refused, the operator principal is required before any read, and the stored JWT drives no decision (SR-001, SR-002, SR-004, SR-005, FR-013).
-- [ ] T090 [P] Verify the JWT is parsed only through `lestrrat-go/jwx/v4` without verification, the fingerprint uses `crypto/sha256`, storage uses the existing encryption adapters, and there is no hand-written parser, signature operation or custom cryptography (SR-003).
-- [ ] T091 [P] Verify audit records exist for create, rotation, ceiling change, rename and delete, after commit only, following `coding-standards/LOGGING.md` §8 (FR-022, SC-006).
+- [X] T089 Verify encryption is mandatory with no plaintext path, `alg: none` is refused, the operator principal is required before any read, and the stored JWT drives no decision (SR-001, SR-002, SR-004, SR-005, FR-013).
+- [X] T090 [P] Verify the JWT is parsed only through `lestrrat-go/jwx/v4` without verification, the fingerprint uses `crypto/sha256`, storage uses the existing encryption adapters, and there is no hand-written parser, signature operation or custom cryptography (SR-003).
+- [X] T091 [P] Verify audit records exist for create, rotation, ceiling change, rename and delete, after commit only, following `coding-standards/LOGGING.md` §8 (FR-022, SC-006).
 
 **Coding Standards** (Principle XV):
-- [ ] T092 Verify every added log call and span satisfies the review checklists of `coding-standards/LOGGING.md` §10 and `coding-standards/OPENTELEMETRY.md` §8, and `docs/reference/telemetry.md` is current.
-- [ ] T093 Verify the credential-absence tests of `contracts/observability.md` §8 exist for every path (responses, logs, spans) (SR-006, SC-002).
-- [ ] T094 Verify no lint rule is disabled or suppressed; the `LOGGING.md` §6.2 amendment and the `credential-types` addition are the only standard changes, and the PR description states the amendment and its rationale.
+- [X] T092 Verify every added log call and span satisfies the review checklists of `coding-standards/LOGGING.md` §10 and `coding-standards/OPENTELEMETRY.md` §8, and `docs/reference/telemetry.md` is current.
+- [X] T093 Verify the credential-absence tests of `contracts/observability.md` §8 exist for every path (responses, logs, spans) (SR-006, SC-002).
+- [X] T094 Verify no lint rule is disabled or suppressed; the `LOGGING.md` §6.2 amendment and the `credential-types` addition are the only standard changes, and the PR description states the amendment and its rationale.
 
 **Architecture Patterns** (Principles VI, XII):
-- [ ] T095 Verify rules, no-op detection, status and audit live in `internal/domain`; the handler parses and maps only; no handler calls a port directly; all wiring is in `internal/app/builder.go`; routes are registered only in `SetupAdminRoutes`.
+- [X] T095 Verify rules, no-op detection, status and audit live in `internal/domain`; the handler parses and maps only; no handler calls a port directly; all wiring is in `internal/app/builder.go`; routes are registered only in `SetupAdminRoutes`.
 
 **Testing** (Principle VIII):
-- [ ] T096 Verify unit tests were written first and drove the design; red-run evidence is not required.
-- [ ] T097 Verify tests changed minimally during implementation.
-- [ ] T098 Verify unit and integration tests cover every rule and repository method, and no Bash script validates code correctness.
+- [X] T096 Verify unit tests were written first and drove the design; red-run evidence is not required.
+- [X] T097 Verify tests changed minimally during implementation.
+- [X] T098 Verify unit and integration tests cover every rule and repository method, and no Bash script validates code correctness.
 
 **E2E Acceptance Testing** (Principle XIII):
-- [ ] T099 Verify each `It()` maps to exactly one scenario and carries its scenario comment; `Describe` → `Context` → `It` structure; fixtures from `tests/e2e/fixtures/service_account.go`.
-- [ ] T100 Verify the E2E tests changed minimally during implementation (fixture adjustments only) and turned green.
+- [X] T099 Verify each `It()` maps to exactly one scenario and carries its scenario comment; `Describe` → `Context` → `It` structure; fixtures from `tests/e2e/fixtures/service_account.go`.
+- [X] T0100 Verify the E2E tests changed minimally during implementation (fixture adjustments only) and turned green.
 - [ ] T101 Run `just test-e2e-backend`; run `just test-e2e-docker` where a container runtime exists, otherwise confirm the `docker` scenarios pass in CI on the pushed commit. All must pass.
 
 ---
