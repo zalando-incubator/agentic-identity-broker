@@ -29,9 +29,9 @@ paths:
             #### Policy decisions
             A rule's policy either allows the request or explicitly denies it. An explicit denial
             makes the rule not match, and later rules are evaluated in order; if none matches, the
-            response is `403 access_denied` (`impersonation not permitted`) without `error_uri`.
+            response is `403 access_denied` (`token exchange is not authorized`) without `error_uri`.
             A policy that cannot produce a valid allow or deny decision, an evaluation error, or a
-            timeout returns `500 server_error` (`authorization evaluation failed`) and stops rule
+            timeout returns `500 server_error` (`internal server error during token exchange`) and stops rule
             evaluation; later rules are not tried and no token is issued. Policy-produced text is
             never returned. Request headers, including identity-looking headers, never replace the
             validated client, actor, or subject credentials that a policy evaluates. Caller cancellation
@@ -78,7 +78,7 @@ paths:
                   summary: Impersonation - rule authorization could not be evaluated
                   value:
                     error: "server_error"
-                    error_description: "authorization evaluation failed"
+                    error_description: "internal server error during token exchange"
 
 docs:
   - docs/api/enduser-api.md: mirror policy decisions, the 500 example, and the full replacement Agent subjects paragraph with revision-bound unsigned classification and unbound-human fallback.

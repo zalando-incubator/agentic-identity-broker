@@ -144,9 +144,9 @@ retained only for evaluation; formatting and JSON/text slog tests must prove no 
 | Result | Meaning | Response | Diagnostic (`stage/detail`) |
 | --- | --- | --- | --- |
 | Exactly one value, an object with `"action": "allow"` | Rule predicate satisfied; delegation and minting continue | Normal flow | — |
-| Exactly one value, an object with `"action": "deny"` | Non-match; later rules are evaluated | No-match precedence (`403 access_denied`, `impersonation not permitted`) | `client_authorization/client_policy_denied` (existing) |
-| Undefined, more than one result, non-object, missing or non-string `action`, any other `action` (including `approval_required` and `ciba_required`) | Invalid decision; terminal | `500 server_error`, `authorization evaluation failed` | `client_authorization/opa_decision_invalid` (new) |
-| Evaluation error, strict built-in error, timeout, cancellation | Evaluation failure; terminal | `500 server_error`, `authorization evaluation failed` | `client_authorization/opa_evaluation_failed` (new) |
+| Exactly one value, an object with `"action": "deny"` | Non-match; later rules are evaluated | No-match precedence (`403 access_denied`, `token exchange is not authorized`) | `client_authorization/client_policy_denied` (existing) |
+| Undefined, more than one result, non-object, missing or non-string `action`, any other `action` (including `approval_required` and `ciba_required`) | Invalid decision; terminal | `500 server_error`, `internal server error during token exchange` | `client_authorization/opa_decision_invalid` (new) |
+| Evaluation error, strict built-in error, timeout, cancellation | Evaluation failure; terminal | `500 server_error`, `internal server error during token exchange` | `client_authorization/opa_evaluation_failed` (new) |
 
 For caller-disconnected HTTP requests, cancellation maps internally to the same terminal
 `server_error`, but no HTTP response is promised to the disconnected client. Domain tests assert

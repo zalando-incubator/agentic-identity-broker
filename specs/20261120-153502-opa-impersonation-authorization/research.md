@@ -317,8 +317,8 @@ no-match precedence). Undefined, multiple results, non-object, missing or other 
 timeouts, and cancellation map internally to terminal `server_error` with
 `client_authorization/opa_evaluation_failed`; connected callers receive HTTP 500, while
 client-disconnect cancellation has no response guarantee and uses correlated telemetry for E2E.
-Both abort rule evaluation without fallback. Response descriptions reuse the existing
-`authorization evaluation failed`.
+Both abort rule evaluation without fallback. The domain error text stays `authorization evaluation
+failed`; the token endpoint returns its fixed `internal server error during token exchange`.
 
 **Rationale**: FR-007 distinguishes deny from failure. CEL failures use
 `client_authorization/cel_evaluation_failed`; reusing the CEL detail for OPA would mislead operators,

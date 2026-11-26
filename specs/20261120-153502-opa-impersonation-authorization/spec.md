@@ -455,8 +455,10 @@ The local token-claims policy, not OPA and not the routing audience, supplies `a
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
 
-{"error":"access_denied","error_description":"impersonation not permitted"}
+{"error":"access_denied","error_description":"token exchange is not authorized"}
 ```
 
 For Scenario 1.3, restore the allowing policy/data but remove Alice's delegation. The same request returns the existing recovery response rather than letting an OPA allow bypass consent:
@@ -464,11 +466,13 @@ For Scenario 1.3, restore the allowing policy/data but remove Alice's delegation
 ```http
 HTTP/1.1 403 Forbidden
 Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
 
-{"error":"access_denied","error_description":"user delegation is required before impersonation","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
+{"error":"access_denied","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
 ```
 
-Descriptions illustrate credential-free summaries, not new stable diagnostic identifiers.
+The descriptions are the token endpoint's existing fixed, credential-free texts for these errors; the internal domain descriptions and diagnostic details are not returned.
 
 **Step 6 — Signed self-agent variant (Scenario 1.4).** The operator sets `allowed_subject_categories: [agent]` on this rule. The client uses a signed subject JWT with the same header, issuer, audience, and times as Step 2, but `sub` is `550e8400-e29b-41d4-a716-446655440000`. It sends the same form request with that replacement `subject_token`. Governance still approves the target for `inventory-api`; there is no corresponding human grant. The response is the same `200` envelope as Step 4 with marker `SYNTHETIC_AGENT_BROKER_JWT`. Its header is the same broker header and its relevant decoded claims are:
 
@@ -502,8 +506,10 @@ No category claim, human grant, or human session is created. Q2 also supports th
 ```http
 HTTP/1.1 500 Internal Server Error
 Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
 
-{"error":"server_error","error_description":"authorization evaluation failed"}
+{"error":"server_error","error_description":"internal server error during token exchange"}
 ```
 
 For the canceled-client variant, start the same exchange with a synthetic trace context, wait
