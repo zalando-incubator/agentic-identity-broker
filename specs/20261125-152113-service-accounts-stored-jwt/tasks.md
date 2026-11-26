@@ -44,7 +44,7 @@ repository's service-account counter, are feature behaviour and belong to User S
 
 ## Phase 1: Setup
 
-- [ ] T001 Read `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/domain/id/AGENTS.md`, `internal/ports/AGENTS.md`, `internal/adapters/AGENTS.md`, `tests/e2e/AGENTS.md` and `tests/integration/AGENTS.md`; confirm that `050` is the next free number in `migrations/` and that `ServiceAccountID` is not yet in `internal/domain/id/gen_ids.go` (DB-002; Principles II, IX).
+- [X] T001 Read `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/domain/id/AGENTS.md`, `internal/ports/AGENTS.md`, `internal/adapters/AGENTS.md`, `tests/e2e/AGENTS.md` and `tests/integration/AGENTS.md`; confirm that `050` is the next free number in `migrations/` and that `ServiceAccountID` is not yet in `internal/domain/id/gen_ids.go` (DB-002; Principles II, IX).
 
 ---
 
@@ -59,9 +59,9 @@ production code.
 
 **Constitution Reference**: Principles II, V
 
-- [ ] T002 Verify `specs/20261125-152113-service-accounts-stored-jwt/data-model.md` against `spec.md` §Domain Model and FR-001–FR-025: entity fields, value objects, derived `Narrowing` and `StatusAt`, update outcomes, domain events, invariants (one service for life, non-empty ceiling, exactly one credential, ID and kind fixed, `canonical_id` renamable). Correct `data-model.md` only where it contradicts the spec (Principle V).
-- [ ] T003 [P] Add a "Service Accounts" glossary section to `ARCHITECTURE.md` §12 and rows to the Domain Glossary table in `AGENTS.md` for Service Account, Kind, Credential Format, Ceiling, Narrowing and Credential Summary, with the definitions of #478 and their relationships to ThirdpartyOAuth2Service (spec §Domain Model; Principle V).
-- [ ] T004 [P] Write `adrs/20261125-154231-service-accounts-stored-jwt.md` (Context, Decision, Consequences, Status) covering research R2, R3, R6, R7, R9, R15 and SR-004: the entity and its repository port, the stored-JWT posture and why it is not a Principle I exception, `service_id` encryption of a format-discriminated credential document, status derived on read, optional `If-Match`, `ON DELETE RESTRICT`. Set Status to Accepted; Principle II permits accepting an ADR in the PR that introduces it. Add the ADR to `ARCHITECTURE.md` §10 and to the ADR Decision Index in `AGENTS.md` (ADR-SA; Principle II).
+- [X] T002 Verify `specs/20261125-152113-service-accounts-stored-jwt/data-model.md` against `spec.md` §Domain Model and FR-001–FR-025: entity fields, value objects, derived `Narrowing` and `StatusAt`, update outcomes, domain events, invariants (one service for life, non-empty ceiling, exactly one credential, ID and kind fixed, `canonical_id` renamable). Correct `data-model.md` only where it contradicts the spec (Principle V).
+- [X] T003 [P] Add a "Service Accounts" glossary section to `ARCHITECTURE.md` §12 and rows to the Domain Glossary table in `AGENTS.md` for Service Account, Kind, Credential Format, Ceiling, Narrowing and Credential Summary, with the definitions of #478 and their relationships to ThirdpartyOAuth2Service (spec §Domain Model; Principle V).
+- [X] T004 [P] Write `adrs/20261125-154231-service-accounts-stored-jwt.md` (Context, Decision, Consequences, Status) covering research R2, R3, R6, R7, R9, R15 and SR-004: the entity and its repository port, the stored-JWT posture and why it is not a Principle I exception, `service_id` encryption of a format-discriminated credential document, status derived on read, optional `If-Match`, `ON DELETE RESTRICT`. Set Status to Accepted; Principle II permits accepting an ADR in the PR that introduces it. Add the ADR to `ARCHITECTURE.md` §10 and to the ADR Decision Index in `AGENTS.md` (ADR-SA; Principle II).
 
 **Checkpoint**: Domain model documented, glossary updated, ADR drafted.
 
@@ -69,7 +69,7 @@ production code.
 
 **Constitution Reference**: Principle VII
 
-- [ ] T005 Confirm that no configuration parameter is added: no change to `internal/ports/config.go`, `docs/configuration.md`, `examples/config/` or `charts/agentic-identity-broker/`; the 16 KiB limit is fixed in the contract; the chart's existing migration Job applies `050`. Record the result in a `## Design notes` section of `specs/20261125-152113-service-accounts-stored-jwt/tasks.md` (spec Assumptions; Principle VII).
+- [X] T005 Confirm that no configuration parameter is added: no change to `internal/ports/config.go`, `docs/configuration.md`, `examples/config/` or `charts/agentic-identity-broker/`; the 16 KiB limit is fixed in the contract; the chart's existing migration Job applies `050`. Record the result in a `## Design notes` section of `specs/20261125-152113-service-accounts-stored-jwt/tasks.md` (spec Assumptions; Principle VII).
 
 **Checkpoint**: No configuration or Helm change, confirmed.
 
@@ -77,8 +77,8 @@ production code.
 
 **Constitution Reference**: Principles IV, X
 
-- [ ] T006 Merge `specs/20261125-152113-service-accounts-stored-jwt/contracts/admin-service-accounts-openapi.yaml` into `api/admin/openapi.yaml`: `info.version` `3.1.0`, a `Service Accounts` tag, the three paths, the parameters, header, responses and schemas, and the extra `409` cause on `DELETE /api/services/{service-id}` (reuse the existing `ServiceId`, `ErrorResponse`, `NotFoundError`, `InternalServerError` components). Leave every other operation unchanged (API-001–API-006; Principles IV, X).
-- [ ] T007 Verify the merged contract against Journeys 1–3 of `spec.md` (status codes, headers, bodies, messages) and FR-020's delete conflict; add the Admin API `3.1.0` note to the API versioning paragraph of `ARCHITECTURE.md` §5; confirm `api/enduser/openapi.yaml` is unchanged (API-004, API-005; Principles II, IV).
+- [X] T006 Merge `specs/20261125-152113-service-accounts-stored-jwt/contracts/admin-service-accounts-openapi.yaml` into `api/admin/openapi.yaml`: `info.version` `3.1.0`, a `Service Accounts` tag, the three paths, the parameters, header, responses and schemas, and the extra `409` cause on `DELETE /api/services/{service-id}` (reuse the existing `ServiceId`, `ErrorResponse`, `NotFoundError`, `InternalServerError` components). Leave every other operation unchanged (API-001–API-006; Principles IV, X).
+- [X] T007 Verify the merged contract against Journeys 1–3 of `spec.md` (status codes, headers, bodies, messages) and FR-020's delete conflict; add the Admin API `3.1.0` note to the API versioning paragraph of `ARCHITECTURE.md` §5; confirm `api/enduser/openapi.yaml` is unchanged (API-004, API-005; Principles II, IV).
 
 **Checkpoint**: Contract merged; the maintainer confirms it in PR review.
 
@@ -86,7 +86,7 @@ production code.
 
 **Constitution Reference**: Principle IX
 
-- [ ] T008 Verify the `service_accounts` schema in `data-model.md` §PostgreSQL schema against DB-001–DB-003 and FR-025: every column, `CHECK`, `uq_service_accounts_service_canonical_id`, `ON DELETE RESTRICT`, no plaintext column, explicit-column queries, one atomic pair `050_create_service_accounts.{up,down}.sql` without `-- migrate:no-transaction` (DB-050; Principle IX). The SQL files are written in T037 after their tests.
+- [X] T008 Verify the `service_accounts` schema in `data-model.md` §PostgreSQL schema against DB-001–DB-003 and FR-025: every column, `CHECK`, `uq_service_accounts_service_canonical_id`, `ON DELETE RESTRICT`, no plaintext column, explicit-column queries, one atomic pair `050_create_service_accounts.{up,down}.sql` without `-- migrate:no-transaction` (DB-050; Principle IX). The SQL files are written in T037 after their tests.
 
 **Checkpoint**: Schema designed; migration number reserved.
 
@@ -102,14 +102,14 @@ Playwright test or screenshot applies (spec Assumptions: the admin UI comes late
 E2E tests reach the broker only over HTTP, so they compile before the scaffold; without routes
 they fail on `404`, after Phase 2.7 on `501`.
 
-- [ ] T009 Review Journeys 1–3 in `spec.md` against their linked scenarios and the contract delta: HTTP exchanges, `Location` with the UUID path although the request used canonical IDs, ETag on create, read, update and status, decoded claims of tokens T1, T2 and U, and the absence of configuration. Record findings in the `## Design notes` section of `specs/20261125-152113-service-accounts-stored-jwt/tasks.md`; change `spec.md` only with the user's approval (Principle XIV).
-- [ ] T010 [P] Create `tests/e2e/fixtures/service_account.go`: the *Company Platform* service (canonical ID `company-platform`) built on `fixtures.ServiceWithID`; ES256 tokens signed with a key generated per call carrying the T1 and T2 header and claims of the spec (`kid`, `iss`, `sub`, `aud`, `scope`, `iat`, `exp`); a token without `exp`; a token whose `exp` lies a given number of seconds ahead; `alg` variants `none`, `NONE`, `None` and missing; a token of 16385 bytes; a five-segment token; a token with a leading space; a token whose payload is not a JSON object; a token with a boolean `exp`; create and update request bodies. All values synthetic (US1–US5; Principle XIII).
-- [ ] T011 [P] Create `tests/e2e/helpers/service_account.go` with a decoder for the `ServiceAccount` and `ServiceAccountStatus` representations and a Gomega matcher that fails when a response body or header contains a given JWT or any of its three segments; create `tests/e2e/service_accounts_backend_test.go` with `withServiceAccountBackend(backend string, action func(*bootstrap.TestServer, *storageadapter.Adapter))` for `memory` and `postgres`, following `withExternalIDBackend` in `tests/e2e/agent_external_id_backend_test.go` (SR-006, SC-008; Principle XIII).
-- [ ] T012 [US1] Write the seven User Story 1 `It()` blocks in `tests/e2e/service_accounts_register_test.go` (Scenarios 1–7) under `Describe("Service accounts")`, one `Context` per precondition, each preceded by `// Scenario N from specs/20261125-152113-service-accounts-stored-jwt/spec.md (User Story 1)`, with the descriptions of `plan.md` §Scenario Mapping. Scenario 5 carries `Label("docker")` and runs both store cases through `withServiceAccountBackend`. Assert status, `Location`, `ETag`, every representation member and summary value, list contents, and the credential-absence matcher on every response (US1.1–US1.7; FR-002, FR-011, FR-012, FR-016; SC-001).
-- [ ] T013 [US2] Write the seven User Story 2 `It()` blocks in `tests/e2e/service_accounts_register_test.go` (Scenarios 1–7). Scenarios 1, 2, 5 and 6 iterate over a table of variants inside one `It()`; every variant asserts `400`, the contract message, an unchanged list and the credential-absence matcher (US2.1–US2.7; FR-006, FR-007, FR-009, FR-010; SC-003).
-- [ ] T014 [US3] Write the nine User Story 3 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–9). Scenarios 7 and 9 carry `Label("docker")` and run both store cases. Scenario 3 registers a token expiring a few seconds ahead and waits for `failed` with `Eventually` before rotating; no fixed sleep. Scenario 8's rename body repeats the stored `scopes`, which `PUT` requires (US3.1–US3.9; FR-005, FR-017–FR-019; SC-005).
-- [ ] T015 [US4] Write the four User Story 4 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–4); Scenario 2 uses `Eventually` on both the status read and the list (US4.1–US4.4; FR-014, FR-015; SC-004).
-- [ ] T016 [US5] Write the four User Story 5 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–4). Scenario 4 carries `Label("docker")`, runs both store cases, and asserts `409` on service deletion, the unchanged service and account, then `204` after the account is removed (US5.1–US5.4; FR-020, FR-021, FR-025).
+- [X] T009 Review Journeys 1–3 in `spec.md` against their linked scenarios and the contract delta: HTTP exchanges, `Location` with the UUID path although the request used canonical IDs, ETag on create, read, update and status, decoded claims of tokens T1, T2 and U, and the absence of configuration. Record findings in the `## Design notes` section of `specs/20261125-152113-service-accounts-stored-jwt/tasks.md`; change `spec.md` only with the user's approval (Principle XIV).
+- [X] T010 [P] Create `tests/e2e/fixtures/service_account.go`: the *Company Platform* service (canonical ID `company-platform`) built on `fixtures.ServiceWithID`; ES256 tokens signed with a key generated per call carrying the T1 and T2 header and claims of the spec (`kid`, `iss`, `sub`, `aud`, `scope`, `iat`, `exp`); a token without `exp`; a token whose `exp` lies a given number of seconds ahead; `alg` variants `none`, `NONE`, `None` and missing; a token of 16385 bytes; a five-segment token; a token with a leading space; a token whose payload is not a JSON object; a token with a boolean `exp`; create and update request bodies. All values synthetic (US1–US5; Principle XIII).
+- [X] T011 [P] Create `tests/e2e/helpers/service_account.go` with a decoder for the `ServiceAccount` and `ServiceAccountStatus` representations and a Gomega matcher that fails when a response body or header contains a given JWT or any of its three segments; create `tests/e2e/service_accounts_backend_test.go` with `withServiceAccountBackend(backend string, action func(*bootstrap.TestServer, *storageadapter.Adapter))` for `memory` and `postgres`, following `withExternalIDBackend` in `tests/e2e/agent_external_id_backend_test.go` (SR-006, SC-008; Principle XIII).
+- [X] T012 [US1] Write the seven User Story 1 `It()` blocks in `tests/e2e/service_accounts_register_test.go` (Scenarios 1–7) under `Describe("Service accounts")`, one `Context` per precondition, each preceded by `// Scenario N from specs/20261125-152113-service-accounts-stored-jwt/spec.md (User Story 1)`, with the descriptions of `plan.md` §Scenario Mapping. Scenario 5 carries `Label("docker")` and runs both store cases through `withServiceAccountBackend`. Assert status, `Location`, `ETag`, every representation member and summary value, list contents, and the credential-absence matcher on every response (US1.1–US1.7; FR-002, FR-011, FR-012, FR-016; SC-001).
+- [X] T013 [US2] Write the seven User Story 2 `It()` blocks in `tests/e2e/service_accounts_register_test.go` (Scenarios 1–7). Scenarios 1, 2, 5 and 6 iterate over a table of variants inside one `It()`; every variant asserts `400`, the contract message, an unchanged list and the credential-absence matcher (US2.1–US2.7; FR-006, FR-007, FR-009, FR-010; SC-003).
+- [X] T014 [US3] Write the nine User Story 3 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–9). Scenarios 7 and 9 carry `Label("docker")` and run both store cases. Scenario 3 registers a token expiring a few seconds ahead and waits for `failed` with `Eventually` before rotating; no fixed sleep. Scenario 8's rename body repeats the stored `scopes`, which `PUT` requires (US3.1–US3.9; FR-005, FR-017–FR-019; SC-005).
+- [X] T015 [US4] Write the four User Story 4 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–4); Scenario 2 uses `Eventually` on both the status read and the list (US4.1–US4.4; FR-014, FR-015; SC-004).
+- [X] T016 [US5] Write the four User Story 5 `It()` blocks in `tests/e2e/service_accounts_lifecycle_test.go` (Scenarios 1–4). Scenario 4 carries `Label("docker")`, runs both store cases, and asserts `409` on service deletion, the unchanged service and account, then `204` after the account is removed (US5.1–US5.4; FR-020, FR-021, FR-025).
 - [ ] T017 Check both suites: `Describe` → `Context` → exactly one `It()` per scenario, scenario comments, fresh server and storage per test, fixtures from T010, no `XIt`, `PIt`, `Skip()` or red-phase comments. Run `ginkgo -v --label-filter="!performance && !docker" --focus "Service accounts" ./tests/e2e/` and confirm each test fails on a concrete assertion. Add `file:line` to each row of `plan.md` §Scenario Mapping (Principle XIII).
 
 **Checkpoint**: Journeys reviewed; 31 E2E scenarios written and failing semantically.
@@ -118,8 +118,8 @@ they fail on `404`, after Phase 2.7 on `501`.
 
 **Constitution Reference**: Principle XV
 
-- [ ] T018 Verify `contracts/observability.md` against `coding-standards/LOGGING.md` §§2, 3, 6, 8, 10 and `coding-standards/OPENTELEMETRY.md` §§3, 4, 6, 8: event names, levels, canonical keys, the seven `storage.*.service_account` spans, no new span attribute namespace and no metric instrument (so no metric entry and no §4.1 registry change), and the credential-path test matrix in §8 (Principle XV).
-- [ ] T019 Add the service-account credential row of `contracts/observability.md` §4 to the table in `coding-standards/LOGGING.md` §6.2, and draft the PR-description paragraph stating the change and its rationale in the `## Design notes` section of `specs/20261125-152113-service-accounts-stored-jwt/tasks.md` (FR-022, FR-023; Principle XV).
+- [X] T018 Verify `contracts/observability.md` against `coding-standards/LOGGING.md` §§2, 3, 6, 8, 10 and `coding-standards/OPENTELEMETRY.md` §§3, 4, 6, 8: event names, levels, canonical keys, the seven `storage.*.service_account` spans, no new span attribute namespace and no metric instrument (so no metric entry and no §4.1 registry change), and the credential-path test matrix in §8 (Principle XV).
+- [X] T019 Add the service-account credential row of `contracts/observability.md` §4 to the table in `coding-standards/LOGGING.md` §6.2, and draft the PR-description paragraph stating the change and its rationale in the `## Design notes` section of `specs/20261125-152113-service-accounts-stored-jwt/tasks.md` (FR-022, FR-023; Principle XV).
 
 **Checkpoint**: Observability design checked against the standards; amendment applied.
 
@@ -452,3 +452,42 @@ and the acceptance scenario for refusing to delete a bound account.
 - `[USn]` maps a task to spec User Story n.
 - Commit after each task or logical group; the Phase 2.7 scaffold is its own commit.
 - The DCO rule applies to every commit on this branch.
+
+---
+
+## Design notes
+
+### Configuration (T005)
+
+No configuration parameter is added. `internal/ports/config.go`, `docs/configuration.md`,
+`examples/config/` and `charts/agentic-identity-broker/` are unchanged. The 16 KiB JWT limit is a
+fixed value in the API contract (`SignedJwtCredential.jwt.maxLength`) and in the domain rule. The
+chart's existing migration Job applies every file in `migrations/`, so it applies `050` without a
+chart change.
+
+### Journey review (T009)
+
+Journeys 1–3 agree with the merged contract (`api/admin/openapi.yaml` 3.1.0):
+
+- Create answers `201` with a UUID `Location` although the request addressed the service by its
+  canonical ID, and `ETag: "1"`; read, update and status carry the strong ETag.
+- Journey 2 Steps 1–2 show the status bodies without the `ETag` header the contract also sends; the
+  journey illustrates the body, so this is not a contradiction and `spec.md` is unchanged.
+- Journey 3 messages (`credential.jwt must be a signed compact JWS`,
+  `credential.use must be access_token`, `service account canonical_id already exists on this
+  service`) are the contract's examples.
+- Tokens T1, T2 and U are decoded in the spec; the fingerprints shown there are synthetic. The E2E
+  tests generate their tokens per test and compute the expected fingerprint from the token they
+  submit.
+- No configuration block applies.
+
+### Observability amendment (T019) — paragraph for the PR description
+
+> **Coding-standard amendment (Principle XV):** `coding-standards/LOGGING.md` §6.2 gains one row:
+> the SHA-256 fingerprint (`SHA256:` and the base64 digest) of a stored service-account credential
+> is permitted in `service.service_account.*` audit records, never the credential, a fragment of it
+> or its ciphertext. FR-022 requires audit records to carry the credential summary so that a
+> rotation can be recognised. §6.2 already permits `iss`, `kid` and `exp`, and permits `sub` as an
+> `id.Principal` through the principal policy, but had no row for a credential fingerprint. The
+> digest cannot be reversed to the credential, and the row is scoped to these audit events.
+> `ServiceAccountCredentialInput` is added to `credential-types` in `.golangci.yml`.

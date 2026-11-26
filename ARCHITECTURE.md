@@ -1255,6 +1255,14 @@ unchanged. Migration `047` and consumer adaptation precede deployment. The contr
 not a broker release announcement. [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) cites the
 maintainer approval.
 
+**Admin API 3.1.0 (issue #471)** is additive. It adds create, list, read, update, delete and
+status for service accounts under `/api/services/{service-id}/service-accounts`, with strong
+ETags and an optional `If-Match`. `DELETE /api/services/{service-id}` gains one cause for its
+existing `409`: a service that holds a service account. No existing request or successful
+response changes, and the end-user and ExtProc contracts are unchanged. The maintainer confirms
+the contract in the review of the PR that introduces it
+([20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md)).
+
 ## 6. Deployment & Infrastructure
 
 The [broker Helm chart](charts/agentic-identity-broker/templates/deployment.yaml) deploys the broker, not ExtProc.
@@ -1366,6 +1374,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
 | [048-authzen-delegation-pip.md](adrs/048-authzen-delegation-pip.md) | Accepted | AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc grant-context resolver, and permit-bound token reuse |
 | [20261119-211813-service-icons-image-mode.md](adrs/20261119-211813-service-icons-image-mode.md) | Accepted | Exact service-owned SVG metadata, authenticated JSON, named upload checks, and browser image-mode isolation |
+| [20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md) | Accepted | Service accounts on third-party services: repository port, stored-JWT posture (not a Constitution I exception), `service_id` encryption, derived status, optional `If-Match`, `RESTRICT` service deletion, migration `050`, Admin API `3.1.0` |
 
 ## 11. Project Identification
 
@@ -1617,6 +1626,20 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **OAuth2SessionService**: Domain service that orchestrates OAuth2 authorization flows and session lifecycle. Handles PKCE generation, JWE state token management, authorization URL construction, callback processing, token exchange with retry logic, session encryption/storage, and termination with dependent agent warnings.
 
 **Encryption Context**: Additional authenticated data (AAD) included in token encryption. Binds ciphertext to principal, service_id, session_id, and purpose ("oauth2_token"). Stored as JSONB in PostgreSQL. Used for auditing and prevents cross-context token usage (tokens encrypted for one session cannot be decrypted for another).
+
+### Service Accounts
+
+**Service Account**: A machine credential that a third-party service issued to software, registered with the broker by an administrator, attached to exactly one `ThirdpartyOAuth2Service` for its whole life and bounded by a Ceiling. Identified by a broker-generated `ServiceAccountID` and named by a `canonical_id` unique within its service; the name can be renamed, the ID and Kind cannot. Its credential is stored encrypted under the owning service's `service_id` context and never returned. A service may hold any number of accounts; a service that holds one cannot be deleted. In this release an account has no effect on any user or agent request ([20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md)).
+
+**Kind**: How a Service Account obtains tokens. It selects which Credential Formats are accepted and never changes after creation. The first kind is `jwt_bearer`.
+
+**Credential Format**: The shape of a Service Account's secret within its Kind; the credential document is discriminated by it. The first format is `signed_jwt`: a JWT signed outside the broker, stored exactly as submitted, checked for form only (at most 16384 bytes, a compact JWS parsed by `jwx` without verification, `alg` not `none`, not expired when it states `exp`) and never verified. Its `use` is `access_token`.
+
+**Ceiling**: The non-empty set of unique scope values that bounds what a Service Account may ever obtain. The administrator declares it; the broker never compares it with anything inside the stored credential.
+
+**Narrowing**: Whether the broker can ask for less than the Ceiling when obtaining a token for a Service Account. A fact about Kind and Credential Format, derived and never settable; `none` for `jwt_bearer` with `signed_jwt`.
+
+**Credential Summary**: The non-secret recognition data that every Service Account representation carries instead of the credential, computed on each write that carries a credential. For `signed_jwt`: `format`, `use`, the `iss`, `sub`, `kid` and `exp` read from the token without verification (each omitted when absent), and a `SHA256:` fingerprint of the exact stored token. Its values are for display and status only, never for an authorization decision. Status is derived on read: `failed` with `credential_expired` from the instant a stated `exp` has passed, otherwise `ready`.
 
 ### RFC 8693 Token Exchange
 
