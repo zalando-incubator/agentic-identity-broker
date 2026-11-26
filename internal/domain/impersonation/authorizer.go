@@ -1,6 +1,16 @@
 package impersonation
 
-import "context"
+import (
+	"context"
+
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
+)
+
+// PolicySourceFactory starts the shared impersonation OPA engine without blocking on readiness.
+// It is supplied by the app builder so the domain starts no adapter itself (Principle VI).
+type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
+	decisions []ports.ImpersonationPolicyDecisionRef,
+	admit ports.ImpersonationPolicyAdmission) (ports.ImpersonationPolicySource, error)
 
 // authorization is one rule's authorization decision. CEL rules hold a static implementation
 // compiled at startup.

@@ -27,7 +27,7 @@ func validImpersonationConfig() *ports.ImpersonationConfig {
 				AllowedAlgorithms: []string{"ES256", "RS256"},
 				SignsRoles:        []string{"client_assertion", "actor", "subject"},
 			}},
-			Authorization: ports.AuthorizationConfig{
+			Authorization: ports.ImpersonationAuthorizationConfig{
 				Type: "cel",
 				CEL:  ports.CELAuthorizationConfig{Expression: `client_assertion.sub == "gw"`},
 			},
@@ -136,9 +136,9 @@ func TestValidateImpersonationConfig_Rejections(t *testing.T) {
 			r.ExpectedAudience = ""
 			c.Rules[0].Roles["subject"] = r
 		}, "signs_roles"},
-		{"non-cel authorization", servermode.Local, func(c *ports.ImpersonationConfig) {
-			c.Rules[0].Authorization.Type = "opa"
-		}, "authorization.type"},
+		{"opa rule without the shared engine block", servermode.Local, func(c *ports.ImpersonationConfig) {
+			c.Rules[0].Authorization = ports.ImpersonationAuthorizationConfig{Type: "opa"}
+		}, "oauth2_authorization_server.impersonation.opa"},
 		{"empty authorization expression", servermode.Local, func(c *ports.ImpersonationConfig) {
 			c.Rules[0].Authorization.CEL.Expression = ""
 		}, "authorization.cel.expression"},

@@ -645,7 +645,7 @@ func TestOAuth2AuthServerConfig_ImpersonationIsOptional(t *testing.T) {
 				AllowedAlgorithms: []string{"RS256"},
 				SignsRoles:        []string{"client_assertion", "actor", "subject"},
 			}},
-			Authorization: AuthorizationConfig{Type: "cel", CEL: CELAuthorizationConfig{Expression: "true"}},
+			Authorization: ImpersonationAuthorizationConfig{Type: "cel", CEL: CELAuthorizationConfig{Expression: "true"}},
 		}},
 	}
 	require.NoError(t, withImp.Validate(), "ports-level mode validation is unaffected by the impersonation block")

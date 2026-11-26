@@ -61,7 +61,7 @@ func imperSignedRule(name, issuerURI, jwksURI, authzExpr string) ports.Impersona
 			AllowedAlgorithms: []string{"RS256", "ES256"},
 			SignsRoles:        []string{"client_assertion", "actor", "subject"},
 		}},
-		Authorization: ports.AuthorizationConfig{
+		Authorization: ports.ImpersonationAuthorizationConfig{
 			Type: "cel",
 			CEL: ports.CELAuthorizationConfig{
 				Expression:        authzExpr,
@@ -94,7 +94,7 @@ func imperUnverifiedRule(name, issuerURI, jwksURI, authzExpr string) ports.Imper
 			AllowedAlgorithms: []string{"RS256", "ES256"},
 			SignsRoles:        []string{"client_assertion", "actor"},
 		}},
-		Authorization: ports.AuthorizationConfig{
+		Authorization: ports.ImpersonationAuthorizationConfig{
 			Type: "cel",
 			CEL: ports.CELAuthorizationConfig{
 				Expression:        authzExpr,

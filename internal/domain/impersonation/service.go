@@ -40,6 +40,8 @@ func NewService(
 	logger *slog.Logger,
 	delegationVerifier ports.UserDelegationVerifier,
 	consentBaseURL string,
+	policySources PolicySourceFactory,
+	publicURL string,
 ) (*Service, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("impersonation config is nil")

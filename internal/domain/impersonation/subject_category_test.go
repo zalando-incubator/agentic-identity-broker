@@ -106,7 +106,7 @@ func TestImpersonateAgentSubject(t *testing.T) {
 			verifier := &recordingDelegationVerifier{status: ports.UserDelegationMissing}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
-			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com", nil, "")
 			require.NoError(t, err)
 			subject := target.Agent.ID.String()
 			if tc.human {

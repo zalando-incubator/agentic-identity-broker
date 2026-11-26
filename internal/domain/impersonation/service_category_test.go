@@ -67,7 +67,7 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 			}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
-			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com")
+			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com", nil, "")
 			require.NoError(t, err)
 			target := testTarget()
 			subject := target.Agent.ID.String()
@@ -173,7 +173,7 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 			verifier := &recordingDelegationVerifier{status: status}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
-			}, agents, issuer, 0, nil, verifier, "https://broker.example.com")
+			}, agents, issuer, 0, nil, verifier, "https://broker.example.com", nil, "")
 			require.NoError(t, err)
 			target := testTarget()
 			sign := func(sub string) string {
