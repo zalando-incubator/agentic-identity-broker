@@ -130,6 +130,16 @@ export function AgentGrantDetailPage() {
   // emptied selection never falls back to the saved grant.
   const [selectionReported, setSelectionReported] = useState(false);
 
+  const [retryingAgentId, setRetryingAgentId] = useState<string | null>(null);
+  const handleRequestedServiceRetry = useCallback(async () => {
+    setRetryingAgentId(resolvedAgentId);
+    try {
+      await refetch();
+    } finally {
+      setRetryingAgentId(null);
+    }
+  }, [refetch, resolvedAgentId]);
+
   // Validation errors
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
 
@@ -348,21 +358,6 @@ export function AgentGrantDetailPage() {
     return serviceIds;
   }, [agent, perPsIncludedServiceIds, selectionReported]);
 
-  // Filter services: show only those without active sessions
-  // When dynamicServiceIds is null (no PSes), show ALL services without active sessions
-  // When dynamicServiceIds is set, only show services in the dynamic set
-  const servicesWithoutActiveSessions = useMemo(() => {
-    return services.filter(
-      (service) =>
-        (dynamicServiceIds === null ||
-          dynamicServiceIds.has(service.serviceId) ||
-          agent?.requested_service_coverage?.some(
-            (requested) => requested.service_id === service.serviceId,
-          )) &&
-        !agent?.active_session_service_ids?.includes(service.serviceId),
-    );
-  }, [services, dynamicServiceIds, agent]);
-
   // Compute effective requirement types for service connections badges.
   // A service is effectively mandatory if SR.requirement_type=mandatory OR any currently-active PS
   // has it as ServiceScope.requirement_type=mandatory (FR-009, FR-014).
@@ -452,6 +447,30 @@ export function AgentGrantDetailPage() {
     () => new Set(requestedCoverage.map((service) => service.service_id)),
     [requestedCoverage],
   );
+  // Show services without active sessions, plus requested services whose live login is missing or
+  // unusable even though a session exists. When dynamicServiceIds is null (no PSes), show all of them.
+  const servicesWithoutActiveSessions = useMemo(() => {
+    const requestedNeedingLogin = new Set(
+      requestedResults
+        .filter((result) => result.login === 'missing' || result.login === 'unusable')
+        .map((result) => result.serviceId),
+    );
+    return services
+      .filter(
+        (service) =>
+          requestedNeedingLogin.has(service.serviceId) ||
+          ((dynamicServiceIds === null ||
+            dynamicServiceIds.has(service.serviceId) ||
+            requestedServiceIds.has(service.serviceId)) &&
+            !agent?.active_session_service_ids?.includes(service.serviceId)),
+      )
+      .map((service) =>
+        service.kind === 'requirement'
+          ? { ...service, connectionStatus: 'not_connected' as const }
+          : service,
+      );
+  }, [services, dynamicServiceIds, agent, requestedResults, requestedServiceIds]);
+
   const requestedBlockReasons = requestedResults
     .filter((result) => !result.satisfied)
     .map((result) => result.reason);
@@ -490,8 +509,8 @@ export function AgentGrantDetailPage() {
     );
   }
 
-  // Loading state
-  if (loading) {
+  // Loading state; a requested-service retry keeps the page mounted so unsaved selections survive
+  if (loading && retryingAgentId !== resolvedAgentId) {
     return (
       <AppLayout>
         <div className="space-y-6">
@@ -763,7 +782,7 @@ export function AgentGrantDetailPage() {
               }
               agentName={agent.displayName}
               requestedServices={requestedServices}
-              onRequestedServiceRetry={() => void refetch()}
+              onRequestedServiceRetry={() => void handleRequestedServiceRetry()}
               onSelectionChange={(_optionalIds, perPsIncluded) => {
                 setPerPsIncludedServiceIds(perPsIncluded);
                 setSelectionReported(true);

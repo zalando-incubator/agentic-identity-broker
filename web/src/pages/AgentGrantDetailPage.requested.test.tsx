@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AgentGrantDetailPage } from './AgentGrantDetailPage';
@@ -187,6 +187,78 @@ describe('AgentGrantDetailPage — requested services', () => {
     expect(saveReason()).toBe(
       'Connect all required services before saving. To save: log in to GitHub Production under Connect Your Accounts and turn on a permission set that allows it.',
     );
+  });
+
+  it('offers the usual Login to reconnect a requested service whose existing session is unusable', async () => {
+    const user = userEvent.setup();
+    const submit = vi.spyOn(HTMLFormElement.prototype, 'submit').mockImplementation(() => {});
+    vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockReturnValue({
+      agent: agent(coverage('unusable')),
+      services: services.map((service) =>
+        service.serviceId === github ? { ...service, connectionStatus: 'connected' } : service,
+      ),
+      cimdMeta: null, grants: grant, loading: false, error: null, refetch: vi.fn(),
+    } as never);
+    render(
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/agents/agent-1?session_token=sealed']}>
+          <Routes>
+            <Route path="*" element={<AgentGrantDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>,
+    );
+
+    expect(saveReason()).toContain('log in to GitHub Production under Connect Your Accounts');
+    const connectCard = screen.getByRole('article', { name: 'Service: GitHub Production' });
+    expect(within(connectCard).getByText('Asked for')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Log in|^Login$/ })).toHaveLength(1);
+    await user.click(within(connectCard).getByRole('button', { name: 'Login' }));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit.mock.contexts[0]).toHaveProperty('action', expect.stringContaining(`/api/third-party/${github}/oauth2/authorize`));
+    expect(screen.queryByRole('article', { name: 'Service: Corporate Identity' })).not.toBeInTheDocument();
+    submit.mockRestore();
+  });
+
+  it('keeps the unsaved selection while retrying the requested-service check', async () => {
+    const user = userEvent.setup();
+    const loaded = {
+      agent: agent(coverage('unavailable')),
+      services, cimdMeta: null, grants: grant, loading: false, error: null,
+    };
+    let current: Record<string, unknown> = { ...loaded };
+    let finishReload!: () => void;
+    const reloaded = new Promise<void>((resolve) => {
+      finishReload = resolve;
+    });
+    const refetch = vi.fn(() => {
+      current = { ...loaded, loading: true };
+      return reloaded;
+    });
+    vi.spyOn(useAgentGrantsModule, 'useAgentGrants').mockImplementation(() => ({ ...current, refetch }) as never);
+    const page = () => (
+      <ToastProvider>
+        <MemoryRouter initialEntries={['/agents/agent-1?session_token=sealed']}>
+          <Routes>
+            <Route path="*" element={<AgentGrantDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </ToastProvider>
+    );
+    const { rerender } = render(page());
+
+    await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' }));
+    await user.click(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' }));
+    await user.click(within(group()).getByRole('button', { name: 'Retry' }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    rerender(page());
+    current = { ...loaded };
+    await act(async () => finishReload());
+    rerender(page());
+
+    expect(screen.getByRole('switch', { name: 'Toggle GitHub Read Access' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('switch', { name: 'Toggle GitHub Issue Triage' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group()).getByTestId('requested-service-selection')).toHaveTextContent('Permission set on');
   });
 
   it('explains that a request no offered set covers cannot be allowed here', () => {

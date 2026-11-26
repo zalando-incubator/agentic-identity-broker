@@ -3,9 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { ThirdPartySessionDetailPage } from './ThirdPartySessionDetailPage';
 import { sessionsApi, type ServiceSessionDetail, type ServiceSessionStatus } from '@services/api/sessions';
 
@@ -179,5 +179,34 @@ describe('ThirdPartySessionDetailPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Retry' }));
     expect(await screen.findByTestId('service-session-status')).toHaveTextContent('No active session');
+  });
+
+  it.each([
+    ['response', (settle: { resolve: (value: ServiceSessionDetail) => void }) =>
+      settle.resolve({ ...detail(null), service: { ...detail(null).service, display_name: 'Stale Service' } })],
+    ['error', (settle: { reject: (reason: unknown) => void }) =>
+      settle.reject({ status: 404, code: 'NOT_FOUND', message: 'The requested resource was not found.' })],
+  ])('ignores a late %s for the previous service after navigating to another', async (_, settleStale) => {
+    let settle!: { resolve: (value: ServiceSessionDetail) => void; reject: (reason: unknown) => void };
+    vi.mocked(sessionsApi.getServiceSessionDetail).mockImplementation((identifier) =>
+      identifier === 'stale'
+        ? new Promise<ServiceSessionDetail>((resolve, reject) => {
+            settle = { resolve, reject };
+          })
+        : Promise.resolve(detail(activeSession)),
+    );
+    const router = createMemoryRouter(
+      [{ path: '/sessions/:service', element: <ThirdPartySessionDetailPage /> }],
+      { initialEntries: ['/sessions/stale'] },
+    );
+    render(<RouterProvider router={router} />);
+
+    await act(() => router.navigate('/sessions/github'));
+    expect(await screen.findByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
+
+    await act(async () => settleStale(settle));
+    expect(screen.getByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
+    expect(screen.queryByText('Stale Service')).not.toBeInTheDocument();
+    expect(screen.queryByText('Service not found')).not.toBeInTheDocument();
   });
 });

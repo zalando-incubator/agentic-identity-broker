@@ -47,6 +47,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
   const [terminating, setTerminating] = useState(false);
   const [terminationError, setTerminationError] = useState<string | null>(null);
   const loginButton = useRef<HTMLButtonElement>(null);
+  const latestLoad = useRef(0);
 
   useEffect(() => {
     if (state.kind === 'loaded' && !state.detail.session && alert?.message === 'Session terminated successfully.') {
@@ -55,11 +56,17 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
   }, [state, alert]);
 
   const load = useCallback(async () => {
+    const request = ++latestLoad.current;
     try {
       const detail = await sessionsApi.getServiceSessionDetail(identifier);
-      setState({ kind: 'loaded', detail });
+      if (request === latestLoad.current) {
+        setState({ kind: 'loaded', detail });
+      }
       return detail;
     } catch (err) {
+      if (request !== latestLoad.current) {
+        return null;
+      }
       if (isApiError(err) && err.status === 404) {
         setState({ kind: 'not_found' });
       } else {
