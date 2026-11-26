@@ -23,6 +23,9 @@ type AuthorizationCode struct {
 	ExpiresAt     time.Time              `json:"expires_at" db:"expires_at"`
 	UsedAt        *time.Time             `json:"used_at,omitempty" db:"used_at"`
 	CreatedAt     time.Time              `json:"created_at" db:"created_at"`
+	// ServiceScopeBindings pins each granted Virtual Service Scope to its service UUID.
+	// Nil when no virtual scope was granted.
+	ServiceScopeBindings ServiceScopeBindings `json:"service_scope_bindings,omitempty" db:"-"`
 }
 
 // Validate validates the AuthorizationCode fields.
@@ -45,5 +48,5 @@ func (c *AuthorizationCode) Validate() error {
 	if c.ExpiresAt.IsZero() {
 		return NewStorageError("AuthorizationCode.Validate", ErrorKindValidation, nil, "expires_at is required")
 	}
-	return nil
+	return c.ServiceScopeBindings.Validate(c.Scope, true)
 }
