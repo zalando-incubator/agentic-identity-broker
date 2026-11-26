@@ -130,7 +130,7 @@ sequenceDiagram
 
 | Term | Definition |
 | --- | --- |
-| **Impersonation Policy Engine** | The engine one impersonation rule selects for its authorization decision: `cel` or `opa`. |
+| **Impersonation Policy Engine** | The engine one impersonation rule selects for its authorization decision: `cel` or `opa`. Not the shared Impersonation OPA Engine runtime. |
 | **Policy/Data Revision** | An immutable, all-configured-bundle admitted snapshot of the shared OPA engine's compiled policy and data, with a broker admission identifier distinct from operator labels. Admitted only if every OPA rule's decision rule exists. Each request uses one revision for all its OPA rules. |
 | **Impersonation OPA Engine** | The one OPA runtime (`impersonation.opa`) shared by every OPA rule, loading either managed bundles through a Policy Bootstrap or a local bundle directory read at startup. |
 | **Policy Bootstrap** | The contained OPA-native configuration file of the Impersonation OPA Engine, limited to `services`, `bundles`, `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin, with no OPA-native local-file references. |

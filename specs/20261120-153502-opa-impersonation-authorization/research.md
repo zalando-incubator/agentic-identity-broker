@@ -202,7 +202,7 @@ candidate unless every OPA rule's decision rule exists (R11). Exists means that
 `data.<package>.<decision>`; a value only in data documents, or only rules nested below the ref, is
 `decision_absent` (revised 2026-11-26). A decision rule that exists but yields no value for a
 request is not an admission question: it is a terminal runtime failure (R9). CEL rules keep their existing inline
-startup checks in `cel.go` unchanged. The service reads one engine revision per request, before the
+startup `References` checks in `rule.go` unchanged. The service reads one engine revision per request, before the
 first rule, and uses it for every OPA rule's decision. The binding requirements of the original
 decision are withdrawn with R5.
 

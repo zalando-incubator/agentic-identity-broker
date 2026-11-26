@@ -138,7 +138,8 @@ type PolicySourceFactory func(cfg ports.ImpersonationOPAEngineConfig,
   is undefined for a request is a runtime failure (`ErrPolicyDecisionInvalid`, terminal), never a
   deny. OPA rules have no reference or
   field-binding requirements ([policy-input-decision.md § 4](policy-input-decision.md#4-exceptional-credential-modes-dec-bind-withdrawn)).
-  CEL rules keep their inline startup checks in `cel.go` and today's error text
+  CEL rules keep their inline startup `References` checks in `rule.go` (on the concrete CEL
+  program, before it is wrapped as an `authorization`; OPA rules skip them) and today's error text
   (`requires the authorization predicate to reference subject_token (FR-007a)` and the CR-009
   message).
 - `compiledRule` gets an internal `authorization`; CEL rules hold a static one and OPA rules obtain
