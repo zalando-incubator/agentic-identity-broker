@@ -2059,6 +2059,54 @@ func TestThirdpartyOAuth2ProviderService_Delete(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
+type stubServiceAccountCount struct {
+	count int
+	err   error
+}
+
+func (c stubServiceAccountCount) CountByService(context.Context, id.ServiceID) (int, error) {
+	return c.count, c.err
+}
+
+func TestThirdpartyOAuth2ProviderService_DeleteRefusedWhileServiceAccountsAttached(t *testing.T) {
+	ctx := context.Background()
+	svcID := id.NewServiceID()
+
+	t.Run("accounts attached", func(t *testing.T) {
+		mockRepo := new(MockRepository)
+		svc := NewThirdpartyOAuth2ProviderService(mockRepo, new(MockEncryption), newNoopBranchKeyManager(), nil, false, slog.New(slog.DiscardHandler)).
+			WithServiceAccounts(stubServiceAccountCount{count: 2})
+
+		err := svc.Delete(ctx, svcID)
+
+		var storageErr *storage.StorageError
+		require.ErrorAs(t, err, &storageErr)
+		assert.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+		assert.Equal(t, "cannot delete service: 2 service account(s) are attached to it", storageErr.Message)
+		mockRepo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+	})
+
+	t.Run("no accounts", func(t *testing.T) {
+		mockRepo := new(MockRepository)
+		mockRepo.On("Delete", ctx, svcID).Return(nil)
+		svc := NewThirdpartyOAuth2ProviderService(mockRepo, new(MockEncryption), newNoopBranchKeyManager(), nil, false, slog.New(slog.DiscardHandler)).
+			WithServiceAccounts(stubServiceAccountCount{})
+
+		require.NoError(t, svc.Delete(ctx, svcID))
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("counter failure propagates", func(t *testing.T) {
+		mockRepo := new(MockRepository)
+		failure := errors.New("count failed")
+		svc := NewThirdpartyOAuth2ProviderService(mockRepo, new(MockEncryption), newNoopBranchKeyManager(), nil, false, slog.New(slog.DiscardHandler)).
+			WithServiceAccounts(stubServiceAccountCount{err: failure})
+
+		assert.ErrorIs(t, svc.Delete(ctx, svcID), failure)
+		mockRepo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+	})
+}
+
 // =============================================================================
 // FindByProtectedResource tests
 // =============================================================================

@@ -1833,6 +1833,33 @@ func TestServicesHandler_DeleteService(t *testing.T) {
 	})
 }
 
+type serviceAccountCountStub int
+
+func (c serviceAccountCountStub) CountByService(context.Context, id.ServiceID) (int, error) {
+	return int(c), nil
+}
+
+func TestServicesHandler_DeleteServiceRefusedWhileServiceAccountsAttached(t *testing.T) {
+	mockRepo := new(MockProviderRepository)
+	svc := thirdparty.NewThirdpartyOAuth2ProviderService(mockRepo, newTestEncryption(), &encryptionnoop.BranchKeyManager{}, nil, false, slog.New(slog.DiscardHandler)).
+		WithServiceAccounts(serviceAccountCountStub(1))
+	handler := NewServicesHandler(svc, testConfig(), slog.New(slog.DiscardHandler))
+	serviceID := id.NewServiceID()
+	req := httptest.NewRequest(http.MethodDelete, "/api/services/"+serviceID.String(), nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("service-id", serviceID.String())
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+
+	handler.DeleteService(w, req)
+
+	require.Equal(t, http.StatusConflict, w.Code)
+	var resp ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, ErrorResponse{Error: "conflict", Message: "cannot delete service: 1 service account(s) are attached to it"}, resp)
+	mockRepo.AssertNotCalled(t, "Delete", mock.Anything, mock.Anything)
+}
+
 func TestServicesHandler_ListServices(t *testing.T) {
 	t.Run("successful list", func(t *testing.T) {
 		mockRepo := new(MockProviderRepository)

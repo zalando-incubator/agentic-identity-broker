@@ -40,6 +40,7 @@ func NamedPlatformService(canonicalID string) *model.ThirdpartyOAuth2ProviderEnt
 	service := ServiceWithID(id.NewServiceID().String())
 	service.DisplayName = "Company Platform " + canonicalID
 	service.CanonicalID = &canonicalID
+	service.ProtectedResources = []string{"https://" + canonicalID + ".example.com/api"}
 	return service
 }
 

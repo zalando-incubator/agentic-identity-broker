@@ -504,7 +504,8 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		).WithCIMDPublicURL(b.config.Server.EndUser.PublicURL).
 			WithDCRClientName(b.config.ThirdPartyOAuth2.ClientName).
 			WithUserSessions(b.storage.UserSessions()).
-			WithDiscoveryStatusWriter(b.storage.DiscoveryStatusWriter())
+			WithDiscoveryStatusWriter(b.storage.DiscoveryStatusWriter()).
+			WithServiceAccounts(b.storage.ServiceAccounts())
 	}
 
 	// Construct outbound CIMD key dependencies before the OAuth server-mode split.
