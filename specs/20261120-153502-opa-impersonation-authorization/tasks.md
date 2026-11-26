@@ -70,7 +70,7 @@ T015 adds only compile-enabling declarations and the fixture migration that keep
 
 **Constitution Reference**: Principles IV (API Documentation & OpenAPI Transparency), X (API-First Development).
 
-- [ ] T012 Verify the recorded API sign-off and publish the approved `POST /oauth2/token` description delta, including the Agent subjects paragraph (CEL rules need the `sub` binding; on OPA rules an unsigned exact-target subject is agent category and the policy must constrain `sub`; cross-agent rejection), the 500 example, and version `1.4.0` (from `1.3.0`) in `api/enduser/openapi.yaml` before endpoint implementation; confirm no Admin API, request/response envelope, or token-claim change (`contracts/openapi-token-opa.yaml`, FR-007–FR-009, Principles IV, X).
+- [ ] T012 Verify the recorded API sign-off and publish the approved `POST /oauth2/token` description delta, including the Agent subjects paragraph (CEL rules need the `sub` binding; on OPA rules an unsigned exact-target subject is agent category and the policy must constrain `sub`; cross-agent rejection), the 500 example, and version `1.4.0` (from `1.3.0`) in `api/enduser/openapi.yaml` before endpoint implementation; correct the existing `impersonation_consent_required` example's `error_description` to the endpoint's returned `User authorization is insufficient. Please re-consent.`, because the OPA delegation journey (Scenario 1.3) documents that response; confirm no Admin API, request/response envelope, or token-claim change (`contracts/openapi-token-opa.yaml`, FR-007–FR-009, Principles IV, X).
 
 **Checkpoint**: APIs designed and confirmed by user/stakeholder
 
