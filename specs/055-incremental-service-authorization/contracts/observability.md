@@ -24,14 +24,14 @@ Closed reason sets:
 
 - Focused consent: `not_selected`, `required_scopes_uncovered`, `missing`, `unusable_definitive`.
 - Submission rejection: `binding_mismatch`, `unsatisfied`.
-- Scope rejection: `malformed_scope`, `unknown_service`, `service_not_eligible`, `binding_mismatch`.
+- Scope rejection: `malformed_scope`, `unknown_service`, `service_not_eligible`, `binding_mismatch`, `user_required` (proxy `client_credentials`).
   Map typed/sentinel permission errors; never use `err.Error()` or echo the requested scope.
 - Resolution/evaluation failure: `dependency_failed`. This safe coarse classification is sufficient;
   do not parse a wrapped cause to invent a more detailed reason or record its text.
 - Authorization continuation rejection: `invalid_authorization_session` (the AuthorizationSessionClaims JWE, not a UserSession). Authorize collapses every continuation failure, including expiry and mismatch, into this reason.
 - Consent authorization-session rejection: `invalid_authorization_session` (empty, repeated, forged or malformed token, with the same meaning as authorize), `expired_authorization_session`, `agent_mismatch` (sealed agent differs from the requested agent) and `principal_mismatch` (sealed principal differs from the authenticated principal). Consent keeps the distinct reasons because it already returns distinct HTTP errors for them. Consent retains existing HTTP status codes and error responses and logs no token or validation cause.
 - Requested-service unverifiability: `unverifiable_transient`.
-- Local refresh refusal: `binding_unresolved`, `not_selected`, `required_scopes_uncovered`, `missing`, `unusable_definitive`, `service_lookup_failed`, `grant_lookup_failed`, `permission_set_lookup_failed`, `unverifiable_transient`.
+- Local refresh refusal: `binding_unresolved`, `not_selected`, `required_scopes_uncovered`, `missing`, `unusable_definitive`, `service_lookup_failed`, `grant_lookup_failed`, `permission_set_lookup_failed`, `permission_set_undeclared`, `unverifiable_transient`.
 
 `servicescope.Outcome.Reason()` returns `OutcomeReason`, the shared log projection of an Outcome. Its constants cover `not_selected`, `required_scopes_uncovered`, `usable`, `missing`, `unusable_definitive` and `unverifiable_transient`. It is distinct from structural `CoverageFailure` (which it coarsens for logs) and verified `Usability` (which it projects after selection/coverage precedence). Authorization and local refresh both use `unverifiable_transient` for unverifiable usability of a selected service. Not selected takes precedence over transient usability: `servicescope.AnyTransient` ignores unselected outcomes, so an unselected service whose usability is unverifiable is logged as `not_selected`. These pre-merge corrections replace the former refresh-only `usability_unverifiable` and ambiguous continuation `invalid_session` labels, as approved in [the remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7047148239).
 

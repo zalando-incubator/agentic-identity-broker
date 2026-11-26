@@ -357,6 +357,16 @@ func (s *Service) checkServiceScopes(ctx context.Context, scopes []string, categ
 	if s.serviceScopes == nil || s.serviceEvaluator == nil {
 		return invalidScope(serviceScopeNotPermittedDescription)
 	}
+	// Resolve splits on any whitespace, so a malformed element such as one containing a tab
+	// must be refused here rather than resolved as a valid scope plus an unchecked remainder.
+	for _, scope := range requested {
+		if _, kind := servicescope.Parse(scope, s.consentBaseURL); kind == servicescope.KindMalformed {
+			return invalidScope(serviceScopeNotPermittedDescription)
+		}
+	}
+	if servicescope.UndeclaredPermissionSet(agent, selection) {
+		return invalidScope("grant references a permission set the agent no longer declares; interactive authorization required")
+	}
 	services, err := s.serviceScopes.Resolve(ctx, strings.Join(requested, " "), agent, nil)
 	if err != nil {
 		if servicescope.IsPermissionFailure(err) {

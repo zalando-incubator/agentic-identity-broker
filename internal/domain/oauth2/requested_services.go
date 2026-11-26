@@ -150,6 +150,7 @@ const (
 	reasonUnknownService              serviceLogReason    = "unknown_service"
 	reasonServiceNotEligible          serviceLogReason    = "service_not_eligible"
 	reasonBindingMismatch             serviceLogReason    = "binding_mismatch"
+	reasonUserRequired                serviceLogReason    = "user_required"
 	reasonDependencyFailed            serviceLogReason    = "dependency_failed"
 	reasonRedirectBuildFailed         serviceLogReason    = "redirect_build_failed"
 	errorKindDefinitive               serviceLogErrorKind = "definitive"
@@ -165,6 +166,8 @@ func scopeRejectionReason(err error) serviceLogReason {
 		return reasonUnknownService
 	case errors.Is(err, servicescope.ErrServiceNotEligible):
 		return reasonServiceNotEligible
+	case errors.Is(err, errServiceScopeWithoutUser):
+		return reasonUserRequired
 	default:
 		return reasonBindingMismatch
 	}

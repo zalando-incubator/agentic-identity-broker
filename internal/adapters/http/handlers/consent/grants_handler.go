@@ -127,7 +127,7 @@ func (h *GrantsHandler) CreateGrant(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// FR-029: Validate JWE session_token when present.
-	sessionToken, parameterErr := sessionTokenParameter(r.URL.Query())
+	sessionToken, parameterErr := sessionTokenParameter(r.URL.RawQuery)
 	var sessionRedirectURI string
 	var requestedServiceIDs []id.ServiceID
 	var serviceScopeBindings map[string]id.ServiceID

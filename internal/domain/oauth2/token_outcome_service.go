@@ -13,7 +13,10 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-var errProxyClientMissing = errors.New("agent has no upstream client_id configured")
+var (
+	errProxyClientMissing      = errors.New("agent has no upstream client_id configured")
+	errServiceScopeWithoutUser = errors.New("service scopes require a user authorization")
+)
 
 const tokenProxySuccessStatus = 200
 
@@ -48,6 +51,13 @@ func (s *TokenOutcomeService) Proxy(ctx context.Context, form url.Values, conten
 
 	if resolution.ClientID == nil {
 		return nil, ports.TokenProxyClientMissing, errProxyClientMissing
+	}
+	if s.publicURL != "" && form.Get("grant_type") == "client_credentials" {
+		for _, token := range strings.Fields(form.Get("scope")) {
+			if servicescope.IsBrokerScope(token, s.publicURL) {
+				return nil, ports.TokenProxyScopeNotPermitted, errServiceScopeWithoutUser
+			}
+		}
 	}
 	hasBrokerScope := false
 	if s.publicURL != "" && form.Get("grant_type") == "refresh_token" {

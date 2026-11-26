@@ -30,6 +30,8 @@ func TestConsentRejectsInvalidSessionToken(t *testing.T) {
 		{"repeated", "session_token=" + token + "&session_token=" + token},
 		{"trailing_empty", "session_token=" + token + "&session_token="},
 		{"leading_empty", "session_token=&session_token=" + token},
+		{"malformed", "session_token=%ZZ"},
+		{"valid_then_malformed", "session_token=" + token + "&session_token=%ZZ"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, method := range []string{http.MethodGet, http.MethodPost} {

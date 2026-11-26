@@ -462,7 +462,7 @@ func sortServiceRequirements(services []ServiceRequirementForUser) {
 // metadata-spoofing surface. Non-CIMD/opaque flows do not use session tokens.
 func (h *AgentDetailHandler) resolveSessionContext(r *http.Request, agentID id.AgentID) (*CIMDMetadataResponse, []id.ServiceID, error) {
 	var requested []id.ServiceID
-	sessionToken, err := sessionTokenParameter(r.URL.Query())
+	sessionToken, err := sessionTokenParameter(r.URL.RawQuery)
 	if err != nil {
 		return nil, requested, err
 	}

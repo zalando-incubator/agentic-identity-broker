@@ -389,13 +389,15 @@ func (p *Provider) HandleAuthorizationCodeExchange(
 		}
 		return nil, err
 	}
-	if err := p.pkceHandler.HandleTokenEndpointRequest(ctx, req); err != nil {
-		return nil, err
-	}
+	// The PKCE handler deletes its record, so the bound-service check runs first: a transient
+	// lookup failure must leave the code exchangeable. PKCE is still verified before minting.
 	if holder, ok := fositeClient.(agentHolder); ok {
 		if err := p.verifyBoundServices(ctx, sessionBindings(req.GetSession()), holder.getAgent()); err != nil {
 			return nil, err
 		}
+	}
+	if err := p.pkceHandler.HandleTokenEndpointRequest(ctx, req); err != nil {
+		return nil, err
 	}
 
 	fositeResp := fosite.NewAccessResponse()

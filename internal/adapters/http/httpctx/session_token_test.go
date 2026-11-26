@@ -1,7 +1,6 @@
 package httpctx
 
 import (
-	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,20 +10,25 @@ import (
 
 func TestParseContinuationParameter(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		values url.Values
-		want   model.ContinuationParameter
+		name     string
+		rawQuery string
+		want     model.ContinuationParameter
 	}{
-		{"absent", url.Values{}, model.ContinuationParameter{}},
-		{"present", url.Values{"session_token": {"synthetic-JWE"}}, model.ContinuationParameter{Token: "synthetic-JWE", Status: model.ContinuationPresent}},
-		{"empty", url.Values{"session_token": {""}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
-		{"no values", url.Values{"session_token": {}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
-		{"repeated", url.Values{"session_token": {"synthetic-JWE", "synthetic-JWE"}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
-		{"leading empty", url.Values{"session_token": {"", "synthetic-JWE"}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
-		{"trailing empty", url.Values{"session_token": {"synthetic-JWE", ""}}, model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"absent", "client_id=agent&scope=openid", model.ContinuationParameter{}},
+		{"empty query", "", model.ContinuationParameter{}},
+		{"present", "client_id=agent&session_token=synthetic-JWE", model.ContinuationParameter{Token: "synthetic-JWE", Status: model.ContinuationPresent}},
+		{"percent-encoded", "session_token=synthetic%2EJWE", model.ContinuationParameter{Token: "synthetic.JWE", Status: model.ContinuationPresent}},
+		{"empty", "session_token=", model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"no value", "session_token", model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"repeated", "session_token=synthetic-JWE&session_token=synthetic-JWE", model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"leading empty", "session_token=&session_token=synthetic-JWE", model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"trailing empty", "session_token=synthetic-JWE&session_token=", model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"malformed only", "session_token=%ZZ", model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"valid then malformed repeat", "session_token=synthetic-JWE&session_token=%ZZ", model.ContinuationParameter{Status: model.ContinuationInvalid}},
+		{"malformed unrelated parameter", "state=%ZZ&session_token=synthetic-JWE", model.ContinuationParameter{Token: "synthetic-JWE", Status: model.ContinuationPresent}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, ParseContinuationParameter(tc.values))
+			assert.Equal(t, tc.want, ParseContinuationParameter(tc.rawQuery))
 		})
 	}
 }
