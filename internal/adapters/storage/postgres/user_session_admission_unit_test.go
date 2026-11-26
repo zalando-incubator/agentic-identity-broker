@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -27,7 +28,8 @@ func newAdmissionTestRepository(t *testing.T, cfg signingKeyRepoTestConfig) *Pos
 	adapter, err := NewAdapter(&ports.StorageConfig{
 		Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: "postgres://admission-test"},
 		Timeouts: ports.StorageTimeouts{Read: time.Second, Write: time.Second},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 	adapter.db = newUnitTestSigningKeyRepo(t, cfg).adapter.db
 	adapter.db.SetMaxOpenConns(25)

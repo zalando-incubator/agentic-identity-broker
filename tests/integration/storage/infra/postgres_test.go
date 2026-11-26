@@ -6,6 +6,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -44,7 +45,7 @@ func TestPostgresAdapter_Initialize_ConnectionFailed(t *testing.T) {
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -69,7 +70,7 @@ func TestPostgresAdapter_HealthCheck_NotInitialized(t *testing.T) {
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -94,7 +95,7 @@ func TestPostgresAdapter_Close_NotInitialized(t *testing.T) {
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -117,7 +118,7 @@ func TestPostgresAdapter_CreateUser_ValidationErrors(t *testing.T) {
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -186,7 +187,7 @@ func TestPostgresAdapter_ContextCancellation(t *testing.T) {
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -220,7 +221,7 @@ func TestPostgresAdapter_FullLifecycle_Integration(t *testing.T) {
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	defer func() { require.NoError(t, adapter.Close(ctx)) }()
@@ -246,7 +247,7 @@ func TestPostgresAdapter_CRUD_Operations_Simulation(t *testing.T) {
 		},
 	}
 
-	adapter, err := postgres.NewAdapter(config)
+	adapter, err := postgres.NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -640,7 +641,8 @@ func newCIMDKeyDomainStorage(t *testing.T, connStr string) (*storageadapter.Adap
 			Read:  5 * time.Second,
 			Write: 5 * time.Second,
 		},
-	})
+	}, slog.New(slog.DiscardHandler))
+
 	require.NoError(t, err)
 
 	return store, func() {

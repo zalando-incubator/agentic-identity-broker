@@ -120,7 +120,7 @@ jobs:
         run: timeout 3m docker pull postgres:15-alpine@sha256:09e4f20b14ddb3dfe3a0c825b206032aaf8f28300ba2070c0b60fc1c10c6abc7
       - name: Pre-pull agentgateway E2E images
         run: |
-          docker pull cr.agentgateway.dev/agentgateway:v1.5.0
+          docker pull cr.agentgateway.dev/agentgateway:v1.7.0
           docker pull testcontainers/sshd:1.4.0
           docker pull testcontainers/ryuk:0.14.0
       - name: Docker E2E scenarios with JUnit

@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -155,7 +156,7 @@ var _ = Describe("AuthZEN evaluation request failures", Label("authzen-delegatio
 				Postgres: ports.PostgresConfig{ConnectionURL: postgres.ConnectionURL},
 				Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second},
 			}
-			storage, err := storageadapter.NewAdapter(&storageConfig)
+			storage, err := storageadapter.NewAdapter(&storageConfig, slog.New(slog.DiscardHandler))
 			Expect(err).NotTo(HaveOccurred())
 			DeferCleanup(func() { Expect(storage.Close(context.Background())).To(Succeed()) })
 			Expect(fixtures.SeedPlaceholderGrantData(ctx, storage)).To(Succeed())

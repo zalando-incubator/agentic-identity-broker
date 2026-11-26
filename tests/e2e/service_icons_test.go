@@ -178,7 +178,7 @@ var _ = Describe("Service icons", func() {
 				Postgres: ports.PostgresConfig{ConnectionURL: postgres.ConnectionURL},
 				Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second},
 			}
-			store, err = storageadapter.NewAdapter(&config.Storage)
+			store, err = storageadapter.NewAdapter(&config.Storage, slog.New(slog.DiscardHandler))
 		} else {
 			store, err = storageFactory.NewTestStorage()
 		}
@@ -257,7 +257,7 @@ var _ = Describe("Service icons", func() {
 			store = nil
 
 			By("booting a fresh application against the same database without reseeding")
-			store, err = storageadapter.NewAdapter(&config.Storage)
+			store, err = storageadapter.NewAdapter(&config.Storage, slog.New(slog.DiscardHandler))
 			Expect(err).NotTo(HaveOccurred())
 			startServers()
 			afterService, afterETag := readService()

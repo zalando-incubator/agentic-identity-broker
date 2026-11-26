@@ -430,7 +430,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 		return nil, fmt.Errorf("encryption configuration required: set encryption.memory.raw_key or encryption.aws_kms in configuration (no fallback)")
 	}
 
-	encryptor, branchKeyManager, err := awsencryption.NewEncryptionAdapter(&b.config.Encryption)
+	encryptor, branchKeyManager, err := awsencryption.NewEncryptionAdapter(&b.config.Encryption, b.logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize encryption adapter: %w", err)
 	}

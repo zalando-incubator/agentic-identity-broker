@@ -52,9 +52,13 @@ type Cache struct {
 	createdAt    time.Time
 	idleTTL      time.Duration
 	maxStaleness time.Duration
+	logger       *slog.Logger
 }
 
-func NewCache(idleTTL, maxStaleness time.Duration) *Cache {
+func NewCache(idleTTL, maxStaleness time.Duration, logger *slog.Logger) *Cache {
+	if logger == nil {
+		panic("approval.NewCache: logger must not be nil")
+	}
 	now := time.Now()
 	return &Cache{
 		pairs:        make(map[pairKey]*pairEntry),
@@ -62,6 +66,7 @@ func NewCache(idleTTL, maxStaleness time.Duration) *Cache {
 		createdAt:    now,
 		idleTTL:      idleTTL,
 		maxStaleness: maxStaleness,
+		logger:       logger,
 	}
 }
 
@@ -145,7 +150,7 @@ func (c *Cache) Replace(pairs []Pair, etag string) {
 			continue
 		}
 		key := pairKey{principal: pair.Identity.Principal, agentID: pair.Identity.AgentID}
-		replacement[key] = snapshotEntry(pair.Approvals, c.pairs[key], now)
+		replacement[key] = c.snapshotEntry(pair.Approvals, c.pairs[key], now)
 	}
 	c.pairs = replacement
 	c.etag = etag
@@ -174,7 +179,7 @@ func (c *Cache) ReplaceForPrincipal(principal string, pairs []Pair, etag string)
 			continue
 		}
 		key := pairKey{principal: pair.Identity.Principal, agentID: pair.Identity.AgentID}
-		replacement[key] = snapshotEntry(pair.Approvals, c.pairs[key], now)
+		replacement[key] = c.snapshotEntry(pair.Approvals, c.pairs[key], now)
 	}
 	for key := range c.pairs {
 		if key.principal == principal {
@@ -208,7 +213,7 @@ func parseSyncVersion(etag string) (int64, bool) {
 	return version, err == nil
 }
 
-func snapshotEntry(records []Record, current *pairEntry, now time.Time) *pairEntry {
+func (c *Cache) snapshotEntry(records []Record, current *pairEntry, now time.Time) *pairEntry {
 	lastSeen := now
 	var previous []Record
 	if current != nil {
@@ -218,10 +223,10 @@ func snapshotEntry(records []Record, current *pairEntry, now time.Time) *pairEnt
 	if lastSeen.IsZero() {
 		lastSeen = now
 	}
-	return &pairEntry{records: snapshotRecords(records, previous), lastSeen: lastSeen, syncedAt: now}
+	return &pairEntry{records: c.snapshotRecords(records, previous), lastSeen: lastSeen, syncedAt: now}
 }
 
-func snapshotRecords(records, previous []Record) []Record {
+func (c *Cache) snapshotRecords(records, previous []Record) []Record {
 	if len(records) == 0 {
 		return nil
 	}
@@ -230,7 +235,7 @@ func snapshotRecords(records, previous []Record) []Record {
 	for i, record := range records {
 		snapshot[i] = cloneRecord(record)
 		if snapshot[i].Status == "approved" && snapshot[i].ApprovedAt == nil {
-			slog.Warn("approval broker record missing approved_at", "approval_id", snapshot[i].ID)
+			c.logger.Warn("approval broker record missing approved_at", "approval_id", snapshot[i].ID)
 		}
 		for _, old := range previous {
 			if snapshot[i].ID == "" || old.ID != snapshot[i].ID {

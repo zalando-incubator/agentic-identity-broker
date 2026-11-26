@@ -4,7 +4,9 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/adapters/storage/memory"
@@ -68,11 +70,15 @@ type Adapter struct {
 // NewAdapter creates a storage adapter based on configuration.
 // Returns appropriate adapter implementation (memory or PostgreSQL).
 // Factory pattern allows backend selection without domain logic knowing details.
+// - Logger is nil
 //
 // Returns error if:
 // - Backend type is unsupported
 // - Backend-specific initialization fails
-func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
+func NewAdapter(config *ports.StorageConfig, logger *slog.Logger) (*Adapter, error) {
+	if logger == nil {
+		return nil, errors.New("storage.NewAdapter: logger must not be nil")
+	}
 	backend := storage.StorageBackend(config.Backend)
 
 	switch backend {
@@ -80,7 +86,7 @@ func NewAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		return newMemoryAdapter(config)
 
 	case storage.BackendPostgres:
-		return newPostgresAdapter(config)
+		return newPostgresAdapter(config, logger)
 
 	default:
 		return nil, fmt.Errorf("unsupported storage backend: %s", config.Backend)
@@ -127,8 +133,8 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 }
 
 // newPostgresAdapter creates a PostgreSQL storage adapter.
-func newPostgresAdapter(config *ports.StorageConfig) (*Adapter, error) {
-	pgAdapter, err := postgres.NewAdapter(config)
+func newPostgresAdapter(config *ports.StorageConfig, logger *slog.Logger) (*Adapter, error) {
+	pgAdapter, err := postgres.NewAdapter(config, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PostgreSQL adapter: %w", err)
 	}

@@ -2313,7 +2313,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 			}
 			cfg := testConfig()
 			cfg.Sessions.Extraction.HTTPHeader = "X-Agent-Session"
-			gate := approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker)
+			gate := approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler))
 			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, cfg, exchanger, auth, gate)
 			defer cleanup()
 
@@ -2378,7 +2378,7 @@ func TestApprovalInvocationIDIsSemantic(t *testing.T) {
 func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(t *testing.T) {
 	permanent := "permanent"
 	approvedAt := time.Now()
-	cache := approval.NewCache(time.Minute, time.Minute)
+	cache := approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	cache.Replace([]approval.Pair{{
 		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
 		Approvals: []approval.Record{{
@@ -2419,7 +2419,7 @@ func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(
 	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 		return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 	}}
-	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker))
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker, slog.New(slog.DiscardHandler)))
 	defer cleanup()
 
 	_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
@@ -2440,7 +2440,7 @@ func TestServer_OPA_ApprovalRequired_UsesBrokerAuthoritativeIdentityForCacheKey(
 func TestServer_OPA_AmbiguousArgumentsCannotUseCachedApproval(t *testing.T) {
 	permanent := "permanent"
 	approvedAt := time.Now()
-	cache := approval.NewCache(time.Minute, time.Minute)
+	cache := approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler))
 	cache.Replace([]approval.Pair{{
 		Identity: approval.Identity{Principal: "verified@example.com", AgentID: "canonical-agent-id"},
 		Approvals: []approval.Record{{
@@ -2467,7 +2467,7 @@ func TestServer_OPA_AmbiguousArgumentsCannotUseCachedApproval(t *testing.T) {
 			return errors.New("ambiguous request must not consume approval")
 		},
 	}
-	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker))
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(cache, broker, slog.New(slog.DiscardHandler)))
 	defer cleanup()
 
 	body := []byte(`{"jsonrpc":"2.0","method":"tools/call","id":1,"params":{"name":"deploy","arguments":{"env":"dev"},"Arguments":{"env":"prod"}}}`)
@@ -2548,7 +2548,7 @@ func TestServer_OPA_ApprovalGateIsolatedFromNonApprovalActionsAndBatches(t *test
 			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 			}}
-			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)))
 			defer cleanup()
 
 			_, bodyResp := sendHeadersThenBody(t, client, map[string]string{
@@ -2605,7 +2605,7 @@ func TestServer_OPA_ApprovalGateOnlyHandlesStandaloneMCPToolCalls(t *testing.T) 
 			exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 				return server.ExchangeResult{Token: "exchanged-token", Principal: "verified@example.com", AgentID: "canonical-agent-id", GrantedPermissionSets: map[string][]string{}}, nil
 			}}
-			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+			client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)))
 			defer cleanup()
 
 			_, bodyResp := sendHeadersThenBodyWithProtocol(t, client, map[string]string{
@@ -2650,7 +2650,7 @@ func TestServer_OPA_ApprovalGateDoesNotHandleHeaderOnlyRequests(t *testing.T) {
 	exchanger := &mockExchanger{exchangeFunc: func(context.Context, string, string) (server.ExchangeResult, error) {
 		return server.ExchangeResult{Token: "exchanged-token"}, nil
 	}}
-	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute), broker))
+	client, cleanup := startTestServerWithAuthorizerConfigAndGate(t, testConfig(), exchanger, auth, approval.NewGate(approval.NewCache(time.Minute, time.Minute, slog.New(slog.DiscardHandler)), broker, slog.New(slog.DiscardHandler)))
 	defer cleanup()
 
 	response, err := sendRequestHeadersWithProtocolEOS(t, client, map[string]string{

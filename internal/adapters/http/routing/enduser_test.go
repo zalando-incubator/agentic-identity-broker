@@ -209,7 +209,7 @@ func newEnduserConsentRouter(t *testing.T) (http.Handler, string) {
 
 	cfg := fixtures.DefaultOAuth2Config()
 
-	storage, err := storageadapter.NewAdapter(&cfg.Storage)
+	storage, err := storageadapter.NewAdapter(&cfg.Storage, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, storage.Close(context.Background()))

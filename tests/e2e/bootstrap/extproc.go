@@ -156,8 +156,8 @@ func NewExtProcEnvironmentWithOptions(brokerBaseURL, clientAssertion, policyPath
 			environment.Close()
 			return nil, fmt.Errorf("initialize ExtProc approval client: %w", err)
 		}
-		approvalCache = approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness)
-		svc = extprocserver.NewServerWithApprovalGate(cfg, exchangePort, authorizer, approval.NewGate(approvalCache, approvalClient), logger)
+		approvalCache = approval.NewCache(cfg.ToolApprovals.ApprovalCacheIdleTTL, cfg.ToolApprovals.MaxStaleness, logger)
+		svc = extprocserver.NewServerWithApprovalGate(cfg, exchangePort, authorizer, approval.NewGate(approvalCache, approvalClient, logger), logger)
 	} else {
 		svc = extprocserver.NewServerWithAuthorizer(cfg, exchangePort, authorizer, logger)
 	}

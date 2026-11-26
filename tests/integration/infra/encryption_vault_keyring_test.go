@@ -5,6 +5,7 @@ package integration
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/kms"
@@ -41,7 +42,7 @@ func newAdapter(t *testing.T) *awsencryption.AWSAdapter {
 	t.Helper()
 	emulator := requireSharedEmulator(t)
 	kmsARN := "arn:aws:kms:eu-central-1:000000000000:key/" + emulator.KMSKeyID
-	adapter, _, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0)
+	adapter, _, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err, "failed to create encryption adapter")
 	return adapter
 }
@@ -240,13 +241,13 @@ func TestEncryption_Configuration(t *testing.T) {
 	emulator := requireSharedEmulator(t)
 	validARN := "arn:aws:kms:eu-central-1:000000000000:key/" + emulator.KMSKeyID
 
-	adapter, manager, err := awsencryption.NewAWSEncryption(validARN, "IdentityBrokerEncryptionBranchKeys", 0)
+	adapter, manager, err := awsencryption.NewAWSEncryption(validARN, "IdentityBrokerEncryptionBranchKeys", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, adapter)
 	require.NotNil(t, manager)
 
 	for _, invalid := range []string{"not-an-arn", "arn:aws:s3:::bucket", ""} {
-		_, _, err := awsencryption.NewAWSEncryption(invalid, "IdentityBrokerEncryptionBranchKeys", 0)
+		_, _, err := awsencryption.NewAWSEncryption(invalid, "IdentityBrokerEncryptionBranchKeys", 0, slog.New(slog.DiscardHandler))
 		if err == nil && invalid != "" {
 			t.Logf("invalid ARN %q accepted (may fail at runtime)", invalid)
 		}
@@ -306,7 +307,7 @@ func TestEncryption_BranchKeyManagerCreate(t *testing.T) {
 	emulator := requireSharedEmulator(t)
 
 	kmsARN := "arn:aws:kms:eu-central-1:000000000000:key/" + emulator.KMSKeyID
-	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0)
+	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -334,7 +335,7 @@ func TestEncryption_BranchKeyManagerCreate_SigningKey(t *testing.T) {
 	emulator := requireSharedEmulator(t)
 
 	kmsARN := "arn:aws:kms:eu-central-1:000000000000:key/" + emulator.KMSKeyID
-	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0)
+	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -360,7 +361,7 @@ func TestEncryption_CrossNamespaceIsolation(t *testing.T) {
 	emulator := requireSharedEmulator(t)
 
 	kmsARN := "arn:aws:kms:eu-central-1:000000000000:key/" + emulator.KMSKeyID
-	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0)
+	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 
@@ -448,7 +449,7 @@ func TestEncryption_BranchKeyManagerCreate_Idempotent(t *testing.T) {
 	emulator := requireSharedEmulator(t)
 
 	kmsARN := "arn:aws:kms:eu-central-1:000000000000:key/" + emulator.KMSKeyID
-	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0)
+	adapter, manager, err := awsencryption.NewAWSEncryption(kmsARN, "IdentityBrokerEncryptionBranchKeys", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 

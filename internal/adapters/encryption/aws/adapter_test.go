@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func TestNewAWSEncryptionWithBase64KEK(t *testing.T) {
 	testKEK := "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
 
 	// Test: Create adapter with base64-encoded key directly
-	adapter, _, err := NewAWSEncryption(testKEK, "", 0)
+	adapter, _, err := NewAWSEncryption(testKEK, "", 0, slog.New(slog.DiscardHandler))
 
 	// Verify: Adapter created successfully
 	if err != nil {
@@ -37,7 +38,7 @@ func TestNewAWSEncryptionWithBase64KEK(t *testing.T) {
 // TestNewAWSEncryptionWithEmptyKEK tests adapter creation fails when empty base64 key provided
 func TestNewAWSEncryptionWithEmptyKEK(t *testing.T) {
 	// Test: Try to create adapter with empty key material
-	adapter, _, err := NewAWSEncryption("", "", 0)
+	adapter, _, err := NewAWSEncryption("", "", 0, slog.New(slog.DiscardHandler))
 
 	// Verify: Error returned
 	if err == nil {
@@ -58,7 +59,7 @@ func TestNewAWSEncryptionWithEmptyKEK(t *testing.T) {
 // TestNewAWSEncryptionWithInvalidBase64Format tests adapter rejects invalid base64 KEK
 func TestNewAWSEncryptionWithInvalidBase64Format(t *testing.T) {
 	// Test: Try to create adapter with invalid base64 key
-	adapter, _, err := NewAWSEncryption("not-valid-base64!!!", "", 0)
+	adapter, _, err := NewAWSEncryption("not-valid-base64!!!", "", 0, slog.New(slog.DiscardHandler))
 
 	// Verify: Error returned
 	if err == nil {
@@ -79,7 +80,7 @@ func TestNewAWSEncryptionWithInvalidKEKLength(t *testing.T) {
 	// Test: Try to create adapter with 16-byte KEK (too short, need 32)
 	// "SGVsbG8gV29ybGQgSGVsbG8gV29ybGQ=" is 16 bytes base64-encoded
 	shortKEK := "SGVsbG8gV29ybGQgSGVsbG8gV29ybGQ="
-	adapter, _, err := NewAWSEncryption(shortKEK, "", 0)
+	adapter, _, err := NewAWSEncryption(shortKEK, "", 0, slog.New(slog.DiscardHandler))
 
 	// Verify: Error returned
 	if err == nil {
@@ -109,7 +110,7 @@ func TestNewAWSEncryptionWithInvalidFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			adapter, _, err := NewAWSEncryption(tt.keyMaterial, "", 0)
+			adapter, _, err := NewAWSEncryption(tt.keyMaterial, "", 0, slog.New(slog.DiscardHandler))
 
 			if err == nil {
 				t.Fatal("expected error for invalid format")
@@ -134,7 +135,7 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_KEK_ROUNDTRIP") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -182,7 +183,7 @@ func TestContextMismatchDetection(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_KEK_CONTEXT") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -231,7 +232,7 @@ func TestContextMismatchDetection(t *testing.T) {
 // signalling "do not retry" instead of "transient, retry after backoff".
 func TestCancelledContextClassifiedAsKEKUnavailable(t *testing.T) {
 	const testKEK = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
-	adapter, _, err := NewAWSEncryption(testKEK, "", 0)
+	adapter, _, err := NewAWSEncryption(testKEK, "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -300,7 +301,7 @@ func TestUniqueEncryptionPerCall(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_KEK_UNIQUE") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -356,7 +357,7 @@ func TestEncryptEmptyPlaintext(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_KEK_EMPTY") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -388,7 +389,7 @@ func TestDecryptEmptyCiphertext(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_KEK_EMPTY_CIPHER") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -427,7 +428,7 @@ func TestTamperedCiphertextDetection(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_KEK_TAMPER") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -525,7 +526,7 @@ func TestEncryptDecryptPostCallContextExpiry(t *testing.T) {
 	const internalTimeout = 1 * time.Millisecond
 
 	// Produce a valid ciphertext for the Decrypt sub-tests.
-	realAdapter, _, err := NewAWSEncryption(testKEK, "", 0)
+	realAdapter, _, err := NewAWSEncryption(testKEK, "", 0, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	encCtx := map[string]string{"service_id": "test-svc"}
@@ -545,7 +546,7 @@ func TestEncryptDecryptPostCallContextExpiry(t *testing.T) {
 				}
 			},
 		}
-		adapter := &AWSAdapter{encryptionClient: mock, dynamoDBTimeout: internalTimeout}
+		adapter := &AWSAdapter{logger: slog.New(slog.DiscardHandler), encryptionClient: mock, dynamoDBTimeout: internalTimeout}
 
 		_, encErr := adapter.Encrypt(context.Background(), plaintext, encCtx)
 		require.Error(t, encErr)
@@ -563,7 +564,7 @@ func TestEncryptDecryptPostCallContextExpiry(t *testing.T) {
 				return errors.New("mock error after parent cancel")
 			},
 		}
-		adapter := &AWSAdapter{encryptionClient: mock, dynamoDBTimeout: time.Minute}
+		adapter := &AWSAdapter{logger: slog.New(slog.DiscardHandler), encryptionClient: mock, dynamoDBTimeout: time.Minute}
 
 		_, encErr := adapter.Encrypt(ctx, plaintext, encCtx)
 		require.Error(t, encErr)
@@ -582,7 +583,7 @@ func TestEncryptDecryptPostCallContextExpiry(t *testing.T) {
 				}
 			},
 		}
-		adapter := &AWSAdapter{encryptionClient: mock, dynamoDBTimeout: internalTimeout}
+		adapter := &AWSAdapter{logger: slog.New(slog.DiscardHandler), encryptionClient: mock, dynamoDBTimeout: internalTimeout}
 
 		_, decErr := adapter.Decrypt(context.Background(), ciphertext, encCtx)
 		require.Error(t, decErr)
@@ -600,7 +601,7 @@ func TestEncryptDecryptPostCallContextExpiry(t *testing.T) {
 				return errors.New("mock error after parent cancel")
 			},
 		}
-		adapter := &AWSAdapter{encryptionClient: mock, dynamoDBTimeout: time.Minute}
+		adapter := &AWSAdapter{logger: slog.New(slog.DiscardHandler), encryptionClient: mock, dynamoDBTimeout: time.Minute}
 
 		_, decErr := adapter.Decrypt(ctx, ciphertext, encCtx)
 		require.Error(t, decErr)
@@ -618,6 +619,7 @@ func TestEncryptDecryptTimeoutErrorChainPreservesSDKError(t *testing.T) {
 	t.Run("Encrypt", func(t *testing.T) {
 		sdkErr := errors.New("mock sdk timeout after context expiry")
 		adapter := &AWSAdapter{
+			logger: slog.New(slog.DiscardHandler),
 			encryptionClient: &testMockEncryptionSDKClient{
 				onCall: func(ctx context.Context) error {
 					<-ctx.Done()
@@ -637,6 +639,7 @@ func TestEncryptDecryptTimeoutErrorChainPreservesSDKError(t *testing.T) {
 	t.Run("Decrypt", func(t *testing.T) {
 		sdkErr := errors.New("mock sdk timeout after context expiry")
 		adapter := &AWSAdapter{
+			logger: slog.New(slog.DiscardHandler),
 			encryptionClient: &testMockEncryptionSDKClient{
 				onCall: func(ctx context.Context) error {
 					<-ctx.Done()
@@ -663,7 +666,7 @@ func BenchmarkEncrypt(b *testing.B) {
 	}
 	defer func() { _ = os.Unsetenv("BENCH_KEK") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		b.Fatalf("failed to create adapter: %v", err)
 	}
@@ -692,7 +695,7 @@ func BenchmarkDecrypt(b *testing.B) {
 	}
 	defer func() { _ = os.Unsetenv("BENCH_KEK_DECRYPT") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		b.Fatalf("failed to create adapter: %v", err)
 	}
@@ -725,7 +728,7 @@ func TestKMSHierarchicalKeyringAdapterCreation(t *testing.T) {
 	// This validates the hierarchical keyring initialization flow
 	invalidKMSARN := "arn:aws:kms:us-west-2:123456789012:key/invalid-test-key"
 
-	adapter, _, err := NewAWSEncryption(invalidKMSARN, "", 0)
+	adapter, _, err := NewAWSEncryption(invalidKMSARN, "", 0, slog.New(slog.DiscardHandler))
 
 	// Expected to fail due to invalid KMS key in test environment
 	if err == nil {
@@ -773,7 +776,7 @@ func TestKMSARNValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			adapter, _, err := NewAWSEncryption(tt.keyMaterial, "", 0)
+			adapter, _, err := NewAWSEncryption(tt.keyMaterial, "", 0, slog.New(slog.DiscardHandler))
 
 			if !tt.shouldFail && err != nil {
 				t.Errorf("expected no error, got: %v", err)
@@ -805,7 +808,7 @@ func TestHierarchicalKeyringWithEnvVarFallback(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("FALLBACK_KEK") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 
 	// Should succeed with env var KEK
 	if err != nil {
@@ -857,7 +860,7 @@ func TestAdapterInterfaceImplementation(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("INTERFACE_KEK") }()
 
-	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0)
+	adapter, _, err := NewAWSEncryption("AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=", "", 0, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatalf("failed to create adapter: %v", err)
 	}
@@ -913,9 +916,10 @@ func TestAdapterInterfaceImplementation(t *testing.T) {
 // is only set to errDynamoDBTimeout when our internal timer fires.
 func TestEncryptContextClassification(t *testing.T) {
 	const testKEK = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
-	base, err := newAdapterWithBase64KEK(testKEK)
+	base, err := newAdapterWithBase64KEK(testKEK, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	adapter := &AWSAdapter{
+		logger:           slog.New(slog.DiscardHandler),
 		encryptionClient: base.encryptionClient,
 		keyring:          base.keyring,
 		dynamoDBTimeout:  5 * time.Second,
@@ -963,9 +967,10 @@ func TestEncryptContextClassification(t *testing.T) {
 // TestDecryptContextClassification mirrors TestEncryptContextClassification for Decrypt.
 func TestDecryptContextClassification(t *testing.T) {
 	const testKEK = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA="
-	base, err := newAdapterWithBase64KEK(testKEK)
+	base, err := newAdapterWithBase64KEK(testKEK, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	adapter := &AWSAdapter{
+		logger:           slog.New(slog.DiscardHandler),
 		encryptionClient: base.encryptionClient,
 		keyring:          base.keyring,
 		dynamoDBTimeout:  5 * time.Second,
@@ -1019,7 +1024,7 @@ func TestPlaintextKEKNeverLogged(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := NewAWSEncryption(tt.keyMaterial, "", 0)
+			_, _, err := NewAWSEncryption(tt.keyMaterial, "", 0, slog.New(slog.DiscardHandler))
 
 			if tt.shouldFail {
 				if err == nil {

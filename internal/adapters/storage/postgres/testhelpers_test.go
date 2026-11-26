@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -261,7 +262,7 @@ func setupMigratedAdapter(t *testing.T) (*Adapter, func()) {
 
 	connString, cleanup := setupMigratedConnString(t)
 	config := testStorageConfig(connString)
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	ctx := context.Background()

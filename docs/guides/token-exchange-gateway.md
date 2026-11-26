@@ -23,7 +23,8 @@ compare both options.
 
 ## What you need
 
-- An Agentgateway v1.5.0 instance with the ExtProc policy. Configure it with the `jwtAuth` syntax shown in this guide.
+- An Agentgateway instance with the ExtProc policy. The example uses v1.7.0.
+  Configure `jwtAuth` as shown in this guide.
 - A trusted JWT issuer and a JWKS source for the Agentgateway JWT provider.
 - A reachable broker token endpoint at `POST /oauth2/token` on end-user port 8000.
 - OAuth2 client credentials for the ExtProc sidecar. The sidecar uses them to obtain a client assertion for the broker.

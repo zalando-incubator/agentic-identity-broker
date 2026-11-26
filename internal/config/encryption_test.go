@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -356,7 +357,7 @@ func TestEncryptionConfigFactory_AdapterFactory(t *testing.T) {
 	t.Run("memory backend encrypts and binds its context", func(t *testing.T) {
 		adapter, manager, err := aws.NewEncryptionAdapter(&ports.EncryptionConfig{
 			Memory: &ports.MemoryConfig{RawKey: generateBase64EncodedString(t, 32)},
-		})
+		}, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
 		require.NotNil(t, adapter)
 		require.Nil(t, manager)
@@ -386,7 +387,7 @@ func TestEncryptionConfigFactory_AdapterFactory(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			adapter, manager, err := aws.NewEncryptionAdapter(&tc.cfg)
+			adapter, manager, err := aws.NewEncryptionAdapter(&tc.cfg, slog.New(slog.DiscardHandler))
 			require.Error(t, err)
 			require.Nil(t, adapter)
 			require.Nil(t, manager)

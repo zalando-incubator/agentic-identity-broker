@@ -752,7 +752,7 @@ var _ = Describe("OAuth2 User Impersonation", func() {
 				},
 				Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second},
 			}
-			testStorage, err = storageadapter.NewAdapter(&storageConfig)
+			testStorage, err = storageadapter.NewAdapter(&storageConfig, slog.New(slog.DiscardHandler))
 			Expect(err).ToNot(HaveOccurred())
 			Expect(fixtures.SeedPlaceholderGrantData(ctx, testStorage)).To(Succeed())
 			Expect(testStorage.Agents().Create(ctx, targetAgent)).To(Succeed())

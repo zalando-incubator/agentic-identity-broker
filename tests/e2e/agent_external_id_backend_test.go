@@ -14,7 +14,7 @@ import (
 
 func externalIDPostgresStorage(fixture *bootstrap.PostgresFixture) *storageadapter.Adapter {
 	cfg := ports.StorageConfig{Backend: "postgres", Postgres: ports.PostgresConfig{ConnectionURL: fixture.ConnectionURL}, Timeouts: ports.StorageTimeouts{Read: 5 * time.Second, Write: 10 * time.Second}}
-	st, err := storageadapter.NewAdapter(&cfg)
+	st, err := storageadapter.NewAdapter(&cfg, slog.New(slog.DiscardHandler))
 	Expect(err).To(Succeed())
 	return st
 }

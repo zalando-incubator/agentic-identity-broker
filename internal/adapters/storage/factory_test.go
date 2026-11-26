@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestNewAdapter_Memory(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	require.NoError(t, err)
 	assert.NotNil(t, adapter)
@@ -30,7 +31,7 @@ func TestNewAdapter_Memory(t *testing.T) {
 }
 
 func TestNewAdapter_MemoryClientAssertionReplayRepository(t *testing.T) {
-	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	repo := adapter.ClientAssertionReplays()
 	require.NotNil(t, repo)
@@ -40,7 +41,7 @@ func TestNewAdapter_MemoryClientAssertionReplayRepository(t *testing.T) {
 }
 
 func TestMemoryAdapter_MissingServiceSessionIsNotFound(t *testing.T) {
-	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	repo := adapter.UserSessions()
 	ctx := context.Background()
@@ -83,7 +84,7 @@ func TestNewAdapter_MemoryExposesSigningKeyBootstrapCoordinator(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 
 	coordinator := adapter.SigningKeyBootstrapCoordinator()
@@ -112,7 +113,7 @@ func TestNewAdapter_Postgres(t *testing.T) {
 
 	// NewAdapter now initializes the adapter at creation time.
 	// Without a running database, initialization must fail.
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	assert.Error(t, err)
 	assert.Nil(t, adapter)
@@ -128,7 +129,7 @@ func TestNewAdapter_InvalidBackend(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	assert.Error(t, err)
 	assert.Nil(t, adapter)
@@ -147,7 +148,7 @@ func TestNewAdapter_PostgresNoURL(t *testing.T) {
 		},
 	}
 
-	adapter, err := NewAdapter(config)
+	adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 	assert.Error(t, err)
 	assert.Nil(t, adapter)
@@ -164,7 +165,7 @@ func TestBackendSwitching(t *testing.T) {
 			Write: 10 * time.Second,
 		},
 	}
-	memAdapter, err := NewAdapter(memConfig)
+	memAdapter, err := NewAdapter(memConfig, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	require.NotNil(t, memAdapter)
 
@@ -246,7 +247,7 @@ func TestBackendSelectionValidation(t *testing.T) {
 				},
 			}
 
-			adapter, err := NewAdapter(config)
+			adapter, err := NewAdapter(config, slog.New(slog.DiscardHandler))
 
 			if tt.shouldFail {
 				assert.Error(t, err)
@@ -261,7 +262,7 @@ func TestBackendSelectionValidation(t *testing.T) {
 
 func TestMemoryAdapter_IssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 	ctx := context.Background()
-	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	serviceID := id.NewServiceID()
 	resourceURL := "https://mcp.example.test/mcp"
@@ -310,7 +311,7 @@ func TestMemoryAdapter_IssuerChangeRejectsStaleAndActiveSessions(t *testing.T) {
 func TestMemoryAdapter_ConcurrentIssuerSwitchAndCallbackCannotCoexist(t *testing.T) {
 	ctx := context.Background()
 	for range 32 {
-		adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+		adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"}, slog.New(slog.DiscardHandler))
 		require.NoError(t, err)
 		serviceID := id.NewServiceID()
 		resourceURL := "https://mcp.example.test/mcp"
@@ -361,7 +362,7 @@ func TestMemoryAdapter_ConcurrentIssuerSwitchAndCallbackCannotCoexist(t *testing
 
 func TestMemoryAdapter_StaleAudienceCannotInsertOrReplaceSession(t *testing.T) {
 	ctx := context.Background()
-	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"})
+	adapter, err := NewAdapter(&ports.StorageConfig{Backend: "memory"}, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
 	serviceID := id.NewServiceID()
 	const audienceA = "https://mcp.example.test/a"
