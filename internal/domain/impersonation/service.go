@@ -88,7 +88,7 @@ func NewService(
 	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
 }
 
-// WithServiceScopes enables Virtual Service Scopes (ADR 050) with the resolver and evaluator
+// WithServiceScopes enables Virtual Service Scopes (ADR 20261106-141214-virtual-service-scopes) with the resolver and evaluator
 // shared by authorization, consent and local refresh. Without them every broker-prefixed scope is
 // refused.
 func (s *Service) WithServiceScopes(resolver *servicescope.Resolver, evaluator *servicescope.Evaluator) *Service {

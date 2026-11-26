@@ -46,9 +46,9 @@ The [maintainer-approved proposal](https://github.com/zalando-incubator/agentic-
 The [selected remediation proposal](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-7040265475) covers F1, F2, F3, F4, F6 and F7 only. These corrections preserve the existing functional requirements and acceptance journeys:
 
 - **F1 / SR-005**: Proxy-refresh refusal audits belong to `TokenOutcomeService.Proxy`, using the existing domain `scopeRejectionReason`; the HTTP adapter retains response mapping and span status, not a duplicate reason classifier or audit. *Reason*: the selected proposal keeps one domain owner for the taxonomy.
-- **F2–F3 / FR-005–FR-006**: Recovery documentation and `initiateOAuth2Flow` describe `/sessions/<identifier>` (current canonical ID, UUID when absent), as specified by `049-service-session-recovery-return`. Gateway examples carry the service `scope`; valid optional `resource_metadata` is supported, while `realm` is not supplied. *Reason*: the selected proposal aligns stale text with the existing approved recovery/challenge behavior.
+- **F2–F3 / FR-005–FR-006**: Recovery documentation and `initiateOAuth2Flow` describe `/sessions/<identifier>` (current canonical ID, UUID when absent), as specified by `20261106-141214-service-session-recovery-return`. Gateway examples carry the service `scope`; valid optional `resource_metadata` is supported, while `realm` is not supplied. *Reason*: the selected proposal aligns stale text with the existing approved recovery/challenge behavior.
 - **F4, F6 / SR-005**: PostgreSQL successor creation uses `startStorageSpan`; the observability contract describes its storage span and the existing `oauth2.token_proxy` Internal span's refusal `error.type` values `definitive`/`transient` and `codes.Error` status, including 400 refusals. *Reason*: the selected proposal requires storage trace parity and an accurate telemetry contract.
-- **F7 / FR-003, FR-008**: The architecture glossary distinguishes Grant Coverage, configured required-scope ceilings and effective selected scopes, and records the domain/log-to-consent-API usability mapping. Its ADR index includes the already accepted `050-virtual-service-scopes-revision-1`. *Reason*: the selected proposal makes the shared domain vocabulary and existing revision discoverable.
+- **F7 / FR-003, FR-008**: The architecture glossary distinguishes Grant Coverage, configured required-scope ceilings and effective selected scopes, and records the domain/log-to-consent-API usability mapping. Its ADR index includes the already accepted `20261107-143056-virtual-service-scopes-revision-1`. *Reason*: the selected proposal makes the shared domain vocabulary and existing revision discoverable.
 
 Each clarification above is limited to the linked proposal; it does not decide the separate unselected-service transient-usability question (F5) or approve unrelated historical planning items.
 
@@ -189,7 +189,7 @@ the pipeline's approval comment.
 - **Reconciliation with merged ADR 046 and final numbering**: The definitive unusability state is
   ADR 046's observed rejection, `UserSession.RefreshRejectedAt` with `requires_reauthentication`,
   not the former `refresh_token_expires_at` marker. The ADR drafts became ADR 048 (recovery return)
-  and ADR 049 (virtual scopes), and the bindings migration became `048_add_service_scope_bindings`,
+  and ADR 20261106-141214-service-session-recovery-return (virtual scopes), and the bindings migration became `048_add_service_scope_bindings`,
   because ADR and migration numbers 045–047 were taken on the default branch. DEC-003, DEC-004 and
   Database Requirements use these values. *Reason*: merged ADR 046 is binding. No behavior beyond
   the approved items changes.

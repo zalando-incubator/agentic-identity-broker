@@ -370,7 +370,7 @@ func (s *OAuth2SessionService) ServiceAuthorizeURL(service *model.ThirdpartyOAut
 }
 
 // ServiceScope returns the service's current Virtual Service Scope, which is also its
-// same-origin service page (ADR 049, ADR 050).
+// same-origin service page (ADR 20261106-141214-service-session-recovery-return, ADR 20261106-141214-virtual-service-scopes).
 func (s *OAuth2SessionService) ServiceScope(service *model.ThirdpartyOAuth2ProviderEntity) string {
 	return servicescope.Format(s.config.CallbackBaseURL, service.ID, service.CanonicalID)
 }

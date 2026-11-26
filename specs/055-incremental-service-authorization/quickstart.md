@@ -42,8 +42,8 @@ task remains unchecked. The previous checkpoints below are historical.
 ## Earlier implementation checkpoint — 2026-11-08
 
 **101/115 tasks complete; local gates pass, but final evidence and test-expansion obligations remain.**
-The supplied approval covers all 15 current items. It is recorded in ADRs 049/050, approved
-ADR 050 Revision 1 and DEC-006. OpenAPI is `1.4.0`; proxy refresh rejects malformed/unknown/ineligible
+The supplied approval covers all 15 current items. It is recorded in ADRs 20261106-141214-service-session-recovery-return and 20261106-141214-virtual-service-scopes, approved
+ADR 20261107-143056-virtual-service-scopes-revision-1 and DEC-006. OpenAPI is `1.4.0`; proxy refresh rejects malformed/unknown/ineligible
 broker scopes and lookup failures before upstream calls, then preserves ordinary fields and upstream
 rotation. Explicit continuation/state/callback regressions pass. Feature-owned security records now
 use canonical events and safe bounded metadata instead of dependency causes or raw redirect URLs.
@@ -94,7 +94,7 @@ below remain historical, not validation by this document phase. The original com
 now T068–T069 (red) and T075–T077 (implementation/documentation/green); U4 documentation is T093.
 
 - T001 first verifies all 15 current sign-off items and records only supplied approvals, including
-  moving and applying the approved ADR 050 Revision 1 draft. The previous approval does not cover
+  moving and applying the approved ADR 20261107-143056-virtual-service-scopes-revision-1 draft. The previous approval does not cover
   reconciled wording automatically.
 - T011–T012 provide test-first current OpenAPI reconciliation to version 1.4.0 before behavior.
 - T032–T033 validate merged ADR 046: no refresh-token expiry prediction; a recorded rejection
@@ -287,7 +287,7 @@ keeps its original validation evidence.
   forms in response and JWT, code-to-refresh bindings, code-exchange rename/reuse rejection,
   exact (case-sensitive) non-consuming widening refusal and durable narrowing.
 - **T050, T057–T059** exchange `scope` member on recoverable errors and service-page recovery
-  (ADR 049); ExtProc decodes `scope`, validates `aib.tokenexchange.resource_metadata_url` and
+  (ADR 20261106-141214-service-session-recovery-return); ExtProc decodes `scope`, validates `aib.tokenexchange.resource_metadata_url` and
   appends both attributes in fixed order with value-free diagnostics.
 - **T085** existing acceptance assertions updated for the approved recovery target and `scope`.
 
@@ -393,8 +393,8 @@ This historical checkpoint is superseded by the 2026-10-30 progress and validati
 
 All 11 items in the immutable plan match the supplied approval by **mjungsbluth** on
 **2026-10-29**, [approval comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/323#issuecomment-6509178189).
-ADRs [049](../../adrs/049-service-session-recovery-return.md) and
-[050](../../adrs/050-virtual-service-scopes.md) now record that approval in `adrs/`.
+ADRs [20261106-141214-service-session-recovery-return](../../adrs/20261106-141214-service-session-recovery-return.md) and
+[20261106-141214-virtual-service-scopes](../../adrs/20261106-141214-virtual-service-scopes.md) now record that approval in `adrs/`.
 Their feature-local paths remain reference-only pointers. Approval is not evidence that the
 feature is implemented. The original spec and plan are intentionally unchanged.
 
@@ -471,7 +471,7 @@ changed to imply that either revision was approved.
   verification gate's container-backed suites. This feature's broker-plus-ExtProc challenge tests
   use `bootstrap.ExtProcEnvironment` and assert gRPC immediate responses without a gateway container.
 - The maintainer has approved the items in [plan.md › Approval Items](./plan.md#approval-items).
-  ADRs 049 and 050 have been moved to `adrs/` with an Accepted status.
+  ADRs 20261106-141214-service-session-recovery-return and 20261106-141214-virtual-service-scopes have been moved to `adrs/` with an Accepted status.
 
 ## 1. Static checks and fast tests
 

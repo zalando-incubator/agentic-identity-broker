@@ -81,7 +81,7 @@ ExtProc never logs credentials. It logs the scope only as `token_exchange.challe
 `token_exchange.challenge_resource_metadata_present=true|false`. The broker-provided URLs are already public
 action links, but the logging footprint stays unchanged apart from these booleans.
 
-## 5. Grant-context mode denial ([`050-virtual-service-scopes-revision-2`](../../../adrs/050-virtual-service-scopes-revision-2.md))
+## 5. Grant-context mode denial ([`20261122-103452-virtual-service-scopes-revision-2`](../../../adrs/20261122-103452-virtual-service-scopes-revision-2.md))
 
 With `grant_context.enabled`, a delegation denial keeps the precedence, status and body of the
 Feature 054 contract (`specs/054-authzen-delegation-pip/contracts/extproc-grant-context.md`):
