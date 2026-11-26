@@ -29,8 +29,9 @@ file_containment:            # R3 (revised 2026-11-24): applies to every file th
 engine:                      # oauth2_authorization_server.impersonation.opa
   presence:
     - required when at least one rule has authorization.type opa
-    - MUST be absent or empty when no rule selects opa; startup fails, so a CEL-only deployment
-      never opens a bundle connection
+    - when no rule selects opa, an absent block or an empty block ({}) is accepted and starts
+      nothing; any populated key fails startup, so a CEL-only deployment never opens a bundle
+      connection
   properties:
     policy.config_file:
       type: string
@@ -97,6 +98,12 @@ rule:                        # oauth2_authorization_server.impersonation.rules[<
         description: Rule name in package whose value is the decision document. Same default as ExtProc.
         validation:
           - a single Rego identifier; otherwise startup fails
+          - admission, rule absent — data.<package>.<decision> must resolve to at least one rule in the
+            candidate's broker-owned compiler by exact rule lookup (ast.Compiler.GetRulesExact on that
+            ref); a value only in data documents, or only rules nested below the ref, does not satisfy
+            it and the candidate is rejected with decision_undefined
+          - evaluation, undefined at runtime — a decision rule that exists but yields no value for a
+            request is a terminal 500 server_error, never a deny; policies SHOULD define a default
       evaluation_timeout:
         type: duration
         default: 100ms
@@ -131,18 +138,53 @@ bootstrap_subset:            # API-BOOT, managed mode only
   rejected_examples: [decision_logs, status, discovery, server, persistence_directory, caching,
                       distributed_tracing, nd_builtin_cache, storage, default_decision, default_authorization_decision,
                       "plugins.<any other name>"]
+  allowlist:                 # closed list for OPA v1.21.4 (R3, revised 2026-11-26); every other member fails startup naming it
+    services.<name>: [url, headers, credentials, response_header_timeout_seconds]
+    services.<name>.credentials:          # exactly one of
+      bearer: [token, scheme]             # inline token; token_path rejected (v1/plugins/rest/auth.go:62-65)
+      oauth2:                             # client credentials with inline secret (auth.go:236-254)
+        accepted: ["grant_type (client_credentials only)", token_url, client_id, client_secret, scopes,
+                   additional_headers, additional_parameters]
+        rejected: [signing_key, thumbprint, additional_claims, include_jti_claim, aws_kms, aws_signing,
+                   azure_keyvault, azure_signing, client_assertion_type, client_assertion, client_assertion_path]
+      s3_signing:                         # aws.go:707-716; members that read files are rejected
+        accepted:
+          - environment_credentials
+          - "metadata_credentials: iam_role, aws_region"
+          - "assume_role_credentials: aws_region, iam_role_arn, session_name, aws_domain, and a nested aws_signing that itself uses only accepted members"
+          - service
+          - signature_version
+        rejected:
+          - "web_identity_credentials: reads web_identity_token_file (aws.go:861-866)"
+          - "profile_credentials: reads path (aws.go:416-431)"
+          - "sso_credentials: reads path and cache_path (aws.go:118-121)"
+      gcp_metadata: [access_token_path, audience, endpoint, identity_token_path, scopes]   # metadata-server URL paths, not files (gcp.go:49-54)
+      azure_managed_identity: [endpoint, api_version, resource, object_id, client_id, mi_res_id, use_app_service_msi]   # no file members (azure.go:49-56)
+      plugin: [aib_bearer_token_file]
+    rejected_service_members:
+      - "client_tls: certificate and key files (auth_tls.go)"
+      - "tls: ca_cert is a file path, and system_ca_required has no use without it (auth_tls.go:85-88)"
+      - "allow_insecure_tls: disables certificate verification (rest.go:58)"
+      - type
+    bundles.<name>: [service, resource, signing, polling, size_limit_bytes, trigger]   # v1/plugins/bundle/config.go:147-154, v1/download/config.go:28-38
+    bundles.<name>.signing: [keyid, scope, exclude_files]   # v1/bundle/keys.go:31-35; allow_unsigned_delta_bundles rejected
+    keys.<id>: [algorithm, key, scope]    # v1/keys/keys.go:28-31; private_key rejected (verification keys only)
+    labels: any string map
   rules:
     - every top-level key outside the accepted list fails startup; the diagnostic names the key, never its value
+    - every nested member outside the allowlist fails startup naming its path (for example services.governance.credentials.bearer.token_path)
     - bundles must contain at least one entry
     - bundles.<name>.persist true fails startup
-    - service credentials are inline (bearer token, oauth2 client credentials) or credentials.plugin aib_bearer_token_file
-    - reject every OPA-native local file read, including bearer token_path, TLS file paths, client_tls, and file:// bundles
-    - validate nested settings against the pinned OPA types before sdk.New; unchecked local-file references are forbidden
+    - file:// bundle URLs fail startup
     - OPA parser errors are not echoed; the diagnostic gives the field and a reason class
   transport_and_signing: >-
-    No broker requirement (spec clarification 2026-11-24), as in ExtProc: http and https service
-    URLs and unsigned or signed bundles are accepted as OPA accepts them. Documentation recommends
-    https services and bundle signing with keys, because bundles decide token issuance.
+    No broker requirement (spec clarification 2026-11-24; rationale recorded 2026-11-26), as in
+    ExtProc: http and https service URLs and unsigned or signed bundles are accepted as OPA accepts
+    them. Bundles and the bootstrap are operator-trusted configuration; transport and signing for
+    operator-managed bundle distribution are deployment choices, not broker security controls that
+    Principle I requires to be enabled by default. Documentation MUST recommend https services and
+    bundle signing with keys, because bundles decide token issuance. Rejected: requiring https by
+    default; requiring https and bundle signing by default.
   reuse_from_extproc: >-
     An ExtProc bootstrap file is accepted only if it uses the subset above. Files with
     decision_logs, status, discovery, or other plugins fail startup by design; copy only services,
@@ -158,7 +200,7 @@ startup_diagnostics:         # credential-free
   messages:
     - engine policy: "exactly one of policy.config_file and policy.path is required"
     - engine: "required when a rule selects authorization.type \"opa\""
-    - engine: "must be empty when no rule selects authorization.type \"opa\""
+    - engine: "must be absent or empty when no rule selects authorization.type \"opa\""
     - engine policy.config_file: "<reason class> [key <name>]"
     - engine policy.path: "<reason class> [file <relative path>]"
     - engine plugins.aib_bearer_token_file.path: "<reason class>"

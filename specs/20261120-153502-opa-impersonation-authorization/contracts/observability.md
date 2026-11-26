@@ -51,11 +51,18 @@ client and are not instrumented.
 | --- | --- | --- | --- | --- |
 | `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_undefined`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
 | `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | none | Read per export: seconds since the shared active revision was admitted; no point before the first admission |
+| `tokenexchange.impersonation.opa.bundle.downloads` | Counter | `{download}` | `bundle` (configured bundle-name set); `outcome` (`success`, `failure`) | Each completed bundle download attempt reported by OPA's bundle status listener in managed mode |
+| `tokenexchange.impersonation.opa.bundle.download.age` | Observable gauge (Float64) | `s` | `bundle` (configured bundle-name set) | Read per export: seconds since that bundle's last successful download (`bundle.Status.LastSuccessfulDownload`); no point for a bundle before its first success; managed mode only |
 
-There is one engine and one active revision, so neither instrument carries `rule`. The rejecting
-rule is a log attribute only.
-Both instruments use scope `tokenexchange` and are created once in the adapter constructor; constructor errors are logged once at
-`Warn`.
+There is one engine and one active revision, so no instrument carries `rule`. The rejecting rule is
+a log attribute only. The `bundle` attribute is bounded by the bundle names in the bootstrap file.
+The bundle instruments come from a listener registered with OPA's bundle plugin
+(`sdk.OPA.Plugin("bundle")`, `bundle.Plugin.Register`, OPA v1.21.4 `v1/plugins/bundle/plugin.go:294`).
+They observe downloads whatever credential form a service uses, so a failing or unreachable bundle
+service is visible even though the revision counter sees no candidate. Neither carries an HTTP code,
+error text, URL, or credential.
+All instruments use scope `tokenexchange` and are created once in the adapter constructor;
+constructor errors are logged once at `Warn`.
 
 ## Log records
 
@@ -65,6 +72,7 @@ Both instruments use scope `tokenexchange` and are created once in the adapter c
 | `impersonation policy revision rejected` | `oauth2_server.impersonation_policy.revision_rejected` | Warn | `rule` (first failing rule, for `decision_undefined` only), `policy_revision`, `reason` (closed set above), `error_kind`; for `prohibited_builtin` also `builtin` (built-in name) |
 | `impersonation policy not ready` | `oauth2_server.impersonation_policy.startup_failed` | Error | `reason` (`timeout`, `bootstrap_invalid`, `local_bundle_invalid`), `rule` (last rejecting rule, when known), `duration_ms` |
 | `impersonation policy loaded from local bundle` | `oauth2_server.impersonation_policy.local_mode` | Info | `policy_revision`, `file_count`; once at startup in local mode. Message states that policy and data change only on restart (spec clarification 2026-11-24) |
+| `impersonation policy bundle download failed` | `oauth2_server.impersonation_policy.bundle_download_failed` | Warn | `bundle`, `error_kind` (`http_status`, `transport`, `invalid_bundle`); at most once per minute per bundle while failures last; never URL, response body, or credentials |
 | `impersonation policy bundle token unavailable` | `oauth2_server.impersonation_policy.token_unavailable` | Warn | `reason` (`unreadable`, `file_too_large`, `empty`), at most once per minute while the condition lasts; never the path's contents |
 
 `policy_revision` is the sorted `<bundle>=<manifest revision>` list joined with `,`; a bundle without a
@@ -80,9 +88,10 @@ have no admission ID. It is log/audit-only, never a metric or span attribute. Th
 is requiring fresh nonempty manifest labels and rejecting unchanged labels (would reject valid
 updates from existing bundle publishers).
 
-## Audit event `impersonation_decision`
+## Audit event `impersonation.decision.recorded`
 
-Adds three attributes, set on every record after rule selection:
+The existing `impersonation.decision.recorded` event (`internal/adapters/http/enduser/oauth2_token.go`)
+adds three attributes, set on every record after rule selection:
 
 | Attribute | Values |
 | --- | --- |
@@ -100,6 +109,10 @@ Existing attributes keep their meaning.
 - Span tests use the in-memory exporter and assert the constant span name, attributes, and status.
 - Metric tests assert the counter outcomes and reasons and the gauge after admission; no revision
   label or admission ID appears in a metric or span.
+- Bundle download tests drive the in-process bundle server through success, HTTP error, and
+  unreachable states and assert the `bundle.downloads` outcomes, the `bundle.download.age` gauge
+  growing while downloads fail, and the rate-limited `bundle_download_failed` log without URL,
+  body, or token.
 - Admit two different snapshots with equal or empty manifest labels; their admission IDs differ.
   Concurrent swap tests pair each audit with exactly the snapshot that made its decision.
 - Formatting and JSON/text slog tests of the sensitive input type assert constant redaction for

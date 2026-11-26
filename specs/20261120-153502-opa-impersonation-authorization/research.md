@@ -109,9 +109,23 @@ Alternatives: keep `security.trust_material_dir` (scope creep on an accepted ADR
 `impersonation.opa.directory` (same lack of a boundary against the admin, one more setting); plain
 `os.Open` (loses the protection against content written by others). Bootstrap-referenced local file reads are not supported: reject bearer
 `token_path`, TLS CA/certificate/private-key file paths, bundle `file://` resources, and any other
-OPA configuration field that would cause a local file read. Validate against the pinned OPA
-configuration types before `sdk.New`, failing closed on unsupported nested settings; never pass
-unchecked file references to the SDK. Services use supported inline credentials or the broker's
+OPA configuration field that would cause a local file read. Validate against a closed member
+allowlist for the pinned OPA v1.21.4 configuration types before `sdk.New` (revised 2026-11-26;
+the exact list is in the configuration contract `bootstrap_subset.allowlist`), failing closed on
+every other nested member; never pass unchecked file references to the SDK. Accepted credentials:
+`bearer` with an inline `token` and optional `scheme` (`token_path` rejected,
+`v1/plugins/rest/auth.go:62-65`); `oauth2` client credentials with inline `token_url`, `client_id`,
+`client_secret`, `scopes`, and additional headers or parameters (assertion, signing-key, KMS, and
+`client_assertion_path` members rejected, `auth.go:236-254`); `s3_signing` with
+`environment_credentials`, `metadata_credentials`, or `assume_role_credentials`, while
+`web_identity_credentials`, `profile_credentials`, and `sso_credentials` read files and are
+rejected (`aws.go:118-121, 416-431, 707-716, 861-866`); `gcp_metadata` (its `*_token_path` members
+are metadata-server URL paths, `gcp.go:49-54`); `azure_managed_identity` (no file members,
+`azure.go:49-56`); and `plugin: aib_bearer_token_file`. Service `tls` (`ca_cert` is a file),
+`client_tls`, `allow_insecure_tls`, and `type` are rejected (`rest.go:55-70`,
+`auth_tls.go:85-88`). `bundles.<name>` accepts `service`, `resource`, `signing` (`keyid`, `scope`,
+`exclude_files`), `polling`, `size_limit_bytes`, and `trigger`; `keys.<id>` accepts `algorithm`,
+`key`, and `scope` (`private_key` rejected). Services use supported inline credentials or the broker's
 contained token-file plugin (R16), and bundle keys are inline. There is no fallback to unrestricted
 opening. Only the top-level keys `services`, `bundles`, `keys`, `labels`, and `plugins` are accepted,
 and `plugins` may contain only `aib_bearer_token_file`. Every other top-level key or plugin
@@ -142,8 +156,8 @@ this release; R16 covers bearer tokens only.
 
 **Decision**: Candidate revisions compile with capabilities derived from
 `ast.CapabilitiesForThisVersion()` minus every built-in whose declaration is `Nondeterministic`,
-except `time.now_ns`. In OPA v1.21.4 this removes `http.send`, `net.lookup_ip_addr`, `opa.runtime`,
-`rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign`, and `io.jwt.encode_sign_raw`. A module that calls
+except `time.now_ns` and `io.jwt.decode_verify` (revised 2026-11-26). OPA v1.21.4 marks 11 built-ins
+nondeterministic (`v1/ast/builtins.go`); this removes `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign`, `io.jwt.encode_sign_raw`, `json.verify_schema`, and `json.match_schema`. A module that calls
 a removed built-in, including from a helper package that the decision does not reach, fails
 compilation, so the candidate is rejected before activation and nothing is called. Print statements
 are disabled.
@@ -151,12 +165,16 @@ are disabled.
 **Rationale**: The nondeterministic flag is OPA's own classification of built-ins with external
 effects or inputs. Deriving the allowlist from it fails closed for built-ins a future OPA upgrade
 adds. `opa.runtime` exposes the runtime configuration, which can include bundle-service credentials.
-`time.now_ns` is needed for time-based governance and has no external effect. Checking whole bundles
+`time.now_ns` is needed for time-based governance and has no external effect. `io.jwt.decode_verify`
+is marked nondeterministic only because it checks token times against the clock; it has no external
+effect and is common in governance policies. `json.verify_schema` and `json.match_schema` can resolve
+remote `$ref`s, so they stay removed. Checking whole bundles
 rather than only reachable rules needs no dependency-graph walk.
 
 **Alternatives**: Remove only `http.send` and `net.lookup_ip_addr` (fails open for future network
 built-ins; leaves `opa.runtime`). Also allow `rand.intn` and `uuid.rfc4122` (no governance use
-case; reintroduces nondeterministic decisions).
+case; reintroduces nondeterministic decisions). Remove `io.jwt.decode_verify` too (rejected
+2026-11-26: it has no external effect and blocks common policies).
 
 ## R5 — Binding evidence from the decision's dependency graph (**Sign-off: DEC-BIND**, ADR)
 
@@ -179,7 +197,11 @@ CONST-AMEND (R13).
 
 **Decision** (revised 2026-11-25): For OPA, `NewService` passes an admission function to the
 factory; the adapter calls it for every candidate (initial and update), and it rejects the
-candidate unless every OPA rule's decision exists (R11). CEL rules keep their existing inline
+candidate unless every OPA rule's decision rule exists (R11). Exists means that
+`ast.Compiler.GetRulesExact` on the candidate's broker-owned compiler returns at least one rule for
+`data.<package>.<decision>`; a value only in data documents, or only rules nested below the ref, is
+`decision_undefined` (revised 2026-11-26). A decision rule that exists but yields no value for a
+request is not an admission question: it is a terminal runtime failure (R9). CEL rules keep their existing inline
 startup checks in `cel.go` unchanged. The service reads one engine revision per request, before the
 first rule, and uses it for every OPA rule's decision. The binding requirements of the original
 decision are withdrawn with R5.
@@ -237,8 +259,8 @@ protocol, header map) into `impersonation.Request`. The domain builds the input:
   bundles cannot override it. UUID remains the routing and minted identity.
 
 Field names and shapes follow `envoyauth.RequestToInput`. The adapter converts the input with
-`ast.InterfaceToValue` before evaluation; claim maps keep JSON types (numbers stay `json.Number`
-precision, arrays and nested objects unchanged).
+`ast.InterfaceToValue` before evaluation; claim maps carry the same values and types as the CEL
+activation (arrays and nested objects unchanged), with no extra numeric precision guarantee.
 
 **Rationale**: Envoy-compatible predicates such as `input.attributes.request.http.method == "POST"`
 and `input.parsed_path == ["oauth2","token"]` work unchanged (FR-005). The configured public URL is
@@ -304,7 +326,11 @@ and separating an invalid decision from an evaluation failure points to policy a
 runtime problems.
 
 **Alternatives**: One `policy_evaluation_failed` detail for both engines (changes the documented CEL
-detail). Treat undefined as deny like ExtProc (contradicts FR-007).
+detail). Treat undefined as deny like ExtProc, or require a `default` decision at admission
+(both rejected by the user on 2026-11-26: an undefined decision may hide a policy defect, and
+admission cannot prove that a rule is total). Reused policies without a `default` decision
+therefore return 500 for every non-matching request; documentation and examples require a
+`default` (spec Risks & Mitigations).
 
 ## R10 — Configuration schema separation
 
@@ -366,16 +392,22 @@ admission (brings back mixed versions within a request).
 `tokenexchange.impersonation.opa.evaluate` per OPA evaluation. Counter
 `tokenexchange.impersonation.opa.revisions` (`outcome`: `admitted`, `rejected`; `reason`: closed
 set) and observable gauge `tokenexchange.impersonation.opa.revision.age` (seconds since the active
-revision was admitted), without a `rule` attribute because the engine is shared (R11). Lifecycle log events
-`oauth2_server.impersonation_policy.revision_admitted` and `...revision_rejected`. The existing
-`impersonation_decision` audit event adds `authorization_engine` (`cel`/`opa`) and, for OPA,
+revision was admitted), without a `rule` attribute because the engine is shared (R11). In managed
+mode a listener registered with OPA's bundle plugin (`bundle.Plugin.Register`, OPA v1.21.4
+`v1/plugins/bundle/plugin.go:294`) feeds counter `tokenexchange.impersonation.opa.bundle.downloads`
+(`bundle`, `outcome`) and gauge `tokenexchange.impersonation.opa.bundle.download.age` (seconds since
+`Status.LastSuccessfulDownload`, `status.go:31`) plus a rate-limited `bundle_download_failed` log,
+so a failing bundle service is visible for every credential form (revised 2026-11-26). Lifecycle
+log events `oauth2_server.impersonation_policy.revision_admitted` and `...revision_rejected`. The
+existing `impersonation.decision.recorded` audit event adds `authorization_engine` (`cel`/`opa`) and, for OPA,
 `policy_revision` (bundle manifest revisions) and `policy_admission_id` (process-instance UUID
 plus the engine's monotonic admission sequence). The latter identifies the exact deciding snapshot
 when manifest revisions are absent or reused; it is never a metric or span label. Details:
 [contracts/observability.md](contracts/observability.md).
 
-**Rationale**: Q1 accepts no broker-enforced maximum age, so operators need the age and rejection
-signals to manage staleness. No principal, claim, token, or decision reason is recorded
+**Rationale**: Q1 accepts no broker-enforced maximum age, so operators need the age, rejection,
+and download signals to manage staleness. The revision-age gauge alone cannot tell "nothing new
+published" from "downloads failing", because a failed download produces no candidate. No principal, claim, token, or decision reason is recorded
 (OPENTELEMETRY §6, LOGGING §6).
 
 **Alternatives**: Rely on OPA status reporting (disabled by R3, and not authoritative under R2).
@@ -404,8 +436,7 @@ unchanged and limit OPA rules to signed roles with an expected audience (narrows
 **Decision**: An in-process `httptest` bundle server serves tarballs built with OPA's `bundle.Write`
 and controllable ETags, with OPA polling at 1-second delays, so update journeys finish in seconds.
 Rego fixtures live under `tests/e2e/fixtures/opa/impersonation/`. Journeys that do not test updates
-may load that directory in local mode (R15). Unit tests cover the analysis
-(table of Rego forms), capability rejection, the input builder, decision parsing, the admission
+may load that directory in local mode (R15). Unit tests cover capability rejection, the input builder, decision parsing, the admission
 function for both engines, and a race test that swaps revisions during concurrent evaluations. No
 container suite is needed.
 

@@ -21,8 +21,8 @@ unchanged. Contract: [contracts/impersonation-opa-config.yaml](contracts/imperso
 
 ### OPA Engine (configuration, `impersonation.opa`)
 
-One per deployment, shared by every OPA rule (R11). Required when a rule selects `opa`; must be
-empty otherwise.
+One per deployment, shared by every OPA rule (R11). Required when a rule selects `opa`; when none
+does, an absent block or `{}` is accepted and any populated key fails startup.
 
 | Field | Type | Default | Validation |
 | --- | --- | --- | --- |
@@ -96,7 +96,9 @@ stateDiagram-v2
 ```
 
 Candidate rejection reasons: `compile_failed`, `prohibited_builtin`, `decision_undefined`,
-`snapshot_failed`, `bundles_incomplete`. No partial initial snapshot is admitted even if it evaluates successfully;
+`snapshot_failed`, `bundles_incomplete`. `decision_undefined` means no rule matches the decision ref by
+exact rule lookup in the candidate's compiler; a decision that exists but is undefined for a request
+is the runtime `invalid` outcome above. No partial initial snapshot is admitted even if it evaluates successfully;
 completeness of an earlier candidate cannot be combined with historical activation of other bundles.
 
 ## Per-request use
@@ -133,7 +135,7 @@ sequenceDiagram
 | **Impersonation OPA Engine** | The one OPA runtime (`impersonation.opa`) shared by every OPA rule, loading either managed bundles through a Policy Bootstrap or a local bundle directory read at startup. |
 | **Policy Bootstrap** | The contained OPA-native configuration file of the Impersonation OPA Engine, limited to `services`, `bundles`, `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin, with no OPA-native local-file references. |
 
-Existing glossary entries must also be restated (T007): Impersonation Rule selects exactly one CEL
+Existing glossary entries must also be restated (T008): Impersonation Rule selects exactly one CEL
 or OPA authorization; Subject Category classifies an unverified exact-target subject as agent on an
 OPA rule, and on a CEL rule only with the predicate's `subject_token.sub` binding. Agent-Subject
 Token keeps its CEL third-party detector, but distinguishes that detector from issuance binding

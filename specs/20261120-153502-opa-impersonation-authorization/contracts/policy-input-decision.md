@@ -218,7 +218,8 @@ historically.
 ## 5. Built-ins (DEC-BUILTINS)
 
 Revisions compile with this OPA version's built-ins minus every built-in marked nondeterministic,
-except `time.now_ns`. In OPA v1.21.4 the removed built-ins are `http.send`, `net.lookup_ip_addr`,
-`opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign`, and `io.jwt.encode_sign_raw`. The
+except `time.now_ns` and `io.jwt.decode_verify`, which are nondeterministic only because they read
+the clock. OPA v1.21.4 marks 11 built-ins nondeterministic (`v1/ast/builtins.go`), so the removed
+built-ins are `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `rand.intn`, `uuid.rfc4122`, `io.jwt.encode_sign`, `io.jwt.encode_sign_raw`, `json.verify_schema`, and `json.match_schema`. The schema built-ins can resolve remote `$ref`s. The
 check covers every module in the revision, reachable or not. A revision that calls one is rejected
 before activation, so the call never runs.

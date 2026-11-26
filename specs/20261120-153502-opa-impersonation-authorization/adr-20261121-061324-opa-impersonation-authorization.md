@@ -51,8 +51,12 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    key fails startup, including the reserved `policy_url` and `policy_path`. The engine loads
    either managed bundles through a bootstrap file (`policy.config_file`) or one local bundle
    directory read at startup (`policy.path`). The bootstrap accepts only `services`, `bundles`,
-   `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin; decision logs,
-   status, discovery, other plugins, persistence, and every other key fail startup. Bootstrap,
+   `keys`, `labels`, and the broker's `aib_bearer_token_file` credential plugin, each restricted to
+   a closed member allowlist for OPA v1.21.4 (config contract `bootstrap_subset.allowlist`): inline
+   bearer and OAuth2 client-credentials secrets, cloud credentials in forms that read no file
+   (`s3_signing` environment, metadata, or assume-role; `gcp_metadata`; `azure_managed_identity`),
+   and the token-file plugin. Decision logs, status, discovery, other plugins, persistence,
+   `allow_insecure_tls`, and every other key fail startup. Bootstrap,
    local bundle, and token file are configured by absolute path. Each is read through an
    adapter-owned `os.Root` over its own directory (the bundle directory for a local bundle), so
    content written by others, such as a rotated token or a bundle file, cannot link outside it.
@@ -63,7 +67,9 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
 3. **Broker-owned revisions.** After each OPA activation, the broker builds an immutable candidate
    revision from the compiled modules and a copy of the data. A candidate becomes the active revision
    only if its own transaction includes every configured bundle, it compiles with the restricted
-   capabilities (decision 4), and defines every OPA rule's decision. Otherwise the whole candidate is rejected and the previous
+   capabilities (decision 4), and every OPA rule's decision ref `data.<package>.<decision>` resolves
+   to at least one rule by exact rule lookup in the candidate's compiler (a value only in data, or
+   only nested rules, does not count). Otherwise the whole candidate is rejected and the previous
    active revision stays for every rule. Every request reads one revision before the first rule and
    uses it for every OPA rule's decision, so first-match fallthrough never mixes policy versions. Every admission assigns a process-instance
    UUID plus an increasing engine sequence identifier, copied to deciding audits and the admission log;
@@ -71,8 +77,10 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    admitted complete snapshot, never historical bundle activation plus a subset candidate. There
    is no broker-enforced maximum revision age.
 4. **No policy-time networking.** Candidate revisions compile without any built-in that OPA marks
-   nondeterministic, except `time.now_ns`. This removes `http.send`, `net.lookup_ip_addr`, and
-   `opa.runtime`, among others. A module that uses a removed built-in cannot activate.
+   nondeterministic, except `time.now_ns` and `io.jwt.decode_verify`, which only read the clock. In
+   OPA v1.21.4 this removes `http.send`, `net.lookup_ip_addr`, `opa.runtime`, `rand.intn`,
+   `uuid.rfc4122`, `io.jwt.encode_sign`, `io.jwt.encode_sign_raw`, `json.verify_schema`, and
+   `json.match_schema`. A module that uses a removed built-in cannot activate.
 5. **No static binding checks for OPA rules.** The broker does not analyze which token maps an OPA
    decision references. For OPA rules only:
    - ADR 031 control 3 and ADR 034 control 3 do not apply: an unsigned-subject or audience-absent
@@ -89,7 +97,8 @@ ADR `028-opa-extproc-authorization` governs the separate ExtProc service and is 
    eligibility, cross-agent rejection, human delegation, fail-closed evaluation and extraction, and
    credential-free audit stay. CEL rules keep their existing startup checks unchanged.
 6. **Fail closed.** `{"action":"allow"}` satisfies the rule's predicate; `{"action":"deny"}` is a
-   non-match. Undefined, malformed, or other actions, evaluation errors, timeouts, and cancellation
+   non-match. A decision rule that exists but is undefined for a request, malformed or other
+   actions, evaluation errors, timeouts, and cancellation
    map internally to terminal `server_error` and stop rule evaluation; connected callers receive
    HTTP 500, but disconnected callers have no response guarantee. Cancellation acceptance uses
    request-correlated canceled telemetry and no issuance/fallthrough, with domain error-mapping tests. Credential validation, category eligibility,
@@ -150,12 +159,23 @@ Implementation of the exceptional modes requires approval of ADR-OPA.
   OPA rule's safety depends solely on review of the operator's policy. A policy that does not
   constrain the caller-asserted value lets the client choose it. CEL rules keep a startup check.
 - Without a maximum revision age, a long bundle outage leaves an old governance snapshot active.
-  Operators monitor the revision-age gauge.
+  Operators monitor the per-bundle download-age gauge and download counter, which come from an OPA
+  bundle status listener, together with the revision-age gauge.
+- A reused Rego policy without a `default` decision is undefined for every non-matching request,
+  which is a terminal 500 that also blocks later rules. Admission cannot detect this; documentation
+  and examples require a `default` decision.
+- A large bundle publication can exhaust memory on every replica within one polling interval, and
+  readiness then needs the same bundle, so replicas crash-loop until it is withdrawn. Mitigation:
+  documented sizing and `size_limit_bytes`.
+- Bundle transport and signing are operator choices; the broker accepts `http` services and unsigned
+  bundles, and documentation recommends `https` and signing.
 - Inline bootstrap credentials require a restart to rotate. The contained token-file plugin covers
   one bearer token per bootstrap; mTLS client certificates and OPA-native file credentials stay
   unsupported rather than reopened outside containment.
-- Rules are coupled at admission: a revision that leaves one OPA rule's decision undefined keeps
-  every OPA rule on the previous revision.
+- Rules are coupled at admission: a revision that lacks one OPA rule's decision rule keeps every OPA
+  rule on the previous revision. A rejected bundle also stays in OPA's store and is not downloaded
+  again while its ETag is unchanged, so later updates to other bundles are rejected too until it is
+  republished.
 - A local bundle directory changes only on restart.
 
 ### Risks
@@ -178,6 +198,17 @@ Implementation of the exceptional modes requires approval of ADR-OPA.
   mentions a value, which shows intent, not that the policy constrains it. It is not a security
   control; policy review is. It also added dependency-graph, `with`-modifier, and revision-coupling
   rules.
+- **Unsigned exact-target subjects stay human unless the decision opts in** (for example
+  `{"action":"allow","subject_category":"agent"}`), and **the decision echoes the approved `sub` or
+  email for the broker to compare** (both considered 2026-11-26): rejected by the user, who chose
+  policy review as the control. Either option reintroduces a broker-side binding protocol, and it
+  proves only that the policy returned a value, not that it constrained the subject sensibly.
+- **Undefined decision as deny, or admission requiring a `default` rule** (considered 2026-11-26):
+  rejected by the user in favor of the fail-closed terminal error plus documentation; an undefined
+  decision may hide a policy defect, and admission cannot prove a rule is total.
+- **Require `https` bundle services, or `https` plus bundle signing, by default** (considered
+  2026-11-26): rejected. Bundles and the bootstrap are operator-trusted configuration, as in
+  ExtProc; transport and signing are operator deployment choices that documentation recommends.
 - **Keep Principle I unchanged and allow only signed roles with an expected audience for OPA**:
   avoids the constitution amendment but drops modes that Q2 requires.
 - **UUID-only governance lookup**: operators would have to synchronize UUID-to-governance maps.
