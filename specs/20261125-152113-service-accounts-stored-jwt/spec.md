@@ -74,7 +74,7 @@ An administrator pastes the wrong thing: a truncated token, an unsigned token, a
 
 **Acceptance Scenarios**:
 
-1. **Given** a credential whose `jwt` is not a compact JWS (not exactly three non-empty base64url segments, or a header or payload that does not decode to a JSON object), **When** it is submitted, **Then** the broker answers `400` and stores nothing.
+1. **Given** a credential whose `jwt` is not a compact JWS (not three dot-separated segments, a segment that does not decode, or a header or payload that is not a JSON object), **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 2. **Given** a JWT whose header states `alg: none` in any letter case, or no `alg`, **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 3. **Given** a JWT that states an `exp` at or before the time of the request, **When** it is submitted, **Then** the broker answers `400` and stores nothing.
 4. **Given** a JWT whose compact serialization is longer than 16384 bytes (16 KiB), **When** it is submitted, **Then** the broker answers `400` and stores nothing.
@@ -144,10 +144,12 @@ An administrator removes an account that is no longer needed. The stored credent
 
 - **Expiry between validation and use**: a JWT accepted seconds before its `exp` is stored and becomes `failed` at `exp`. No grace period or clock-skew allowance is applied in either direction.
 - **`nbf` in the future, or other time claims**: not interpreted. Only `exp` drives validation and status.
-- **Malformed `exp`**: an `exp` that is present but not a JSON number, or a number outside 0 to 253402300799 (the end of year 9999), is refused on write, because the broker could not tell when the account fails.
+- **Malformed `exp`**: an `exp` that the JOSE library cannot read as a date, such as a boolean or a value beyond its range, is refused on write, because the broker could not tell when the account fails. A numeric string or a fractional value is accepted as the library reads it, in whole seconds.
+- **Registered claims of the wrong type**: a JWT whose registered claim is not of its RFC 7519 type, such as a numeric `sub`, is refused, because the JOSE library refuses it.
+- **Unrecognised `alg`**: an `alg` value the JOSE library does not know, including `NONE` or `None`, is refused because the token does not parse.
 - **Absent `iss`, `sub` or `kid`**: accepted. The summary omits what the token does not state.
 - **Encrypted JWT (JWE, five segments)**: refused as not a compact JWS.
-- **Whitespace**: leading and trailing whitespace around the pasted `jwt` is refused, not trimmed, so the fingerprint always describes exactly the submitted value.
+- **Whitespace and base64 variants**: leading or trailing spaces are refused. Padded or standard-alphabet base64 segments, and a trailing line break, are accepted because the JOSE library's decoder accepts them. Nothing is trimmed: the token is stored and fingerprinted exactly as submitted.
 - **Rotation to a token from another issuer or for another subject**: accepted. The token is opaque; the summary shows the change, and the audit event records the previous and new summaries.
 - **Ceiling wider or narrower than the token's own `scope` claim**: not compared. The ceiling is declared by the administrator; the token's content never drives a decision.
 - **Two accounts holding the same JWT**: accepted. They show the same fingerprint.
@@ -438,7 +440,7 @@ Content-Type: application/json
 - **FR-006**: This feature MUST accept exactly one kind, `jwt_bearer`, and exactly one credential format for it, `signed_jwt`. Any other kind or format MUST be refused. `kind` selects which credential formats are accepted, and the credential is discriminated by its `format`, so that later kinds and formats (#474–#477) add a branch without changing this one.
 - **FR-007**: A `signed_jwt` credential MUST carry `jwt` and MAY carry `use`. `use` MUST accept only `access_token` and MUST default to it. The value `assertion` MUST be refused until a later feature offers it; the model MUST allow that value and an accompanying `token_endpoint` to be added later without a new format.
 - **FR-008**: The broker MUST treat the JWT as opaque: store it exactly as submitted, never verify its signature, never fetch keys for it, never modify or rebuild it.
-- **FR-009**: On every write that carries a `signed_jwt` credential the broker MUST refuse it unless all of these hold: it is a compact JWS of exactly three non-empty base64url segments; its header and payload each decode to a JSON object; its header states an `alg` that is not `none` in any letter case; its compact serialization is at most 16384 bytes (16 KiB), a fixed limit that is not configurable; and, when the payload states an `exp`, that `exp` is a number and lies after the time of the request. A JWT without `exp` MUST be accepted.
+- **FR-009**: On every write that carries a `signed_jwt` credential the broker MUST refuse it unless all of these hold: its compact serialization is at most 16384 bytes (16 KiB), a fixed limit that is not configurable, checked before any parsing; it parses, without verification, as a compact JWS whose payload is a JWT claims set, using the broker's JOSE library (`lestrrat-go/jwx`); its header states an `alg` that is not `none`; and, when the payload states an `exp`, that `exp` lies after the time of the request. Which encodings, `alg` values and claim types parse is the library's behaviour, not a broker rule (see Edge Cases). A JWT without `exp` MUST be accepted.
 - **FR-010**: A refused write MUST store nothing, MUST leave an existing account unchanged, and MUST answer with the failed rule and without the submitted JWT or any fragment of it.
 
 **What the administrator sees**
@@ -461,7 +463,7 @@ Content-Type: application/json
 **Audit and observability**
 
 - **FR-022**: The broker MUST write an audit record after each committed creation, credential rotation, ceiling change, rename and deletion of a service account. Each record MUST identify the service, the service account and the acting administrator, and MUST carry the credential summary, with the previous and new summary, ceiling and `canonical_id` on a change. A refused or failed operation MUST NOT produce a success record.
-- **FR-023**: The stored JWT is a bearer credential under `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`. Neither it, nor any fragment of it, nor its ciphertext MUST appear in a log record, span, span event, metric, or error message. Only the claim and header metadata those standards permit (`iss`, `kid`, `exp`, `alg`, validation failure reason) and the fingerprint MAY appear; `sub` MAY appear only in API responses and audit summaries.
+- **FR-023**: The stored JWT is a bearer credential under `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`. Neither it, nor any fragment of it, nor its ciphertext MUST appear in a log record, span, span event, metric, or error message. Only the claim and header metadata those standards permit (`iss`, `kid`, `exp`, `alg`, validation failure reason) and the fingerprint MAY appear; `sub` MAY appear in API responses, and in audit summaries only as an `id.Principal` rendered through the principal policy of `coding-standards/LOGGING.md` section 5.
 
 - **FR-025**: Deleting a service that still holds at least one service account MUST be refused with a conflict and MUST leave the service and its accounts unchanged.
 
@@ -554,7 +556,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 
 - **SR-001**: The stored JWT MUST be encrypted before it is persisted, through the broker's existing envelope encryption, under the encryption context of the owning service (`service_id`, as defined by `adrs/008-encryption-context-optimization.md`). A credential encrypted for one service MUST NOT decrypt under another service's context.
 - **SR-002**: There MUST be no plaintext fallback. If encryption fails or is unavailable, the write fails and nothing is stored (Constitution Principle I).
-- **SR-003**: The fingerprint MUST be computed with a vetted hash from the Go standard library over the submitted JWT (Constitution Principle III). No custom cryptography is introduced. The broker performs no signature operation in this feature.
+- **SR-003**: The fingerprint MUST be computed with a vetted hash from the Go standard library over the submitted JWT (Constitution Principle III). The JWT MUST be parsed with the broker's JOSE library (`lestrrat-go/jwx`), without verification; the broker adds no parser of its own. No custom cryptography is introduced. The broker performs no signature operation in this feature.
 - **SR-004**: Storing a JWT without verifying it is not an exception to Constitution Principle I's signature rule: the broker never accepts the stored JWT as proof of anything. It authenticates nobody with it, authorizes nothing from it (FR-013), and only displays metadata read from it. Refusing `alg: none` guarantees the broker never stores, for later hand-out, a token that no party could verify.
 - **SR-005**: The administrator access boundary is the existing one of the admin server: the trusted proxy authenticates and authorizes the administrator, and a request without an operator principal is refused with `401` before any account is read.
 - **SR-006**: Tests MUST assert, for every path that handles the JWT (create, rotation, refused write, list, status, delete), that the token under test appears in no response body, log buffer, span attribute, span event or metric attribute, as the coding standards require.
@@ -588,7 +590,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 - The admin UI for service accounts comes later (#478: "mirrored in the admin UI later"); this feature has no frontend change.
 - This feature adds no configuration parameter. The JWT size limit is a fixed value in the API contract.
 - The fingerprint is a SHA-256 digest of the exact submitted compact serialization. Its textual encoding is fixed in the API contract at planning.
-- The `exp` in the summary is the numeric value the token states; the status additionally reports it as a timestamp.
+- The `exp` in the summary is the expiry in whole seconds since the epoch, as the JOSE library reads it from the token; the status additionally reports it as a timestamp.
 - The current time used for validation and status is the broker's clock, without skew allowance.
 - Scope values in a `jwt_bearer` ceiling follow the same per-value rules as service scopes today.
 - Listing is unpaginated and returns a direct array, like the existing list of a service's protected resources.

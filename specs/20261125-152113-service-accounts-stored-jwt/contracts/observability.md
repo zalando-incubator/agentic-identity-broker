@@ -49,7 +49,7 @@ match in the order above and `changes` lists all of them.
 | `service.service_account.write_failed` | `Error` | Encryption or storage failed during create, update or delete | `operator_principal`, `service_id`, `service_account_id` (when known), `operation` (`create`, `update`, `delete`), `error_kind` |
 
 `reason` is one of: `unsupported_format`, `unsupported_use`, `missing_jwt`, `too_large`,
-`not_compact_jws`, `unsigned`, `malformed_exp`, `expired`.
+`malformed`, `unsigned`, `expired`.
 
 `error_kind` is `encryption` or a `storage.ErrorKind`. The wrapped cause is not logged: this is a
 credential boundary (LOGGING.md section 4).
@@ -65,8 +65,9 @@ errors. The handler does not add a record for them; the request log already carr
 |---|---|
 | `format` | `signed_jwt` |
 | `use` | `access_token` |
-| `iss`, `sub`, `kid` | As the token states them, each capped at 256 bytes; omitted when not stated |
-| `exp` | The number the token states; omitted when not stated |
+| `iss`, `kid` | As the token states them, each capped at 256 bytes; omitted when not stated |
+| `sub` | `id.Principal`, capped at 256 bytes, rendered through the principal policy (LOGGING.md section 5); omitted when not stated |
+| `exp` | Whole seconds since the epoch; omitted when not stated |
 | `fingerprint` | `SHA256:<base64>` |
 
 The values come from an unverified token and are untrusted input. They appear only as attribute
@@ -78,12 +79,13 @@ Section 6.2, new row:
 
 | Data | Permitted form |
 |---|---|
-| Service-account credential | The credential summary only (`format`, `use`, `iss`, `sub`, `kid`, `exp`, fingerprint), each string capped at 256 bytes, and only in `service.service_account.*` audit records. `sub` names the workload the credential was issued for. Never the credential, a fragment of it, or its ciphertext. |
+| Credential fingerprint | `SHA256:` and the base64 SHA-256 digest of a stored service-account credential, only in `service.service_account.*` audit records. Never the credential, a fragment of it, or its ciphertext. |
 
 Rationale for the PR description: FR-022 requires audit records to carry the credential summary so
-that a rotation can be attributed and recognised; section 6.2 lists `kid`, `alg`, `iss`, `aud`,
-`jti`, `exp` for JWTs and not `sub`. The row is scoped to these audit events; `sub` stays
-prohibited in every other record, in spans and in metrics.
+that a rotation can be recognised. Section 6.2 already permits `iss`, `kid` and `exp`, and permits
+`sub` as an `id.Principal` through the principal policy, but has no row for a credential
+fingerprint. The digest cannot be reversed to the credential. The row is scoped to these audit
+events.
 
 ## 5. Spans
 
@@ -127,6 +129,7 @@ or the request body.
 | Create, rotation, refused write (each rule of section 2), list, single read, status, delete | A JSON buffer logger injected through the production constructors does not contain the JWT under test or any of its three segments |
 | The same paths | An in-memory span recorder shows no attribute, event or status description containing the JWT or a segment |
 | The same paths | Response bodies and headers do not contain the JWT or a segment |
+| Credential summary in audit events | `sub` is the principal policy output, injected through a test policy that changes the value, so the test fails if `sub` bypasses the policy |
 | Each audit event | `event`, `operator_principal` (policy output), `service_id`, `service_account_id`, `changes` and the `previous_observed_*` keys are asserted; message text is not |
 | No-op update, refused write, failed write | No record from section 1 is written |
 | Storage spans | Name, kind `Client`, and `storage.outcome` for not found, name conflict and version mismatch |

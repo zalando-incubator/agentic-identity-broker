@@ -39,7 +39,7 @@ Location: `internal/domain/model/service_account_credential.go`.
 | `Narrowing` | `none` | |
 | `ServiceAccountStatus` | `ready`, `failed` | Later values (`needs_bootstrap`) are added by #474. |
 | `ServiceAccountFailureReason` | `credential_expired` | |
-| `CredentialSummary` | `Format`, `Use`, `Iss *string`, `Sub *string`, `Kid *string`, `Exp *json.Number`, `Fingerprint string` | Implements `slog.LogValuer` (strings capped at 256 bytes in logs). Holds no secret. |
+| `CredentialSummary` | `Format`, `Use`, `Iss *string`, `Sub *string`, `Kid *string`, `Exp *int64` (whole seconds, as `jwx` reads it), `Fingerprint string` | Implements `slog.LogValuer`: strings capped at 256 bytes, `sub` rendered as `id.Principal`. Holds no secret. |
 | `ServiceAccountCredentialInput` | `Format`, `Use`, `JWT model.Secret` | What the handler passes to the domain service. |
 | `CredentialValidationError` | `Reason` (closed set below), constant message | Never contains the submitted value. |
 
@@ -60,10 +60,11 @@ Evaluated in order; the first failed rule decides the reason ([research R4](./re
 | 1 | `format` is `signed_jwt` | `unsupported_format` | `credential.format must be signed_jwt` |
 | 2 | `use` is absent or `access_token` | `unsupported_use` | `credential.use must be access_token` |
 | 3 | `jwt` is present and at most 16384 bytes | `missing_jwt` / `too_large` | `credential.jwt is required` / `credential.jwt must be at most 16384 bytes` |
-| 4 | Three non-empty unpadded base64url segments; header and payload are JSON objects | `not_compact_jws` | `credential.jwt must be a compact JWS` |
-| 5 | Header `alg` is a non-empty string and not `none` in any letter case | `unsigned` | `credential.jwt must be a signed compact JWS` |
-| 6 | `exp`, when stated, is a number in `[0, 253402300799]` | `malformed_exp` | `credential.jwt exp must be a number` |
-| 7 | `exp`, when stated, is after the request time | `expired` | `credential.jwt is expired` |
+| 4 | `jws.Parse` with `jws.WithCompact()` and `jwt.ParseInsecure` both succeed | `malformed` | `credential.jwt must be a compact JWS with valid JWT claims` |
+| 5 | The parsed header states an `alg` that is not `none` | `unsigned` | `credential.jwt must be a signed compact JWS` |
+| 6 | The parsed expiration, when stated, is after the request time | `expired` | `credential.jwt is expired` |
+
+What rule 4 accepts is the library's behaviour; research R4 lists the cases.
 
 ### Fingerprint
 

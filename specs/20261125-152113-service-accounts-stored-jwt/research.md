@@ -77,44 +77,58 @@ format-discriminated document lets `private_key`, `google_service_account_json`,
 
 ## R4 — Form validation of the JWT
 
-**Decision**: A pure function in `internal/domain/model` checks the submitted string in this
-order and stops at the first failed rule:
+**Decision**: Parse the JWT with `lestrrat-go/jwx/v4`, which the broker already depends on, and
+add only the broker's own rules around it. A function in `internal/domain/model` checks the
+submitted string in this order and stops at the first failed rule:
 
-1. Length at most 16384 bytes (checked before any decoding).
-2. Exactly three segments separated by `.`, each non-empty and each valid unpadded base64url
-   (`base64.RawURLEncoding`, strict).
-3. Header and payload each decode to a JSON object (`encoding/json` with `UseNumber`).
-4. Header member `alg` is a string, non-empty, and not `none` under `strings.EqualFold`.
-5. If the payload has `exp`: it is a JSON number that parses as a finite value in
-   `[0, 253402300799]` (year 9999), and it is after the request time. **Proposed** (the range
-   bound; the spec only says "a number").
+1. Length at most 16384 bytes, checked before the library sees the input (SR-007; the library
+   leaves input bounds to the caller).
+2. `jws.Parse(token, jws.WithCompact())` succeeds, and `jwt.ParseInsecure(token)` succeeds. No key
+   is passed and no signature is verified. Either failure is one rule, reason `malformed`.
+3. The parsed protected header states an `alg`, and it is not `jwa.NoSignature()` (reason
+   `unsigned`).
+4. If the parsed token has an expiration, it is after the request time (reason `expired`).
 
-Each rule maps to one constant message and one enumerated reason
-([contracts](./contracts/admin-service-accounts-openapi.yaml), [observability](./contracts/observability.md)).
-The function uses only the Go standard library. It performs no signature operation and fetches
-nothing (FR-008).
+Summary values come from the parsed objects: `iss`, `sub` and `exp` from the token, `kid` from
+the protected header. The function performs no signature operation and fetches nothing (FR-008).
+Library errors are never returned or logged: each failure maps to the constant message of its
+reason.
 
-**Rationale**: The rules are FR-009 verbatim. Strict base64url makes the whitespace edge case
-(leading or trailing whitespace is refused) and the JWE case (five segments) fall out of rule 2.
-Decoding is bounded by rule 1 (SR-007). A structural decode is not cryptography, so Principle III
-is not engaged. The upper bound on `exp` exists because a value such as `1e30` is a JSON number
-but cannot be stored as a timestamp, and the broker "could not tell when the account fails" (spec
-Edge Cases, malformed `exp`).
+What the library accepts, checked against v4.6.0 on 2026-11-26:
+
+| Input | Library result | Broker outcome |
+|---|---|---|
+| Two or five segments, JSON serialization | Refused (`WithCompact`, segment count) | `malformed` |
+| Empty header or payload, payload not a JSON object | Refused | `malformed` |
+| `alg: none`, or no `alg` | Parsed | `unsigned` (rule 3) |
+| `alg` it does not know, such as `NONE` or `XYZ` | Refused | `malformed` |
+| Padded or standard-alphabet base64, trailing line break | Parsed | Accepted, stored as submitted |
+| Leading or trailing space | Refused | `malformed` |
+| `exp` as numeric string or fractional | Parsed, whole seconds | Accepted |
+| `exp` boolean, or beyond the date range | Refused | `malformed` |
+| `exp` negative | Parsed | `expired` |
+| Registered claim of the wrong type, such as numeric `sub` | Refused | `malformed` |
+
+**Rationale**: The maintainer's direction on 2026-11-26 is to use established libraries rather
+than hand-written parsing, and to relax the spec's rules where the library differs. This follows
+Constitution Principle III for a security-relevant parser, and the library is already vetted and
+used for every other JWT the broker handles. The broker keeps only the rules that are its own
+decisions: the size bound, refusing unsigned tokens (SR-004) and refusing expired ones.
 
 **Alternatives considered**:
 
-- `jws.Parse` / `jwt.ParseInsecure` from `lestrrat-go/jwx/v4`: also accepts JSON serialization and
-  has its own leniency rules; the spec's rules are stricter and simpler to state with the standard
-  library.
-- Refusing `iss`, `sub` or `kid` values that are not strings: the token is opaque, so only the
-  form rules of FR-009 may refuse it. A non-string value is treated as not stated and omitted from
-  the summary.
+- A standard-library parser with strict raw base64url and exact segment checks (the earlier
+  design): stricter on encodings and whitespace, but it is a second, hand-written JWT parser next
+  to the library the broker already uses.
+- Adding broker checks to restore the stricter rules, such as rejecting line breaks: each one
+  re-creates part of a parser; the stored token is opaque and handed out unchanged, so the
+  library's notion of a valid compact JWS is enough.
 
 ## R5 — Credential summary and fingerprint
 
 **Decision**: The summary is computed once per write and stored as `credential_summary` (`JSONB`):
-`format`, `use`, and `iss`, `sub`, `kid`, `exp` when the token states them. `exp` keeps the number
-as the token states it. The fingerprint is `SHA256:` followed by the unpadded standard base64
+`format`, `use`, and `iss`, `sub`, `kid`, `exp` when the token states them. `exp` is the expiry in
+whole seconds, as `jwx` reads it. The fingerprint is `SHA256:` followed by the unpadded standard base64
 encoding of the SHA-256 digest of the exact submitted compact serialization (43 characters after
 the prefix), computed with `crypto/sha256`. The parsed expiry is also stored as
 `credential_expires_at` so status needs no JSON access or decryption. **Proposed** (the textual
@@ -302,11 +316,16 @@ namespace. Details and the credential-absence test matrix are in
 [contracts/observability.md](./contracts/observability.md).
 
 `coding-standards/LOGGING.md` section 6.2 permits JWT metadata `kid`, `alg`, `iss`, `aud`, `jti`,
-`exp` in logs; it does not list `sub`. FR-022 requires audit records to carry the credential
-summary, and FR-023 permits `sub` in "audit summaries". The plan therefore amends section 6.2 in
-the same PR (Principle XV allows in-place amendment with rationale) with one scoped row: the
-credential summary of a service account, including `sub`, is permitted in
-`service.service_account.*` audit records only. **Proposed**.
+`exp` in logs, and principals only as `id.Principal` through the principal policy. A token's
+`sub` identifies whoever the token was issued for, possibly a person, so the summary's
+`LogValue` renders it as `id.NewPrincipal(sub)`: the principal policy handler renders every
+`id.Principal` value, including values inside a group, so any later redaction or
+pseudonymisation of principals reaches it too. The summary keeps `sub` as a plain string
+everywhere else; the conversion happens only at the log boundary, so the unverified claim never
+becomes an identity the code could act on (FR-013). The fingerprint is not covered by section
+6.2, so the plan amends it in the same PR (Principle XV allows in-place amendment with rationale)
+with one scoped row: the SHA-256 fingerprint of a stored credential is permitted in
+`service.service_account.*` audit records. **Proposed**.
 
 Claim values come from an unverified token, so they are untrusted input (LOGGING.md section 7).
 The summary's `slog.LogValuer` caps each string at 256 bytes in log output; the API response
@@ -322,8 +341,10 @@ monitoring interface the spec defines (User Story 4).
 **Alternatives considered**:
 
 - Leaving `sub` out of logs: contradicts FR-022.
-- Logging `sub` under a reserved principal key: it is not an `id.Principal`, and for a machine
-  credential it names a workload.
+- Logging `sub` as a plain string under a new `LOGGING.md` exception: it would bypass the
+  principal policy for a value that can identify a person.
+- Storing `sub` as `id.Principal` in the summary: would type an unverified claim as an
+  authenticated identity in domain code.
 - A gauge of failed accounts: useful, but no requirement asks for it (Feature Scope rule).
 
 ## R14 — Ceiling validation

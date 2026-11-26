@@ -17,9 +17,9 @@ agent can use an account yet (#472, #473).
 - **Entity in the existing bounded context.** `model.ServiceAccount` and its value objects join
   `internal/domain/model`; a new `thirdparty.ServiceAccountService` holds the workflow
   ([research R1](./research.md#r1--where-the-domain-code-lives)).
-- **Opaque credential, checked for form only.** A pure standard-library function applies the
-  FR-009 rules in a fixed order and derives the summary and a `SHA256:<base64>` fingerprint. No
-  signature is verified and nothing is fetched ([R4](./research.md#r4--form-validation-of-the-jwt),
+- **Opaque credential, checked for form only.** `jwx` parses the token without verification; the
+  broker adds only the size bound, the `alg: none` refusal and the expiry check, then derives the
+  summary and a `SHA256:<base64>` fingerprint. No signature is verified and nothing is fetched ([R4](./research.md#r4--form-validation-of-the-jwt),
   [R5](./research.md#r5--credential-summary-and-fingerprint)).
 - **Encrypted under the service.** A format-discriminated credential document is encrypted with
   the existing `EncryptionPort` under the owning service's `service_id` context; there is no
@@ -47,7 +47,8 @@ agent can use an account yet (#472, #473).
 
 **Primary Dependencies**: chi v5 (routing), sqlx and pgx v5 (PostgreSQL adapter), golang-migrate
 (migrations), `log/slog`, OpenTelemetry API, the existing `ports.EncryptionPort` adapters;
-standard library `crypto/sha256`, `encoding/base64`, `encoding/json`. No new dependency.
+`lestrrat-go/jwx/v4` (`jws`, `jwt`, already a dependency) for parsing; standard library
+`crypto/sha256` and `encoding/base64` for the fingerprint. No new dependency.
 
 **Storage**: PostgreSQL (production) and in-memory (development, tests). One new table,
 `service_accounts`, in migration `050_create_service_accounts.{up,down}.sql`.
@@ -99,7 +100,7 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
   defines the change; it is merged into `api/admin/openapi.yaml` before any handler is implemented.
 - [x] **API Documentation**: Admin API only (`api/admin/openapi.yaml`).
 - [ ] **API Changes**: The maintainer confirms API-SA, API-SHAPE, API-UPDATE, API-SVC-DELETE,
-  API-VERSION, DEC-FINGERPRINT and DEC-EXP-RANGE by reviewing the PR (maintainer decision,
+  API-VERSION and DEC-FINGERPRINT by reviewing the PR (maintainer decision,
   2026-11-26). No separate approval record is kept.
 - [x] **Database Design**: `050_create_service_accounts.{up,down}.sql`, go-migrate naming, atomic;
   schema in [data-model.md](./data-model.md#postgresql-schema--migration-050_create_service_accounts).
@@ -122,8 +123,8 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
 - [x] **ADRs**: New `adrs/20261125-154231-service-accounts-stored-jwt.md`, introduced and accepted
   in this PR ([R15](./research.md#r15--adr)). No accepted ADR is superseded.
 - [x] **Library-First Security**: `crypto/sha256` for the fingerprint, the existing encryption
-  adapters for storage. The JWT form check is structural decoding, not cryptography; the broker
-  performs no signature operation (SR-003).
+  adapters for storage, `lestrrat-go/jwx/v4` for parsing the JWT without verification; no
+  hand-written parser, and the broker performs no signature operation (SR-003).
 - [x] **Zalando Guidelines**: Kebab-case path segments, snake_case members, sub-resource under its
   parent, standard status codes, optional `If-Match` with strong ETags. The unpaginated direct
   array follows the existing protected-resources list (spec Assumptions).
@@ -159,8 +160,8 @@ approval.
 | API-SVC-DELETE | API | `DELETE /api/services/{service-id}` answers `409` while the service holds a service account | [research R9](./research.md#r9--a-service-that-holds-accounts-cannot-be-deleted) |
 | API-VERSION | API | Raise the Admin API from `3.0.0` to `3.1.0` (additive) | spec API-006 |
 | DEC-FINGERPRINT | Decision | Fingerprint text: `SHA256:` plus the unpadded standard base64 SHA-256 digest of the submitted JWT | [research R5](./research.md#r5--credential-summary-and-fingerprint) |
-| DEC-EXP-RANGE | Decision | An `exp` outside `[0, 253402300799]` is refused as malformed, like a non-number | [research R4](./research.md#r4--form-validation-of-the-jwt) |
-| STD-LOGGING | Standard | Amend `coding-standards/LOGGING.md` section 6.2: the credential summary of a service account, including `sub`, is permitted in `service.service_account.*` audit records only | [contracts/observability.md](./contracts/observability.md#4-amendment-to-coding-standardsloggingmd-same-pr) |
+| DEC-JWX | Decision | Parse the JWT with `jwx` v4 and relax the spec's form rules to the library's behaviour (maintainer direction, 2026-11-26) | [research R4](./research.md#r4--form-validation-of-the-jwt) |
+| STD-LOGGING | Standard | Amend `coding-standards/LOGGING.md` section 6.2: the SHA-256 fingerprint of a stored credential is permitted in `service.service_account.*` audit records. `sub` needs no amendment: it is logged as an `id.Principal` | [contracts/observability.md](./contracts/observability.md#4-amendment-to-coding-standardsloggingmd-same-pr) |
 | ADR-SA | ADR | New ADR `20261125-154231-service-accounts-stored-jwt`: entity and port, stored-JWT posture, `service_id` encryption of a format-discriminated credential document, derived status, optional `If-Match`, `RESTRICT` on service deletion | [research R15](./research.md#r15--adr) |
 | DB-050 | Decision | Migration `050`: table `service_accounts` with the columns, checks, unique constraint and `ON DELETE RESTRICT` foreign key of the data model; DOWN drops the table and with it the stored credentials | [data-model.md](./data-model.md#postgresql-schema--migration-050_create_service_accounts) |
 
@@ -396,9 +397,9 @@ error messages, list contents. No `XIt`, `PIt`, `Skip()` or red-phase comments.
 **Unit Tests** (TDD, written first):
 
 - `internal/domain/model/service_account_credential_test.go`: table tests for every rule and its
-  order, reason and message; the size boundary (16384 and 16385 bytes); `alg` letter cases;
-  `exp` at, before and after the request time, fractional, non-number and out of range; absent
-  and non-string `iss`, `sub`, `kid`; fingerprint equality for equal tokens and difference for
+  order, reason and message; the size boundary (16384 and 16385 bytes) before parsing; each
+  library case of research R4; `alg` `none`, `NONE` and missing; `exp` at, before and after the
+  request time; absent `iss`, `sub`, `kid`; fingerprint equality for equal tokens and difference for
   different ones; no error message contains the input.
 - `internal/domain/model/service_account_test.go`: entity validation, ceiling rules,
   `StatusAt` boundary, `Narrowing`, `CredentialSummary.LogValue` capping.
