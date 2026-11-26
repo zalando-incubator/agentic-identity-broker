@@ -24,7 +24,7 @@ set of the spec (D-17).
 The feature does not record cases, measure a model, or tune questions and thresholds. It has no
 evaluation run and no evaluation record (D-18).
 
-[research.md](research.md) records the design decisions `D-01` to `D-18` with their alternatives
+[research.md](research.md) records the design decisions `D-01` to `D-19` with their alternatives
 and the verification record of 2026-11-24.
 The contracts are in [contracts/](contracts/).
 
@@ -44,7 +44,7 @@ The contracts are in [contracts/](contracts/).
 
 **Constraints**: A context of a maximum of 16 KiB. A listing of a maximum of 1 MiB. A maximum of 10,000 tool definitions for each instance. A maximum of 64 model requests in progress for each instance. No argument value in a log, span, or metric of the feature. Each failure keeps the call for a person or denies it.
 
-**Scale/Scope**: 19 acceptance scenarios in four user stories. One new ExtProc package. No subcommand, no migration, no API change, and no change to the web application. Hundreds of target servers without configuration for each server.
+**Scale/Scope**: 20 acceptance scenarios in four user stories. One new ExtProc package. No subcommand, no migration, no API change, and no change to the web application. Hundreds of target servers without configuration for each server.
 
 ## Constitution Check
 
@@ -52,12 +52,12 @@ The feature adds no domain entity and no typed identifier. The broker does not c
 
 | Principles | Decision and gate |
 |---|---|
-| I, III | Assessment and automatic approval are disabled by default. Each failure keeps the call for a person or denies it (D-04). The system conditions of FR-041 are Go code that a policy cannot disable (D-05). The plan adds no cryptography. The assurance case gets the new trust boundary (SR-011). |
-| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-03, D-05, D-07, D-14, D-15, D-16, D-17, and D-18. It records that the leaf package `internal/domain/approval/toolpattern` of `adrs/035-shared-tool-pattern-matching.md` also owns the arguments hash. The import rule of that ADR stays. It supersedes in part two Accepted ADRs: the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md`, and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The new ADR names each superseded decision. The two older ADR files do not change (Principle II). The rule "no approval records in the policy input" of `adrs/036-extproc-approval-cache-and-gate.md` stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
+| I, III | The default mode is `disabled`, and automatic approval needs the mode `auto_approve` (D-19). Each failure keeps the call for a person or denies it (D-04). The system conditions of FR-041 are Go code that a policy cannot disable (D-05). The plan adds no cryptography. The assurance case gets the new trust boundary (SR-011). |
+| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-03, D-05, D-07, D-14, D-15, D-16, D-17, D-18, and D-19. It records that the leaf package `internal/domain/approval/toolpattern` of `adrs/035-shared-tool-pattern-matching.md` also owns the arguments hash. The import rule of that ADR stays. It supersedes in part two Accepted ADRs: the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md`, and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The new ADR names each superseded decision. The two older ADR files do not change (Principle II). The rule "no approval records in the policy input" of `adrs/036-extproc-approval-cache-and-gate.md` stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
 | IV, X | The feature changes no OpenAPI document (API-001). The three contracts of API-006 are drafts. The stakeholder approved the direction of the spec but not these contracts. Approval of the contracts is a gate before implementation. |
 | VI, XII | ExtProc has its own structure under `adrs/011-extproc-standalone-binary.md`: packages under `internal/extproc/` and wiring in `cmd/extproc-token-exchange/root.go`. The new package has no import from broker adapters. The broker gets no change and no new wiring. |
 | VII | New keys are in the ExtProc configuration schema with defaults and validation ([contracts/assessment-configuration.md](contracts/assessment-configuration.md)). They include the organization values and the questions with their default. The plan adds no file format for these values. Update `docs/configuration.md`, the examples, `configs/config.extproc.docker.yaml`, and `internal/extproc/AGENTS.md`. The documentation states the minimum agentgateway release `v1.7.0` and the gateway requirements of [contracts/decision-request.md](contracts/decision-request.md). The Helm chart does not deploy ExtProc, thus it does not change. |
-| VIII, XIII | Write one Ginkgo case for each of the 19 scenarios before behavior, with realistic assertions and no pending or skipped case. Write unit tests first for the parser, the context builder, the validation, the automatic approval conditions, and the telemetry. |
+| VIII, XIII | Write one Ginkgo case for each of the 20 scenarios before behavior, with realistic assertions and no pending or skipped case. Write unit tests first for the parser, the context builder, the validation, the automatic approval conditions, and the telemetry. |
 | IX | The feature adds no migration, no column, and no repository change (DB-001). |
 | XI, XIV | The feature changes no page and no component, thus the design system rules have no subject and the spec needs no wireframe. The spec has three journeys with configuration, HTTP exchanges, and a table of the page values before and after. |
 | XV | [contracts/observability.md](contracts/observability.md) defines the events, spans, and instruments. Add the `assessment` namespace to `coding-standards/OPENTELEMETRY.md`. The audit record has no tool name, because no configuration bounds that value (D-12). The tests that the two standards require come before the telemetry code: the credential and the principal in log records and spans, and the attribute set of each instrument. The pull request amends `coding-standards/LOGGING.md` with two scoped rules for the audit record of an automatic approval: the time of a decision record, and the direct `Handle` call (D-13). |
@@ -78,7 +78,7 @@ specs/20261123-194542-decision-model-tool-approvals/
 ├── spec.md
 ├── decision-model-research.md       # Guidance about decision models (R-01 to R-20)
 ├── plan.md                          # This file
-├── research.md                      # Design decisions (D-01 to D-18) and verification record
+├── research.md                      # Design decisions (D-01 to D-19) and verification record
 ├── data-model.md
 ├── quickstart.md
 ├── contracts/
@@ -137,11 +137,11 @@ Four seams need care:
 |---|---|
 | Phase 0 | Refactoring without a behavior change: divide `Gate.Evaluate` into "find an existing decision" and "create a pending approval". Move the arguments hash to the leaf package `internal/domain/approval/toolpattern`, which ExtProc can import (D-07). |
 | Phase 1 | Setup: read the scoped `AGENTS.md` files and prepare the test doubles. Change the pinned agentgateway release to `v1.7.0` at each pin site of D-14: the Compose image with its index digest, the two test defaults, the image test, and the three CI workflows. Run the existing agentgateway suites in `tests/e2e/` and `tests/e2e/extproc/` and the verification cases. Change the report entries of the verification cases into assertions (see "Verification with agentgateway"). |
-| Phase 2 | Design preconditions: the stakeholder approvals, the Accepted ADR, the glossary, the configuration examples, the review of the default question set, the observability contract, and the 19 acceptance cases. |
+| Phase 2 | Design preconditions: the stakeholder approvals, the Accepted ADR, the glossary, the configuration examples, the review of the default question set, the observability contract, and the 20 acceptance cases. |
 | Phase 2.5 | Foundations, each with tests first: configuration keys with the default questions, listing parser and store, context builder, model client, answer validation, decision parser, and the automatic approval conditions of FR-041. |
 | US2 | The model interface in the request path: context, one request, no request for other calls. |
 | US3 | Each failure status, the second identical call, and the system rules for the policy result. |
-| US1 | The description and the risk level of the second evaluation in the approval request. The example policy. The authoring rules for questions and for policy descriptions. |
+| US1 | The four modes. The description and the risk level of the second evaluation in the approval request. The example policy. The authoring rules for questions and for policy descriptions. |
 | US4 | Automatic approval with the conditions of FR-041 and the audit record. |
 | Phase N | Constitution compliance: documentation, assurance case, security review, full gate. |
 
@@ -171,8 +171,9 @@ The tests do not exist at this time. All cases use the ExtProc suite with the br
 | Scenario | Observable result |
 |---|---|
 | US1.1 | External editor share: the tool double gets no call. The create request at the broker double has `risk_level: critical` and the description "Share a Drive file with a party outside the organization". |
-| US1.2 | Internal reader share in the `recommend` mode: the create request has `risk_level: low` and the description "Share a Drive file inside the organization". |
-| US1.3 | Assessment disabled: the model double gets no request, and the create request equals the request of today byte for byte. |
+| US1.2 | Internal reader share in the `guidance` mode: the create request has `risk_level: low` and the description "Share a Drive file inside the organization". |
+| US1.3 | The mode `disabled`: the model double gets no request, and the create request equals the request of today byte for byte. |
+| US1.4 | The `shadow` mode: one model request, the create request equals the request of today, and the audit record has the answers and `policy_action`. |
 | US2.1 | One model request with the default questions, the organization values, the server name, the listed definition, and the tool name and the arguments as the agent sent them. |
 | US2.2 | The request body has no principal, agent identifier, session identifier, credential, risk level, policy description, or other tool. |
 | US2.3 | Arguments that make the context larger than the limit: no model request, and the call waits in each mode. |
@@ -188,9 +189,9 @@ The tests do not exist at this time. All cases use the ExtProc suite with the br
 | US3.5 | With `incomplete`, an `allow` result ends as a pending approval. |
 | US4.1 | The call gets to the tool double, the broker double gets no create request, and one audit record has the answers and no argument value. |
 | US4.2 | The external editor share waits for a person. |
-| US4.3 | The `recommend` mode: the call waits, and the record has `would_auto_approve: true`. |
+| US4.3 | The `guidance` mode: the call waits, and the record has `would_auto_approve: true`. |
 
-The cases are in `tests/e2e/extproc/tool_assessment_test.go`. This file contains only the 19
+The cases are in `tests/e2e/extproc/tool_assessment_test.go`. This file contains only the 20
 scenario cases. The signal test is in `tests/e2e/extproc/assessment_signals_test.go`. It is not
 an acceptance scenario. The cases use the existing bootstrap with the broker double
 (`bootstrap/broker.go`) and a new decision endpoint double in the same directory. The test sends
@@ -244,6 +245,7 @@ Unit tests come first for each of these subjects:
 - The arguments hash in `internal/domain/approval/toolpattern`: `1`, `1.0`, `1e0`, and numbers in nested values give one hash through the decoder of ExtProc and through the decoder of the broker. The hash of each existing broker value does not change.
 - The authorizer: each evaluation outcome (a result, an undefined result, an error, a timeout) with the prepared query and with the SDK.
 - The audit write: an error from `Handle` and a disabled INFO level each keep the call for a person.
+- The modes: each of the four modes, with the result that the system uses in the modes `shadow` and `guidance` (FR-009).
 - The automatic approval conditions: each condition of FR-041 and its `unmet_condition` value. A permanent denial gives a denial (FR-042).
 - The telemetry: the `event` and the key attributes of each record, the principal as the output of the principal policy, no tool name in the audit record (D-12), each span name, attribute, and status, and the attribute set of each instrument.
 - The server: a batched MCP request and a request that is not MCP cause no assessment. The create request has no field that the request of today does not have (FR-038).

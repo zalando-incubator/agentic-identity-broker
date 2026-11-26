@@ -49,15 +49,16 @@ existing places. The page has no new element. The request still waits for her de
 It is safe to deploy this story first. This story also supplies the observations that are
 necessary for automatic approval.
 
-**Independent Test**: Start recommendation mode. Send one external share and one internal share.
+**Independent Test**: Start the guidance mode. Send one external share and one internal share.
 Make sure that the two calls wait for a person. Make sure that the two pending approvals have
 different descriptions and different risk levels.
 
 **Acceptance Scenarios**:
 
-1. **Given** recommendation mode and a policy that sends `drive.share_file` to approval, **When** the agent shares a file with `thirdparty.example.com` as editor and the model returns a high probability for `leaves_organization`, **Then** the system does not call the tool, and a pending approval exists. The approval has the risk level `critical` and the description "Share a Drive file with a party outside the organization".
+1. **Given** the guidance mode and a policy that sends `drive.share_file` to approval, **When** the agent shares a file with `thirdparty.example.com` as editor and the model returns a high probability for `leaves_organization`, **Then** the system does not call the tool, and a pending approval exists. The approval has the risk level `critical` and the description "Share a Drive file with a party outside the organization".
 2. **Given** the same setup, **When** the agent shares a file with an `example.com` colleague as reader and no answer shows a risk property, **Then** the pending approval has the risk level `low` and the description "Share a Drive file inside the organization". The call still waits for Alice.
-3. **Given** assessment is disabled, **When** the agent makes the same call, **Then** the system sends no model request. The approval request and the approval page are the same as before this feature.
+3. **Given** the mode `disabled`, **When** the agent makes the same call, **Then** the system sends no model request. The approval request and the approval page are the same as before this feature.
+4. **Given** the shadow mode, **When** the agent shares a file with `thirdparty.example.com` as editor, **Then** the system sends one model request and evaluates the policy with the answers. The approval request is the same as before this feature. The audit record has the answers and the action that the policy returns with them.
 
 ---
 
@@ -142,7 +143,7 @@ that the call waits for a person.
 
 1. **Given** automatic approval mode and a policy that allows an internal reader share, **When** the agent shares a file with an `example.com` colleague as reader and all answers satisfy the rule, **Then** the system forwards the call to the tool without an elicitation. The broker creates no pending approval. One audit record has the answering model and each answer value. The audit record contains no argument value.
 2. **Given** the same setup, **When** the agent shares a file with `thirdparty.example.com` as editor, **Then** the call does not satisfy the rule. The call waits for a person, as in User Story 1.
-3. **Given** recommendation mode, **When** the policy returns `allow` after the assessment, **Then** the call waits for a person. The audit record shows that the policy lets this call proceed in automatic approval mode.
+3. **Given** the guidance mode, **When** the policy returns `allow` after the assessment, **Then** the call waits for a person. The audit record shows that the policy lets this call proceed in automatic approval mode.
 
 ---
 
@@ -192,8 +193,7 @@ content rules in these examples are normative.
 ```yaml
 authorization:
   assessment:
-    enabled: true                    # false (default): current behavior, no model request
-    mode: "recommend"                # a person decides every call; "auto_approve" is opt-in
+    mode: "guidance"                 # "disabled" (default), "shadow", "guidance", or "auto_approve"
     endpoint: "https://agentgateway.internal.example.com/v1/decisions"
     model: "jev-1.14.0"              # a versioned model, not a moving alias (R-20)
     credential_file: "/etc/extproc/assessment/token"
@@ -379,8 +379,8 @@ result := {"action": "approval_required", "approval_context": approval_context} 
 
 Without an assessment, the policy returns `approval_required` for each share, with the
 description "Share a Drive file" and the risk level `medium`. This first result makes an
-assessment of the call possible. In `recommend` mode, an `allow` result after the assessment
-does not let the call proceed.
+assessment of the call possible. In the `guidance` mode, an `allow` result after the
+assessment does not let the call proceed.
 
 The policy refers to the questions by name. The description and the risk level are the only
 values that Alice sees. Each description is a constant text of the policy.
@@ -759,7 +759,7 @@ The policy returns:
 
 The call proceeds, thus the system does not use the `approval_context`.
 
-Variant (US1.2): In the recommendation mode, the call waits for Alice. The pending approval has
+Variant (US1.2): In the guidance mode, the call waits for Alice. The pending approval has
 the risk level `low` and the description "Share a Drive file inside the organization".
 
 The mode is `auto_approve`, the result is `allow`, and the assessment is complete. The system
@@ -794,7 +794,7 @@ The record also identifies the principal in the form that the logging standard r
 contains no argument value and no context text. `contracts/observability.md` sets the field names
 in agreement with `coding-standards/LOGGING.md`.
 
-Variant (US4.3): With `mode: "recommend"`, the same call waits for Alice. The record then
+Variant (US4.3): With `mode: "guidance"`, the same call waits for Alice. The record then
 contains `"outcome": "human_review"` and `"would_auto_approve": true`.
 
 **Observable result**: The colleague can read the file. The agent session continued without a
@@ -838,9 +838,10 @@ decision of Alice.
 - **FR-003**: After an assessment attempt, the system MUST evaluate the policy again with the assessment as additional input. The policy result MUST be the only source of the final action.
 - **FR-004**: After an assessment, a policy result MUST be able to deny the call or keep it for human approval. Under FR-040 to FR-045, the result can also let the call proceed.
 - **FR-005**: The system MUST NOT interpret an answer as an action. Only the policy result selects the action. The default question set MUST NOT contain a question that asks whether to approve, allow, or deny a call. The authoring rules of FR-027 MUST prohibit such a question (R-01, R-02).
-- **FR-006**: Assessment is disabled by default. While assessment is disabled, the system MUST operate as it did before this feature.
+- **FR-006**: The mode `disabled` MUST be the default. In this mode, the system MUST send no model request and MUST operate as it did before this feature.
 - **FR-007**: The system MUST send a maximum of one model request for each assessed call. A question MUST NOT depend on an earlier answer (R-08).
 - **FR-008**: This requirement applies to an assessed call that waits for human approval. If the same principal and agent send the identical call again, the system MUST give the same outcome. The system MUST NOT send a new model request before the pending approval expires. Two calls are identical if they have the same principal, agent, and tool name, and the same hash of the canonical arguments. Number spellings such as `1`, `1.0`, and `1e0` give one hash. The target server is not part of the comparison, as for existing approvals.
+- **FR-009**: One configuration key MUST select the mode of the feature. The modes are `disabled`, `shadow`, `guidance`, and `auto_approve`. In each mode apart from `disabled`, the system MUST assess a call under FR-001 and MUST evaluate the policy again under FR-003. In the `shadow` mode, the system MUST NOT use the result of that evaluation: the call gets the outcome, the description, and the risk level of the policy result without an assessment. In the `guidance` mode, the system MUST use the result of that evaluation, and it MUST keep a call with an `allow` result for human approval. In the `auto_approve` mode, the system MUST also let a call proceed under FR-041.
 
 **Assessment context (the data that the model receives)**
 
@@ -913,7 +914,7 @@ Conditions for automatic approval:
 - **FR-041**: The system MUST let a call proceed without human approval only if all conditions in the table "Conditions for automatic approval" are true.
 - **FR-042**: If the policy result is `allow` and one condition of FR-041 is false, the system MUST use `approval_required` as the result. The condition for a permanent denial is the exception. If a permanent denial applies, the system MUST deny the call (SR-003).
 - **FR-043**: A policy MUST NOT be able to disable a condition of FR-041.
-- **FR-044**: In recommendation mode, the system MUST record each call that satisfies all conditions of FR-041 apart from the mode. The system MUST keep each such call for human approval.
+- **FR-044**: In the `shadow` mode and in the `guidance` mode, the system MUST record each call that satisfies all conditions of FR-041 apart from the mode. The system MUST keep each such call for human approval.
 - **FR-045**: A call that proceeds under FR-041 MUST NOT create an approval record and MUST NOT change an existing approval record.
 
 **Audit and observability**
@@ -1025,8 +1026,7 @@ The policy decision point is the standalone ExtProc service. It has its own conf
 in agreement with `adrs/011-extproc-standalone-binary.md`. The Helm chart does not deploy it.
 
 **Configuration Parameters**:
-- **authorization.assessment.enabled**: Boolean. The default is `false`. It enables the feature. While it is `true`, the log level must permit INFO records, because the audit record of FR-060 has that level.
-- **authorization.assessment.mode**: `recommend` (default) or `auto_approve`.
+- **authorization.assessment.mode**: `disabled` (default), `shadow`, `guidance`, or `auto_approve` (FR-009). The feature is enabled if the mode is not `disabled`. While it is enabled, the log level must permit INFO records, because the audit record of FR-060 has that level.
 - **authorization.assessment.endpoint**: The URL of the decision endpoint. It is required while the feature is enabled. The endpoint must use transport protection. Only the existing development setting `oauth2.tls.allow_http` permits plaintext. That setting applies to each outbound endpoint of the service and to each host. It is not for production.
 - **authorization.assessment.model**: The model name in the request. It is required while the feature is enabled.
 - **authorization.assessment.credential_file**: An optional file with the credential for the endpoint. The system never logs the credential.
@@ -1106,12 +1106,13 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **The approver sees no new element.** The stakeholder decided on 2026-11-26 that the approver gets one statement, and that this statement is a part of the policy result. The existing description and the existing risk level are that statement. A list of findings, a recommendation, a notice about the assessment, and a stored assessment summary are out of scope. Thus, the broker, its API, its database, and the approval page do not change.
 - **The product has default questions.** This spec defines the default question set (Journey 1, step 2), and the service contains it. An operator can replace it in the configuration. A policy refers to the questions by name. No model measured the default questions, and three of them got new wording after a smoke test ([research.md](research.md), D-17).
 - **The organization values and the questions are service configuration.** They are keys of the ExtProc configuration and use its existing loader, defaults, and validation. A separate file for them is out of scope.
-- **The model always gets the arguments as the agent sent them.** The system does not filter, select, or change an argument. A filter needs rules about the input schema of each tool, and it hides data from the model that a person sees. The questions are about the effect of one call, and the arguments show that effect. Without them, the model cannot answer. Thus, the feature has no setting that withholds argument values: the operator enables assessment, or does not. Issue #206 says that remote assessment must not forward the full argument map implicitly, and it asks which argument fields can leave the deployment. The stakeholder decided on 2026-11-26 that the key `enabled` is the explicit decision, and that the arguments can leave as the agent sent them. The documentation states what the system sends (SR-006). A model inside the deployment keeps the values in the organization.
+- **The model always gets the arguments as the agent sent them.** The system does not filter, select, or change an argument. A filter needs rules about the input schema of each tool, and it hides data from the model that a person sees. The questions are about the effect of one call, and the arguments show that effect. Without them, the model cannot answer. Thus, the feature has no setting that withholds argument values: the operator enables assessment, or does not. Issue #206 says that remote assessment must not forward the full argument map implicitly, and it asks which argument fields can leave the deployment. The stakeholder decided on 2026-11-26 that a mode other than `disabled` is the explicit decision, and that the arguments can leave as the agent sent them. The documentation states what the system sends (SR-006). A model inside the deployment keeps the values in the organization.
 - **The policy shows the trust in a server.** A trust flag for a server does not exist. A call proceeds automatically only if a policy rule applies to it.
 - **Model names.** OpenAI documents `gpt-6-luna` as the model for the Decisions API. The spec uses the term "the configured decision model". Model names are configuration values.
 - **The system does not send the static risk level to the model.** The example in the issue includes the policy risk level in the model input. This spec excludes it, because it is not evidence about the call and the policy has it (R-11). The policy can derive the risk level from the answers.
 - **One question set for all tools.** A question set for each tool is out of scope.
 - **Two question types.** Choice questions without a sequence are out of scope, because their answers depend on option names and option sequence (R-06).
+- **Four modes give a sequence for the rollout.** An operator starts with the mode `shadow`: the model gets the calls, and the logs show the answers and the policy results, but no approver and no call gets a different outcome. The mode `guidance` gives the approver the description and the risk level of the policy. The mode `auto_approve` also lets the policy let a call proceed. In the `shadow` mode, a call still waits for the model request before the approval request, thus it gets the delay of an assessment.
 - **Automatic approval creates no approval record.** The audit record is a structured log record at the policy decision point, as for existing authorization decisions. A history of automatically approved calls for the user in the broker is out of scope. Thus, the broker creates no record for calls that need no person. The read of the approval state before an assessment still applies to these calls. The issue proposes this design.
 - **Measurement is out of scope.** The product does not record cases, measure a model, or tune questions and thresholds. It has no evaluation run and no evaluation record. The policy input contains the call and the answers, and the policy result follows from them. Thus, the decision logs of the policy engine show the input and the result, if the operator enables these logs. An operator can use the logs for an analysis outside the product. That analysis is not a part of this spec.
 - **The system does not cache positive results.** The system assesses each call that can proceed automatically. It remembers only the outcome "waits for a person" of FR-008.

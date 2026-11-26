@@ -88,7 +88,9 @@ argument value or an answer value (FR-039, SR-008). The system does not examine 
 
 ## 4. Rules that the system applies to the result
 
-The system applies these rules in Go code. A policy cannot change them (FR-043).
+The system applies these rules in Go code. A policy cannot change them (FR-043). The rules are
+for the modes `guidance` and `auto_approve`. In the `shadow` mode, the system evaluates the
+policy a second time and then uses the result of the first evaluation for each call (FR-009).
 
 | Result of the second evaluation | System behavior |
 |---|---|

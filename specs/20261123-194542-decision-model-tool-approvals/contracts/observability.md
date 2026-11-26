@@ -47,7 +47,9 @@ Attributes of `assessment.tool_call.assessed`:
 | `arguments_ref` | `sha256:` and the arguments hash of the shared leaf package (D-07) |
 | `assessment_status` | A status of D-04 |
 | `outcome` | `automatic_approval`, `human_review`, or `denied` |
-| `would_auto_approve` | Boolean. True in the `recommend` mode if all other conditions of FR-041 are true (FR-044) |
+| `assessment_mode` | `shadow`, `guidance`, or `auto_approve` |
+| `policy_action` | The action of the policy result after the assessment: `allow`, `approval_required`, or `deny`. Absent if the second evaluation had an error or a timeout |
+| `would_auto_approve` | Boolean. True in the `shadow` mode and in the `guidance` mode if all other conditions of FR-041 are true (FR-044) |
 | `unmet_condition` | For an `allow` result that did not proceed: `mode`, `status`, or `denial` |
 | `model` | The answering model |
 | `answers` | A group with the question name as the key. The value is the probability, or the list of level probabilities, or the answer state if no value exists |
@@ -100,7 +102,7 @@ Useful signals for an operator:
 
 - A high share of `timeout` or `unavailable` shows a problem with the decision endpoint.
 - A high share of `definition_missing` after a start shows that agents do not list tools through this instance.
-- The share of `would_auto_approve` in the `recommend` mode estimates the effect of the `auto_approve` mode.
+- The share of `would_auto_approve` in the `shadow` mode or the `guidance` mode estimates the effect of the `auto_approve` mode.
 
 ## Broker
 

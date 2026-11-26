@@ -8,7 +8,7 @@
 
 **Format**: `- [ ] [ID] [P?] [Story?] Description`. `[P]` shows a task that can run in parallel with its neighbors. Paths are relative to the repository root. A document name without a path is a file in the feature directory. An identifier can have a letter, for example `T056a`. Task identifiers are stable: T088, T093, and T096 are in a different phase than their numbers show and keep their identifiers.
 
-The scope changes of 2026-11-26 (`research.md`, D-16 to D-18) removed these tasks: T008, T009, T021 to T024, T027, T028, T028a, T039, T040, T051, T056, T059, T070 to T087, T089 to T092, T090a, T095a, T100, T112, and T113. Their identifiers are not used again. T118 to T121 are new.
+The scope changes of 2026-11-26 (`research.md`, D-16 to D-19) removed these tasks: T008, T009, T021 to T024, T027, T028, T028a, T039, T040, T051, T056, T059, T070 to T087, T089 to T092, T090a, T095a, T100, T112, and T113. Their identifiers are not used again. T118 to T121 are new.
 
 ## Feature Scope
 
@@ -78,7 +78,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 ### Phase 2a: Domain Model and Glossary (Principles II, V)
 
 - [ ] T013 Add the glossary terms of `spec.md` ("Domain Model") to the glossary in `ARCHITECTURE.md`. Add the invariant of FR-041. Correct the `OPADecision` entry, because this feature changes that type (D-05).
-- [ ] T014 Write `adrs/20261124-212043-decision-model-assessment.md` with the status Proposed. Record D-01, D-02, D-03, D-05, D-07, D-14, D-15, D-16, D-17, and D-18, and copy the verification record of `research.md`. State that the ADR supersedes in part the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md` and the gate of `adrs/036-extproc-approval-cache-and-gate.md`, and name each superseded decision. Do not change those two files. Set the status to Accepted after T020. Add the ADR to the ADR index in `ARCHITECTURE.md` and in `AGENTS.md`, and show the relation in the index rows of the two older ADRs (Principle II). Record that the leaf package `internal/domain/approval/toolpattern` also owns the arguments hash with its canonical form (T002a, T066), and that the import rule of `adrs/035-shared-tool-pattern-matching.md` stays.
+- [ ] T014 Write `adrs/20261124-212043-decision-model-assessment.md` with the status Proposed. Record D-01, D-02, D-03, D-05, D-07, D-14, D-15, D-16, D-17, D-18, and D-19, and copy the verification record of `research.md`. State that the ADR supersedes in part the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md` and the gate of `adrs/036-extproc-approval-cache-and-gate.md`, and name each superseded decision. Do not change those two files. Set the status to Accepted after T020. Add the ADR to the ADR index in `ARCHITECTURE.md` and in `AGENTS.md`, and show the relation in the index rows of the two older ADRs (Principle II). Record that the leaf package `internal/domain/approval/toolpattern` also owns the arguments hash with its canonical form (T002a, T066), and that the import rule of `adrs/035-shared-tool-pattern-matching.md` stays.
 - [ ] T015 Add the new trust boundary to `ARCHITECTURE.md` after T013 and T014, because the three tasks change one file: the decision endpoint, and the tool definition as input that the server controls (SR-011, D-02).
 
 ### Phase 2b: Configuration Design (Principle VII)
@@ -94,9 +94,9 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 ### Phase 2f: Acceptance Test Design (Principles XIII, XIV)
 
-- [ ] T025 Write one Ginkgo `It` for each of US1.1 to US1.3, US2.1 to US2.8, and US3.1 to US3.5 in `tests/e2e/extproc/tool_assessment_test.go`. Use the observable results of the mapping table in `plan.md`. Put the scenario identifier in a comment on each case.
+- [ ] T025 Write one Ginkgo `It` for each of US1.1 to US1.4, US2.1 to US2.8, and US3.1 to US3.5 in `tests/e2e/extproc/tool_assessment_test.go`. Use the observable results of the mapping table in `plan.md`. Put the scenario identifier in a comment on each case.
 - [ ] T026 Write one Ginkgo `It` for each of US4.1 to US4.3 in `tests/e2e/extproc/tool_assessment_test.go`, after T025.
-- [ ] T029 Run `just test-e2e-extproc`. Make sure that the 19 cases of T025 and T026 compile and fail on their assertions. Make sure that no case in `tests/e2e/extproc/tool_assessment_test.go` uses `XIt`, `PIt`, or `Skip`. Without a local container runtime, the container-backed cases can run for the first time in CI (Principle XIII).
+- [ ] T029 Run `just test-e2e-extproc`. Make sure that the 20 cases of T025 and T026 compile and fail on their assertions. Make sure that no case in `tests/e2e/extproc/tool_assessment_test.go` uses `XIt`, `PIt`, or `Skip`. Without a local container runtime, the container-backed cases can run for the first time in CI (Principle XIII).
 - [ ] T030 Compare the three journeys of `spec.md` with the approved contracts. Correct each difference. Make sure that the create request of Journey 1, step 8, agrees with `api/enduser/openapi.yaml`, which the feature does not change (Principle XIV).
 
 ### Phase 2g: Observability Design (Principle XV)
@@ -105,7 +105,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T032 [P] Add the namespace `assessment` to the table in section 4.1 of `coding-standards/OPENTELEMETRY.md`. State this change in the description of the pull request (Principle XV).
 - [ ] T033 [P] List the signals that need a safety test in `contracts/observability.md`: the bearer credential of the model request in log records and spans, the principal in the audit record as the output of the principal policy, the absent tool name (D-12), and the attribute set of each instrument (`LOGGING.md` section 9, `OPENTELEMETRY.md` section 7). T056a and T056b write these tests.
 
-**Checkpoint**: The contracts have approval, the ADR is Accepted, and 19 acceptance cases fail on realistic assertions.
+**Checkpoint**: The contracts have approval, the ADR is Accepted, and 20 acceptance cases fail on realistic assertions.
 
 **Phase 2.7 (entity boilerplate)**: Not applicable. The feature adds no entity, no handler, and no repository (`plan.md`).
 
@@ -115,7 +115,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 **Purpose**: Build the parts that each user story needs. Write the test task of each pair first.
 
-- [ ] T034 Write tests in `internal/extproc/config/validate_assessment_test.go` and `internal/extproc/config/loader_assessment_test.go` for each key, default, and validation rule of `contracts/assessment-configuration.md` section 1. Cover each rule of `data-model.md` `Organization Context.name`, `.description`, and `.internal_domains`. Include a missing organization value. Make sure that the schema has no key for an individual server or tool and no key that withholds argument values (FR-016). Include assessment enabled with `log.level: warn` in each mode, and a path that is a directory (D-13).
+- [ ] T034 Write tests in `internal/extproc/config/validate_assessment_test.go` and `internal/extproc/config/loader_assessment_test.go` for each key, default, and validation rule of `contracts/assessment-configuration.md` section 1. Cover each rule of `data-model.md` `Organization Context.name`, `.description`, and `.internal_domains`. Cover the four values of `mode` and its default `disabled` (FR-009). Include a missing organization value. Make sure that the schema has no `enabled` key for the feature, no key for an individual server or tool, and no key that withholds argument values (FR-016). Include assessment enabled with `log.level: warn` in each mode, and a path that is a directory (D-13).
 - [ ] T035 Add the assessment keys to `internal/extproc/config/config.go`, `loader.go`, and `validate.go` until T034 passes. They apply the rules of `data-model.md` `Organization Context.name`, `.description`, and `.internal_domains` (Principle VII, D-17).
 - [ ] T036 [P] Write tests in `internal/extproc/config/validate_assessment_questions_test.go` for each rejection of `contracts/assessment-configuration.md` section 2. Cover `data-model.md` `Question Set.questions`. The default value of `questions` equals the questions of `spec.md` Journey 1, step 2, and of `examples/config/extproc-tool-assessment.yaml`, and it obeys each rule. A list in the configuration replaces the full default list (FR-024, FR-028).
 - [ ] T037 Extend `internal/extproc/config/validate_assessment_questions_test.go` after T036. Cover each rule of `data-model.md` `Assessment Question.name`, `.type`, `.instructions`, `.yes_when`, `.no_when`, and `.levels`. Include the placeholder rule and the length limits of the criteria and the level texts (FR-025, FR-028).
@@ -191,20 +191,20 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 **Goal**: A call that waits for a person gets the description and the risk level that the policy derived from the answers. The approval request has no new field.
 
-**Independent Test**: Run the cases US1.1 to US1.3 in `tests/e2e/extproc/tool_assessment_test.go`.
+**Independent Test**: Run the cases US1.1 to US1.4 in `tests/e2e/extproc/tool_assessment_test.go`.
 
 ### Tests first
 
-- [ ] T118 [P] [US1] Extend `internal/extproc/server/server_test.go`. After a complete assessment, the create request has the description and the risk level of the second evaluation. The create request has no field that the request of today does not have. With assessment disabled, the create request equals the request of today (FR-035, FR-036, FR-038).
+- [ ] T118 [P] [US1] Extend `internal/extproc/server/server_test.go`. After a complete assessment, the create request has the description and the risk level of the second evaluation. The create request has no field that the request of today does not have. In the `shadow` mode, the system sends the model request and evaluates the policy a second time, and the create request has the description and the risk level of the first evaluation. In the mode `disabled`, the create request equals the request of today (FR-009, FR-035, FR-036, FR-038).
 - [ ] T088 [P] [US1] Write the example policy `examples/config/assessment-policy.rego` from `spec.md` Journey 1, step 3. Evaluate it with the OPA library against the first evaluation and the inputs of journeys 1 to 3 in a test in `internal/extproc/assessment/example_policy_test.go`. The test makes sure that each description is a constant text of the policy (FR-039).
 
 ### Implementation
 
-- [ ] T119 [US1] Give the description and the risk level of the second evaluation to the gate in `internal/extproc/server/server.go` until T118 passes. Use the existing fields of `approval.Invocation`. Do not change `internal/extproc/approval/client.go` (FR-035, FR-038, D-16).
+- [ ] T119 [US1] Give the description and the risk level of the second evaluation to the gate in `internal/extproc/server/server.go` until T118 passes. In the `shadow` mode, give the gate the result of the first evaluation. Use the existing fields of `approval.Invocation`. Do not change `internal/extproc/approval/client.go` (FR-035, FR-038, D-16).
 - [ ] T120 [US1] Write `docs/guides/assess-tool-calls.md`. Describe the organization values and the default question set. State that the system sends the tool name and the full arguments of each assessed call to the decision endpoint while assessment is enabled (SR-006). Give the authoring rules for questions in the configuration with one correct and one incorrect question for each rule, and an annotated organization description and question set. Give the rules for a policy description: constant texts, and no argument value or answer value. State the residual risks of SR-010. State that the default questions and the example thresholds have no measured results, and that the decision logs of the policy engine contain the call and the answers for an analysis outside the product (FR-027, FR-039, FR-061, SR-008, SR-010).
-- [ ] T121 [US1] Run `just test-e2e-extproc`. Make sure that US1.1 and US1.2 in `tests/e2e/extproc/tool_assessment_test.go` pass (SC-001).
+- [ ] T121 [US1] Run `just test-e2e-extproc`. Make sure that US1.1, US1.2, and US1.4 in `tests/e2e/extproc/tool_assessment_test.go` pass (SC-001).
 
-**Checkpoint**: Recommendation mode operates. Automatic approval is not possible at this point.
+**Checkpoint**: The modes `shadow` and `guidance` operate. Automatic approval is not possible at this point.
 
 ---
 
@@ -226,7 +226,7 @@ The tests and the code of the conditions are T093 and T096 in Phase 2.5.
 
 - [ ] T097 [US4] Write the audit write in `internal/extproc/assessment/audit.go` until T094 passes. It writes the record of T062 through `Handler.Handle` and returns the write error. Write the record before the call proceeds (FR-060, D-13).
 - [ ] T098 [US4] Add the read-only denial lookup to `internal/extproc/approval/cache.go` until T095 passes.
-- [ ] T099 [US4] Add the automatic approval path to the approval branch in `internal/extproc/server/server.go` until T095b passes (SC-002). The sequence is the conditions, the denial lookup, the audit write, and then the forward of the call. A matching permanent denial denies the call (FR-042). In the `recommend` mode, record `would_auto_approve` and keep the call for a person. A call that proceeds creates no approval record (FR-041, FR-044, FR-045, DB-004).
+- [ ] T099 [US4] Add the automatic approval path to the approval branch in `internal/extproc/server/server.go` until T095b passes (SC-002). The sequence is the conditions, the denial lookup, the audit write, and then the forward of the call. A matching permanent denial denies the call (FR-042). In the modes `shadow` and `guidance`, record `would_auto_approve` and keep the call for a person. A call that proceeds creates no approval record (FR-041, FR-044, FR-045, DB-004).
 - [ ] T100a [US4] Update `docs/guides/token-exchange-gateway.md`: the minimum agentgateway release `v1.7.0`, and the fact that in the `auto_approve` mode a call with the result `approval_required` can proceed without a pending approval and without an elicitation (FR-041, D-14).
 - [ ] T101 [US4] Run `just test-e2e-extproc`. Make sure that US4.1 to US4.3 in `tests/e2e/extproc/tool_assessment_test.go` pass. Make sure that the signal test of T056b passes with the automatic approval cases (SC-006).
 
@@ -243,7 +243,7 @@ The tests and the code of the conditions are T093 and T096 in Phase 2.5.
 - [ ] T102 Make sure that each task and each change refers to a requirement of `spec.md`. Make sure that no change is unrelated to the feature (Feature Scope).
 - [ ] T103 Make sure that `ARCHITECTURE.md` has the glossary terms and the trust boundary. Make sure that the ADR of T014 is Accepted, names the decisions that it supersedes, and agrees with the code. Make sure that `examples/config/README.md` refers to each new example. Make sure that the Helm chart has no key of the feature, because it does not deploy ExtProc (`adrs/011-extproc-standalone-binary.md`, Principles II, V, VII).
 - [ ] T104 Make sure that the feature diff has no change under `api/`, `docs/api/`, `migrations/`, `internal/adapters/`, `internal/domain/storage/` apart from T002a, and `web/` (API-001, API-005, DB-001, FR-038, D-16). Make sure that the approval of T020 is in the pull request (Principles IV, X).
-- [ ] T105 Make sure that `tests/e2e/extproc/tool_assessment_test.go` contains exactly 19 cases, one for each scenario. Each case has its scenario identifier, and no case is pending or skipped. The case of T056b is in its own file and is not a scenario case (Principle XIII).
+- [ ] T105 Make sure that `tests/e2e/extproc/tool_assessment_test.go` contains exactly 20 cases, one for each scenario. Each case has its scenario identifier, and no case is pending or skipped. The case of T056b is in its own file and is not a scenario case (Principle XIII).
 - [ ] T105a Make sure that each journey of `spec.md` refers to its scenarios. Make sure that the configuration, the HTTP exchanges, and the default question set agree with the requirements, the contracts, and the code (Principle XIV).
 
 ### Implementation phase verification
@@ -253,7 +253,7 @@ The tests and the code of the conditions are T093 and T096 in Phase 2.5.
 - [ ] T108 [P] Update `docs/resources/assurance-case.md`. Add the trust boundary to the decision endpoint. Add the tool definition as input that the server controls. Add the controls of the security requirements of `spec.md` (SR-011). Add the residual risks of SR-010 and the rule for policy descriptions (SR-008).
 - [ ] T109 Review the feature code against `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md` with their review checklists. Make sure that no automated check is disabled (Principle XV).
 - [ ] T109a Make sure that the tests, the contract entries, and the registry entry that the two standards require exist: the credential is absent from log records and spans, the principal value is the output of the principal policy, a test asserts the attribute set of each instrument, `contracts/observability.md` lists each instrument, and `coding-standards/OPENTELEMETRY.md` has the namespace `assessment` (Principle XV).
-- [ ] T110 Make sure that assessment and automatic approval are disabled by default. Make sure that each failure path keeps the call for a person or denies it. Make sure that `internal/extproc/assessment/` contains no cryptography (Principles I and III, SR-001 to SR-003).
+- [ ] T110 Make sure that the default mode is `disabled`. Make sure that each failure path keeps the call for a person or denies it. Make sure that `internal/extproc/assessment/` contains no cryptography (Principles I and III, SR-001 to SR-003).
 - [ ] T111 Make sure that `internal/extproc/assessment/` imports no broker adapter (Principle VI).
 - [ ] T111a Make sure that `cmd/extproc-token-exchange/root.go` is the only place that connects the assessment parts. Make sure that the broker has no change (Principle XII, `adrs/011-extproc-standalone-binary.md`).
 - [ ] T112a Make sure that each behavior of the feature has a test that was written before it. Make sure that the tests changed only in small parts during implementation. Make sure that no Bash script validates code correctness. Evidence of a failed run is not necessary (Principle VIII).

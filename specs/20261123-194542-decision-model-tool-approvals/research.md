@@ -6,14 +6,14 @@
 
 This document records the design decisions of the planning phase. The guidance about decision
 models is in [decision-model-research.md](decision-model-research.md) (`R-01` to `R-20`). This
-document refers to its own decisions as `D-01` to `D-18`.
+document refers to its own decisions as `D-01` to `D-19`.
 
 The first version of this document used the code of this repository and published documentation
 only. On 2026-11-24, Docker tests against agentgateway `v1.5.0` and `v1.7.0` replaced the
 assumptions of D-02, D-03, and D-07 with observed results. Each decision states its evidence. The
 section "Verification record" at the end gives the commands and the test files.
 
-On 2026-11-26, the stakeholder narrowed the scope. D-16, D-17, and D-18 record the decisions.
+On 2026-11-26, the stakeholder narrowed the scope. D-16 to D-19 record the decisions.
 D-06, D-08, D-09, D-10, and D-11 are withdrawn. D-02, D-03, D-05, D-07, and D-12 changed with
 them.
 
@@ -227,7 +227,7 @@ reads no new field. It reads the existing `approval_context` also on an `allow` 
 the result. The contract is in [contracts/policy-assessment.md](contracts/policy-assessment.md).
 
 An `allow` result can carry an `approval_context`. The system uses it only if a condition of
-FR-041 is false and the call waits for a person. Without it, the recommendation mode gives the
+FR-041 is false and the call waits for a person. Without it, the guidance mode gives the
 person no call-specific description for exactly the calls that a rule approves (US1.2, FR-044).
 
 If the second evaluation fails, ExtProc uses the result of the first evaluation, with its
@@ -539,7 +539,7 @@ stakeholder removed them: the model must see the call that a person sees. One li
 the size of the full context.
 
 Issue #206 says: "Remote assessment must not implicitly forward the full argument map." The
-spec does not follow this sentence to the letter. The explicit decision is the key `enabled`,
+spec does not follow this sentence to the letter. The explicit decision is a mode other than `disabled`,
 and the documentation states what the system sends (SR-006, SR-010). A model inside the
 deployment keeps the values in the organization.
 
@@ -567,13 +567,41 @@ tuning outside the product. The product does not need a second mechanism for tha
 - A changed tool definition, a changed question, or a changed model changes the answers. The system does not stop automatic approval after such a change, and it does not report the change. A policy can require one answering model name, because the policy input has that name.
 - The default questions and the example thresholds have no measured results. The documentation states this (SR-010).
 - The policy result has no rule name. An earlier design required the field `auto_approval.rule` on an `allow` result, for the audit record. The stakeholder removed it: the decision log has the input and the result, and a policy can add a field of its own to the result. One limit applies. The policy engine writes decision logs only with an OPA configuration file that enables them. With a local policy path, it writes none, and the audit record of ExtProc is then the only record of the answers.
-- The record of the `recommend` mode stays: it shows that the policy lets a call proceed in the `auto_approve` mode (FR-044). An operator can count these records before the change of the mode.
+- The record of the modes `shadow` and `guidance` stays: it shows that the policy lets a call proceed in the `auto_approve` mode (FR-044). An operator can count these records before the change of the mode.
 
 **Alternatives considered**: An evaluation run on the production code path with a labeled case
 set, an evaluation record with fingerprints of the questions and of each tool definition, and a
 measured default question set. This design was a part of the feature until 2026-11-26. It gives
 a measured false-approval rate and a stop after each change, and it adds a subcommand, three
 file formats, and a case set that the project must maintain.
+
+## D-19 — One key selects one of four modes
+
+**Decision**: The key `authorization.assessment.mode` has four values. The feature has no
+separate `enabled` key.
+
+| Mode | Model request and second evaluation | Effect of the second evaluation |
+|---|---|---|
+| `disabled` (default) | No | None. The service operates as before this feature. |
+| `shadow` | Yes | None. The call gets the outcome, the description, and the risk level of the first evaluation. The audit record and the decision log show the answers and the second result. |
+| `guidance` | Yes | The approver gets the description and the risk level of the second result. A denial of the second result denies the call. An `allow` result waits for a person. |
+| `auto_approve` | Yes | As `guidance`. An `allow` result also lets the call proceed, if the conditions of FR-041 are true. |
+
+**Rationale**: The stakeholder asked for these modes on 2026-11-26. One key with four values has
+no combination without a meaning, which two keys have. The modes are a sequence for a rollout:
+an operator looks at the answers in the `shadow` mode before an approver or a call depends on
+them.
+
+**Consequences**:
+
+- In the `shadow` mode, a call still waits for the model request and the second evaluation before ExtProc sends the approval request. Thus, the mode adds the delay of an assessment and changes no other result.
+- The `shadow` mode is useful only with a record of the answers. The audit record of ExtProc exists in each enabled mode. The decision log of the policy engine exists only with an OPA configuration file that enables it (D-18).
+- The name `guidance` replaces the earlier name `recommend`.
+
+**Alternatives considered**: A Boolean key `enabled` with a second key for the mode. It permits
+`enabled: false` with `mode: auto_approve`, and the reader must know which key wins. A `shadow`
+mode that sends the model request after the approval request adds no delay, but it needs a second
+code path that the other modes do not use.
 
 ## Verification record
 

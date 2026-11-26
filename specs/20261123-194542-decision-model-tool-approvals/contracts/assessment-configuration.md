@@ -13,17 +13,16 @@ change.
 
 | Key | Type | Default | Validation |
 |---|---|---|---|
-| `authorization.assessment.enabled` | boolean | `false` | It requires `authorization.enabled` and `tool_approvals.enabled`. It requires `log.level` `debug` or `info`, because the audit record has the INFO level (FR-060, D-13). |
-| `authorization.assessment.mode` | string | `recommend` | `recommend` or `auto_approve`. |
-| `authorization.assessment.endpoint` | URL | none | Required while enabled. HTTPS, or HTTP if `oauth2.tls.allow_http` is true. That development setting does not examine the host. With it, the context and the credential can go to each configured host without transport protection. |
-| `authorization.assessment.model` | string | none | Required while enabled. |
+| `authorization.assessment.mode` | string | `disabled` | `disabled`, `shadow`, `guidance`, or `auto_approve` (FR-009). Assessment is enabled if the mode is not `disabled`. An enabled mode requires `authorization.enabled` and `tool_approvals.enabled`. It requires `log.level` `debug` or `info`, because the audit record has the INFO level (FR-060, D-13). |
+| `authorization.assessment.endpoint` | URL | none | Required while assessment is enabled. HTTPS, or HTTP if `oauth2.tls.allow_http` is true. That development setting does not examine the host. With it, the context and the credential can go to each configured host without transport protection. |
+| `authorization.assessment.model` | string | none | Required while assessment is enabled. |
 | `authorization.assessment.credential_file` | path | none | Optional. The file has a maximum of 4 KiB. |
 | `authorization.assessment.request_timeout` | duration | `500ms` | More than 0, maximum `2s`. |
 | `authorization.assessment.max_context_bytes` | integer | `16384` | 1,024 to 262,144. |
 | `authorization.assessment.max_listing_bytes` | integer | `1048576` | 1,024 to 8,388,608. For a larger `tools/list` response, ExtProc removes the stored definitions of that server (D-02). |
-| `authorization.assessment.organization.name` | string | none | Required while enabled. Maximum 200 characters. |
-| `authorization.assessment.organization.description` | string | none | Required while enabled. Maximum 1,000 characters. |
-| `authorization.assessment.organization.internal_domains` | list of strings | none | Required while enabled. 1 to 50 entries. Each entry is a lowercase DNS name. |
+| `authorization.assessment.organization.name` | string | none | Required while assessment is enabled. Maximum 200 characters. |
+| `authorization.assessment.organization.description` | string | none | Required while assessment is enabled. Maximum 1,000 characters. |
+| `authorization.assessment.organization.internal_domains` | list of strings | none | Required while assessment is enabled. 1 to 50 entries. Each entry is a lowercase DNS name. |
 | `authorization.assessment.questions` | list of questions | the default question set (section 2) | 1 to 16 entries. A list in the configuration replaces the full default list. |
 
 The schema has no key for an individual target server or tool (FR-016). The keys use the existing
