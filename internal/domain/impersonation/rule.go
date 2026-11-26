@@ -39,7 +39,7 @@ type compiledRule struct {
 	name        string
 	roles       map[ports.CredentialRole]*compiledRole
 	issuers     []*compiledIssuer
-	authz       *authorizationProgram
+	authz       authorization
 	allowsHuman bool
 	allowsAgent bool
 }
@@ -57,6 +57,7 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 	if err != nil {
 		return nil, fmt.Errorf("authorization: %w", err)
 	}
+	authz.rule = cfg.Name
 
 	roles := make(map[ports.CredentialRole]*compiledRole, len(cfg.Roles))
 	for name, roleCfg := range cfg.Roles {

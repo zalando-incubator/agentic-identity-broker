@@ -53,25 +53,21 @@ func TestCompileAuthorization_EvaluatesAndEnumeratesReferences(t *testing.T) {
 	assert.True(t, prog.References(celSubjectToken))
 	assert.False(t, prog.References(celActorToken))
 
-	ok, err := prog.evaluate(
-		context.Background(),
-		map[string]interface{}{"sub": "gw"},
-		map[string]interface{}{"sub": "actor"},
-		map[string]interface{}{"sub": "user"},
-		false,
-		requestContext{GrantType: GrantType},
-	)
+	ok, err := prog.evaluate(context.Background(), policyInputs{
+		clientClaims:  map[string]interface{}{"sub": "gw"},
+		actorClaims:   map[string]interface{}{"sub": "actor"},
+		subjectClaims: map[string]interface{}{"sub": "user"},
+		request:       requestContext{GrantType: GrantType}.toMap(),
+	})
 	require.NoError(t, err)
 	assert.True(t, ok)
 
-	ok, err = prog.evaluate(
-		context.Background(),
-		map[string]interface{}{"sub": "other"},
-		map[string]interface{}{"sub": "actor"},
-		map[string]interface{}{"sub": "user"},
-		false,
-		requestContext{},
-	)
+	ok, err = prog.evaluate(context.Background(), policyInputs{
+		clientClaims:  map[string]interface{}{"sub": "other"},
+		actorClaims:   map[string]interface{}{"sub": "actor"},
+		subjectClaims: map[string]interface{}{"sub": "user"},
+		request:       requestContext{}.toMap(),
+	})
 	require.NoError(t, err)
 	assert.False(t, ok)
 }

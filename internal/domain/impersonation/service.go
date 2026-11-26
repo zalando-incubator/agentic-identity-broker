@@ -159,6 +159,7 @@ type ruleResult struct {
 
 func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Request, request requestContext, targetAgent *storage.Agent, validationCache *verifiedCredentialCache) *ruleResult {
 	res := &ruleResult{ruleName: rule.name}
+	authz := rule.authz
 
 	clientClaims, _, err := s.validateCredential(ctx, rule, ports.CredentialRoleClientAssertion, req.ClientAssertion, validationCache)
 	if err != nil {
@@ -222,7 +223,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		return res
 	}
 	res.subject = subjectID
-	subBound := rule.authz.Binds(celSubjectToken, "sub")
+	subBound := authz.bindsSubjectField("sub")
 	res.category = classifySubject(subjectUnverified, subBound, subjectClaims, targetAgent.ID)
 	if res.category == SubjectCategoryAgent {
 		res.subject = targetAgent.ID.String()
@@ -250,7 +251,7 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		// FR-006a: a caller-controlled unverified-subject email is mintable only when the rule's
 		// authorization predicate binds subject_token.email; a signed-subject email (from a verified
 		// issuer) requires no such binding.
-		if !subjectUnverified || rule.authz.Binds(celSubjectToken, "email") {
+		if !subjectUnverified || authz.bindsSubjectField("email") {
 			value, err := extractor.extract(ctx, subjectClaims)
 			if err != nil {
 				res.failure = originError(ctx, invalidRequest("could not extract subject email"), err, tokenexchange.StageIdentityResolution, tokenexchange.DetailCELEvaluationFailed)
@@ -262,7 +263,13 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		}
 	}
 
-	authorized, err := rule.authz.evaluate(ctx, clientClaims, actorClaims, subjectClaims, subjectUnverified, request)
+	authorized, err := authz.evaluate(ctx, policyInputs{
+		clientClaims:      clientClaims,
+		actorClaims:       actorClaims,
+		subjectClaims:     subjectClaims,
+		subjectUnverified: subjectUnverified,
+		request:           request.toMap(),
+	})
 	if err != nil {
 		res.abort = originError(ctx, serverError("authorization evaluation failed"), err, tokenexchange.StageClientAuthorization, tokenexchange.DetailCELEvaluationFailed)
 		return res
