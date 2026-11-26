@@ -234,6 +234,19 @@ func TestStartStorageSpan_RecordsResult(t *testing.T) {
 	}
 }
 
+func TestStorageSpans_CreateSuccessorRequiresTransaction(t *testing.T) {
+	recorder := recordStorageSpans(t)
+	repo := NewRefreshTokenSessionRepo(&Adapter{})
+	const credential = "synthetic-refresh-signature"
+
+	err := repo.CreateSuccessor(context.Background(), &storage.RefreshTokenSession{Signature: credential}, credential)
+	require.Error(t, err)
+	span := requireOneStorageSpan(t, recorder, "storage.create_successor.refresh_token_session")
+	assert.Equal(t, "RefreshTokenSessionRepo.CreateSuccessor", spanAttributes(span)["db.operation"])
+	assertStorageSpanResult(t, span, codes.Unset, "", "validation")
+	assert.NotContains(t, fmt.Sprint(span.Attributes(), span.Events(), span.Status()), credential)
+}
+
 func TestStorageSpans_FailedRepositoryCalls(t *testing.T) {
 	adapter := &Adapter{}
 	agents := NewAgentRepository(adapter)

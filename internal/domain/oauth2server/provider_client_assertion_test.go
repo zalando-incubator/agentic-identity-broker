@@ -18,6 +18,71 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProvider_CIMDServiceScopesPreserveClientAuthentication(t *testing.T) {
+	for _, method := range []string{"none", "private_key_jwt"} {
+		t.Run(method, func(t *testing.T) {
+			f := newServiceScopeFixture(t)
+			clientID := "https://client.example/metadata.json"
+			f.agent.ClientID = nil
+			f.agent.ClientURIs = []string{clientID}
+			require.NoError(t, f.agents.Update(context.Background(), f.agent))
+			verifier := &providerAssertionVerifierFake{}
+			f.provider.clientAssertions = verifier
+			f.provider.fositeStorage.clientResolver = &mockClientResolver{resolveFunc: func(_ context.Context, resolvedID id.ClientID) (*ports.ClientResolution, error) {
+				if string(resolvedID) != clientID {
+					return nil, &ports.ClientIDError{Code: "invalid_client", Desc: "not found"}
+				}
+				return ports.NewClientResolution(f.agent, &ports.CIMDMetadataDTO{
+					ClientID: clientID, AuthMethod: method, RedirectURIs: []string{scopeCallback},
+					GrantTypes: []string{"authorization_code", "refresh_token"},
+					SigningAlg: "RS256", JWKSURI: "https://client.example/jwks.json",
+				}), nil
+			}}
+			scope := "read offline_access " + githubScope
+			code, err := f.provider.HandleBoundAuthorize(context.Background(), clientID, scopeCallback, "code", scope, "state",
+				generateS256Challenge(scopeVerifier), "S256", id.Principal("user@example.com"), map[string]id.ServiceID{githubScope: scopeGitHubID})
+			require.NoError(t, err)
+
+			assertion := ports.ClientCredentials{AssertionType: ClientAssertionTypeJWTBearer, Assertion: "code-assertion"}
+			valid, invalid := ports.ClientCredentials{}, assertion
+			if method == "private_key_jwt" {
+				valid, invalid = assertion, ports.ClientCredentials{}
+			}
+			_, err = f.provider.HandleAuthorizationCodeExchange(context.Background(), clientID, invalid, code, scopeCallback, scopeVerifier)
+			require.ErrorIs(t, err, ErrInvalidClient)
+			issued, err := f.provider.HandleAuthorizationCodeExchange(context.Background(), clientID, valid, code, scopeCallback, scopeVerifier)
+			require.NoError(t, err, "authentication failure must leave the bound code usable")
+			assert.Equal(t, scope, issued.Scope)
+			assert.Equal(t, scope, decodeJWTPayload(t, issued.AccessToken)["scope"])
+
+			_, err = f.provider.HandleRefreshToken(context.Background(), clientID, invalid, issued.RefreshToken, "")
+			require.ErrorIs(t, err, ErrInvalidClient)
+			if method == "private_key_jwt" {
+				valid.Assertion = "refresh-assertion"
+			}
+			f.snapshots.snapshot.Usability = "missing"
+			_, err = f.provider.HandleRefreshToken(context.Background(), clientID, valid, issued.RefreshToken, "")
+			require.ErrorIs(t, err, ErrInvalidScope)
+			f.snapshots.snapshot.Usability = "usable"
+			if method == "private_key_jwt" {
+				valid.Assertion = "retry-refresh-assertion"
+			}
+			refreshed, err := f.provider.HandleRefreshToken(context.Background(), clientID, valid, issued.RefreshToken, "")
+			require.NoError(t, err, "authentication and service failures must not rotate the refresh token")
+			assert.NotEqual(t, issued.RefreshToken, refreshed.RefreshToken)
+			assert.Equal(t, scope, refreshed.Scope)
+			session, err := f.refreshes.FindBySignature(context.Background(), f.provider.refreshStrategy.RefreshTokenSignature(context.Background(), refreshed.RefreshToken))
+			require.NoError(t, err)
+			assert.Equal(t, dstorage.ServiceScopeBindings{githubScope: scopeGitHubID}, session.ServiceScopeBindings)
+			if method == "none" {
+				assert.Zero(t, verifier.calls)
+			} else {
+				assert.Positive(t, verifier.calls)
+			}
+		})
+	}
+}
+
 func TestProvider_ClientAssertionFailuresLeaveCodeAndRefreshUsable(t *testing.T) {
 	verifier := &providerAssertionVerifierFake{err: ErrClientAuthentication}
 	provider, _, clientID := newCIMDProviderForAssertionTest(t, "private_key_jwt", verifier)
