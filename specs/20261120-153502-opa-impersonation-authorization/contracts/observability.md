@@ -33,7 +33,7 @@ no fallthrough. No new production test API, manually logged trace ID, or credent
 
 | Name | Scope | Kind | When | Attributes | Status |
 | --- | --- | --- | --- | --- | --- |
-| `tokenexchange.impersonation.opa.evaluate` | `tokenexchange` | Internal | Each OPA decision evaluation | `impersonation.rule` (configured rule-name set), `impersonation.authorization.action` (`allow`, `deny`, `invalid`, `error`, `canceled`), `error.type` (`opa_decision_invalid`, `opa_evaluation_failed`, on failures only) | `Error` with a constant description for `invalid` and `error`; unset for `allow`, `deny`, and caller cancellation (`canceled`) |
+| `tokenexchange.impersonation.opa_evaluate` | `tokenexchange` | Internal | Each OPA decision evaluation | `impersonation.rule` (configured rule-name set), `impersonation.authorization.action` (`allow`, `deny`, `invalid`, `error`, `canceled`), `error.type` (`opa_decision_invalid`, `opa_evaluation_failed`, on failures only) | `Error` with a constant description for `invalid` and `error`; unset for `allow`, `deny`, and caller cancellation (`canceled`) |
 
 CEL evaluation keeps no span, as today. The rule attribute is bounded by the configured rule-name
 set. Free-form bundle manifest revisions remain log/audit attributes only, not span or metric
@@ -49,10 +49,10 @@ client and are not instrumented.
 
 | Name | Kind | Unit | Attributes | Changes when |
 | --- | --- | --- | --- | --- |
-| `tokenexchange.impersonation.opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_absent`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
-| `tokenexchange.impersonation.opa.revision.age` | Observable gauge (Float64) | `s` | none | Read per export: seconds since the shared active revision was admitted; no point before the first admission |
-| `tokenexchange.impersonation.opa.bundle.downloads` | Counter | `{download}` | `bundle` (configured bundle-name set); `outcome` (`success`, `failure`) | Each completed bundle download attempt reported by OPA's bundle status listener in managed mode |
-| `tokenexchange.impersonation.opa.bundle.download.age` | Observable gauge (Float64) | `s` | `bundle` (configured bundle-name set) | Read per export: seconds since that bundle's last successful download (`bundle.Status.LastSuccessfulDownload`); no point for a bundle before its first success; managed mode only |
+| `tokenexchange.impersonation_opa.revisions` | Counter | `{revision}` | `outcome` (`admitted`, `rejected`); `reason` (`none`, `compile_failed`, `prohibited_builtin`, `decision_absent`, `snapshot_failed`, `bundles_incomplete`) | Each candidate revision of the shared engine (each activation in managed mode, once in local mode) |
+| `tokenexchange.impersonation_opa.revision_age` | Observable gauge (Float64) | `s` | none | Read per export: seconds since the shared active revision was admitted; no point before the first admission |
+| `tokenexchange.impersonation_opa.bundle_downloads` | Counter | `{download}` | `bundle` (configured bundle-name set); `outcome` (`success`, `failure`) | Each completed bundle download attempt reported by OPA's bundle status listener in managed mode |
+| `tokenexchange.impersonation_opa.bundle_download_age` | Observable gauge (Float64) | `s` | `bundle` (configured bundle-name set) | Read per export: seconds since that bundle's last successful download (`bundle.Status.LastSuccessfulDownload`); no point for a bundle before its first success; managed mode only |
 
 There is one engine and one active revision, so no instrument carries `rule`. The rejecting rule is
 a log attribute only. The `bundle` attribute is bounded by the bundle names in the bootstrap file.
@@ -110,7 +110,7 @@ Existing attributes keep their meaning.
 - Metric tests assert the counter outcomes and reasons and the gauge after admission; no revision
   label or admission ID appears in a metric or span.
 - Bundle download tests drive the in-process bundle server through success, HTTP error, and
-  unreachable states and assert the `bundle.downloads` outcomes, the `bundle.download.age` gauge
+  unreachable states and assert the `bundle_downloads` outcomes, the `bundle_download_age` gauge
   growing while downloads fail, and the rate-limited `bundle_download_failed` log without URL,
   body, or token.
 - Admit two different snapshots with equal or empty manifest labels; their admission IDs differ.

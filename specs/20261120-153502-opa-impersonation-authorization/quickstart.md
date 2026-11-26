@@ -79,11 +79,11 @@ above is not evidence that the full recipe passed; do not change tests or CI to 
 
 ## Expected observability
 
-- `tokenexchange.impersonation.opa.revisions{outcome="admitted"}` increments after each admitted
+- `tokenexchange.impersonation_opa.revisions{outcome="admitted"}` increments after each admitted
   activation; `{outcome="rejected",reason=...}` after each rejected one.
-- `tokenexchange.impersonation.opa.revision.age` grows while no new revision is admitted.
-- `tokenexchange.impersonation.opa.bundle.downloads{bundle=...,outcome=...}` counts download
-  attempts, and `tokenexchange.impersonation.opa.bundle.download.age{bundle=...}` grows while a
+- `tokenexchange.impersonation_opa.revision_age` grows while no new revision is admitted.
+- `tokenexchange.impersonation_opa.bundle_downloads{bundle=...,outcome=...}` counts download
+  attempts, and `tokenexchange.impersonation_opa.bundle_download_age{bundle=...}` grows while a
   bundle service fails, even when no candidate is built.
 - `impersonation.decision.recorded` records contain `authorization_engine=opa`, `policy_revision`, and
   `policy_admission_id` (the deciding snapshot's process-instance UUID/engine sequence), and no

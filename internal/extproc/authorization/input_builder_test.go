@@ -3,6 +3,8 @@ package authorization_test
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -456,4 +458,53 @@ func TestBuildOPAInputHeadersOnlyWithContext_CarriesSuppliedContext(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, supplied, input["context"])
 	assert.Equal(t, "mcp_headers_only", input["type"])
+}
+
+// envoyInputVector is a shared broker/ExtProc vector in tests/testdata/opa-envoy-input. ExtProc
+// keeps every header and the query string in path; the broker's exclusions apply only there.
+type envoyInputVector struct {
+	Name    string `json:"name"`
+	Request struct {
+		Method   string            `json:"method"`
+		Path     string            `json:"path"`
+		RawQuery string            `json:"raw_query"`
+		Headers  map[string]string `json:"headers"`
+	} `json:"request"`
+	Expected     map[string]any    `json:"expected"`
+	ExpectedPath map[string]string `json:"expected_path"`
+}
+
+func TestBuildOPAInput_MatchesSharedEnvoyVectors(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "..", "..", "tests", "testdata", "opa-envoy-input", "*.json"))
+	require.NoError(t, err)
+	require.Len(t, paths, 4)
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var vector envoyInputVector
+		require.NoError(t, json.Unmarshal(raw, &vector))
+		t.Run(vector.Name, func(t *testing.T) {
+			headers := map[string]string{":method": vector.Request.Method, ":path": vector.Request.Path}
+			if vector.Request.RawQuery != "" {
+				headers[":path"] += "?" + vector.Request.RawQuery
+			}
+			for name, value := range vector.Request.Headers {
+				headers[name] = value
+			}
+			input, err := authorization.BuildOPAInputHeadersOnly("http", headers, "")
+			require.NoError(t, err)
+			encoded, err := json.Marshal(input)
+			require.NoError(t, err)
+			var document map[string]any
+			require.NoError(t, json.Unmarshal(encoded, &document))
+			http := document["attributes"].(map[string]any)["request"].(map[string]any)["http"].(map[string]any)
+
+			want := vector.Expected["attributes.request.http"].(map[string]any)
+			assert.Equal(t, want["method"], http["method"])
+			assert.Equal(t, want["headers"], http["headers"])
+			assert.Equal(t, vector.ExpectedPath["extproc"], http["path"])
+			assert.Equal(t, vector.Expected["parsed_path"], document["parsed_path"])
+			assert.Equal(t, vector.Expected["parsed_query"], document["parsed_query"])
+		})
+	}
 }

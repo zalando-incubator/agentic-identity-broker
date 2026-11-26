@@ -30,7 +30,7 @@ const (
 	opaPackage            = "company.impersonation"
 	opaExceptionalPackage = "company.impersonation.exceptional"
 	opaBundleName         = "impersonation"
-	opaEvaluateSpan       = "tokenexchange.impersonation.opa.evaluate"
+	opaEvaluateSpan       = "tokenexchange.impersonation.opa_evaluate"
 	opaInternalError      = "internal server error during token exchange"
 	opaDeniedDescription  = "token exchange is not authorized"
 	opaHuman              = "alice@example.com"
@@ -246,7 +246,7 @@ func (j *opaImpersonation) exchangeWithHeaders(form url.Values, headers http.Hea
 			req.Header.Add(name, value)
 		}
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := helpers.HTTPClient().Do(req)
 	Expect(err).NotTo(HaveOccurred())
 	defer func() { _ = resp.Body.Close() }()
 	var body map[string]any
@@ -326,14 +326,15 @@ func unsignedJWT(claims map[string]any) string {
 	return token
 }
 
-// tamperSignature flips the last signature character so the JWT no longer verifies.
+// tamperSignature changes a signature character away from the padding bits, so the JWT no longer
+// verifies.
 func tamperSignature(token string) string {
-	last := token[len(token)-1]
+	i := len(token) - 10
 	replacement := byte('A')
-	if last == 'A' {
+	if token[i] == 'A' {
 		replacement = 'B'
 	}
-	return token[:len(token)-1] + string(replacement)
+	return token[:i] + string(replacement) + token[i+1:]
 }
 
 func joinRoles(roles []string) string {

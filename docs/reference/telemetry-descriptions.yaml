@@ -66,6 +66,7 @@ spans:
   tokenexchange.exchange: RFC 8693 token exchange request in the broker.
   tokenexchange.get_valid_access_token: Returns the access token of the session. Refreshes it during the request when it has expired, and starts a background refresh when it expires within the refresh lookahead.
   tokenexchange.impersonation: RFC 8693 impersonation request in the broker.
+  tokenexchange.impersonation.opa_evaluate: Evaluates one impersonation rule's OPA decision on the policy revision the request read before its first rule. An explicit deny lets later rules run; an invalid decision, an error, a timeout or a cancellation stops the request.
   tokenexchange.verify_agent_access: Checks that the principal has an active grant for the agent.
 attributes:
   access_evaluation.decision: Decision that the broker returned. `deny` is a consent problem, such as a missing or expired grant. `error` is a failed request, with the status in `http.response.status_code`.
@@ -90,6 +91,7 @@ attributes:
   authorization.result_code: 'How the policy evaluation ended: `ok` when the policy returned a supported action, otherwise the reason why it did not.'
   authorization.target_server_name: Name of the MCP server that the request targets.
   authorization.tool_name: Name of the MCP tool that the request calls.
+  bundle: Name of an impersonation policy bundle, from the bundles of the configured OPA bootstrap.
   db.operation: Name of the storage operation, such as `GetAgent`.
   db.system: Database that the storage call uses.
   dry_run: Whether the sweep is a dry run.
@@ -101,9 +103,12 @@ attributes:
   http.request.method: 'HTTP method: an allowlisted method, `_OTHER` otherwise.'
   http.response.status_code: HTTP status code of the response. On `extproc.client_assertion.refresh`, it is set only from an error response of the token endpoint, and is `0` otherwise. On `tokenexchange.access_evaluation`, it is set only on an `error` decision.
   impersonation.target_agent_id: ID of the agent that the impersonation request names as its audience.
+  impersonation.rule: Name of the impersonation rule whose OPA decision the span evaluates, from the configured rule names.
+  impersonation.authorization.action: Outcome of the OPA decision.
   oauth2.refresh.outcome: "Result of the background refresh: `refreshed` when it stored new tokens, `not_due` when no refresh was needed or the session no longer exists, `failed` otherwise."
   oauth2.refresh.triggered_by: Always `background`, because a token exchange started the refresh.
   outcome: Result of the operation that the metric records. Each metric has its own values.
+  reason: Why a candidate impersonation policy revision was rejected, or `none` when it was admitted.
   refreshable: Whether the stored session can be refreshed.
   service_id: Canonical ID of the service when one is set, otherwise its UUID.
   storage.outcome: "Result of a storage call that failed in a way the caller handles: `not_found`, `conflict`, `validation` or `canceled`. Absent on success. The span status stays unset."

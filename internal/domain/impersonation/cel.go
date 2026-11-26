@@ -132,7 +132,7 @@ func (p *authorizationProgram) Binds(variable, field string) bool {
 
 func (p *authorizationProgram) label() string { return p.rule }
 
-func (p *authorizationProgram) engine() string { return "cel" }
+func (p *authorizationProgram) engine() string { return engineCEL }
 
 // bindsSubjectField reports whether the predicate selects the field on subject_token.
 func (p *authorizationProgram) bindsSubjectField(field string) bool {

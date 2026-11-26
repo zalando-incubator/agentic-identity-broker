@@ -1,0 +1,31 @@
+{
+  "name": "filtered_headers",
+  "request": {
+    "method": "POST",
+    "path": "/oauth2/token",
+    "raw_query": "",
+    "headers": {
+      "content-type": "application/x-www-form-urlencoded",
+      "authorization": "Bearer synthetic",
+      "proxy-authorization": "Basic synthetic",
+      "cookie": "session=synthetic",
+      "x-request-id": "r-1"
+    }
+  },
+  "expected": {
+    "attributes.request.http": {
+      "method": "POST",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "authorization": "Bearer synthetic",
+        "proxy-authorization": "Basic synthetic",
+        "cookie": "session=synthetic",
+        "x-request-id": "r-1"
+      }
+    },
+    "parsed_path": ["oauth2", "token"],
+    "parsed_query": {}
+  },
+  "expected_path": {"broker": "/oauth2/token", "extproc": "/oauth2/token"},
+  "broker_excluded_headers": ["authorization", "proxy-authorization", "cookie"]
+}

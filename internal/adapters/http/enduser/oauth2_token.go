@@ -84,6 +84,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", "failed to parse form data")
 		return
 	}
+	rawForm := copyForm(formData)
 
 	repeatedParameter := ""
 	for _, parameter := range [...]string{
@@ -106,7 +107,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if len(formData["grant_type"]) == 1 && formData.Get("grant_type") == tokenexchange.TokenExchangeGrantType && h.Impersonation != nil && len(formData["audience"]) > 0 {
 			err := tokenexchange.NewInvalidRequestError(repeatedParameter + " must not be repeated").
 				WithDiagnostic(tokenexchange.NewDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
-			h.handleTokenExchange(w, r, formData, err)
+			h.handleTokenExchange(w, r, formData, rawForm, err)
 		} else {
 			writeOAuth2ErrorJSON(w, http.StatusBadRequest, "invalid_request", repeatedParameter+" must not be repeated")
 		}
@@ -120,7 +121,7 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if grantType == tokenexchange.TokenExchangeGrantType {
-		h.handleTokenExchange(w, r, formData, nil)
+		h.handleTokenExchange(w, r, formData, rawForm, nil)
 		return
 	}
 	// Finalize the request security context at the /oauth2/token seam before
@@ -165,6 +166,33 @@ func (h *OAuth2TokenHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.GrantHandler.HandleTokenGrant(w, r, grantType, formData, resolution)
 }
 
+// copyForm copies the parsed form before omitted-value normalization, for the OPA policy input.
+func copyForm(form url.Values) url.Values {
+	copied := make(url.Values, len(form))
+	for key, values := range form {
+		copied[key] = append([]string(nil), values...)
+	}
+	return copied
+}
+
+// requestAttributes passes the transport facts of the token request to impersonation. Policy
+// decisions and credential filtering stay in the domain.
+func requestAttributes(r *http.Request, rawForm url.Values) impersonation.RequestAttributes {
+	headers := make(map[string][]string, len(r.Header))
+	for name, values := range r.Header {
+		headers[name] = append([]string(nil), values...)
+	}
+	return impersonation.RequestAttributes{
+		Method:      r.Method,
+		Path:        r.URL.Path,
+		RawQuery:    r.URL.RawQuery,
+		Protocol:    r.Proto,
+		ContentType: r.Header.Get("Content-Type"),
+		Headers:     headers,
+		Form:        rawForm,
+	}
+}
+
 // dropOmittedValues removes a parameter sent without a value, which RFC 6749 Section 3.2
 // requires to be treated as omitted from the request.
 func dropOmittedValues(formData url.Values, parameter string) {
@@ -205,7 +233,7 @@ func resolveExchangeResource(values []string) (string, error) {
 }
 
 // handleTokenExchange processes RFC 8693 token exchange requests.
-func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.Request, formData url.Values, requestErr error) {
+func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.Request, formData, rawForm url.Values, requestErr error) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	ctx, span := otel.Tracer("tokenexchange").Start(r.Context(), "tokenexchange.exchange")
@@ -221,7 +249,7 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 		}
 		if activated {
 			span.SetName("tokenexchange.impersonation")
-			h.handleImpersonation(ctx, span, w, formData, target, requestErr)
+			h.handleImpersonation(ctx, span, w, r, formData, rawForm, target, requestErr)
 			return
 		}
 	}
@@ -274,11 +302,14 @@ func (h *OAuth2TokenHandler) handleTokenExchange(w http.ResponseWriter, r *http.
 }
 
 // handleImpersonation always emits its credential-free audit event before the response.
-func (h *OAuth2TokenHandler) handleImpersonation(ctx context.Context, span trace.Span, w http.ResponseWriter, formData url.Values, target *impersonation.Target, err error) {
+func (h *OAuth2TokenHandler) handleImpersonation(ctx context.Context, span trace.Span, w http.ResponseWriter, r *http.Request, formData, rawForm url.Values, target *impersonation.Target, err error) {
 	span.SetAttributes(attribute.String("impersonation.target_agent_id", target.Agent.ID.String()))
 	var req *impersonation.Request
 	if err == nil {
 		req, err = impersonation.ParseRequest(formData)
+	}
+	if err == nil {
+		req.HTTP = requestAttributes(r, rawForm)
 	}
 	if err != nil {
 		record := h.impersonationParseAudit(err)
@@ -346,6 +377,12 @@ func (h *OAuth2TokenHandler) logImpersonationDecision(ctx context.Context, recor
 	}
 	if record.OAuthErrorCode != "" {
 		attrs = append(attrs, "oauth_error_code", record.OAuthErrorCode)
+	}
+	if record.AuthorizationEngine != "" {
+		attrs = append(attrs, "authorization_engine", record.AuthorizationEngine)
+	}
+	if record.PolicyAdmissionID != "" {
+		attrs = append(attrs, "policy_revision", record.PolicyRevision, "policy_admission_id", record.PolicyAdmissionID)
 	}
 	if requestID := httpctx.RequestIDFromContext(ctx); requestID != "" {
 		attrs = append(attrs, "request_id", requestID)

@@ -1,0 +1,19 @@
+{
+  "name": "query_string",
+  "request": {
+    "method": "POST",
+    "path": "/oauth2/token",
+    "raw_query": "trace=1&tag=a&tag=b",
+    "headers": {"content-type": "application/x-www-form-urlencoded"}
+  },
+  "expected": {
+    "attributes.request.http": {
+      "method": "POST",
+      "headers": {"content-type": "application/x-www-form-urlencoded"}
+    },
+    "parsed_path": ["oauth2", "token"],
+    "parsed_query": {"trace": ["1"], "tag": ["a", "b"]}
+  },
+  "expected_path": {"broker": "/oauth2/token", "extproc": "/oauth2/token?trace=1&tag=a&tag=b"},
+  "broker_excluded_headers": []
+}

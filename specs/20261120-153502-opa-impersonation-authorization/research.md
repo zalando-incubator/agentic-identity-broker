@@ -389,13 +389,13 @@ admission (brings back mixed versions within a request).
 ## R12 — Observability (**Sign-off: API-DIAG**)
 
 **Decision**: Scope `tokenexchange` (existing broker token-exchange scope). Span
-`tokenexchange.impersonation.opa.evaluate` per OPA evaluation. Counter
-`tokenexchange.impersonation.opa.revisions` (`outcome`: `admitted`, `rejected`; `reason`: closed
-set) and observable gauge `tokenexchange.impersonation.opa.revision.age` (seconds since the active
+`tokenexchange.impersonation.opa_evaluate` per OPA evaluation. Counter
+`tokenexchange.impersonation_opa.revisions` (`outcome`: `admitted`, `rejected`; `reason`: closed
+set) and observable gauge `tokenexchange.impersonation_opa.revision_age` (seconds since the active
 revision was admitted), without a `rule` attribute because the engine is shared (R11). In managed
 mode a listener registered with OPA's bundle plugin (`bundle.Plugin.Register`, OPA v1.21.4
-`v1/plugins/bundle/plugin.go:294`) feeds counter `tokenexchange.impersonation.opa.bundle.downloads`
-(`bundle`, `outcome`) and gauge `tokenexchange.impersonation.opa.bundle.download.age` (seconds since
+`v1/plugins/bundle/plugin.go:294`) feeds counter `tokenexchange.impersonation_opa.bundle_downloads`
+(`bundle`, `outcome`) and gauge `tokenexchange.impersonation_opa.bundle_download_age` (seconds since
 `Status.LastSuccessfulDownload`, `status.go:31`) plus a rate-limited `bundle_download_failed` log,
 so a failing bundle service is visible for every credential form (revised 2026-11-26). Lifecycle
 log events `oauth2_server.impersonation_policy.revision_admitted` and `...revision_rejected`. The

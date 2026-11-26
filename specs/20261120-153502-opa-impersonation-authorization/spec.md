@@ -166,6 +166,10 @@ approval items; none is an approval.
   (API-BOOT).
 - Bundle downloads are observable through an OPA bundle status listener (API-DIAG).
 
+### Session 2026-11-26 (implementation)
+
+- Telemetry names follow `coding-standards/OPENTELEMETRY.md` §3.2 and §5.2, which allow at most three dot-separated segments (maintainer decision during implementation): span `tokenexchange.impersonation.opa_evaluate`; metrics `tokenexchange.impersonation_opa.revisions`, `tokenexchange.impersonation_opa.revision_age`, `tokenexchange.impersonation_opa.bundle_downloads`, and `tokenexchange.impersonation_opa.bundle_download_age`. Attributes, log events, and value sets are unchanged.
+
 ## Problem Statement & Goals
 
 **Problem**: Impersonation rules authorize only with CEL predicates over the presented credentials.

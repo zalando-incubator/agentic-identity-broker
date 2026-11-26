@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -28,6 +29,8 @@ type Service struct {
 	delegationVerifier ports.UserDelegationVerifier
 	consentBaseURL     string
 	logger             *slog.Logger
+	policies           ports.ImpersonationPolicySource
+	publicURL          *url.URL
 }
 
 // NewService compiles the impersonation rules at startup and validates direct construction.
@@ -84,7 +87,93 @@ func NewService(
 		}
 		rules = append(rules, rule)
 	}
-	return &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}, nil
+	svc := &Service{audiencePrefix: cfg.AudiencePrefix, rules: rules, agents: agents, canonicalAgents: canonicalAgents, issuer: issuer, delegationVerifier: delegationVerifier, consentBaseURL: consentBaseURL, logger: logger}
+	if err := svc.startPolicyEngine(cfg, policySources, publicURL); err != nil {
+		return nil, err
+	}
+	return svc, nil
+}
+
+const (
+	opaEngineField        = "oauth2_authorization_server.impersonation.opa"
+	defaultStartupTimeout = 30 * time.Second
+)
+
+// startPolicyEngine starts the shared OPA engine when at least one rule selects OPA and waits
+// for its first admitted revision within startup_timeout. With no OPA rule nothing starts, and a
+// populated engine block fails.
+func (s *Service) startPolicyEngine(cfg *ports.ImpersonationConfig, policySources PolicySourceFactory, publicURL string) error {
+	var decisions []ports.ImpersonationPolicyDecisionRef
+	var names []string
+	index := map[string]int{}
+	for i, rule := range s.rules {
+		index[rule.name] = i
+		if rule.opa != nil {
+			decisions = append(decisions, *rule.opa)
+			names = append(names, rule.name)
+		}
+	}
+	engine := cfg.OPA
+	if len(decisions) == 0 {
+		if engine != (ports.ImpersonationOPAEngineConfig{}) {
+			return fmt.Errorf("%s: must be absent or empty when no rule selects authorization.type \"opa\"", opaEngineField)
+		}
+		return nil
+	}
+	if engine == (ports.ImpersonationOPAEngineConfig{}) {
+		return fmt.Errorf("%s: required when a rule selects authorization.type \"opa\"", opaEngineField)
+	}
+	if (engine.Policy.ConfigFile == "") == (engine.Policy.Path == "") {
+		return fmt.Errorf("%s: policy: exactly one of policy.config_file and policy.path is required", opaEngineField)
+	}
+	if t := engine.StartupTimeout; t != 0 && (t < time.Second || t > 5*time.Minute) {
+		return fmt.Errorf("%s.startup_timeout: must be between 1s and 5m", opaEngineField)
+	}
+	if engine.StartupTimeout == 0 {
+		engine.StartupTimeout = defaultStartupTimeout
+	}
+	if policySources == nil {
+		return fmt.Errorf("%s: no policy engine is available", opaEngineField)
+	}
+	parsed, err := url.Parse(publicURL)
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("%s: the end-user public URL is required for OPA policy input", opaEngineField)
+	}
+	s.publicURL = parsed
+
+	source, err := policySources(engine, decisions, newOPAAdmission(names))
+	if err != nil {
+		return fmt.Errorf("%s: %w", opaEngineField, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), engine.StartupTimeout)
+	defer cancel()
+	if err := source.AwaitReady(ctx); err != nil {
+		source.Stop(context.Background())
+		var notReady *ports.ImpersonationPolicyNotReadyError
+		if errors.As(err, &notReady) && notReady.Reason != "" {
+			rule := ""
+			if notReady.Rule != "" {
+				rule = fmt.Sprintf(" for rules[%d] (%s)", index[notReady.Rule], notReady.Rule)
+			}
+			return fmt.Errorf("%s.startup_timeout: no admissible policy revision within %s (last rejection: %s%s)",
+				opaEngineField, engine.StartupTimeout, notReady.Reason, rule)
+		}
+		return fmt.Errorf("%s.startup_timeout: no admissible policy revision within %s", opaEngineField, engine.StartupTimeout)
+	}
+	if source.Current() == nil {
+		source.Stop(context.Background())
+		return fmt.Errorf("%s: no admitted policy revision", opaEngineField)
+	}
+	s.policies = source
+	return nil
+}
+
+// Close stops the shared OPA engine. It is safe to call when no engine runs and more than once.
+func (s *Service) Close(ctx context.Context) error {
+	if s.policies != nil {
+		s.policies.Stop(ctx)
+	}
+	return nil
 }
 
 // AuditRecord is the credential-free decision record emitted for every impersonation attempt
@@ -99,6 +188,9 @@ type AuditRecord struct {
 	ActorIdentity            string   // extracted actor identity, when available
 	SubjectIdentity          string   // represented subject: extracted principal for humans, target UUID for agents
 	OAuthErrorCode           string   // OAuth2 error code on failure
+	AuthorizationEngine      string   // "cel" or "opa" once a rule reached authorization
+	PolicyRevision           string   // OPA only: the deciding revision's manifest label
+	PolicyAdmissionID        string   // OPA only: the deciding revision's admission identifier
 }
 
 // Outcome carries the result of an impersonation attempt: a success response (nil on failure)
@@ -122,10 +214,23 @@ func (s *Service) Impersonate(ctx context.Context, req *Request, target *Target)
 		}
 	}
 
+	// Every OPA rule of this request decides on the same revision, read once before the first rule.
+	var revision ports.ImpersonationPolicyRevision
+	if s.policies != nil {
+		revision = s.policies.Current()
+		if revision == nil {
+			err := serverError("impersonation policy is unavailable").
+				WithDiagnostic(impersonationDiagnostic(tokenexchange.StageClientAuthorization, tokenexchange.DetailOPAEvaluationFailed))
+			return &Outcome{Audit: failureAudit(target.Agent.ID.String(), nil, err)}, err
+		}
+	}
+	agent := agentContext(target.Agent)
+
 	results := make([]*ruleResult, 0, len(s.rules))
 	validationCache := verifiedCredentialCache{}
 	for _, rule := range s.rules {
-		res := s.evaluateRule(ctx, rule, req, request, target.Agent, &validationCache)
+		authz := rule.authorizationFor(revision, s.publicURL)
+		res := s.evaluateRule(ctx, rule, authz, req, request, agent, target.Agent, &validationCache)
 		if res.matched {
 			return &Outcome{Response: res.response, Audit: successAudit(target.Agent.ID.String(), res)}, nil
 		}
@@ -157,11 +262,35 @@ type ruleResult struct {
 	actor       string
 	subject     string
 	issuerRoles []string
+
+	engine            string
+	policyRevision    string
+	policyAdmissionID string
 }
 
-func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Request, request requestContext, targetAgent *storage.Agent, validationCache *verifiedCredentialCache) *ruleResult {
+// recordAuthorization records which engine, and for OPA which revision, decided this rule.
+func (r *ruleResult) recordAuthorization(authz authorization) {
+	r.engine = authz.engine()
+	if opa, ok := authz.(opaAuthorization); ok {
+		r.policyRevision = opa.revision.Label()
+		r.policyAdmissionID = opa.revision.AdmissionID()
+	}
+}
+
+// authorizationFailureDetail classifies a failed authorization decision.
+func authorizationFailureDetail(err error) tokenexchange.FailureDetail {
+	switch {
+	case errors.Is(err, ports.ErrPolicyDecisionInvalid):
+		return tokenexchange.DetailOPADecisionInvalid
+	case errors.Is(err, ports.ErrPolicyEvaluationFailed):
+		return tokenexchange.DetailOPAEvaluationFailed
+	default:
+		return tokenexchange.DetailCELEvaluationFailed
+	}
+}
+
+func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, authz authorization, req *Request, request requestContext, agent *AgentContext, targetAgent *storage.Agent, validationCache *verifiedCredentialCache) *ruleResult {
 	res := &ruleResult{ruleName: rule.name}
-	authz := rule.authz
 
 	clientClaims, _, err := s.validateCredential(ctx, rule, ports.CredentialRoleClientAssertion, req.ClientAssertion, validationCache)
 	if err != nil {
@@ -265,15 +394,18 @@ func (s *Service) evaluateRule(ctx context.Context, rule *compiledRule, req *Req
 		}
 	}
 
+	res.recordAuthorization(authz)
 	authorized, err := authz.evaluate(ctx, policyInputs{
 		clientClaims:      clientClaims,
 		actorClaims:       actorClaims,
 		subjectClaims:     subjectClaims,
 		subjectUnverified: subjectUnverified,
 		request:           request.toMap(),
+		http:              req.HTTP,
+		agent:             agent,
 	})
 	if err != nil {
-		res.abort = originError(ctx, serverError("authorization evaluation failed"), err, tokenexchange.StageClientAuthorization, tokenexchange.DetailCELEvaluationFailed)
+		res.abort = originError(ctx, serverError("authorization evaluation failed"), err, tokenexchange.StageClientAuthorization, authorizationFailureDetail(err))
 		return res
 	}
 	if !authorized {
@@ -398,6 +530,9 @@ func successAudit(targetAgentID string, res *ruleResult) AuditRecord {
 		ActorIdentity:            res.actor,
 		SubjectIdentity:          res.subject,
 		SubjectCategory:          res.category,
+		AuthorizationEngine:      res.engine,
+		PolicyRevision:           res.policyRevision,
+		PolicyAdmissionID:        res.policyAdmissionID,
 	}
 }
 
@@ -414,6 +549,9 @@ func failureAudit(targetAgentID string, res *ruleResult, err *tokenexchange.Toke
 		record.ActorIdentity = res.actor
 		record.SubjectIdentity = res.subject
 		record.SubjectCategory = res.category
+		record.AuthorizationEngine = res.engine
+		record.PolicyRevision = res.policyRevision
+		record.PolicyAdmissionID = res.policyAdmissionID
 	}
 	return record
 }

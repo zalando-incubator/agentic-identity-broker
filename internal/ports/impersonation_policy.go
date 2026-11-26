@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -18,6 +19,15 @@ const (
 // ImpersonationPolicyInput is the OPA input document of one impersonation decision. It excludes
 // raw credentials but contains sensitive identity claims, so it renders only as a constant.
 type ImpersonationPolicyInput map[string]any
+
+const redactedPolicyInput = "[REDACTED]"
+
+// LogValue renders the input as a constant, so no claim reaches a log record.
+func (ImpersonationPolicyInput) LogValue() slog.Value { return slog.StringValue(redactedPolicyInput) }
+
+func (ImpersonationPolicyInput) String() string { return redactedPolicyInput }
+
+func (ImpersonationPolicyInput) GoString() string { return redactedPolicyInput }
 
 // ImpersonationPolicyDecisionRef names one rule's decision in the shared engine.
 type ImpersonationPolicyDecisionRef struct {
@@ -72,3 +82,17 @@ var (
 	ErrPolicyDecisionInvalid  = errors.New("impersonation policy decision invalid")
 	ErrPolicyEvaluationFailed = errors.New("impersonation policy evaluation failed")
 )
+
+// ImpersonationPolicyNotReadyError reports that no admissible revision became active. Reason is
+// the last candidate rejection reason and Rule the rule that rejected it, when known.
+type ImpersonationPolicyNotReadyError struct {
+	Reason string
+	Rule   string
+}
+
+func (e *ImpersonationPolicyNotReadyError) Error() string {
+	if e.Reason == "" {
+		return "no admissible policy revision"
+	}
+	return "no admissible policy revision (last rejection: " + e.Reason + ")"
+}

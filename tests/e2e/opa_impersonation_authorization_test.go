@@ -306,6 +306,63 @@ var _ = Describe("OPA Impersonation Authorization", func() {
 		// Scenario 3.2 from specs/20261120-153502-opa-impersonation-authorization/spec.md (User Story 3)
 		It("fails closed without fallthrough on runtime failures and observes caller cancellation through correlated telemetry", func() {
 			permissive := j.rule("permissive").CEL("true")
+			By("cancelling the client while the policy evaluates")
+			tp, recorder, started := bootstrap.NewSignalingTracerProvider(opaEvaluateSpan)
+			DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
+			j.publish(opaBundleName, "r1", j.governanceData(), "slow.rego")
+			traced := j.managed(j.config(j.rule("governed-inventory").OPA(opaPackage, "result", 5*time.Second), permissive), 10*time.Second)
+			fixtures.EnableTelemetryTracing(traced)
+			Expect(j.buildWith(traced, tp)).To(Succeed())
+			j.logs.Reset()
+
+			traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
+			ctx, cancel := context.WithCancel(context.Background())
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, j.enduser.BaseURL()+"/oauth2/token", strings.NewReader(j.request(j.agent).Encode()))
+			Expect(err).NotTo(HaveOccurred())
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("traceparent", "00-"+traceID+"-00f067aa0ba902b7-01")
+			done := make(chan error, 1)
+			go func() {
+				resp, err := helpers.HTTPClient().Do(req)
+				if resp != nil {
+					_ = resp.Body.Close()
+				}
+				done <- err
+			}()
+			Eventually(started.Started, 10*time.Second).Should(BeClosed())
+			cancel()
+			Eventually(done, 10*time.Second).Should(Receive(MatchError(context.Canceled)))
+
+			var evaluation sdktrace.ReadOnlySpan
+			Eventually(func() bool {
+				for _, span := range recorder.Ended() {
+					if span.Name() == opaEvaluateSpan && span.SpanContext().TraceID().String() == traceID {
+						evaluation = span
+					}
+				}
+				return evaluation != nil
+			}, 10*time.Second).Should(BeTrue(), func() string {
+				var names []string
+				for _, span := range recorder.Ended() {
+					names = append(names, span.Name()+"@"+span.SpanContext().TraceID().String())
+				}
+				return strings.Join(names, "\n")
+			})
+			Expect(spanAttribute(evaluation, "impersonation.authorization.action")).To(Equal("canceled"))
+			Expect(evaluation.Status().Code).NotTo(Equal(codes.Error))
+			Eventually(func() bool {
+				for _, span := range recorder.Ended() {
+					if span.SpanKind() == trace.SpanKindServer && span.SpanContext().TraceID().String() == traceID {
+						return true
+					}
+				}
+				return false
+			}, 10*time.Second).Should(BeTrue())
+			for _, audit := range j.audits() {
+				Expect(audit["outcome"]).NotTo(Equal("success"))
+				Expect(audit["rule"]).NotTo(Equal("permissive"))
+			}
+
 			for _, variant := range []struct {
 				name, module string
 				timeout      time.Duration
@@ -325,55 +382,6 @@ var _ = Describe("OPA Impersonation Authorization", func() {
 				Expect(audit).To(HaveKeyWithValue("rule", "governed-inventory"))
 				Expect(audit).To(HaveKeyWithValue("outcome", "server_error"))
 				Expect(j.logs.Raw()).NotTo(ContainSubstring(`"rule":"permissive"`))
-			}
-
-			By("cancelling the client while the policy evaluates")
-			tp, recorder, started := bootstrap.NewSignalingTracerProvider(opaEvaluateSpan)
-			DeferCleanup(func() { _ = tp.Shutdown(context.Background()) })
-			j.publish(opaBundleName, "r1", j.governanceData(), "slow.rego")
-			Expect(j.buildWith(j.managed(j.config(j.rule("governed-inventory").OPA(opaPackage, "result", 5*time.Second), permissive), 10*time.Second), tp)).To(Succeed())
-			j.logs.Reset()
-
-			traceID := "4bf92f3577b34da6a3ce929d0e0e4736"
-			ctx, cancel := context.WithCancel(context.Background())
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, j.enduser.BaseURL()+"/oauth2/token", strings.NewReader(j.request(j.agent).Encode()))
-			Expect(err).NotTo(HaveOccurred())
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.Header.Set("traceparent", "00-"+traceID+"-00f067aa0ba902b7-01")
-			done := make(chan error, 1)
-			go func() {
-				resp, err := http.DefaultClient.Do(req)
-				if resp != nil {
-					_ = resp.Body.Close()
-				}
-				done <- err
-			}()
-			Eventually(started.Started, 10*time.Second).Should(BeClosed())
-			cancel()
-			Eventually(done, 10*time.Second).Should(Receive(MatchError(context.Canceled)))
-
-			var evaluation sdktrace.ReadOnlySpan
-			Eventually(func() bool {
-				for _, span := range recorder.Ended() {
-					if span.Name() == opaEvaluateSpan && span.SpanContext().TraceID().String() == traceID {
-						evaluation = span
-					}
-				}
-				return evaluation != nil
-			}, 10*time.Second).Should(BeTrue())
-			Expect(spanAttribute(evaluation, "impersonation.authorization.action")).To(Equal("canceled"))
-			Expect(evaluation.Status().Code).NotTo(Equal(codes.Error))
-			Eventually(func() bool {
-				for _, span := range recorder.Ended() {
-					if span.SpanKind() == trace.SpanKindServer && span.SpanContext().TraceID().String() == traceID {
-						return true
-					}
-				}
-				return false
-			}, 10*time.Second).Should(BeTrue())
-			for _, audit := range j.audits() {
-				Expect(audit["outcome"]).NotTo(Equal("success"))
-				Expect(audit["rule"]).NotTo(Equal("permissive"))
 			}
 		})
 
@@ -470,8 +478,18 @@ var _ = Describe("OPA Impersonation Authorization", func() {
 				Modules: map[string]string{"/broken.rego": "package company.impersonation\n\nresult := {\"action\": \"allow\"} if { undefined_function(input) }\n"},
 				Data:    j.governanceData(), Revision: "r2",
 			})).To(Succeed())
+			requests := j.bundles.Requests(opaBundleName)
+			Eventually(func() int { return j.bundles.Requests(opaBundleName) }, 10*time.Second).Should(BeNumerically(">", requests+1))
+			expectR1()
+
+			By("publishing a revision without the rule's decision")
+			j.logs.Reset()
+			j.publish(opaBundleName, "r3", j.governanceData(), "exceptional.rego")
 			Eventually(func() []map[string]any { return j.events("oauth2_server.impersonation_policy.revision_rejected") }, 10*time.Second).ShouldNot(BeEmpty())
-			Expect(j.events("oauth2_server.impersonation_policy.revision_rejected")[0]).To(HaveKeyWithValue("reason", "compile_failed"))
+			rejected := j.events("oauth2_server.impersonation_policy.revision_rejected")
+			Expect(rejected[len(rejected)-1]).To(HaveKeyWithValue("reason", "decision_absent"))
+			Expect(rejected[len(rejected)-1]).To(HaveKeyWithValue("rule", "governed-inventory"))
+			Expect(rejected[len(rejected)-1]).To(HaveKeyWithValue("policy_revision", "impersonation=r3"))
 			expectR1()
 		})
 
@@ -491,11 +509,13 @@ var _ = Describe("OPA Impersonation Authorization", func() {
 			j.publish(opaBundleName, "r1", j.governanceData(), "governance.rego")
 			j.boot(j.managed(j.config(governed()), 10*time.Second))
 			j.expectHumanToken(j.exchange(j.request(j.agent)))
+			j.logs.Reset()
 			j.publish(opaBundleName, "r2", lookup, "http_send.rego")
 			Eventually(func() []map[string]any { return j.events("oauth2_server.impersonation_policy.revision_rejected") }, 10*time.Second).ShouldNot(BeEmpty())
 			rejected := j.events("oauth2_server.impersonation_policy.revision_rejected")
 			Expect(rejected[len(rejected)-1]).To(HaveKeyWithValue("reason", "prohibited_builtin"))
 			Expect(rejected[len(rejected)-1]).To(HaveKeyWithValue("builtin", "http.send"))
+			Expect(rejected[len(rejected)-1]).To(HaveKeyWithValue("policy_revision", "impersonation=r2"))
 			j.expectHumanToken(j.exchange(j.request(j.agent)))
 			Expect(j.lastAudit()).To(HaveKeyWithValue("policy_revision", "impersonation=r1"))
 			Expect(recorder.Count()).To(BeZero())

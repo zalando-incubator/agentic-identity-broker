@@ -120,6 +120,12 @@ const (
 	// claim that the token lacks, or an impersonation expression returned a value that is not a string or an empty
 	// identity.
 	DetailCELEvaluationFailed FailureDetail = "cel_evaluation_failed"
+	// DetailOPAEvaluationFailed means an impersonation rule's OPA policy failed, raised a built-in error, or timed
+	// out while it ran. The request fails without trying later rules.
+	DetailOPAEvaluationFailed FailureDetail = "opa_evaluation_failed"
+	// DetailOPADecisionInvalid means an impersonation rule's OPA decision was undefined for the request or was not
+	// exactly one allow or deny object. Give the policy a default decision. Later rules are not tried.
+	DetailOPADecisionInvalid FailureDetail = "opa_decision_invalid"
 	// DetailAgentMissing means no registered agent matches the agent ID that the token claims resolve to, or that the
 	// impersonation `audience` names, in which case the caller may have named the wrong agent.
 	DetailAgentMissing FailureDetail = "agent_missing"
@@ -290,6 +296,10 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		d.stage, d.outcome, d.action = StageIdentityResolution, OutcomeAuthorizationDenied, RecoveryNone
 	case DetailClientPolicyDenied, DetailSubjectCategoryIneligible:
 		d.stage, d.outcome, d.action = StageClientAuthorization, OutcomeAuthorizationDenied, RecoveryNone
+	case DetailOPAEvaluationFailed:
+		d.stage = StageClientAuthorization
+	case DetailOPADecisionInvalid:
+		d.stage, d.outcome, d.action, d.target = StageClientAuthorization, OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration
 	case DetailCELConfiguration, DetailJWTConfiguration:
 		d.outcome, d.action, d.target = OutcomeConfigurationError, RecoveryFixConfiguration, TargetBrokerConfiguration
 	case DetailAgentMissing, DetailAgentInvalid:

@@ -794,3 +794,157 @@ func TestImpersonate_VerificationReuseRespectsRuleTrust(t *testing.T) {
 		})
 	}
 }
+
+func TestNewServiceStartsTheSharedEngineOnlyForOPARules(t *testing.T) {
+	h := newOPAHarness(t)
+	var engine ports.ImpersonationOPAEngineConfig
+	var refs []ports.ImpersonationPolicyDecisionRef
+	var deadline time.Duration
+	h.source.ready = func(ctx context.Context) error {
+		at, ok := ctx.Deadline()
+		require.True(t, ok)
+		deadline = time.Until(at)
+		return nil
+	}
+	cfg := &ports.ImpersonationConfig{AudiencePrefix: "https://broker/impersonation", Rules: []ports.ImpersonationRuleConfig{opaRule("governed"), celRule("cel", "true")}}
+	cfg.OPA = ports.ImpersonationOPAEngineConfig{Policy: ports.ImpersonationOPAPolicySource{ConfigFile: "/etc/opa/bootstrap.yaml"}}
+	svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
+		return configurableJWKSProvider{set: h.keyset}, nil
+	}, stubAgentRepository{}, h.issuer, 0, nil, h.verifier, "https://broker.example.com",
+		func(cfg ports.ImpersonationOPAEngineConfig, decisions []ports.ImpersonationPolicyDecisionRef, _ ports.ImpersonationPolicyAdmission) (ports.ImpersonationPolicySource, error) {
+			engine, refs = cfg, decisions
+			return h.source, nil
+		}, "https://broker.example.com")
+	require.NoError(t, err)
+
+	assert.Equal(t, 30*time.Second, engine.StartupTimeout, "startup_timeout defaults at use")
+	assert.InDelta(t, (30 * time.Second).Seconds(), deadline.Seconds(), 1)
+	assert.Equal(t, []ports.ImpersonationPolicyDecisionRef{{
+		Rule: "governed", Package: "aib.broker.impersonation", Decision: "result", EvaluationTimeout: 100 * time.Millisecond,
+	}}, refs, "package, decision, and evaluation_timeout default at use")
+
+	require.NoError(t, svc.Close(context.Background()))
+	assert.Equal(t, int32(1), h.source.stopped.Load())
+
+	celOnly := newOPAHarness(t)
+	svc = celOnly.mustService(celRule("cel", "true"))
+	require.NoError(t, svc.Close(context.Background()), "Close is a no-op without an engine")
+	assert.Zero(t, celOnly.source.stopped.Load())
+}
+
+func TestNewServiceFailsAndStopsTheEngineWhenNotReady(t *testing.T) {
+	h := newOPAHarness(t)
+	h.source.ready = func(context.Context) error {
+		return &ports.ImpersonationPolicyNotReadyError{Reason: "decision_absent", Rule: "second"}
+	}
+	_, err := h.service(opaRule("first"), opaRule("second"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "oauth2_authorization_server.impersonation.opa.startup_timeout: no admissible policy revision within 30s")
+	assert.Contains(t, err.Error(), "last rejection: decision_absent for rules[1] (second)")
+	assert.Equal(t, int32(1), h.source.stopped.Load())
+}
+
+func TestNewServiceRequiresAnEngineForOPARules(t *testing.T) {
+	h := newOPAHarness(t)
+	cfg := &ports.ImpersonationConfig{AudiencePrefix: "https://broker/impersonation", Rules: []ports.ImpersonationRuleConfig{opaRule("governed")}}
+	jwks := func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
+		return configurableJWKSProvider{set: h.keyset}, nil
+	}
+	_, err := NewService(cfg, jwks, stubAgentRepository{}, h.issuer, 0, nil, h.verifier, "https://broker.example.com", sourceFactory(h.source), "https://broker.example.com")
+	assert.ErrorContains(t, err, `oauth2_authorization_server.impersonation.opa: required when a rule selects authorization.type "opa"`)
+
+	cfg.OPA = ports.ImpersonationOPAEngineConfig{Policy: ports.ImpersonationOPAPolicySource{Path: "/policy"}}
+	_, err = NewService(cfg, jwks, stubAgentRepository{}, h.issuer, 0, nil, h.verifier, "https://broker.example.com", nil, "https://broker.example.com")
+	assert.ErrorContains(t, err, "no policy engine is available", "a nil factory with an OPA rule fails closed")
+
+	_, err = NewService(cfg, jwks, stubAgentRepository{}, h.issuer, 0, nil, h.verifier, "https://broker.example.com",
+		func(ports.ImpersonationOPAEngineConfig, []ports.ImpersonationPolicyDecisionRef, ports.ImpersonationPolicyAdmission) (ports.ImpersonationPolicySource, error) {
+			return nil, assert.AnError
+		}, "https://broker.example.com")
+	assert.ErrorIs(t, err, assert.AnError)
+
+	empty := &fakePolicySource{}
+	_, err = NewService(cfg, jwks, stubAgentRepository{}, h.issuer, 0, nil, h.verifier, "https://broker.example.com", sourceFactory(empty), "https://broker.example.com")
+	assert.ErrorContains(t, err, "no admitted policy revision", "readiness without a revision fails closed")
+	assert.Equal(t, int32(1), empty.stopped.Load())
+}
+
+func TestImpersonateWithAnOPARule(t *testing.T) {
+	t.Run("an allowed human mints the normal token after delegation", func(t *testing.T) {
+		h := newOPAHarness(t)
+		svc := h.mustService(opaRule("governed"))
+		outcome, err := svc.Impersonate(context.Background(), h.request(h.signed("alice@example.com", map[string]any{"email": "alice@example.com"})), h.target)
+		require.NoError(t, err)
+		assert.Equal(t, "alice@example.com", h.issuer.input.Subject)
+		require.NotNil(t, h.issuer.input.Email)
+		assert.Equal(t, "alice@example.com", *h.issuer.input.Email)
+		assert.Equal(t, "actor", h.issuer.input.Actor)
+		assert.Equal(t, []string{"read"}, h.issuer.input.Scopes)
+		assert.Equal(t, 1, h.verifier.calls)
+		assert.Equal(t, "opa", outcome.Audit.AuthorizationEngine)
+		assert.Equal(t, "bundle=r1", outcome.Audit.PolicyRevision)
+		assert.Equal(t, "instance-1", outcome.Audit.PolicyAdmissionID)
+	})
+	t.Run("a governance deny is access_denied without delegation", func(t *testing.T) {
+		h := newOPAHarness(t)
+		h.source.set(decidingRevision("bundle=r1", func(string) (ports.ImpersonationPolicyAction, error) { return ports.ImpersonationPolicyDeny, nil }))
+		svc := h.mustService(opaRule("governed"))
+		outcome, err := svc.Impersonate(context.Background(), h.request(h.signed("alice@example.com", nil)), h.target)
+		assert.Equal(t, "access_denied", exchangeError(t, err).Code())
+		assert.Zero(t, h.verifier.calls)
+		assert.False(t, h.issuer.called)
+		assert.Equal(t, "opa", outcome.Audit.AuthorizationEngine)
+	})
+	t.Run("missing delegation after an allow keeps the consent recovery", func(t *testing.T) {
+		h := newOPAHarness(t)
+		h.verifier.status = ports.UserDelegationMissing
+		svc := h.mustService(opaRule("governed"))
+		_, err := svc.Impersonate(context.Background(), h.request(h.signed("alice@example.com", nil)), h.target)
+		exchangeErr := exchangeError(t, err)
+		assert.Equal(t, "access_denied", exchangeErr.Code())
+		assert.Contains(t, exchangeErr.ErrorURI(), "/agents/"+h.target.Agent.ID.String())
+		assert.False(t, h.issuer.called)
+	})
+	t.Run("a signed self-agent needs no human state", func(t *testing.T) {
+		h := newOPAHarness(t)
+		svc := h.mustService(opaRule("governed", "agent"))
+		outcome, err := svc.Impersonate(context.Background(), h.request(h.signed(h.target.Agent.ID.String(), map[string]any{"email": "x@example.com"})), h.target)
+		require.NoError(t, err)
+		assert.Equal(t, SubjectCategoryAgent, outcome.Audit.SubjectCategory)
+		assert.Equal(t, h.target.Agent.ID.String(), h.issuer.input.Subject)
+		assert.Nil(t, h.issuer.input.Email)
+		assert.Zero(t, h.verifier.calls)
+	})
+	t.Run("an unpermitted scope fails before the policy", func(t *testing.T) {
+		h := newOPAHarness(t)
+		h.target.Agent.AllowedScopes = []string{"write"}
+		svc := h.mustService(opaRule("governed"))
+		_, err := svc.Impersonate(context.Background(), h.request(h.signed("alice@example.com", nil)), h.target)
+		assert.Equal(t, "invalid_scope", exchangeError(t, err).Code())
+		assert.Zero(t, h.source.Current().(*fakeRevision).evaluations("governed"))
+	})
+	t.Run("the decision receives the request and transport context", func(t *testing.T) {
+		h := newOPAHarness(t)
+		rev := allowingRevision("bundle=r1", "instance-1")
+		h.source.set(rev)
+		svc := h.mustService(opaRule("governed"))
+		_, err := svc.Impersonate(context.Background(), h.request(h.signed("alice@example.com", nil)), h.target)
+		require.NoError(t, err)
+		input := rev.lastInput("governed")
+		http := input["attributes"].(map[string]any)["request"].(map[string]any)["http"].(map[string]any)
+		assert.Equal(t, "broker.example.com", http["host"])
+		assert.Equal(t, "https", http["scheme"])
+		context := input["context"].(map[string]any)
+		assert.Equal(t, map[string]any{"id": h.target.Agent.ID.String(), "canonical_id": "inventory-assistant", "external_id": "inventory-agent"}, context["agent"])
+		assert.Equal(t, "read", context["request"].(map[string]any)["scope"])
+		assert.NotContains(t, input["parsed_body"], "subject_token")
+	})
+	t.Run("a missing revision fails closed", func(t *testing.T) {
+		h := newOPAHarness(t)
+		svc := h.mustService(opaRule("governed"))
+		h.source.current.Store(nil)
+		_, err := svc.Impersonate(context.Background(), h.request(h.signed("alice@example.com", nil)), h.target)
+		assert.Equal(t, "server_error", exchangeError(t, err).Code())
+		assert.False(t, h.issuer.called)
+	})
+}

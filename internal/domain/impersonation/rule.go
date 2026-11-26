@@ -2,7 +2,10 @@ package impersonation
 
 import (
 	"fmt"
+	"net/url"
 	"reflect"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v4/jwa"
@@ -40,6 +43,7 @@ type compiledRule struct {
 	roles       map[ports.CredentialRole]*compiledRole
 	issuers     []*compiledIssuer
 	authz       authorization
+	opa         *ports.ImpersonationPolicyDecisionRef // set only for OPA rules
 	allowsHuman bool
 	allowsAgent bool
 }
@@ -52,12 +56,23 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 		return nil, err
 	}
 
-	timeout := cfg.Authorization.CEL.EvaluationTimeout
-	authz, err := compileAuthorization(cfg.Authorization.CEL.Expression, timeout)
-	if err != nil {
-		return nil, fmt.Errorf("authorization: %w", err)
+	// An OPA rule has no CEL timeout: its extraction uses the CEL default, and
+	// authorization.opa.evaluation_timeout bounds only the decision.
+	var timeout time.Duration
+	var authz *authorizationProgram
+	var opa *ports.ImpersonationPolicyDecisionRef
+	if cfg.Authorization.Type == engineOPA {
+		ref := opaDecisionRef(cfg)
+		opa = &ref
+	} else {
+		timeout = cfg.Authorization.CEL.EvaluationTimeout
+		var err error
+		authz, err = compileAuthorization(cfg.Authorization.CEL.Expression, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("authorization: %w", err)
+		}
+		authz.rule = cfg.Name
 	}
-	authz.rule = cfg.Name
 
 	roles := make(map[ports.CredentialRole]*compiledRole, len(cfg.Roles))
 	for name, roleCfg := range cfg.Roles {
@@ -141,7 +156,7 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 	// FR-007a / CR-005a: a rule that accepts the unverified subject mode MUST bind the subject in its
 	// single authorization predicate; the compiled expression MUST reference subject_token. Enforced
 	// at startup (fail-fast) from the checked AST so an unbound unverified rule can never start.
-	if roles[ports.CredentialRoleSubject].unverified && !authz.References(celSubjectToken) {
+	if authz != nil && roles[ports.CredentialRoleSubject].unverified && !authz.References(celSubjectToken) {
 		return nil, fmt.Errorf("rule %q: the unverified subject mode requires the authorization predicate to reference subject_token (FR-007a)", cfg.Name)
 	}
 
@@ -152,7 +167,7 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 		ports.CredentialRoleActor,
 		ports.CredentialRoleSubject,
 	} {
-		if roles[role].requireAbsentAudience && !authz.References(extractionVariable(role)) {
+		if authz != nil && roles[role].requireAbsentAudience && !authz.References(extractionVariable(role)) {
 			return nil, fmt.Errorf("rule %q: role %q uses audience_requirement %q and requires the authorization predicate to reference %s (CR-009)",
 				cfg.Name, role, ports.ImpersonationAudienceRequirementAbsent, extractionVariable(role))
 		}
@@ -162,14 +177,89 @@ func compileRule(cfg ports.ImpersonationRuleConfig, factory JWKSProviderFactory,
 	if err != nil {
 		return nil, fmt.Errorf("rule %q: %w", cfg.Name, err)
 	}
-	return &compiledRule{
+	rule := &compiledRule{
 		allowsHuman: allowsHuman,
 		allowsAgent: allowsAgent,
 		name:        cfg.Name,
 		roles:       roles,
 		issuers:     issuers,
-		authz:       authz,
-	}, nil
+		opa:         opa,
+	}
+	if authz != nil {
+		rule.authz = authz
+	}
+	return rule, nil
+}
+
+// authorizationFor returns the rule's authorization for one request. An OPA rule decides on the
+// revision the request read before its first rule.
+func (r *compiledRule) authorizationFor(rev ports.ImpersonationPolicyRevision, publicURL *url.URL) authorization {
+	if r.opa == nil {
+		return r.authz
+	}
+	return opaAuthorization{rule: r.name, revision: rev, publicURL: publicURL}
+}
+
+// OPA rule decision defaults, applied at use.
+const (
+	defaultOPAPackage  = "aib.broker.impersonation"
+	defaultOPADecision = "result"
+)
+
+// opaDecisionRef names the rule's decision with the defaults applied.
+func opaDecisionRef(cfg ports.ImpersonationRuleConfig) ports.ImpersonationPolicyDecisionRef {
+	ref := ports.ImpersonationPolicyDecisionRef{
+		Rule:              cfg.Name,
+		Package:           cfg.Authorization.OPA.Package,
+		Decision:          cfg.Authorization.OPA.Decision,
+		EvaluationTimeout: cfg.Authorization.OPA.EvaluationTimeout,
+	}
+	if ref.Package == "" {
+		ref.Package = defaultOPAPackage
+	}
+	if ref.Decision == "" {
+		ref.Decision = defaultOPADecision
+	}
+	if ref.EvaluationTimeout == 0 {
+		ref.EvaluationTimeout = defaultEvaluationTimeout
+	}
+	return ref
+}
+
+var regoIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// validateAuthorization enforces exactly one engine block per rule. Messages omit the rule name
+// because the caller prefixes the indexed rule.
+func validateAuthorization(auth ports.ImpersonationAuthorizationConfig) error {
+	switch auth.Type {
+	case engineCEL:
+		if auth.OPA != (ports.ImpersonationRuleOPADecision{}) {
+			return fmt.Errorf("authorization.opa: must be empty when authorization.type is \"cel\"")
+		}
+		if t := auth.CEL.EvaluationTimeout; t != 0 && (t < 10*time.Millisecond || t > 5*time.Second) {
+			return fmt.Errorf("authorization.cel.evaluation_timeout must be between 10ms and 5s")
+		}
+	case engineOPA:
+		if auth.CEL != (ports.CELAuthorizationConfig{}) {
+			return fmt.Errorf("authorization.cel: must be empty when authorization.type is \"opa\"")
+		}
+		if pkg := auth.OPA.Package; pkg != "" {
+			for _, segment := range strings.Split(pkg, ".") {
+				if !regoIdentifier.MatchString(segment) {
+					return fmt.Errorf("authorization.opa.package: must be a dot-separated Rego package path")
+				}
+			}
+		}
+		if decision := auth.OPA.Decision; decision != "" && !regoIdentifier.MatchString(decision) {
+			return fmt.Errorf("authorization.opa.decision: must be a Rego identifier")
+		}
+		if t := auth.OPA.EvaluationTimeout; t != 0 && (t < 10*time.Millisecond || t > 5*time.Second) {
+			return fmt.Errorf("authorization.opa.evaluation_timeout must be between 10ms and 5s")
+		}
+	default:
+		return fmt.Errorf("authorization.type: must be \"cel\" or \"opa\"")
+	}
+	return nil
 }
 
 // validateRuleInvariants enforces the structural rule invariants (CR-003, CR-005, CR-008) at
@@ -179,11 +269,8 @@ func validateRuleInvariants(cfg ports.ImpersonationRuleConfig) error {
 	if _, _, err := ParseAllowedSubjectCategories(cfg.AllowedSubjectCategories); err != nil {
 		return fmt.Errorf("rule %q: %w", cfg.Name, err)
 	}
-	if cfg.Authorization.Type != "cel" {
-		return fmt.Errorf("rule %q: authorization.type must be \"cel\"", cfg.Name)
-	}
-	if t := cfg.Authorization.CEL.EvaluationTimeout; t != 0 && (t < 10*time.Millisecond || t > 5*time.Second) {
-		return fmt.Errorf("rule %q: authorization.cel.evaluation_timeout must be between 10ms and 5s", cfg.Name)
+	if err := validateAuthorization(cfg.Authorization); err != nil {
+		return err
 	}
 
 	for name := range cfg.Roles {
