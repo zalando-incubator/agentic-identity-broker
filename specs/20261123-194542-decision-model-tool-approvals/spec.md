@@ -58,7 +58,7 @@ different descriptions and different risk levels.
 1. **Given** the guidance mode and a policy that sends `drive.share_file` to approval, **When** the agent shares a file with `thirdparty.example.com` as editor and the model returns a high probability for `leaves_organization`, **Then** the system does not call the tool, and a pending approval exists. The approval has the risk level `critical` and the description "Share a Drive file with a party outside the organization".
 2. **Given** the same setup, **When** the agent shares a file with an `example.com` colleague as reader and no answer shows a risk property, **Then** the pending approval has the risk level `low` and the description "Share a Drive file inside the organization". The call still waits for Alice.
 3. **Given** the mode `disabled`, **When** the agent makes the same call, **Then** the system sends no model request. The approval request and the approval page are the same as before this feature.
-4. **Given** the shadow mode, **When** the agent shares a file with `thirdparty.example.com` as editor, **Then** the system sends one model request and evaluates the policy with the answers. The approval request is the same as before this feature.
+4. **Given** the shadow mode, **When** the agent shares a file with `thirdparty.example.com` as editor, **Then** the system sends one model request and evaluates the policy with the answers. The approval request is the same as before this feature. The decision record of the evaluation with the answers has each answer value.
 
 ---
 
@@ -141,7 +141,7 @@ that the call waits for a person.
 
 **Acceptance Scenarios**:
 
-1. **Given** automatic approval mode and a policy that allows an internal reader share, **When** the agent shares a file with an `example.com` colleague as reader and all answers satisfy the rule, **Then** the system forwards the call to the tool without an elicitation. The broker creates no pending approval.
+1. **Given** automatic approval mode and a policy that allows an internal reader share, **When** the agent shares a file with an `example.com` colleague as reader and all answers satisfy the rule, **Then** the system forwards the call to the tool without an elicitation. The broker creates no pending approval. The decision record of the evaluation with the answers has the action `allow` and each answer value. It has no argument value.
 2. **Given** the same setup, **When** the agent shares a file with `thirdparty.example.com` as editor, **Then** the call does not satisfy the rule. The call waits for a person, as in User Story 1.
 3. **Given** the guidance mode, **When** the policy returns `allow` after the assessment, **Then** the call waits for a person.
 
@@ -768,16 +768,44 @@ tool result. The broker creates no pending approval, and Alice gets no request.
 
 **Step 5 — 11:02:10: the record of the decision**
 
-The feature writes no audit record of its own. The policy input of step 3 has the call and the
-assessment, and the result of step 4 follows from them. If Olivia enabled the decision log of the
-policy engine, that log has the input and the result of this evaluation.
+The service writes its existing decision record for each policy evaluation. For the evaluation
+with the answers, the record also has the mode, the assessment status, and the answers:
 
-Variant (US4.3): With `mode: "guidance"`, the same call waits for Alice. The decision log has
-the same input and the same `allow` result.
+```json
+{
+  "time": "2026-11-23T11:02:10Z",
+  "level": "INFO",
+  "msg": "opa authorization decision",
+  "action": "allow",
+  "tool_name": "drive.share_file",
+  "method": "tools/call",
+  "protocol": "mcp",
+  "target_server_name": "google-drive-mcp",
+  "duration_ms": 2,
+  "result_code": "ok",
+  "assessment_mode": "auto_approve",
+  "assessment_status": "complete",
+  "assessment_answers": {
+    "leaves_organization": 0.01,
+    "changes_access": 0.97,
+    "persistent_effect": [0.04, 0.95, 0.01],
+    "addresses_assessor": 0.01,
+    "definition_addresses_assessor": 0.01
+  }
+}
+```
+
+The record of the evaluation without the answers does not change. The telemetry of the service
+exports the two records as OpenTelemetry log records. The record has no argument value. If
+Olivia enabled the decision log of the policy engine, that log also has the full policy input
+and the result of each evaluation.
+
+Variant (US4.3): With `mode: "guidance"`, the same call waits for Alice. The record then has
+`"assessment_mode": "guidance"` and the same `allow` action and answers.
 
 **Observable result**: The colleague can read the file. The agent session continued without a
-stop. An auditor can find the answers that let the call proceed in the decision log of the policy
-engine.
+stop. An auditor can find the answers that let the call proceed in the decision record of the
+service.
 
 ### Journey 3 — The model does not answer, and Alice decides as before (US3.1)
 
@@ -898,7 +926,7 @@ Conditions for automatic approval:
 
 **Records and observability**
 
-- **FR-060**: The feature MUST NOT write an audit record of its own for an assessed call. The policy input of the evaluation after the assessment contains the call and the assessment. Thus, the decision log of the policy engine is the record of each assessed call, if the operator enables that log. The existing decision record of the service ("opa authorization decision") and the existing span of a policy evaluation MUST stay. The service writes them for each policy evaluation, thus two times for an assessed call, and its telemetry exports them.
+- **FR-060**: The feature MUST NOT write a separate audit record for an assessed call. It MUST use the existing decision record of the service ("opa authorization decision"), which the service writes for each policy evaluation. For the evaluation after an assessment, that record MUST also contain the mode, the assessment status, and the value of each answer. For an evaluation without an assessment, the record MUST NOT change. The telemetry of the service exports the record. If the operator enables the decision log of the policy engine, that log also has the policy input and the result of each evaluation.
 - **FR-061**: The log records, spans, and metrics that the system writes for an assessment MUST NOT contain argument values, the context, tool definition text, question text, or credentials. The decision logs of the policy engine and the reason texts of a policy are outputs that the operator configures. The decision logs contain the policy input, with the arguments and the assessment, and the policy result. The documentation MUST state this content (SR-010).
 - **FR-062**: The operator MUST be able to monitor the number of assessments by outcome and by status. The operator MUST be able to monitor the duration of model requests. A metric MUST NOT contain a principal.
 
@@ -1045,7 +1073,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
   - A model can be wrong with high confidence. Injected argument text can move probabilities. A server can describe a tool falsely.
   - The product does not measure a model, a question, or a policy. The operator selects the thresholds of each automatic approval rule and is responsible for its false-approval rate. The operator must write automatic approval rules only for tools of trusted servers.
   - A changed tool definition, a changed question, or a changed model changes the answers. The system does not stop automatic approval after such a change. A policy can require one answering model name. An endpoint that returns the model alias of the request hides a new model release.
-  - The policy engine writes decision logs only if the service uses an OPA configuration file with decision logs enabled. With a local policy path, the engine writes no decision log, and the answers of an assessment are then in no record. The existing decision record of the service still has the action of each evaluation.
+  - The policy engine writes decision logs only if the service uses an OPA configuration file with decision logs enabled. With a local policy path, the engine writes no decision log. The decision record of the service has the answers in each case (FR-060).
   - The decision logs of the policy engine contain the policy input, which includes the arguments and the assessment, and the policy result. A policy can also write argument values into its reasons. The operator decides who can read these logs and whether to mask a part of them. Retention at a remote model provider is also a decision of the operator.
   - An approval identifies a call by the tool name without the target server. If two servers on different routes list one tool name, a pending approval and its description can apply to the call of the other server.
   - While assessment is enabled, the decision endpoint gets the full arguments of each assessed call. This includes a secret that a tool takes as an argument. The feature has no setting that withholds values. The operator must use an endpoint that can receive these values, for example a model inside the deployment.
@@ -1089,7 +1117,7 @@ The keys use the existing configuration loader of the service: the YAML file, th
 - **One question set for all tools.** A question set for each tool is out of scope.
 - **Two question types.** Choice questions without a sequence are out of scope, because their answers depend on option names and option sequence (R-06).
 - **Four modes give a sequence for the rollout.** An operator starts with the mode `shadow`: the model gets the calls, and the logs show the answers and the policy results, but no approver and no call gets a different outcome. The mode `guidance` gives the approver the description and the risk level of the policy. The mode `auto_approve` also lets the policy let a call proceed. In the `shadow` mode, a call still waits for the model request before the approval request, thus it gets the delay of an assessment.
-- **Automatic approval creates no approval record and no audit record.** The broker creates no record for a call that needs no person, and the feature writes no audit record of its own. The decision log of the policy engine is the record of the call, the answers, and the result. Issue #206 asks for an audit record without sensitive arguments. The decision log has the arguments, and the operator can mask them in the configuration of the policy engine. The read of the approval state before an assessment still applies to these calls.
+- **Automatic approval creates no approval record and no separate audit record.** The broker creates no record for a call that needs no person. The existing decision record of the service has the action and the answers of the evaluation that let the call proceed, without argument values, as issue #206 asks. The decision log of the policy engine also has the full policy input with the arguments, if the operator enables it. The read of the approval state before an assessment still applies to these calls.
 - **Measurement is out of scope.** The product does not record cases, measure a model, or tune questions and thresholds. It has no evaluation run and no evaluation record. The policy input contains the call and the answers, and the policy result follows from them. Thus, the decision logs of the policy engine show the input and the result, if the operator enables these logs. An operator can use the logs for an analysis outside the product. That analysis is not a part of this spec.
 - **The system does not cache positive results.** The system assesses each call that can proceed automatically. It remembers only the outcome "waits for a person" of FR-008.
 - **The product has no default thresholds and no default policy.** The values in the journeys are examples. The operator selects the thresholds.

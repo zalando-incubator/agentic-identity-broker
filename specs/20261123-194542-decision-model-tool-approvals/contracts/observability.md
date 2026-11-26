@@ -12,38 +12,50 @@ implementation adds the namespace `assessment` to the namespace table in section
 
 ## The record of an assessed call
 
-The feature writes no audit record of its own (FR-060, D-12). The record of an assessed call is
-the decision log of OPA:
-
-- If the OPA configuration enables decision logs, OPA writes the full input and the result of each evaluation. For the second evaluation, the input contains `assessment` and `mcp.arguments`. Thus, the log shows the call, the answers, and the decision. An operator can use it for an audit and for an analysis outside the product.
-- OPA writes decision logs only if ExtProc uses an OPA configuration file. With a local policy path, no decision log exists.
-- The operator decides who can read the log and whether to mask a part of it, for example `/input/mcp/arguments`.
+The feature writes no separate audit record (FR-060, D-12). It uses the existing decision record
+of ExtProc.
 
 ### The existing decision record of ExtProc
 
 ExtProc already writes the record "opa authorization decision" for each policy evaluation
-(`internal/extproc/authorization/authorizer.go`). The feature keeps it and does not change it.
-It occurs two times for an assessed call: one time for each evaluation.
+(`internal/extproc/authorization/authorizer.go`). It occurs two times for an assessed call: one
+time for each evaluation.
 
-| Attribute | Value |
-|---|---|
-| `action` | The action of the policy result |
-| `reasons` | The reasons of a denial |
-| `tool_name`, `method`, `protocol`, `target_server_name` | The dimensions of the request |
-| `duration_ms`, `result_code` | The duration and the result of the evaluation |
+| Attribute | Value | Present |
+|---|---|---|
+| `action` | The action of the policy result | Each evaluation, as today |
+| `reasons` | The reasons of a denial | Each evaluation, as today |
+| `tool_name`, `method`, `protocol`, `target_server_name` | The dimensions of the request | Each evaluation, as today |
+| `duration_ms`, `result_code` | The duration and the result of the evaluation | Each evaluation, as today |
+| `assessment_mode` | `shadow`, `guidance`, or `auto_approve` | New. Only for the evaluation after an assessment |
+| `assessment_status` | A status of D-04 | New. Only for the evaluation after an assessment |
+| `assessment_answers` | A group with the question name as the key. The value is the probability, or the list of level probabilities, or the answer state if no value exists | New. Only for the evaluation after an assessment |
+
+The record of an evaluation without an assessment does not change. The question names are
+values of the configuration. The record does not have the answering model, because that value
+comes from the response of the decision endpoint and no configuration bounds it
+(`coding-standards/LOGGING.md`, section 6.2).
+
+In the `shadow` mode, the `action` of the second record is the action that the policy returns
+with the answers. The system does not use it (FR-009).
 
 The record already goes through OpenTelemetry. The logger of ExtProc has a bridge to the
 OpenTelemetry log pipeline, which is active if `telemetry.enabled` and `telemetry.logs.enabled`
-are true. Each evaluation also has the existing span `extproc.opa.evaluate`.
+are true. Each evaluation also has the existing span `extproc.opa.evaluate`. The span gets no new
+attribute.
 
-The record has the action of each evaluation. It does not have the answers of the model. The
-answers are only in the decision log of OPA. A policy must not write argument values or
-assessment data into its `reasons`.
+A policy must not write argument values or assessment data into its `reasons`.
+
+### The decision log of OPA
+
+- If the OPA configuration enables decision logs, OPA writes the full input and the result of each evaluation. For the second evaluation, the input contains `assessment` and `mcp.arguments`. An operator can use the log for an analysis outside the product.
+- OPA writes decision logs only if ExtProc uses an OPA configuration file. With a local policy path, no decision log exists. The decision record of ExtProc exists in each case.
+- The operator decides who can read the log and whether to mask a part of it, for example `/input/mcp/arguments`.
 
 ## Data that no signal contains
 
-This contract applies to the signals that ExtProc writes for this feature. No such log record,
-span, or metric contains these items:
+This contract applies to the signals that ExtProc writes for this feature and to the new
+attributes of the existing decision record. None of them contains these items:
 
 - An argument value or an argument name
 - The assessment context or a part of it
@@ -51,7 +63,10 @@ span, or metric contains these items:
 - Question text or criteria
 - The request body or the response body of the model request
 - The credential for the decision endpoint
-- A tool name or a principal.
+- A principal.
+
+The feature adds no tool name to a signal. The existing decision record keeps its `tool_name`
+attribute (D-12).
 
 ## Structured log events
 
@@ -59,7 +74,7 @@ span, or metric contains these items:
 |---|---|---|---|
 | `assessment.question_set.loaded` | INFO | ExtProc at startup | `question_count`, `mode` |
 
-The feature writes no record for one call.
+The feature writes no separate record for one call.
 
 ## Spans
 

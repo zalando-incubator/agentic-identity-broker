@@ -72,7 +72,7 @@ These decisions change the scope or the security model:
 - The model gets the tool definition that the MCP server lists. A Docker test of agentgateway `v1.5.0` and `v1.7.0` showed that ExtProc gets the `tools/list` response (research.md D-02).
 - While assessment is enabled, the system sends the tool name and the full arguments of each assessed call to the decision endpoint, as the agent sent them. No setting withholds or filters them. Issue #206 asks for an explicit decision about argument disclosure, and the key `enabled` is that decision.
 - The system does not send the static policy risk level to the model.
-- An automatic approval creates no approval record and no audit record of the feature. It is visible only in the decision log of the policy engine, if the operator enables that log.
+- An automatic approval creates no approval record and no separate audit record. The existing decision record of the service has the action and the answers. The decision log of the policy engine also has the full policy input, if the operator enables that log.
 - The approver sees only the description and the risk level of the policy. The page does not show that a model contributed to them.
 - The product has a default question set. No model measured the default questions. A release that changes a default question changes the answers, and the release notes must state it.
 - One key selects one of four modes: `disabled` (default), `shadow`, `guidance`, and `auto_approve`.

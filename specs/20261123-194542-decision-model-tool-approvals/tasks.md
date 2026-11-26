@@ -36,7 +36,7 @@ Do not add these items, because the plan excludes them:
 **Future Work** (not part of this feature): These findings are about behavior from before the
 feature. Ask the stakeholder before you open an issue for one of them.
 
-- The existing log record "opa authorization decision" contains a tool name that configuration does not bound (`research.md`, D-12). The feature writes this record two times for an assessed call and does not change its log call.
+- The existing log record "opa authorization decision" contains a tool name that configuration does not bound (`research.md`, D-12). The feature writes this record two times for an assessed call and does not change this attribute.
 - The approval key of the broker has no target server. Two servers on different routes that list one tool name share approvals.
 
 ---
@@ -101,7 +101,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 ### Phase 2g: Observability Design (Principle XV)
 
-- [ ] T031 Read `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`. Make sure that `contracts/observability.md` lists each event, span, attribute, and instrument of the feature. The feature writes no audit record of its own and needs no change of `coding-standards/LOGGING.md` (D-12, Principle XV).
+- [ ] T031 Read `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`. Make sure that `contracts/observability.md` lists each event, span, attribute, and instrument of the feature. The feature writes no separate audit record and needs no change of `coding-standards/LOGGING.md`. Make sure that the three new attributes of the existing decision record obey section 6 of that standard (D-12, Principle XV).
 - [ ] T032 [P] Add the namespace `assessment` to the table in section 4.1 of `coding-standards/OPENTELEMETRY.md`. State this change in the description of the pull request (Principle XV).
 - [ ] T033 [P] List the signals that need a safety test in `contracts/observability.md`: the bearer credential of the model request in log records and spans, no tool name and no principal in a signal of the feature, and the attribute set of each instrument (`LOGGING.md` section 9, `OPENTELEMETRY.md` section 7). T056a and T056b write these tests.
 
@@ -130,8 +130,8 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 - [ ] T048 Write the answer validation in `internal/extproc/assessment/answers.go` until T047 passes. It sets `data-model.md` `Assessment and Answer.status`, `.model`, `.answers.<name>.status`, `.answers.<name>.probability`, and `.answers.<name>.probabilities`, `score`, `confidence` (FR-030 to FR-032).
 - [ ] T049 [P] Write tests in `internal/extproc/assessment/client_test.go` with `httptest`. Cover the request shape of `contracts/decision-request.md` and the composed question text. Cover the deadline, the single attempt, and the credential file. Cover the 256 KiB limit and the limit of 64 requests in progress (SC-005).
 - [ ] T050 Write the model client in `internal/extproc/assessment/client.go` with `internal/extproc/httpclient` until T049 passes (FR-007, FR-024 to FR-026, D-03).
-- [ ] T052 Extend `internal/extproc/authorization/decision_test.go` for the `approval_context` on an `allow` result (`contracts/policy-assessment.md` section 3). Extend `internal/extproc/authorization/authorizer_test.go` for the evaluation outcome: a result, an undefined result, an error, and a timeout, each with the prepared query and with the SDK (D-05).
-- [ ] T053 Change `ParseDecision` in `internal/extproc/authorization/decision.go` and the audit switch in `internal/extproc/authorization/authorizer.go` until T052 passes. Add the evaluation outcome to the decision. The action of each outcome stays as today, and the log call of the record "opa authorization decision" does not change (D-05).
+- [ ] T052 Extend `internal/extproc/authorization/decision_test.go` for the `approval_context` on an `allow` result (`contracts/policy-assessment.md` section 3). Extend `internal/extproc/authorization/authorizer_test.go` for the evaluation outcome: a result, an undefined result, an error, and a timeout, each with the prepared query and with the SDK (D-05). For an evaluation with `input.assessment`, the record "opa authorization decision" has `assessment_mode`, `assessment_status`, and `assessment_answers`, and no argument value. For an evaluation without it, the record does not change (FR-060, D-12).
+- [ ] T053 Change `ParseDecision` in `internal/extproc/authorization/decision.go` and the audit switch in `internal/extproc/authorization/authorizer.go` until T052 passes. Add the evaluation outcome to the decision. The action of each outcome stays as today. Add the three attributes of `contracts/observability.md` to the record "opa authorization decision" for an evaluation after an assessment (FR-060, D-05, D-12).
 - [ ] T093 [P] Write tests in `internal/extproc/assessment/conditions_test.go` for each condition of the table "Conditions for automatic approval" in `spec.md`. A permanent denial gives a denial, and each other false condition gives `approval_required` (FR-041 to FR-044).
 - [ ] T096 Write the conditions in `internal/extproc/assessment/conditions.go` until T093 passes. A policy cannot disable a condition (FR-040, FR-043).
 
@@ -149,7 +149,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 - [ ] T054 [P] [US2] Write tests in `internal/extproc/assessment/assessor_test.go` for one assessment. The statuses `definition_missing` and `context_too_large` cause no model request. The policy input agrees with `contracts/policy-assessment.md` section 2 and contains no approval record (FR-034). For each status, the keys agree with the table of that section: test an absent key and the `missing` entries.
 - [ ] T055 [P] [US2] Extend `internal/extproc/server/server_test.go`. A `tools/list` exchange stores its definitions. The server returns each response chunk without a change. Other responses keep the behavior of today. A batched MCP request and a request that is not MCP cause no assessment (FR-001, D-02).
-- [ ] T056a [P] [US2] Write tests in `internal/extproc/assessment/telemetry_test.go` for each row of `contracts/observability.md`. Give the production constructors a JSON buffer logger, a span recorder, and a metric reader. Assert the `event` and the attributes of `assessment.question_set.loaded`. Assert the span name, its attributes, and its status, and the attribute set of each instrument. Assert that the feature writes no record for one assessed call (FR-060, `LOGGING.md` section 9, `OPENTELEMETRY.md` section 7, Principles VIII and XV).
+- [ ] T056a [P] [US2] Write tests in `internal/extproc/assessment/telemetry_test.go` for each row of `contracts/observability.md`. Give the production constructors a JSON buffer logger, a span recorder, and a metric reader. Assert the `event` and the attributes of `assessment.question_set.loaded`. Assert the span name, its attributes, and its status, and the attribute set of each instrument. Assert that the feature writes no separate record for one assessed call (FR-060, `LOGGING.md` section 9, `OPENTELEMETRY.md` section 7, Principles VIII and XV).
 - [ ] T056b [P] [US2] Write `tests/e2e/extproc/assessment_signals_test.go`. It is not an acceptance scenario. It runs the assessment cases of the fixtures and reads all log records, spans, and metric attributes. It makes sure that no signal contains an argument value, a definition text, a question text, or the credential of the fixtures (FR-061, SR-007).
 
 ### Implementation
@@ -201,7 +201,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 ### Implementation
 
 - [ ] T119 [US1] Give the description and the risk level of the second evaluation to the gate in `internal/extproc/server/server.go` until T118 passes. In the `shadow` mode, give the gate the result of the first evaluation. Use the existing fields of `approval.Invocation`. Do not change `internal/extproc/approval/client.go` (FR-035, FR-038, D-16).
-- [ ] T120 [US1] Write `docs/guides/assess-tool-calls.md`. Describe the organization values and the default question set. State that the system sends the tool name and the full arguments of each assessed call to the decision endpoint while assessment is enabled (SR-006). Give the authoring rules for questions in the configuration with one correct and one incorrect question for each rule, and an annotated organization description and question set. Give the rules for a policy description: constant texts, and no argument value or answer value. State the residual risks of SR-010. State that the decision log of the policy engine is the record of each assessed call, and that the engine writes it only with an OPA configuration file that enables it (FR-060). State that the default questions and the example thresholds have no measured results, and that the decision logs of the policy engine contain the call and the answers for an analysis outside the product (FR-027, FR-039, FR-061, SR-008, SR-010).
+- [ ] T120 [US1] Write `docs/guides/assess-tool-calls.md`. Describe the organization values and the default question set. State that the system sends the tool name and the full arguments of each assessed call to the decision endpoint while assessment is enabled (SR-006). Give the authoring rules for questions in the configuration with one correct and one incorrect question for each rule, and an annotated organization description and question set. Give the rules for a policy description: constant texts, and no argument value or answer value. State the residual risks of SR-010. State that the decision record of the service has the answers of each assessed call, and that the decision log of the policy engine also has the full policy input if an OPA configuration file enables it (FR-060). State that the default questions and the example thresholds have no measured results, and that the decision logs of the policy engine contain the call and the answers for an analysis outside the product (FR-027, FR-039, FR-061, SR-008, SR-010).
 - [ ] T121 [US1] Run `just test-e2e-extproc`. Make sure that US1.1, US1.2, and US1.4 in `tests/e2e/extproc/tool_assessment_test.go` pass (SC-001).
 
 **Checkpoint**: The modes `shadow` and `guidance` operate. Automatic approval is not possible at this point.
@@ -210,7 +210,7 @@ Phases 2c (OpenAPI), 2d (database), and 2e (design system) of the task template 
 
 ## Phase 6: User Story 4 — Let Harmless Calls Proceed Without a Person (P2)
 
-**Goal**: A call proceeds without a person only if all conditions of FR-041 are true. The feature writes no audit record of its own.
+**Goal**: A call proceeds without a person only if all conditions of FR-041 are true. The existing decision record has the answers.
 
 **Independent Test**: Run the cases US4.1 to US4.3 in `tests/e2e/extproc/tool_assessment_test.go` with the example rule.
 

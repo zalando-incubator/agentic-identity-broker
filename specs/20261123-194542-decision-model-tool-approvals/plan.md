@@ -60,7 +60,7 @@ The feature adds no domain entity and no typed identifier. The broker does not c
 | VIII, XIII | Write one Ginkgo case for each of the 20 scenarios before behavior, with realistic assertions and no pending or skipped case. Write unit tests first for the parser, the context builder, the validation, the automatic approval conditions, and the telemetry. |
 | IX | The feature adds no migration, no column, and no repository change (DB-001). |
 | XI, XIV | The feature changes no page and no component, thus the design system rules have no subject and the spec needs no wireframe. The spec has three journeys with configuration, HTTP exchanges, and a table of the page values before and after. |
-| XV | [contracts/observability.md](contracts/observability.md) defines the one event, the span, and the instruments. Add the `assessment` namespace to `coding-standards/OPENTELEMETRY.md`. The feature writes no audit record of its own (D-12), thus it needs no change of `coding-standards/LOGGING.md`. The tests that the two standards require come before the telemetry code: the credential in log records and spans, and the attribute set of each instrument. |
+| XV | [contracts/observability.md](contracts/observability.md) defines the one event, the span, the instruments, and the three new attributes of the existing decision record. Add the `assessment` namespace to `coding-standards/OPENTELEMETRY.md`. The feature writes no separate audit record (D-12), thus it needs no change of `coding-standards/LOGGING.md`. The tests that the two standards require come before the telemetry code: the credential in log records and spans, and the attribute set of each instrument. |
 
 **Gate outcome**: The design has no violation of the constitution. The verification of D-02,
 D-03, D-07, D-14, and D-15 is complete, and the contracts agree with the results. Two prerequisites stay open
@@ -98,6 +98,7 @@ internal/extproc/
 │                                    #      builder, model client, answer validation,
 │                                    #      automatic approval conditions
 ├── authorization/decision.go        # approval_context on an allow result (D-05)
+├── authorization/authorizer.go      # Three attributes on the existing decision record (D-12)
 ├── approval/gate.go                 # Gate in two steps (D-01)
 ├── approval/cache.go                # Lookup of a matching pending approval (D-07)
 ├── config/                          # New keys, defaults (with the default questions), validation
@@ -173,7 +174,7 @@ The tests do not exist at this time. All cases use the ExtProc suite with the br
 | US1.1 | External editor share: the tool double gets no call. The create request at the broker double has `risk_level: critical` and the description "Share a Drive file with a party outside the organization". |
 | US1.2 | Internal reader share in the `guidance` mode: the create request has `risk_level: low` and the description "Share a Drive file inside the organization". |
 | US1.3 | The mode `disabled`: the model double gets no request, and the create request equals the request of today byte for byte. |
-| US1.4 | The `shadow` mode: one model request, and the create request equals the request of today. |
+| US1.4 | The `shadow` mode: one model request, the create request equals the request of today, and the decision record of the second evaluation has the answers. |
 | US2.1 | One model request with the default questions, the organization values, the server name, the listed definition, and the tool name and the arguments as the agent sent them. |
 | US2.2 | The request body has no principal, agent identifier, session identifier, credential, risk level, policy description, or other tool. |
 | US2.3 | Arguments that make the context larger than the limit: no model request, and the call waits in each mode. |
@@ -187,7 +188,7 @@ The tests do not exist at this time. All cases use the ExtProc suite with the br
 | US3.3 | Endpoint not available: the create request arrives at the broker double as today. |
 | US3.4 | A second identical call causes no second model request and gets the same approval URL. |
 | US3.5 | With `incomplete`, an `allow` result ends as a pending approval. |
-| US4.1 | The call gets to the tool double, and the broker double gets no create request. |
+| US4.1 | The call gets to the tool double, the broker double gets no create request, and the decision record of the second evaluation has the action `allow`, the answers, and no argument value. |
 | US4.2 | The external editor share waits for a person. |
 | US4.3 | The `guidance` mode with an `allow` result after the assessment: the call waits. |
 
@@ -243,7 +244,7 @@ Unit tests come first for each of these subjects:
 - The decision parser and the system rules of [contracts/policy-assessment.md](contracts/policy-assessment.md): the `approval_context` of an `allow` result after a downgrade, and the fallback to the first result after an error in the second evaluation.
 - The gate: the pending lookup by tool name and `arguments_hash` (a call with an added argument does not match), the read-only lookup for a permanent denial, and the create request of the reuse path with the result of the first evaluation.
 - The arguments hash in `internal/domain/approval/toolpattern`: `1`, `1.0`, `1e0`, and numbers in nested values give one hash through the decoder of ExtProc and through the decoder of the broker. The hash of each existing broker value does not change.
-- The authorizer: each evaluation outcome (a result, an undefined result, an error, a timeout) with the prepared query and with the SDK.
+- The authorizer: each evaluation outcome (a result, an undefined result, an error, a timeout) with the prepared query and with the SDK. The decision record of an evaluation after an assessment has the three new attributes, and the record of each other evaluation does not change (D-12).
 - The modes: each of the four modes, with the result that the system uses in the modes `shadow` and `guidance` (FR-009).
 - The automatic approval conditions: each condition of FR-041. A permanent denial gives a denial (FR-042).
 - The telemetry: the startup event, the span name with its attributes and status, the attribute set of each instrument, and no tool name in a signal of the feature.
