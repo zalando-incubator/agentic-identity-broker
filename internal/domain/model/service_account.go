@@ -1,8 +1,10 @@
 package model
 
 import (
+	"slices"
 	"time"
 
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/canonical"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 )
 
@@ -64,26 +66,49 @@ type ServiceAccount struct {
 }
 
 // StatusAt derives the account's status at the given instant.
+// The account is failed from the instant a stated expiry has passed, without skew allowance.
 func (a *ServiceAccount) StatusAt(now time.Time) (ServiceAccountStatus, *ServiceAccountFailureReason) {
-	return "", nil
+	if a.CredentialExpiresAt != nil && !now.Before(*a.CredentialExpiresAt) {
+		reason := ServiceAccountFailureCredentialExpired
+		return ServiceAccountStatusFailed, &reason
+	}
+	return ServiceAccountStatusReady, nil
 }
 
 // Narrowing derives whether the broker can ask for less than the ceiling.
+// A stored signed JWT is handed out as it is, so it cannot be narrowed.
 func (a *ServiceAccount) Narrowing() Narrowing {
-	return ""
+	return NarrowingNone
 }
 
 // ValidateServiceAccountKind accepts the kinds this release offers.
 func ValidateServiceAccountKind(kind ServiceAccountKind) error {
+	if kind != ServiceAccountKindJWTBearer {
+		return &ServiceAccountValidationError{Message: "kind must be jwt_bearer"}
+	}
 	return nil
 }
 
 // ValidateServiceAccountCanonicalID applies the canonical-ID rules to a required name.
 func ValidateServiceAccountCanonicalID(canonicalID string) error {
+	if err := canonical.Validate(&canonicalID); err != nil {
+		return &ServiceAccountValidationError{Message: err.Error()}
+	}
 	return nil
 }
 
 // NormalizeServiceAccountScopes validates a ceiling and returns it in ascending byte order.
 func NormalizeServiceAccountScopes(scopes []string) ([]string, error) {
-	return nil, nil
+	invalid := &ServiceAccountValidationError{Message: "scopes must be a non-empty list of unique, non-empty values"}
+	if len(scopes) == 0 {
+		return nil, invalid
+	}
+	sorted := slices.Clone(scopes)
+	slices.Sort(sorted)
+	for i, scope := range sorted {
+		if scope == "" || (i > 0 && sorted[i-1] == scope) {
+			return nil, invalid
+		}
+	}
+	return sorted, nil
 }

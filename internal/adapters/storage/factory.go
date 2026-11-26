@@ -107,6 +107,8 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	signingKeys := memory.NewSigningKeyStore()
 	sessions := memory.NewInMemoryUserSessionRepository()
 	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	serviceAccounts := memory.NewServiceAccountRepository().WithProviderRepository(providerRepo)
+	providerRepo.WithServiceAccountRepository(serviceAccounts)
 	return &Adapter{
 		lifecycle:              memAdapter,
 		users:                  memAdapter,
@@ -130,7 +132,7 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           noOpStorageTransactionManager{},
 		pkceSessions:           memory.NewPKCESessionStore(),
 		clientAssertionReplays: memory.NewClientAssertionReplayStore(),
-		serviceAccounts:        memory.NewServiceAccountRepository(),
+		serviceAccounts:        serviceAccounts,
 	}, nil
 }
 

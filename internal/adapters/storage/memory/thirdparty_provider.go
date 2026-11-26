@@ -38,6 +38,12 @@ type InMemoryThirdpartyOAuth2ProviderRepository struct {
 	dcrIndex          map[dcrClientIdentity]id.ServiceID
 	resources         map[id.ServiceID]map[string]struct{}
 	resourceOwners    map[string]id.ServiceID
+	serviceAccounts   serviceAccountCounter
+}
+
+// serviceAccountCounter counts the service accounts a provider holds.
+type serviceAccountCounter interface {
+	CountByService(ctx context.Context, serviceID id.ServiceID) (int, error)
 }
 
 var _ ports.ThirdpartyOAuth2ProviderRepository = (*InMemoryThirdpartyOAuth2ProviderRepository)(nil)
@@ -63,6 +69,23 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) WithUserSessionRepository(s
 		sessions.issuerSessionGate = &r.issuerSessionGate
 	}
 	return r
+}
+
+// WithServiceAccountRepository makes Delete refuse a provider that holds service accounts, as the
+// PostgreSQL foreign key does. Call it before using either repository concurrently.
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) WithServiceAccountRepository(accounts serviceAccountCounter) *InMemoryThirdpartyOAuth2ProviderRepository {
+	r.serviceAccounts = accounts
+	return r
+}
+
+// withExistingService runs fn while the provider exists and cannot be deleted.
+func (r *InMemoryThirdpartyOAuth2ProviderRepository) withExistingService(serviceID id.ServiceID, fn func() error, operation string) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if _, exists := r.providers[serviceID]; !exists {
+		return providerStorageError(operation, storage.ErrorKindNotFound, ports.ErrNotFound, "provider not found")
+	}
+	return fn()
 }
 
 // Create stores a new provider and its complete protected-resource set.
@@ -343,6 +366,15 @@ func (r *InMemoryThirdpartyOAuth2ProviderRepository) Delete(ctx context.Context,
 		}
 		if count != 0 {
 			return providerStorageError("DeleteThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, "provider has user sessions")
+		}
+	}
+	if _, exists := r.providers[serviceID]; exists && r.serviceAccounts != nil {
+		count, err := r.serviceAccounts.CountByService(ctx, serviceID)
+		if err != nil {
+			return providerStorageError("DeleteThirdpartyOAuth2Provider", storage.ErrorKindUnknown, err, "failed to check provider service accounts")
+		}
+		if count != 0 {
+			return providerStorageError("DeleteThirdpartyOAuth2Provider", storage.ErrorKindConflict, nil, fmt.Sprintf("cannot delete service: %d service account(s) are attached to it", count))
 		}
 	}
 	for resource := range r.resources[serviceID] {
