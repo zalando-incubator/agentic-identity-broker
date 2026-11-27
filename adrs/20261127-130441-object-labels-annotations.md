@@ -7,7 +7,7 @@
 
 Operators manage Agents, Services, and Permission Sets from GitOps repositories and internal catalogues. They need to categorize these resources and attach tool-owned notes without inventing naming conventions in display names or descriptions. Kubernetes labels and annotations are the shape their controllers already copy.
 
-The maintainer confirmed the API draft ([object-metadata.md](../specs/20261127-093439-object-labels-annotations/contracts/object-metadata.md) and [admin-openapi-metadata.yaml](../specs/20261127-093439-object-labels-annotations/contracts/admin-openapi-metadata.yaml)) on 2026-11-27, including the fixed error messages, the write matrix, and the 512 KiB body caps. The research record is [research.md](../specs/20261127-093439-object-labels-annotations/research.md).
+The maintainer confirmed the API draft ([object-metadata.md](../specs/20261127-093439-object-labels-annotations/contracts/object-metadata.md) and [admin-openapi-metadata.yaml](../specs/20261127-093439-object-labels-annotations/contracts/admin-openapi-metadata.yaml)) on 2026-11-27 ([confirmation comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/577#issuecomment-7219784410)), including the fixed error messages, the write matrix, and the 512 KiB body caps. The research record is [research.md](../specs/20261127-093439-object-labels-annotations/research.md).
 
 ## Decision
 

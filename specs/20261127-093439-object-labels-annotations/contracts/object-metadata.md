@@ -1,6 +1,6 @@
 # Contract: Object Metadata on Agents, Services, and Permission Sets
 
-Status: confirmed by the maintainer on 2026-11-27 (API-004, Constitution X) and published in
+Status: confirmed by the maintainer on 2026-11-27 ([confirmation](https://github.com/zalando-incubator/agentic-identity-broker/pull/577#issuecomment-7219784410); API-004, Constitution X) and published in
 `api/admin/openapi.yaml` 3.1.0. The OpenAPI fragments are in
 [admin-openapi-metadata.yaml](admin-openapi-metadata.yaml). This contract applies only to the
 Admin API. `api/enduser/openapi.yaml` does not change.
