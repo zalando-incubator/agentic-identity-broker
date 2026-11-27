@@ -133,7 +133,11 @@ func TestImpersonateAgentSubject(t *testing.T) {
 			} else {
 				var exchangeErr *tokenexchange.TokenExchangeError
 				require.ErrorAs(t, err, &exchangeErr)
-				require.Equal(t, "access_denied", exchangeErr.Code())
+				if tc.wantDelegation > 0 {
+					require.Equal(t, "invalid_grant", exchangeErr.Code())
+				} else {
+					require.Equal(t, "access_denied", exchangeErr.Code())
+				}
 				if !tc.human {
 					require.Empty(t, exchangeErr.ErrorURI())
 				}

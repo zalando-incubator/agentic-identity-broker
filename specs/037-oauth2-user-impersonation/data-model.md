@@ -114,7 +114,7 @@ After rule authorization, a human subject is converted without alteration to `id
 | Result | Effect |
 |---|---|
 | Ready | Continue to `ImpersonationMintInput`. |
-| Consent required | Terminal `403 access_denied`, body `error_uri` at `<end-user-public-url>/agents/<target-uuid>`, and Bearer `insufficient_scope` challenge with the URI when RFC 6750-safe. |
+| Consent required | Terminal `400 invalid_grant` with body `error_uri` at `<end-user-public-url>/agents/<target-uuid>`; no `WWW-Authenticate`. |
 | Repository error | Terminal `500 server_error` with no recovery signals. |
 
 The human check is mandatory for signed and unverified subjects. It never creates or modifies a `UserGrant` and never falls through to later rules.
@@ -198,7 +198,7 @@ sequenceDiagram
                     I-->>S: normal local-policy signed token
                     S-->>H: success
                 else consent required
-                    S-->>H: access_denied + consent error_uri (terminal)
+                    S-->>H: invalid_grant + consent error_uri (terminal)
                 else repository error
                     S-->>H: server_error (terminal)
                 end
@@ -207,5 +207,5 @@ sequenceDiagram
             S->>S: record outcome, fall through
         end
     end
-    H-->>C: RFC 8693 response OR error (consent denial includes safe Bearer challenge) + audit event
+    H-->>C: RFC 8693 response OR error (consent denial carries error_uri in the body) + audit event
 ```

@@ -209,9 +209,9 @@ Descriptions are credential-free summaries, not stable diagnostic identifiers. C
 |---|---|---|
 | 400 | `invalid_request` | The request is malformed or missing a required parameter. |
 | 400 | `invalid_target` | The `resource` matches no configured service, or repeated resource values identify distinct targets. |
-| 400 | `invalid_grant` | Rejected subject credentials, or a missing or unusable provider session. |
+| 400 | `invalid_grant` | Rejected subject credentials, a missing or unusable provider session, or human impersonation consent that is not ready. |
 | 401 | `invalid_client` | The `client_assertion` (or broker credentials) cannot be verified. |
-| 403 | `access_denied` | Missing, expired, or insufficient consent, or CEL policy denial. |
+| 403 | `access_denied` | Missing, expired, or insufficient consent for third-party exchange, or CEL policy denial. |
 | 500 | `server_error` | Configuration or infrastructure failure, including ambiguous registered resources. |
 
 ### 400 invalid_request
@@ -326,7 +326,7 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 
 `grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
 
-Human impersonation uses different session diagnostics from third-party token-vault exchange. These consent conditions return `403 access_denied` with `reconsent` targeting `consent`. A repository error instead returns `500 server_error` with `grant_repository_unavailable` or `session_repository_unavailable` and no recovery URI.
+Human impersonation uses different session diagnostics from third-party token-vault exchange. These consent conditions, and the shared grant details above, return `400 invalid_grant` with the consent `error_uri` and `reconsent` targeting `consent`. A repository error instead returns `500 server_error` with `grant_repository_unavailable` or `session_repository_unavailable` and no recovery URI.
 
 | Impersonation detail | Consent condition |
 |---|---|
@@ -513,23 +513,27 @@ untrusted client assertion returns `invalid_client`. A valid request with no per
 returns `access_denied`. Errors do not expose credentials, signing keys, trust sources, or
 rejected scopes.
 
-For human consent denials, the response includes both the body recovery URI
-and a Bearer challenge when the URI is safe under RFC 6750:
+For human consent denials, the broker returns the RFC 6749 token error
+`invalid_grant` with the recovery URI in the body. The response has no
+`WWW-Authenticate` header:
 
 ```http
-HTTP/1.1 403 Forbidden
+HTTP/1.1 400 Bad Request
 Content-Type: application/json
-WWW-Authenticate: Bearer error="insufficient_scope", error_uri="https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
+Cache-Control: no-store
 
-{"error":"access_denied","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
+{"error":"invalid_grant","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
 ```
 
 The consent page uses the target's canonical UUID, even when the request used a
-`canonical_id` audience suffix. If the URI contains an RFC 6750-unsafe character,
-the challenge omits `error_uri`; the body retains it. Repository failures return
-`500 server_error` without either recovery signal. Browser `/oauth2/authorize`
-instead redirects to consent with sealed JWE state. Self-agent issuance and
-third-party token-vault exchange do not use this human-consent challenge.
+`canonical_id` audience suffix. Repository failures return `500 server_error`
+without `error_uri`. Browser `/oauth2/authorize` instead redirects to consent with
+sealed JWE state. Self-agent issuance does not check human consent.
+
+Third-party token-vault exchange reports the same grant problems as
+`403 access_denied` with the consent `error_uri`, and provider-session problems as
+`400 invalid_grant` with the service's authorization URL. Detect consent or session
+recovery by the presence of `error_uri`, not by status code.
 
 ### Audit events
 

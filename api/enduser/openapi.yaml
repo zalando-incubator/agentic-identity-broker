@@ -1637,20 +1637,21 @@ paths:
         local `/oauth2/authorize`. Missing, expired, or stale grants require consent.
         So does a missing or unusable session for an included service, or a missing,
         unusable, or scope-deficient mandatory service. The denial is terminal
-        `403 access_denied` with body `error_uri` set to
-        `<public URL>/agents/{target-agent-UUID}`. It also includes
-        `WWW-Authenticate: Bearer error="insufficient_scope", error_uri="<same URI>"`
-        when that URI satisfies RFC 6750 challenge-value safety rules. If the URI is
-        unsafe for the header, the body retains `error_uri` and the header omits it.
+        `400 invalid_grant` (RFC 6749 §5.2) with body `error_uri` set to
+        `<public URL>/agents/{target-agent-UUID}`. The response has no
+        `WWW-Authenticate` header: the token endpoint is not an RFC 6750 protected
+        resource, so the recovery URI travels only in the body.
         The body does not disclose which consent condition failed. Repository failures
-        return `500 server_error` without `error_uri` or `WWW-Authenticate`. Unlike the
-        browser flow, impersonation returns no JWE consent redirect.
+        return `500 server_error` without `error_uri`. Unlike the browser flow,
+        impersonation returns no JWE consent redirect.
 
-        End-User API 2.0.0 changes human impersonation requests that previously
-        minted with an active agent-level grant but incomplete browser consent into
-        this denial. Clients must open `error_uri`, complete the user action, and retry.
-        The endpoint and request parameters are unchanged. Other grant types and
-        third-party token-vault exchange retain their existing behavior.
+        End-User API 2.0.0 changes two human impersonation outcomes. A missing or
+        expired delegation, previously `403 access_denied`, now returns this
+        `400 invalid_grant`. Requests that previously minted with an active agent-level
+        grant but incomplete browser consent receive the same denial. Clients must open
+        `error_uri`, complete the user action, and retry. The endpoint and request
+        parameters are unchanged. Other grant types and third-party token-vault exchange
+        retain their existing behavior.
 
         #### Agent subjects
         Each impersonation rule lists accepted `allowed_subject_categories`: `human`, `agent`,
@@ -1666,11 +1667,11 @@ paths:
         agent's represented subject is the target UUID, not necessarily the extracted principal.
 
         A category-ineligible rule falls through. No match returns the existing generic
-        `403 access_denied` (`impersonation not permitted`) without `error_uri` or
-        `WWW-Authenticate`. Signed exact equality on human-only or omitted-category
+        `403 access_denied` (`impersonation not permitted`) without `error_uri`.
+        Signed exact equality on human-only or omitted-category
         rules is ineligible even with active same-text human delegation. Eligible,
         CEL-authorized agents need no human consent, never return a consent-required
-        `error_uri` or challenge, and create no grant or session. Human consent denials
+        `error_uri`, and create no grant or session. Human consent denials
         remain terminal and are never retried as agents.
 
         Agent tokens have reserved `sub` and `agent_id` equal to the target UUID and
@@ -1837,7 +1838,7 @@ paths:
                     expires_in: 3600
                     scope: "read"
         "400":
-          description: Bad Request - Invalid parameters, malformed CIMD assertion parameters, invalid tokens, or no valid session
+          description: Bad Request - Invalid parameters, malformed CIMD assertion parameters, invalid tokens, no valid session, or human impersonation consent not ready
           content:
             application/json:
               schema:
@@ -1885,6 +1886,16 @@ paths:
                   value:
                     error: "invalid_request"
                     error_description: "resource must not be present for impersonation"
+                impersonation_consent_required:
+                  summary: Impersonation - human consent is not ready
+                  description: >-
+                    Terminal denial for a missing, expired, or stale grant, an included
+                    service without a usable session, or a mandatory service without a
+                    usable session or sufficient scopes.
+                  value:
+                    error: "invalid_grant"
+                    error_description: "User authorization is insufficient. Please re-consent."
+                    error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
         "401":
           description: Unauthorized - Invalid client authentication (client_assertion or client credentials)
           content:
@@ -1908,19 +1919,7 @@ paths:
                     error: "invalid_client"
                     error_description: "client assertion is not trusted for impersonation"
         "403":
-          description: >-
-            Forbidden. Only human-category local impersonation consent denials
-            include the Bearer insufficient_scope challenge; other token errors do not.
-          headers:
-            WWW-Authenticate:
-              description: >-
-                Present only for human-category local impersonation consent
-                denials. Bearer error="insufficient_scope" includes error_uri when the
-                body recovery URI satisfies RFC 6750 challenge-value safety rules.
-                Otherwise the header omits error_uri while the body retains it.
-              schema:
-                type: string
-              example: 'Bearer error="insufficient_scope", error_uri="https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"'
+          description: Forbidden - User has not granted access or CEL authorization failed
           content:
             application/json:
               schema:
@@ -1952,19 +1951,8 @@ paths:
                   value:
                     error: "access_denied"
                     error_description: "agent-subject tokens cannot be exchanged for third-party service tokens"
-                impersonation_consent_required:
-                  summary: Impersonation - human consent is not ready
-                  description: >-
-                    Terminal denial for a missing, expired, or stale grant, an included
-                    service without a usable session, or a mandatory service without a
-                    usable session or sufficient scopes. The WWW-Authenticate response
-                    header is shown in the 403 headers contract above.
-                  value:
-                    error: "access_denied"
-                    error_description: "User authorization is insufficient. Please re-consent."
-                    error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
         "500":
-          description: Internal Server Error; consent-check repository failures have no recovery URI or challenge
+          description: Internal Server Error; consent-check repository failures have no recovery URI
           content:
             application/json:
               schema:

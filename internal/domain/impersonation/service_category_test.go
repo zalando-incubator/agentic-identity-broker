@@ -99,10 +99,11 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 					require.Equal(t, "server_error", exchangeErr.Code())
 					require.Empty(t, exchangeErr.ErrorURI())
 				} else {
-					require.Equal(t, "access_denied", exchangeErr.Code())
 					if tc.human && tc.wantDelegation > 0 {
+						require.Equal(t, "invalid_grant", exchangeErr.Code())
 						require.Contains(t, exchangeErr.ErrorURI(), "/agents/")
 					} else {
+						require.Equal(t, "access_denied", exchangeErr.Code())
 						require.Empty(t, exchangeErr.ErrorURI())
 					}
 				}
@@ -132,9 +133,9 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 		{name: "human-only rule", categories: []string{"human"}, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "omitted categories", subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "unsigned bound subject", categories: []string{"human", "agent"}, unsigned: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
-		{name: "unsigned unbound subject stays human", categories: []string{"human", "agent"}, unsigned: true, unbound: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCalls: 1},
-		{name: "unregistered uuid stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return id.NewAgentID().String() }, wantCode: "access_denied", wantCalls: 1},
-		{name: "non-canonical uuid text stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return strings.ToUpper(other.ID.String()) }, wantCode: "access_denied", wantCalls: 1},
+		{name: "unsigned unbound subject stays human", categories: []string{"human", "agent"}, unsigned: true, unbound: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "invalid_grant", wantCalls: 1},
+		{name: "unregistered uuid stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return id.NewAgentID().String() }, wantCode: "invalid_grant", wantCalls: 1},
+		{name: "non-canonical uuid text stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return strings.ToUpper(other.ID.String()) }, wantCode: "invalid_grant", wantCalls: 1},
 		{name: "extracted principal names another agent", categories: []string{"human", "agent"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.ConsentReady, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "extracted principal names another agent on human-only rule", categories: []string{"human"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.ConsentReady, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "agent lookup failure fails closed", categories: []string{"human", "agent"}, subject: func(*Target) string { return other.ID.String() }, lookupErr: context.DeadlineExceeded, wantCode: "server_error"},

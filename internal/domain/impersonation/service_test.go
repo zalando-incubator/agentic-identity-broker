@@ -3,6 +3,7 @@ package impersonation
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -188,7 +189,8 @@ func TestImpersonate_HumanConsentStatus(t *testing.T) {
 			outcome, issuer, target, err := newService(t, verifier, "true")
 			var tokenErr *tokenexchange.TokenExchangeError
 			require.ErrorAs(t, err, &tokenErr)
-			assert.Equal(t, tokenexchange.AccessDeniedError, tokenErr.Code())
+			assert.Equal(t, tokenexchange.InvalidGrantError, tokenErr.Code())
+			assert.Equal(t, http.StatusBadRequest, tokenErr.HTTPStatus())
 			assert.Equal(t, "https://broker.example.com/agents/"+target.Agent.ID.String(), tokenErr.ErrorURI())
 			assert.Nil(t, outcome.Response)
 			assert.Equal(t, tc.stage, tokenErr.Diagnostic().Stage())

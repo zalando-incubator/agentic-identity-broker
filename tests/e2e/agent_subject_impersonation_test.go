@@ -171,12 +171,14 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 	}
 	assertDenied := func(form url.Values, consent bool) map[string]any {
 		status, body := post(form)
-		Expect(status).To(Equal(http.StatusForbidden), "%v", body)
-		Expect(body["error"]).To(Equal("access_denied"))
 		Expect(body).NotTo(HaveKey("access_token"))
 		if consent {
+			Expect(status).To(Equal(http.StatusBadRequest), "%v", body)
+			Expect(body["error"]).To(Equal("invalid_grant"))
 			Expect(body["error_uri"]).To(ContainSubstring("/agents/" + target.ID.String()))
 		} else {
+			Expect(status).To(Equal(http.StatusForbidden), "%v", body)
+			Expect(body["error"]).To(Equal("access_denied"))
 			Expect(body).NotTo(HaveKey("error_uri"))
 		}
 		return body

@@ -46,10 +46,11 @@ func categoryIneligible() *tokenexchange.TokenExchangeError {
 
 const consentRequiredDescription = "user authorization requires consent before impersonation"
 
-// consentRequired builds a credential-free access_denied error directing the user to the
-// existing consent-management page for the target agent.
+// consentRequired builds a credential-free invalid_grant (400) error: RFC 6749 §5.2 reports an
+// authorization grant the user has not (or no longer) authorized this way. error_uri directs the
+// user to the existing consent-management page for the target agent.
 func consentRequired(consentURL string) *tokenexchange.TokenExchangeError {
-	return accessDenied(consentRequiredDescription).WithErrorURI(consentURL)
+	return tokenexchange.NewInvalidGrantError(consentRequiredDescription).WithErrorURI(consentURL)
 }
 
 // serverError builds a server_error (500) for fail-closed internal failures (FR-011).

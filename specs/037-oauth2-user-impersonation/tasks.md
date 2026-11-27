@@ -437,6 +437,13 @@ Tasks T086–T094 describe the original agent-level delegation check. The accept
 - [X] T098 Map consent denials to terminal 403 `access_denied`, body `error_uri` and a safe Bearer `insufficient_scope` challenge; fail closed without recovery on repository errors.
 - [X] T099 Exercise browser redirect, impersonation denial and reconnect success in production-bootstrap E2E; run affected Go tests and the repository checks.
 
+## Amendment 2026-11-27: RFC 6749 consent error
+
+Review replaced the T098 response mapping. The token endpoint is not an RFC 6750 protected resource, so consent denials follow RFC 6749 §5.2.
+
+- [X] T100 Map human impersonation consent denials, including missing and expired delegation, to terminal 400 `invalid_grant` with body `error_uri`; remove the token-endpoint `WWW-Authenticate` challenge.
+- [X] T101 Update unit, handler and E2E assertions, the accepted decision, OpenAPI, architecture, specs and end-user guides for the new response.
+
 ---
 
 ## Dependencies & Execution Order

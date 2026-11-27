@@ -40,28 +40,26 @@ the impersonation rule authorizes the request. The check matches local browser
 sets, usable sessions for all included services, and satisfied mandatory service
 requirements, including sessions and required scopes.
 
-If consent is not ready, the request ends with `403 access_denied`. The body
-points to the existing target-agent page. The Bearer challenge includes the same
-URI when the URI is safe under RFC 6750:
+If consent is not ready, the request ends with the standard OAuth 2.0 token error
+`400 invalid_grant`. The body `error_uri` points to the existing target-agent page:
 
 ```http
-HTTP/1.1 403 Forbidden
+HTTP/1.1 400 Bad Request
 Content-Type: application/json
-WWW-Authenticate: Bearer error="insufficient_scope", error_uri="https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
+Cache-Control: no-store
 
-{"error":"access_denied","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
+{"error":"invalid_grant","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
 ```
 
 The consent page uses the target UUID, even if the request audience used its
-`canonical_id`. If the URI is unsafe for the challenge, the header omits its
-`error_uri`; the body retains it. Repository failures return `500 server_error`
-without a challenge or recovery URI. Browser authorization instead redirects
+`canonical_id`. The response has no `WWW-Authenticate` header. Repository failures
+return `500 server_error` without a recovery URI. Browser authorization instead redirects
 to consent with sealed JWE state. Neither response exposes grant details.
 See the [token exchange reference](../reference/token-exchange.md#user-impersonation).
 
 ### Migrate from End-User API 1.x
 
-The published `1.2.0` contract could mint a human impersonation token with an active agent-level grant while browser consent still required user action. End-User API `2.0.0` denies that request on the same `/oauth2/token` route. Clients must treat `403 access_denied` with the consent `error_uri` as a request for browser action, not a transient token-endpoint error. Open the body URI for the authenticated subject. After the user completes consent or reconnects a service, retry the request. Clients can use the safe Bearer challenge instead of the body URI. Existing third-party exchange and agent-subject clients need no request changes.
+The published `1.2.0` contract could mint a human impersonation token with an active agent-level grant while browser consent still required user action. End-User API `2.0.0` denies that request on the same `/oauth2/token` route. A missing or expired delegation also changes from `403 access_denied` to `400 invalid_grant`. Clients must treat `invalid_grant` with the consent `error_uri` as a request for browser action, not a transient token-endpoint error. Open the body URI for the authenticated subject. After the user completes consent or reconnects a service, retry the request. Existing third-party exchange and agent-subject clients need no request changes.
 
 ## Agent-Subject Token Exchange
 
@@ -75,7 +73,7 @@ Classification is rule-local. A raw string `sub` equal to the audience-selected 
 | `[agent]` | Ineligible | No human consent required |
 | `[human, agent]` (either order) | Consent required | No human consent required |
 
-Category-ineligible rules fall through. A human consent failure is terminal, with the recovery `error_uri` and Bearer `insufficient_scope` challenge described above; no automatic agent retry is allowed. An unsigned-subject rule may list `agent`; it permits consent-free self-agent issuance only if the subject's raw `sub` equals the target UUID and the predicate binds `subject_token.sub`.
+Category-ineligible rules fall through. A human consent failure is terminal, with the `invalid_grant` recovery `error_uri` described above; no automatic agent retry is allowed. An unsigned-subject rule may list `agent`; it permits consent-free self-agent issuance only if the subject's raw `sub` equals the target UUID and the predicate binds `subject_token.sub`.
 
 ### Request and signed response
 

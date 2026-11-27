@@ -1632,7 +1632,7 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 After rule authorization, a human subject must pass the same consent criteria as browser `/oauth2/authorize`. The extracted subject is the grant principal without normalization. The broker checks an active grant with currently declared permission sets, usable sessions for selected services, and mandatory service sessions and scopes. This applies to signed and unverified humans with no configuration opt-out. Eligible self-agent subjects do not require human consent.
 
-When consent is required, the broker returns terminal `403 access_denied` with body `error_uri=<server.enduser.public_url>/agents/<target-agent-id>`. It also sends a Bearer `insufficient_scope` challenge with that URI when the URI is safe under RFC 6750. An unsafe challenge URI stays in the body only. Repository errors return `500 server_error` without a recovery URI or challenge.
+When consent is required, the broker returns terminal `400 invalid_grant` with body `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` and no `WWW-Authenticate` header. Repository errors return `500 server_error` without a recovery URI.
 
 The routing prefix never sets issued `aud`. The normal local `token_claims_expression` controls that claim. The subject role accepts signed (`verification: jwks`) JWTs and explicitly enabled broker-profile unverified (`verification: none`) JWTs.
 

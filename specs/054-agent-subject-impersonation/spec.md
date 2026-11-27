@@ -345,18 +345,17 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &subject_token_type=urn:ietf:params:oauth:token-type:jwt
 &subject_token=SYNTHETIC_HUMAN_JWS
 
-HTTP/1.1 403 Forbidden
+HTTP/1.1 400 Bad Request
 Content-Type: application/json
-WWW-Authenticate: Bearer error="insufficient_scope", error_uri="https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
 
 {
-  "error": "access_denied",
+  "error": "invalid_grant",
   "error_description": "User authorization is insufficient. Please re-consent.",
   "error_uri": "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-The human request uses the existing consent page plus a safe Bearer challenge. Expired delegation has the same external outcome. Human grant and service-session requirements follow [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md). This feature introduces no new consent UI.
+The human request uses the existing consent page as its `error_uri`. Expired delegation has the same external outcome. Human grant and service-session requirements follow [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md). This feature introduces no new consent UI.
 
 **Step 3 — Operator compares outcomes**
 

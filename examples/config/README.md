@@ -479,7 +479,7 @@ Key settings (`oauth2_authorization_server.impersonation`):
 
 The audience-selected target supplies minted `agent_id` and local policy `agent.*`; the asserted privileged-client identity is retained only for authorization and audit. `token_claims_expression` alone controls issued `aud`.
 
-Every authorized human request, including one with an unverified subject, needs an active `UserGrant` for `(extracted subject, target agent)`, current permission-set declarations, usable sessions for included services, and mandatory service sessions with required scopes. An unmet condition returns terminal `403 access_denied` with the target agent's consent `error_uri` and a Bearer `insufficient_scope` challenge. Repository failures return `500 server_error` without a recovery signal. Eligible agent-category subjects do not require human consent.
+Every authorized human request, including one with an unverified subject, needs an active `UserGrant` for `(extracted subject, target agent)`, current permission-set declarations, usable sessions for included services, and mandatory service sessions with required scopes. An unmet condition returns terminal `400 invalid_grant` with the target agent's consent `error_uri`. Repository failures return `500 server_error` without a recovery signal. Eligible agent-category subjects do not require human consent.
 
 **Usage:**
 ```bash
