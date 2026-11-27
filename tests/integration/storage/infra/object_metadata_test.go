@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -390,11 +391,9 @@ func TestPostgresServiceAccountObjectMetadata(t *testing.T) {
 		assert.True(t, metadata.Equal(byName.ObjectMetadata))
 		listed, err := repo.ListByService(h.ctx, h.service.ID)
 		require.NoError(t, err)
-		for _, candidate := range listed {
-			if candidate.ID == created.ID {
-				assert.True(t, metadata.Equal(candidate.ObjectMetadata))
-			}
-		}
+		index := slices.IndexFunc(listed, func(candidate *model.ServiceAccount) bool { return candidate.ID == created.ID })
+		require.GreaterOrEqual(t, index, 0, "the list must contain the created account")
+		assert.True(t, metadata.Equal(listed[index].ObjectMetadata))
 	})
 	t.Run("empty metadata is written as empty objects", func(t *testing.T) {
 		created := account(t, model.ObjectMetadata{})

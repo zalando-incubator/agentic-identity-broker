@@ -231,7 +231,7 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 		}
 	}
 	for attempt := 1; ; attempt++ {
-		view, outcome, err := s.applyUpdate(ctx, operator, stored, request, scopes, validated, now)
+		view, outcome, err := s.applyUpdate(ctx, operator, stored, request, scopes, validated, s.now().UTC())
 		if request.ExpectedVersion != nil || attempt == unconditionalWriteAttempts || !errors.Is(err, ports.ErrServiceAccountVersionMismatch) {
 			return view, outcome, err
 		}

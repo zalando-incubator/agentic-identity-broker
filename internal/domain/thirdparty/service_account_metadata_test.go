@@ -155,3 +155,28 @@ func TestServiceAccountService_UpdateMetadata(t *testing.T) {
 		assert.True(t, created.Account.ObjectMetadata.Equal(h.repo.accounts[created.Account.ID].ObjectMetadata))
 	})
 }
+
+func TestServiceAccountService_RetriedUpdateReadsTheClockAgain(t *testing.T) {
+	ctx := context.Background()
+	h := newSAHarness(t)
+	created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+	h.now = h.now.Add(time.Minute)
+	concurrent := h.now.Add(time.Second)
+	h.repo.beforeWrite = func() {
+		changed := cloneAccount(h.repo.accounts[created.Account.ID])
+		changed.CanonicalID = "renamed"
+		changed.UpdatedAt = concurrent
+		changed.Version++
+		h.repo.accounts[created.Account.ID] = changed
+		h.now = concurrent.Add(time.Second)
+	}
+	replacement := saMetadata(t, map[string]string{"tier": "gold"}, nil)
+
+	view, outcome, err := h.service.Update(ctx, saOperator, h.serviceID, created.Account.ID, ServiceAccountUpdate{Scopes: []string{"read"}, Metadata: &replacement})
+
+	require.NoError(t, err)
+	assert.Equal(t, ServiceAccountUpdated, outcome)
+	assert.Equal(t, "renamed", view.Account.CanonicalID)
+	assert.True(t, view.Account.UpdatedAt.After(concurrent), "a retried write must not store an updated_at before the commit it retried after")
+	assert.Equal(t, view.Account.UpdatedAt, h.repo.accounts[created.Account.ID].UpdatedAt)
+}
