@@ -172,15 +172,19 @@ the existing `parseStrongETag` and `strongETag` helpers, and malformed values an
 service accounts. `AgentGrantService.Put` and `Delete`:
 
 1. Load the agent's grant (absent allowed).
-2. If `If-Match` is supplied: with no grant, answer `412`. With a different version, answer
-   `412` (FR-003).
-3. Build the candidate (R6, R7, R8). If it equals the stored grant (same permission sets, same
+2. Build the candidate (R6, R7, R8). A rule failure answers `400` here, before any
+   precondition is evaluated.
+3. If `If-Match` is supplied: with no grant, answer `412`. With a different version, answer
+   `412` (FR-003). `Delete` has no candidate and goes from step 1 to this step.
+4. If the candidate equals the stored grant (same permission sets, same
    coverage, same bindings, same `valid_until`), return outcome `unchanged`. That means `200`,
    the same ETag, no write and no audit record (FR-003, User Story 1 Scenario 9).
-4. Save conditionally on the version read: `expectedVersion` = the stored version, or "absent"
+5. Save conditionally on the version read: `expectedVersion` = the stored version, or "absent"
    for a create. Without `If-Match`, a mismatch at save time means another writer committed in
    between. The service then re-reads and repeats from step 1, up to three attempts, as
-   `ServiceAccountService` does. With `If-Match`, the mismatch is returned as `412`.
+   `ServiceAccountService` does. When the third attempt also loses, the mismatch is returned
+   as `412`, as `ServiceAccountService` does. With `If-Match`, the mismatch is returned as `412`
+   at once.
 
 Request errors win over the precondition (`400` and `404` before `412`), as in the service-account
 feature (RFC 9110 §13.2.1). Absent and expired grants are both "present" for the admin

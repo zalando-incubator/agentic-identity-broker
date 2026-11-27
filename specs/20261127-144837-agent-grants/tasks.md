@@ -29,8 +29,9 @@ same batch.
 - The two Phase 0 refactors are required by FR-011 (one effective-scope definition) and by the
   spec's Domain Model ("reuses its validation"). The memory agent-deletion cascade is the minimum
   correction User Story 4 Scenario 5 and SC-007 need (research R13).
-- The maintainer approves the API contract (API-006, Principle X) and the other decisions in
-  `plan.md` §Review Items by reviewing the PR. No task waits for or records a separate approval.
+- The maintainer confirms the merged API contract in writing before implementation beyond Phase 0
+  (API-006, Principle X); T012a obtains and records it, and Phase 2.7 waits for it. The other
+  decisions in `plan.md` §Review Items are reviewed in the PR without a separate approval.
 - The deferred finding in `plan.md` §Deferred Findings (memory service `Delete` without an
   active-grant guard) is not a task. Only a user-approved issue URL may be recorded, under a
   `Future Work` note in this file.
@@ -70,7 +71,7 @@ production code.
 
 - [ ] T006 Verify `specs/20261127-144837-agent-grants/data-model.md` against `spec.md` §Domain Model and FR-001–FR-020: `PrincipalKind` values, `AgentGrant.Grant`, `AgentGrant.Bindings`, `AgentGrant.Version`, `ServiceAccountBinding.ServiceID`, `ServiceAccountBinding.ServiceAccountID`, rules 1–10 and their order, write outcomes, preconditions, state. Correct `data-model.md` only where it contradicts the spec (Principle V).
 - [ ] T007 [P] Add Agent Grant, Service-Account Binding and Principal Kind to `ARCHITECTURE.md` §12 and to the Domain Glossary table in `AGENTS.md` with the definitions of `data-model.md` §Glossary entries to add, including the note on the end-user route comment "Get agent grants" (spec Domain Model; Principle V).
-- [ ] T008 [P] Write `adrs/20261127-183359-agent-grants-principal-kind.md` (Context, Decision, Consequences, Status) covering every item of research R14: agent grant as a `UserGrant` of kind `agent`, kind in grant and session identity, human-scoped existing ports and the kind-agnostic guards of research R2, `ports.AgentGrantRepository`, bindings beside the grant with the composite `RESTRICT` key, `storage.EffectiveScopes`, `BindingAgents` and `bound_by_agents`, migration `051` and its rollback erasing agent grants, Admin API `3.2.0`. State that no accepted ADR is superseded and that ADR 045 decision 6 is unchanged. Set Status to Accepted; add it to `ARCHITECTURE.md` §10 and the ADR Decision Index in `AGENTS.md` by full file stem (ADR-AG; Principle II).
+- [ ] T008 [P] Write `adrs/20261127-183359-agent-grants-principal-kind.md` (Context, Decision, Consequences, Status) covering every item of research R14: agent grant as a `UserGrant` of kind `agent`, kind in grant and session identity, human-scoped existing ports and the kind-agnostic guards of research R2, `ports.AgentGrantRepository`, bindings beside the grant with the composite `RESTRICT` key, `storage.EffectiveScopes`, `BindingAgents` and `bound_by_agents`, migration `051` and its rollback erasing agent grants, Admin API `3.2.0`. State that no accepted ADR is superseded and that ADR 045 decision 6 is unchanged. Note that the admin member `granted_permission_sets` follows the consent API's name and is unrelated to the `TokenExchangeResponse.granted_permission_sets` member that `adrs/048-authzen-delegation-pip.md` deprecates. Set Status to Accepted; add it to `ARCHITECTURE.md` §10 and the ADR Decision Index in `AGENTS.md` by full file stem (ADR-AG; Principle II).
 - [ ] T009 Add to `ARCHITECTURE.md`: the `AgentGrantService` entry in the consent-domain part of §3, the `agent_grants` and `agent_grant_service_account_bindings` tables and `principal_kind` in §4, and the human scope of the grant and session ports (plan §Constitution Check "Architecture Docs"; Principle II).
 
 **Checkpoint**: Domain model documented, glossary updated, ADR accepted in this PR.
@@ -89,14 +90,15 @@ production code.
 
 - [ ] T011 Merge `specs/20261127-144837-agent-grants/contracts/admin-agent-grants-openapi.yaml` into `api/admin/openapi.yaml` as its header comment instructs: `info.version` `3.2.0`, an `Agent Grants` tag, `/api/agents/{agent-id}/self-grant` with `GET`, `PUT`, `DELETE`, the new header, schemas and responses, and the replaced `409` response (`ServiceAccountBoundConflict` with `bound_by_agents`) and description of `deleteServiceAccount`. Reuse `AgentId`, `OperatorRequired`, `NotFoundError`, `InternalServerError`, `ErrorResponse`; leave every other operation unchanged (API-001–API-003, API-006; API-AG, API-AG-SHAPE, API-SA-409, API-VERSION).
 - [ ] T012 Verify the merged contract against Journeys 1–2 of `spec.md` (status codes, `ETag`, bodies, messages including the Journey 2 refusals), add the Admin API `3.2.0` note to `ARCHITECTURE.md` §5, and confirm `api/enduser/openapi.yaml` is unchanged (API-004, API-005; Principles II, IV).
+- [ ] T012a Get the maintainer's written confirmation of the merged admin contract (API-AG, API-AG-SHAPE, API-SA-409, API-VERSION), for example as a PR comment on the pushed contract commit, and record its URL in `## Design notes` of `specs/20261127-144837-agent-grants/tasks.md`. Phase 2.7 starts only after it is recorded; a requested change goes back through T011–T012 (API-006; Principle X).
 
-**Checkpoint**: Contract merged; the maintainer confirms it in PR review.
+**Checkpoint**: Contract merged and confirmed in writing by the maintainer (T012a).
 
 ### Phase 2d: Database Design [MANDATORY]
 
 **Constitution Reference**: Principle IX
 
-- [ ] T013 Verify `data-model.md` §PostgreSQL schema against DB-001–DB-003, FR-007, FR-009, FR-015 and FR-016: `user_grants.principal_kind` and `user_sessions.principal_kind` with their checks, `chk_user_grants_agent_principal`, both kind-scoped unique constraints and the dropped `idx_user_sessions_principal_service`, `uq_service_accounts_id_service`, `agent_grants.version`, the binding table's primary key, `fk_agent_grant_bindings_account` with `ON DELETE RESTRICT`, `idx_agent_grant_bindings_account`, the cascade chain, the DOWN order, explicit-column queries, one atomic pair without `-- migrate:no-transaction` (DB-051; Principle IX). The SQL files are written in T043 after their tests.
+- [ ] T013 Verify `data-model.md` §PostgreSQL schema against DB-001–DB-003, FR-007, FR-009, FR-015 and FR-016: `user_grants.principal_kind` and `user_sessions.principal_kind` with their checks, `chk_user_grants_agent_principal`, both kind-scoped unique constraints and the dropped `idx_user_sessions_principal_service`, `uq_service_accounts_id_service`, `agent_grants.version`, the binding table's primary key, `fk_agent_grant_bindings_account` with `ON DELETE RESTRICT`, `idx_agent_grant_bindings_account`, the cascade chain, the DOWN order, explicit-column queries, one atomic pair without `-- migrate:no-transaction` (DB-051; Principle IX). The SQL files are written in T042 after their tests.
 
 **Checkpoint**: Schema designed; migration number reserved.
 
@@ -166,8 +168,8 @@ green at the end of this phase, which proves SC-004 and User Story 5 Scenario 5 
 - [ ] T034 [P] Write `tests/integration/migrations/agent_grants_migration_test.go` (`integration` tag): apply, rollback and reapply twice; existing grants and sessions keep every column and read `human`; each check and unique constraint of `data-model.md` §PostgreSQL schema; an agent principal different from `agent_id` refused; a cross-service binding refused with `23503`; a bound account delete refused; agent delete cascades to `agent_grants` and bindings; rollback removes only agent grants and the new tables, and restores the original constraints and index (DB-002, US5.5; Principle IX).
 - [ ] T035 [P] Write the shared human-scope contract `tests/integration/storage/contract/principal_kind_scope.go`: with an agent grant of agent A stored, every human-scoped `UserGrantRepository` and `UserSessionRepository` method (and `WithLockedSession`) never returns, updates or deletes it, also for a human principal equal to A's UUID; a human grant and the agent grant with equal principal text coexist; `Create` and `CreateIfAbsent` write `human` and refuse another kind with a `validation` error; `DeleteByAgent` and `CountGrantsReferencingPermissionSet` count both kinds; expired agent grants do not count for `CountGrantsReferencingPermissionSet` (FR-015–FR-017, SR-003; research R2; `data-model.md` `UserGrant.PrincipalKind`, `UserSession.PrincipalKind`).
 - [ ] T036 [P] Write the shared contract `tests/integration/storage/contract/agent_grant_repository.go` for every bullet of `data-model.md` §Repository port: `Get` with sorted bindings and expired grants; `Save` create, replace keeping `ID` and `CreatedAt`, version increments, conditional save with absent and different versions as `conflict` wrapping `ErrAgentGrantVersionMismatch`, a lost first-insert race, missing permission set, missing account and account of another service as `not_found` wrapping `ErrAgentGrantReferenceMissing` with nothing written, refusal of a wrong kind or principal, persisted fields copied back; `Delete` with and without version and the returned snapshot; `ListAgentsBindingServiceAccount` distinct, ascending, expired included, empty slice (DB-001, FR-003, FR-006, FR-009, FR-015; SC-007).
-- [ ] T037 [P] Run both contracts on the memory store in `tests/integration/storage/agent_grant_repository_test.go` (`just test-integration`), following `tests/integration/storage/service_account_repository_test.go` (DB-001; SC-007).
-- [ ] T038 [P] Run both contracts on PostgreSQL in `tests/integration/storage/infra/agent_grant_test.go`, including the four spans of `contracts/observability.md` §3 with kind `Client` and `storage.outcome` for not found and version mismatch; write `internal/adapters/storage/postgres/agent_grant_repository_unit_test.go` (no database) for error mapping of `23505`, `23503` and version mismatch to `StorageError` and the sentinels, and record conversion (DB-001; OPENTELEMETRY.md; Principle IX).
+- [ ] T037 Run both contracts (after T035 and T036) on the memory store in `tests/integration/storage/agent_grant_repository_test.go` (`just test-integration`), following `tests/integration/storage/service_account_repository_test.go` (DB-001; SC-007).
+- [ ] T038 Run both contracts (after T035 and T036) on PostgreSQL in `tests/integration/storage/infra/agent_grant_test.go`, including the four spans of `contracts/observability.md` §3 with kind `Client` and `storage.outcome` for not found and version mismatch; write `internal/adapters/storage/postgres/agent_grant_repository_unit_test.go` (no database) for error mapping of `23505`, `23503` and version mismatch to `StorageError` and the sentinels, and record conversion (DB-001; OPENTELEMETRY.md; Principle IX).
 - [ ] T039 [P] Write memory adapter tests in `internal/adapters/storage/memory/user_grants_test.go` and `internal/adapters/storage/memory/user_session_test.go`: kind-prefixed indexes, a human and an agent row with equal principal text coexisting, human methods never returning the agent row (FR-016, FR-017; `data-model.md` §Changed contracts on existing ports).
 
 ### Implementation
@@ -196,8 +198,8 @@ replace it, delete it (spec User Story 1).
 
 ### Tests for User Story 1 [MANDATORY - Principle VIII] ⚠️
 
-- [ ] T049 [P] [US1] Write `internal/domain/consent/agent_grant_service_test.go` for `Get`, `Put` and `Delete`: agent missing → agent not found; rules 1–6 of `data-model.md` §Resolution and invariants in order with their messages and first-failure determinism; mandatory sets added and a listed mandatory set ignored; coverage limited by service requirements; copy on write (a later agent change leaves the stored grant); the shared consent structure check and `UserGrant.ValidateForCreate` called; outcomes `created`, `replaced` (keeping `id`, `created_at`), `unchanged` (no `Save`, same version); every precondition row of `data-model.md` §Write outcomes including absent grant with `If-Match`; up to three re-reads on a concurrent commit; `412` on mismatch at save with `If-Match`; `ErrAgentGrantReferenceMissing` as a `400`-class error; a session repository double that fails if called; audit records per `contracts/observability.md` §§1–2 and §6, with a test principal policy that changes the value (FR-001–FR-006, FR-019, SR-002; `data-model.md` `AgentGrant.Grant`, `AgentGrant.Version`).
-- [ ] T050 [P] [US1] Write `internal/adapters/http/handlers/admin/agent_grants_handler_test.go`: `401` before any read; `{agent-id}` by UUID and canonical ID and `404 agent not found`; `If-Match` weak or malformed → `400`; 64 KiB body limit, unknown members, `granted_permission_sets` in a request and `null` members → `400`; `201` without `Location`, `200` on replace and no-op, `ETag` on both; `GET`/`DELETE` without a grant → `404 agent grant not found`; `204` on delete; `412`; representation keys ordered by ascending UUID; error mapping (SR-001, API-002, API-003; research R11; API-AG, API-AG-SHAPE).
+- [ ] T049 [P] [US1] Write `internal/domain/consent/agent_grant_service_test.go` for `Get`, `Put` and `Delete`: agent missing → agent not found; rules 1–6 of `data-model.md` §Resolution and invariants in order with their messages and first-failure determinism; mandatory sets added and a listed mandatory set ignored; coverage limited by service requirements; copy on write (a later agent change leaves the stored grant); the shared consent structure check and `UserGrant.ValidateForCreate` called; outcomes `created`, `replaced` (keeping `id`, `created_at`), `unchanged` (no `Save`, same version); every precondition row of `data-model.md` §Write outcomes including absent grant with `If-Match`; a rule failure combined with a stale `If-Match`, and with `If-Match` on an absent grant, answered as the rule's `400`; up to three attempts on a concurrent commit and `412` when the third also loses; `412` on mismatch at save with `If-Match`; a `GET` representation sent back after the agent stopped declaring one of its sets refused by rule 3 (spec Edge Cases); `ErrAgentGrantReferenceMissing` as a `400`-class error; a session repository double that fails if called; audit records per `contracts/observability.md` §§1–2 and §6, with a test principal policy that changes the value (FR-001–FR-006, FR-019, SR-002; `data-model.md` `AgentGrant.Grant`, `AgentGrant.Version`).
+- [ ] T050 [P] [US1] Write `internal/adapters/http/handlers/admin/agent_grants_handler_test.go`: `401` before any read; `{agent-id}` by UUID and canonical ID and `404 agent not found`; `If-Match` weak or malformed → `400`; a body error with a stale `If-Match` → `400`, not `412`; 64 KiB body limit, unknown members, `granted_permission_sets` in a request and `null` members → `400`; `201` without `Location`, `200` on replace and no-op, `ETag` on both; `GET`/`DELETE` without a grant → `404 agent grant not found`; `204` on delete; `412`; representation keys ordered by ascending UUID; error mapping (SR-001, API-002, API-003; research R11; API-AG, API-AG-SHAPE).
 
 ### Implementation for User Story 1
 
@@ -296,7 +298,7 @@ the domain paths that read grants and sessions directly.
 
 ### Implementation for User Story 5
 
-- [ ] T070 [US5] List in `## Design notes` of `specs/20261127-144837-agent-grants/tasks.md` every caller of `UserGrantRepository` and `UserSessionRepository` in `internal/domain/` (including `oauth2.AuthorizationService.HandleAuthorization` and `oauth2session.Service`) and confirm each reaches only human-scoped methods or a named kind-agnostic guard; correct a caller only if it bypasses the ports. Make T068 and T069 green (FR-017, FR-018; research R2).
+- [ ] T070 [US5] List in `## Design notes` of `specs/20261127-144837-agent-grants/tasks.md` every caller of `UserGrantRepository` and `UserSessionRepository` in `internal/domain/` (including `oauth2.AuthorizationService.HandleAuthorization` and `oauth2session.Service`) and confirm each reaches only human-scoped methods or a named kind-agnostic guard; correct a caller only if it bypasses the ports. Record that approval authentication (`internal/adapters/http/middleware/approval_auth.go`) reads no grant or session port, so FR-018 holds for it by construction, and that US5.3 covers its ADR 045 rejection path. Make T068 and T069 green (FR-017, FR-018; research R2).
 - [ ] T071 [US5] Run the User Story 5 E2E tests; Scenarios 1, 3 and 4 on memory, 2 and 6 on both stores and 5 on PostgreSQL where containers run (US5.1–US5.6; SC-003, SC-004).
 
 **Checkpoint**: All user stories work independently.
@@ -305,7 +307,7 @@ the domain paths that read grants and sessions directly.
 
 ## Phase 8: Polish & Documentation
 
-- [ ] T072 [P] Add a "Grant an agent access for itself" section to `docs/guides/manage-agents-and-services.md`: what an agent grant is, mandatory sets added by the broker, explicit bindings, the ceiling check, expiry, the bound-account `409`, and that rolling back migration `051` erases agent grants; end-user documentation only (plan §Constitution Check "End-User Docs"; AGENTS.md Documentation Scope).
+- [ ] T072 [P] Add a "Grant an agent access for itself" section to `docs/guides/manage-agents-and-services.md`: what an agent grant is, mandatory sets added by the broker, explicit bindings, the ceiling check, expiry and the bound-account `409`; end-user documentation only, so the rollback consequence of migration `051` stays in the ADR and the migration comments (plan §Constitution Check "End-User Docs"; AGENTS.md Documentation Scope).
 - [ ] T073 [P] Add the three `self-grant` operations and the changed service-account `409` to `docs/reference/api.md` (API-001, API-003).
 - [ ] T074 [P] Update `internal/AGENTS.md` (handler list, key storage types `AgentGrant`, `PrincipalKind`) and confirm `internal/ports/AGENTS.md` from T026 (Principle II).
 - [ ] T075 Run `just telemetry-doc` after the final Go change and commit `docs/reference/telemetry.md` if it changed (AGENTS.md Development Workflow).
@@ -319,7 +321,7 @@ the domain paths that read grants and sessions directly.
 - [ ] T076 Verify every task traces to a requirement, scenario, success criterion or binding constraint, and that the deferred finding is not a task (Feature Scope).
 - [ ] T077 Verify Agent Grant, Service-Account Binding and Principal Kind are in `ARCHITECTURE.md` §12 and `AGENTS.md`, and the ADR is Accepted and indexed in both (Principles II, V).
 - [ ] T078 Verify the no-configuration result of T010 holds: no new key, no example, no Helm change (Principle VII).
-- [ ] T079 Verify `api/admin/openapi.yaml` is `3.2.0` with the merged delta and `api/enduser/openapi.yaml` is unchanged; reference the contract in the PR description for the maintainer's confirmation (API-004, API-006; Principles IV, X).
+- [ ] T079 Verify `api/admin/openapi.yaml` is `3.2.0` with the merged delta, `api/enduser/openapi.yaml` is unchanged, the maintainer's written confirmation from T012a predates the Phase 2.7 commit, and its reference is in the PR description (API-004, API-006; Principles IV, X).
 - [ ] T080 Verify migration `051` matches `data-model.md` §PostgreSQL schema and is atomic (Principle IX).
 - [ ] T081 Verify `spec.md` Journeys 1–3 are linked to their scenarios and match the implemented HTTP exchanges; no configuration, Wireloom or JWT example applies (Principle XIV).
 - [ ] T082 Verify the 39 E2E scenarios exist with one `It()` each, were written before implementation with concrete expectations, and have no `XIt`, `PIt`, `Skip()` or red-phase comments (Principle XIII).
@@ -347,7 +349,8 @@ the domain paths that read grants and sessions directly.
 - **Phase 0** (T001–T004): starts immediately; must be green before Phase 2.
 - **Phase 1** (T005): parallel with Phase 0.
 - **Phase 2** (T006–T023): after Phase 1. 2a–2d and 2g can run in parallel; 2f's story suites
-  (T017–T021) follow T015 and T016. All of Phase 2 precedes Phase 2.7.
+  (T017–T021) follow T015 and T016. T012a follows T012. All of Phase 2, including the recorded
+  confirmation of T012a, precedes Phase 2.7.
 - **Phase 2.7** (T024–T032): after Phase 2. T024 → T025 → T026 → T027/T028 [P] → T029 → T030 →
   T031 → T032.
 - **Phase 2.5** (T033–T048): after Phase 2.7. Tests T033–T039 first; T040 → T041 → T042;
@@ -414,7 +417,8 @@ Agent C: Phase 7 (US5) tests in internal/domain/tokenexchange/, consent/service_
 ### MVP First (User Stories 1–3, all P1)
 
 1. Phase 0 refactors in their own commit, all tests green.
-2. Phase 1 and Phase 2: ADR, contract `3.2.0`, glossary, 39 failing E2E tests.
+2. Phase 1 and Phase 2: ADR, contract `3.2.0` confirmed in writing by the maintainer, glossary,
+   39 failing E2E tests.
 3. Phase 2.7 scaffold in its own commit; E2E fails on `501`.
 4. Phase 2.5: migration `051`, human scope, repositories; every existing test green.
 5. US1 → validate independently; US2 → US3. The P1 set is the MVP: grants are written, bound and
@@ -436,4 +440,4 @@ Agent C: Phase 7 (US5) tests in internal/domain/tokenexchange/, consent/service_
 
 ## Design notes
 
-Filled by T010, T014, T023 and T070.
+Filled by T010, T012a, T014, T023 and T070.

@@ -4,8 +4,10 @@
 
 **Input**: Feature specification from `specs/20261127-144837-agent-grants/spec.md`
 
-**Status**: Planned. The maintainer approves the API contract (Constitution Principle X) and the
-decisions in [Review Items](#review-items) by reviewing the PR.
+**Status**: Planned. The maintainer confirms the merged API contract in writing before any
+implementation beyond Phase 0 begins (Constitution Principle X, spec API-006), for example in a PR
+comment on the contract commit. The other decisions in [Review Items](#review-items) are reviewed
+in the PR.
 
 ## Summary
 
@@ -113,7 +115,9 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
 - [x] **API Documentation**: Admin API only (`api/admin/openapi.yaml`). The end-user API is
   unchanged (API-004).
 - [ ] **API Changes**: The maintainer confirms API-AG, API-AG-SHAPE, API-SA-409 and API-VERSION
-  by reviewing the PR (Principle X, spec API-006).
+  in writing once the contract is merged into `api/admin/openapi.yaml`, before the Phase 2.7
+  scaffold (Principle X, spec API-006). The confirmation's reference is recorded in `tasks.md`
+  and the PR description.
 - [x] **Database Design**: `051_agent_grants_principal_kind.{up,down}.sql`, go-migrate naming,
   atomic. The schema is in
   [data-model.md](./data-model.md#postgresql-schema--migration-051_agent_grants_principal_kind).
@@ -164,12 +168,14 @@ Verified against [.specify/memory/constitution.md](../../.specify/memory/constit
   deferred ([Deferred Findings](#deferred-findings)).
 
 **Post-design re-check (after Phase 1)**: All blocking preconditions pass except the API
-confirmation, which the maintainer gives in PR review. No violation needs Complexity Tracking.
+confirmation, which the maintainer gives in writing before implementation (task T012a). No
+violation needs Complexity Tracking.
 
 ## Review Items
 
-The maintainer reviews these decisions in the PR. Implementation does not wait for a separate
-approval.
+The maintainer reviews these decisions in the PR. The four API items need the maintainer's written
+confirmation before implementation beyond Phase 0 (Principle X); the others do not wait for a
+separate approval.
 
 | ID | Type | Decision | Details |
 |---|---|---|---|
@@ -277,9 +283,11 @@ added. One new port interface, one new handler and two new tables.
 permission-set service, `b.storage.ServiceAccounts()`, `b.storage.AgentGrants()`, `time.Now` and
 the logger.
 
-**Handler order of checks**: operator principal (`401`) → agent (`404`) → `If-Match` syntax (`400`)
-→ body (`400`) → rules (`400`) → precondition (`412`) → write. `GET`/`DELETE` without a grant →
-`404 agent grant not found`.
+**Order of checks**: operator principal (`401`) → agent (`404`) → `If-Match` syntax (`400`) →
+body (`400`) → rules 1–10 (`400`) → precondition (`412`) → no-op check → write. Request errors
+therefore win over a failed precondition, as on service accounts. A request without `If-Match`
+that loses three successive races answers `412`. `GET` without a grant, and `DELETE` without a
+grant and without `If-Match`, → `404 agent grant not found`.
 
 **Wiring**:
 
@@ -314,7 +322,8 @@ the logger.
 Ordering constraints for tasks:
 
 1. Phase 0 refactors with the existing tests green.
-2. ADR; OpenAPI delta merged with `3.2.0`; glossary and `ARCHITECTURE.md`.
+2. ADR; OpenAPI delta merged with `3.2.0`; glossary and `ARCHITECTURE.md`. The maintainer's
+   written confirmation of the merged contract precedes step 3.
 3. Scaffold, then the E2E tests for all scenarios and the migration and contract tests, failing
    on concrete assertions.
 4. Migration `051`, then principal kind in both stores. Every existing test must stay green at

@@ -87,11 +87,13 @@ anything about later changes (FR-013).
 | `unchanged` | Candidate equals the stored grant: same granted sets and coverage, same bindings, same `valid_until` | `200` | No write, same ETag, no audit |
 | `deleted` | `DELETE` of an existing grant | `204` | Grant row, version row and bindings removed; audit `consent.agent_grant.deleted` |
 
-Preconditions ([research R5](./research.md#r5--concurrency-etag-and-no-op-writes)):
+Preconditions ([research R5](./research.md#r5--concurrency-etag-and-no-op-writes)). Request errors
+win: `404` for the agent and every `400` (`If-Match` syntax, body, rules 1–10) are reported
+before a failed precondition (`412`), as on service accounts:
 
 | `If-Match` | Grant | Result |
 |---|---|---|
-| absent | any | Carried out; last writer wins (with up to three re-reads on a concurrent commit) |
+| absent | any | Carried out; last writer wins (with up to three attempts on a concurrent commit; `412` when the third attempt also loses) |
 | equal to current ETag | present | Carried out |
 | different | present | `412`, nothing changed |
 | any | absent | `412`, nothing created or deleted |
@@ -193,7 +195,7 @@ func NewAgentGrantService(
 | Method | Behaviour |
 |---|---|
 | `Get(ctx, agentID)` | Agent must exist (`404 agent not found`). Grant or `404 agent grant not found`. |
-| `Put(ctx, operator, agentID, req, expectedVersion)` | Agent; load grant; precondition; resolution rules 1–10; no-op check; conditional `Save` with re-read; audit. Returns grant and outcome. |
+| `Put(ctx, operator, agentID, req, expectedVersion)` | Agent; load grant; resolution rules 1–10; precondition; no-op check; conditional `Save` with re-read; audit. Returns grant and outcome. |
 | `Delete(ctx, operator, agentID, expectedVersion)` | Agent; load grant; precondition; conditional `Delete`; audit. |
 
 The request type is `AgentGrantRequest{PermissionSetIDs []id.PermissionSetID; Bindings map[id.ServiceID]id.ServiceAccountID; ValidUntil *time.Time}`.
@@ -260,7 +262,7 @@ Deleting an agent cascades: `agents` → `user_grants` (`003`) → `agent_grants
 ### `051_agent_grants_principal_kind.down.sql`
 
 1. `DELETE FROM user_grants WHERE principal_kind = 'agent'`. This cascades to the two new tables
-   and erases every agent grant. The guide and the ADR say so.
+   and erases every agent grant. The ADR and the migration's comments say so.
 2. Drop `agent_grant_service_account_bindings`, then `agent_grants`.
 3. Drop `uq_service_accounts_id_service`.
 4. On `user_sessions`: drop the new unique constraint, restore

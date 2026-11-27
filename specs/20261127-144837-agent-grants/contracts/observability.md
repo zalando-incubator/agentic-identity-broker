@@ -34,7 +34,7 @@ this table.
 The grant's principal is not logged: it is the agent's UUID, already carried as `agent_id`, and it
 is not a person (LOGGING.md section 5 governs person principals). Deleting the agent itself
 removes the grant through the store cascade. The existing agent-deletion record covers it, and no
-`consent.agent_grant.deleted` record is written for it.
+`consent.agent_grant.deleted` record is written for it (spec FR-019).
 
 `trace_id`, `actor` and `calling_peer` come from the context handler.
 

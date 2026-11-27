@@ -76,7 +76,8 @@ paths:
 
         `If-Match` is optional. A value that does not equal the current ETag, or any value when
         the agent has no agent grant, answers `412` and changes nothing. Without it, the last
-        writer wins.
+        writer wins; a request that loses three successive races with concurrent writers
+        answers `412`. A request error (`400`, `404`) is reported before a failed precondition.
 
         No token can be obtained with an agent grant in this version (#473).
       operationId: putAgentGrant
@@ -342,7 +343,7 @@ components:
                 error: invalid If-Match
                 message: If-Match must be one strong ETag
     AgentGrantPreconditionFailed:
-      description: The supplied `If-Match` does not equal the grant's current ETag, or the agent has no agent grant. Nothing changed.
+      description: The supplied `If-Match` does not equal the grant's current ETag, the agent has no agent grant, or a request without `If-Match` lost three successive races with concurrent writers. Nothing changed.
       content:
         application/json:
           schema:
