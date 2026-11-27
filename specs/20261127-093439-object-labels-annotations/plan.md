@@ -102,11 +102,11 @@ specs/20261127-093439-object-labels-annotations/
 internal/domain/model/
 ├── object_metadata.go                   # new: ObjectMetadata value object, grammar, limits, reserved prefix
 ├── object_metadata_test.go              # new: table-driven FR-004–FR-009 cases
-└── thirdparty_oauth2_provider.go        # Metadata, MetadataProvided; re-check in ValidateFor*/ValidateDiscoveryRequest
+└── thirdparty_oauth2_provider.go        # ObjectMetadata, ObjectMetadataProvided; re-check in ValidateFor*/ValidateDiscoveryRequest
 internal/domain/storage/
-├── agent.go                             # Metadata field; Validate/ValidateForCreate re-check
-└── permission_set.go                    # Metadata field; validateCommon re-check
-internal/domain/agents/reconcile.go      # sameDefinition compares Metadata.Equal
+├── agent.go                             # ObjectMetadata field; Validate/ValidateForCreate re-check
+└── permission_set.go                    # ObjectMetadata field; validateCommon re-check
+internal/domain/agents/reconcile.go      # sameDefinition compares ObjectMetadata.Equal
 internal/domain/thirdparty/service.go    # prepareUpdate keeps persisted metadata when not provided
 internal/adapters/http/handlers/admin/
 ├── object_metadata.go                   # new: top-level scan, strict jsontext decode, fixed errors, response type
@@ -151,7 +151,7 @@ the Admin handler package. No new package boundary is needed.
 | The stored metadata differs from what was sent, which would let someone evade a future policy | `jsontext` rejects duplicates, invalid UTF-8, and unpaired surrogates. No trimming, folding, or normalization. A misspelled or repeated `metadata` member is rejected. | Handler tables with duplicate, U+FFFD, surrogate, whitespace, and case-variant inputs; US2.1 and US2.5 |
 | Broker-defined keys are spoofed | Reserved-prefix rejection in both maps on all seven write operations | Unit table; US2.2 covers all three resources and collection PUT |
 | Submitted text leaks through an error, log, or telemetry signal | Fixed messages. The `jsontext` error text is discarded. Audit records log named fields only. No new attributes. | US2.4, plus sentinel-absence checks over logs, spans, and metric attributes (SC-006) |
-| Metadata reaches end users or policy | End-user DTOs are explicit, and no consumer reads `Metadata` | US3.5 compares consent, token claims, and approval matching. Repository search shows no `Metadata` read outside Admin handlers and adapters |
+| Metadata reaches end users or policy | End-user DTOs are explicit, and no consumer reads `ObjectMetadata` | US3.5 compares consent, token claims, and approval matching. Repository search shows no `ObjectMetadata` read outside Admin handlers and adapters |
 | Partial writes | Validation precedes discovery, branch-key, encryption, and repository calls. The whole write fails. | Service and Agent tests with a valid change and invalid metadata in the same request |
 | Partly loaded entities overwrite stored metadata | Every row scan loads both columns. Agent writes go only through the domain service. | Adapter column-list review, plus memory and PostgreSQL round-trip tests |
 | Stored metadata breaks OAuth2 client resolution or token exchange (FR-021) | Rules are write policy. Reads rebuild the value with `RestoreObjectMetadata`, which applies no rule, and fail only when a column is not a JSON object of strings. The entity re-check omits the reserved prefix. | PostgreSQL tests read a stored reserved-prefix key through `GetByClientID` and `GetByClientURI` |
@@ -198,7 +198,9 @@ fixture of metadata sentinels: distinctive keys and values, plus generators for 
 bootstrap. Run the same journey with metadata and without it, and compare the outcomes.
 
 **Helpers**: `bootstrap.NewBufferedJSONLogger`, `bootstrap.NewInMemoryTracerProvider`, and an
-`sdkmetric.ManualReader` as in `tests/e2e/session_metrics_test.go`. No new matcher is needed.
+`sdkmetric.ManualReader` as in `tests/e2e/session_metrics_test.go`. New
+`tests/e2e/helpers/object_metadata.go` holds the key-order shuffle and one sentinel-absence check
+over all three signals, used by every story. No new matcher is needed.
 
 ### Unit & Integration Tests
 

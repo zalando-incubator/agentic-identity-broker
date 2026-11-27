@@ -119,7 +119,7 @@ zero value is valid and empty. The HTTP adapter owns JSON shape: object, members
 duplicates, UTF-8, and string types. The domain owns the semantic rules.
 `storage.Agent.Validate`/`ValidateForCreate`, `storage.PermissionSet` validation, and the provider
 `ValidateForCreate`/`ValidateForUpdate`/`ValidateDiscoveryRequest` call `Validate()`, so domain
-services enforce the invariant (Constitution VI).
+services enforce the write rules (Constitution VI).
 
 **Why reads apply no rule:** FR-009 reserves the prefix for the broker, and FR-021 forbids
 metadata from influencing token issuance. If reads rebuilt the value with `NewObjectMetadata`, the
@@ -127,7 +127,9 @@ first broker-defined reserved key would make every read of its entity fail. A st
 breaks a rule would also fail `GetByClientID` and `GetByClientURI`, which
 `internal/domain/oauth2/client_resolver.go` uses to resolve OAuth2 clients. The rules are
 therefore write policy, enforced on every Admin write (SR-001, SR-003). `Validate()` omits the
-reserved prefix because `storage.Agent.Validate` also runs on non-Admin updates. Only a direct
+reserved prefix because the entity validators also run inside the Agent repositories' `Create` and
+`Update`, so the check would also reject a key the broker writes itself once it defines one. Today,
+no path outside the Admin API writes these entities. Only a direct
 database edit can store a value that breaks the grammar. That value reads back unchanged, and the
 next write of its entity rejects it.
 
@@ -147,12 +149,12 @@ context without behavior of its own.
   domain keeps the field-policy decision under ADR 047 ("handlers parse presence but do not decide
   field policy"). For Agents, an omitted `metadata` and `{}` are equal under every write, so the
   conversion loses no presence the domain could use and decides no policy. `sameDefinition` in `internal/domain/agents/reconcile.go` adds
-  `a.Metadata.Equal(b.Metadata)`, which is map equality on both maps.
+  `a.ObjectMetadata.Equal(b.ObjectMetadata)`, which is map equality on both maps.
 - **Permission Set:** Create and `PUT` set the value from the request. Every `PUT` writes and
   advances `updated_at`, as today.
-- **Service:** Add `Metadata` and `MetadataProvided` to `ThirdpartyOAuth2ProviderEntity`. They
+- **Service:** Add `ObjectMetadata` and `ObjectMetadataProvided` to `ThirdpartyOAuth2ProviderEntity`. They
   follow the `IconSVG`/`IconSVGProvided` precedent. `prepareUpdate` copies the persisted value when
-  the field is not provided. The memory record clears `MetadataProvided` before storing, as it does
+  the field is not provided. The memory record clears `ObjectMetadataProvided` before storing, as it does
   for `IconSVGProvided`. Validation runs before discovery, branch-key provisioning, encryption,
   and persistence.
 

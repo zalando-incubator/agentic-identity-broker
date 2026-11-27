@@ -7,16 +7,20 @@ immutable pair of a label map and an annotation map. It has no ID, repository, o
 own. Agent, ThirdpartyOAuth2Service, and PermissionSet each embed exactly one. Add **Object
 Metadata**, **Label**, and **Annotation** to the `ARCHITECTURE.md` glossary before implementation.
 
-| Member | Type | Invariant |
+| Member | Type | Admin write rule |
 |---|---|---|
 | labels | `map[string]string` (unexported) | At most 64 entries. Each key follows the key grammar and has no reserved prefix. Each value is empty or follows the label-value grammar. |
 | annotations | `map[string]string` (unexported) | Keys follow the key grammar and have no reserved prefix. Values are valid UTF-8 without U+0000. The sum of the UTF-8 byte lengths of all keys and values is at most 65,536. |
+
+`NewObjectMetadata` enforces every rule in this table. `Validate()` enforces all of them except
+the reserved prefix. `RestoreObjectMetadata` enforces none, so a value rebuilt from storage can
+break them (see Persistence). The rules are write policy, not type invariants.
 
 | Operation | Behavior |
 |---|---|
 | `NewObjectMetadata(labels, annotations)` | Admin write constructor. Validates every rule of [contracts/object-metadata.md](contracts/object-metadata.md) §3, including the reserved prefix, and copies both inputs. A nil input means empty. On failure it returns one of the fixed errors in §4. |
 | `RestoreObjectMetadata(labels, annotations)` | Persistence constructor for the storage adapters. Copies both stored maps and applies no rule, so stored metadata cannot fail a read (FR-021). A nil input means empty. |
-| `Validate()` | Re-check called by the entity validators. Applies the grammar, NUL, count, and size rules, but not the reserved prefix, because `storage.Agent.Validate` also runs on non-Admin updates. Returns the same fixed errors. |
+| `Validate()` | Re-check called by the entity validators. Applies the grammar, NUL, count, and size rules, but not the reserved prefix. The entity validators also run inside the Agent repositories' `Create` and `Update`, so a reserved-prefix check here would also reject a key the broker writes itself once it defines one. Today, no path outside the Admin API writes these entities. Returns the same fixed errors. |
 | `Labels()`, `Annotations()` | Return copies. Callers cannot change the value. |
 | `Equal(other)` | Map equality of both maps, independent of key order. |
 | `IsEmpty()` | True when both maps are empty. |
@@ -29,12 +33,12 @@ normalizes them (FR-004).
 
 | Entity | Location | New fields |
 |---|---|---|
-| `storage.Agent` | `internal/domain/storage/agent.go` | `Metadata model.ObjectMetadata` |
-| `storage.PermissionSet` | `internal/domain/storage/permission_set.go` | `Metadata model.ObjectMetadata` |
-| `model.ThirdpartyOAuth2ProviderEntity` | `internal/domain/model/thirdparty_oauth2_provider.go` | `Metadata model.ObjectMetadata`, `MetadataProvided bool` (transient request flag, never persisted) |
+| `storage.Agent` | `internal/domain/storage/agent.go` | `ObjectMetadata model.ObjectMetadata` |
+| `storage.PermissionSet` | `internal/domain/storage/permission_set.go` | `ObjectMetadata model.ObjectMetadata` |
+| `model.ThirdpartyOAuth2ProviderEntity` | `internal/domain/model/thirdparty_oauth2_provider.go` | `ObjectMetadata model.ObjectMetadata`, `ObjectMetadataProvided bool` (transient request flag, never persisted) |
 
 `Copy()` on Agent and PermissionSet keeps the value. The value is immutable, so it needs no deep
-copy. The memory Service record copies the value and clears `MetadataProvided`. These fields get
+copy. The memory Service record copies the value and clears `ObjectMetadataProvided`. These fields get
 no JSON tags that would make them part of any end-user serialization. End-user projections
 (`consent.AgentDelegation`, `AgentDetailData`, permission-set and service views) are explicit DTOs
 and gain no field (FR-019).
@@ -52,13 +56,13 @@ and gain no field (FR-019).
 
 Keys are never merged. A `metadata` value that is sent always replaces both maps.
 
-**Agent reconcile no-op**: `sameDefinition` returns false when `!existing.Metadata.Equal(candidate.Metadata)`.
+**Agent reconcile no-op**: `sameDefinition` returns false when `!existing.ObjectMetadata.Equal(candidate.ObjectMetadata)`.
 A difference in either map is an actual update. It advances `updated_at` and emits
 `agents.agent.updated`, which carries no metadata. Reordered keys compare as equal, so a replay
 writes nothing and emits no audit record (FR-014, SC-002).
 
-**Service update**: `prepareUpdate` sets `entity.Metadata = persisted.Metadata` when
-`!entity.MetadataProvided`. A failed metadata validation returns before discovery, branch-key
+**Service update**: `prepareUpdate` sets `entity.ObjectMetadata = persisted.ObjectMetadata` when
+`!entity.ObjectMetadataProvided`. A failed metadata validation returns before discovery, branch-key
 provisioning, encryption, and repository calls.
 
 **Permission Set update**: the handler builds the entity from the request, as it does today.
