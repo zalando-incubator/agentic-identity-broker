@@ -19,6 +19,7 @@ Users see no change in this feature. The consent screen and the end-user grant r
 
 - Q: How should the migration record old grants in which the user left out an optional service, so that no grant gains access it didn't have before? → A: Split each legacy permission set into one capability per service scope entry. Each capability keeps that entry's `requirement_type`, and a left-out service becomes a capability that the grant does not hold.
 - Q: Should the list of granted capability IDs reach ExtProc policy through the token-exchange response, through the ADR 048 delegation permit, or through both? → A: Only through the ADR `048-authzen-delegation-pip` delegation permit. Capability-based policy requires `grant_context.enabled: true`, and disabled mode and the token-exchange response stay unchanged.
+- Q: How should the Admin API version and compatibility handle permission sets switching from `service_scopes` to `capabilities[]`? → A: Bump the Admin API to `4.0.0` on the existing routes and replace `service_scopes` cleanly. Requests that still send `service_scopes` are rejected with `400`, and there is no deprecated read-only field.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -38,7 +39,7 @@ The operator then composes permission sets from capability entries, and can tigh
 
 1. **US1.1 — Create a group with capabilities**: **Given** an authorized operator, **When** the operator creates group `google-calendar` with *View events* (`read_only: true`) and *Create and edit events*, each with at least one service scope, **Then** Admin reads and listings return both capabilities, their canonical IDs, flags and service scopes.
 2. **US1.2 — Capability validation**: **Given** a capability request without a canonical ID, with a canonical ID that another capability uses, with a UUID-shaped or non-URL-safe canonical ID, or without service scopes, **When** it is submitted, **Then** it is rejected with `400`. Nothing is stored.
-3. **US1.3 — Compose a set**: **Given** existing capabilities, **When** the operator creates a permission set with capability entries `{capability_id, requirement_type}`, **Then** the set is stored. An empty entry list or a duplicate entry is rejected with `400`. The broker accepts any number of entries.
+3. **US1.3 — Compose a set**: **Given** existing capabilities, **When** the operator creates a permission set with capability entries `{capability_id, requirement_type}`, **Then** the set is stored. An empty entry list, a duplicate entry, or a request that still sends the pre-`4.0.0` `service_scopes` field is rejected with `400`. The broker accepts any number of entries.
 4. **US1.4 — Agent entries tighten, never relax**: **Given** a set that marks a capability mandatory, **When** an operator saves an agent entry that marks the same capability optional, **Then** the request is rejected with `400`. Restating mandatory, tightening optional to mandatory, and listing a subset of the set's entries are accepted. An entry that lists a capability the set does not include is rejected.
 5. **US1.5 — Referenced entities cannot be deleted**: **Given** a capability that a permission set or a grant references, **When** the operator deletes it or its group, **Then** the broker responds `409` and nothing changes. The same applies to permission sets today.
 
@@ -359,7 +360,7 @@ flowchart LR
 
 ### API Requirements
 
-- **API-001**: The Admin API (`api/admin/openapi.yaml`) MUST add capability-group resources with nested capabilities, replace permission-set `service_scopes` with `capabilities[]`, and add optional `capabilities[]` to agent permission-set entries. This is a breaking change to the released Admin API `3.0.0`, so the version bump and its compatibility handling MUST be settled in `/speckit-plan`.
+- **API-001**: The Admin API (`api/admin/openapi.yaml`) MUST add capability-group resources with nested capabilities, replace permission-set `service_scopes` with `capabilities[]`, and add optional `capabilities[]` to agent permission-set entries. This breaks the released Admin API `3.0.0`, so the version MUST move to `4.0.0` on the existing routes, following the precedent of ADR `047-unique-agent-external-id-reconcile`. Permission-set responses MUST NOT include `service_scopes`, and a create or update request that sends `service_scopes` MUST be rejected with `400`. The API keeps no compatibility write path or deprecated read-only field.
 - **API-002**: The AuthZEN delegation permit MUST carry the granted capability canonical IDs (FR-016). The token-exchange response MUST stay unchanged. Existing permit members keep their meaning.
 - **API-003**: The end-user grant request and response MUST stay unchanged (FR-010, FR-013).
 - **API-004**: All API changes MUST follow the Zalando RESTful API Guidelines and receive stakeholder approval before implementation (Constitution IV, X).
