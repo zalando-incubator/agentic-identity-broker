@@ -211,7 +211,7 @@ Service with and without metadata, and read both back (US3.1–US3.5).
 - [X] T056 [P] Verify that the migration design in data-model.md matches `migrations/050_object_metadata.{up,down}.sql` (Constitution IX).
 - [X] T057 [P] Verify that no frontend change was made, so no design-system review, Playwright test, or screenshot applies (Constitution XI).
 - [X] T058 Verify that spec.md Journeys 1–4 link their scenarios and match the published contract (Constitution XIV).
-- [ ] T059 Verify that the 15 E2E cases were written before the behavior, with realistic assertions and no pending, skipped, or placeholder cases, and no red-phase comments (Constitution XIII).
+- [X] T059 Verify that the 15 E2E cases were written before the behavior, with realistic assertions and no pending, skipped, or placeholder cases, and no red-phase comments (Constitution XIII).
 - [X] T060 [P] Verify that no log event, span, or metric instrument was added, so no `contracts/observability.md` is needed (Constitution XV).
 
 ### Implementation Phase Verification
@@ -245,7 +245,7 @@ Service with and without metadata, and read both back (US3.1–US3.5).
 - [X] T072 Verify that handlers parse shape and presence only, that the domain value object and services own the rules and field policy, and that there is no handler-to-repository path and no builder change (Constitution VI, XII).
 
 **Testing** (Principle VIII):
-- [ ] T073 Verify that the unit, adapter, and integration tests were written before the behavior, drove the design, changed minimally during implementation, and that no Bash script checks correctness.
+- [X] T073 Verify that the unit, adapter, and integration tests were written before the behavior, drove the design, changed minimally during implementation, and that no Bash script checks correctness.
 
 **E2E Acceptance Testing** (Principle XIII):
 - [X] T074 Verify that `tests/e2e/object_metadata_test.go` has exactly one `It()` per scenario, uses Ginkgo/Gomega per `tests/e2e/README.md` with `Describe` → `Context` → `It`, carries scenario comments, and changed only in fixtures during implementation.
