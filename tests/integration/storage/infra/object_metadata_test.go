@@ -14,19 +14,21 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type objectMetadataHarness struct {
-	ctx      context.Context
-	exec     func(string)
-	query    func(string) string
-	agents   *postgres.AgentRepository
-	sets     *postgres.PermissionSetRepository
-	services *postgres.PostgresThirdpartyOAuth2ProviderRepository
-	service  *model.ThirdpartyOAuth2ProviderEntity
+	ctx       context.Context
+	exec      func(string)
+	query     func(string) string
+	agents    *postgres.AgentRepository
+	sets      *postgres.PermissionSetRepository
+	services  *postgres.PostgresThirdpartyOAuth2ProviderRepository
+	providers *thirdparty.ThirdpartyOAuth2ProviderService
+	service   *model.ThirdpartyOAuth2ProviderEntity
 }
 
 func setupObjectMetadataHarness(t *testing.T) *objectMetadataHarness {
@@ -40,13 +42,14 @@ func setupObjectMetadataHarness(t *testing.T) *objectMetadataHarness {
 	service := createTestService(id.NewServiceID().String(), "Metadata Service", []string{"https://api.metadata.example.test/" + id.NewServiceID().String()})
 	require.NoError(t, providerService.Create(ctx, service))
 	return &objectMetadataHarness{
-		ctx:      ctx,
-		exec:     func(statement string) { shared.ExecuteSQL(t, dbName, statement) },
-		query:    func(statement string) string { return strings.TrimSpace(shared.QuerySQL(t, dbName, statement)) },
-		agents:   postgres.NewAgentRepository(adapter),
-		sets:     postgres.NewPermissionSetRepository(adapter),
-		services: services,
-		service:  service,
+		ctx:       ctx,
+		exec:      func(statement string) { shared.ExecuteSQL(t, dbName, statement) },
+		query:     func(statement string) string { return strings.TrimSpace(shared.QuerySQL(t, dbName, statement)) },
+		agents:    postgres.NewAgentRepository(adapter),
+		sets:      postgres.NewPermissionSetRepository(adapter),
+		services:  services,
+		providers: providerService,
+		service:   service,
 	}
 }
 
@@ -80,30 +83,50 @@ func assertMetadataStorageFailure(t *testing.T, entity any, err error) {
 	assert.Nil(t, entity)
 }
 
+// restoreMetadataColumns resets a row's metadata after a subtest writes
+// columns that every list read of the table would otherwise fail on.
+func (h *objectMetadataHarness) restoreMetadataColumns(t *testing.T, table, rowID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		h.exec(`UPDATE ` + table + ` SET labels = '{}', annotations = '{}' WHERE id = '` + rowID + `'`)
+	})
+}
+
+func (h *objectMetadataHarness) agent(t *testing.T, setID id.PermissionSetID, metadata model.ObjectMetadata, clientID *id.ClientID, clientURI string) *storage.Agent {
+	t.Helper()
+	external := id.ExternalID("registry/" + id.NewAgentID().String())
+	now := time.Now().UTC().Truncate(time.Second)
+	agent := &storage.Agent{
+		ID: id.NewAgentID(), ClientID: clientID, ExternalID: &external, DisplayName: "Agent", Description: "Agent",
+		PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: setID, RequirementType: storage.RequirementTypeMandatory}},
+		ObjectMetadata: metadata, CreatedAt: now, UpdatedAt: now,
+	}
+	if clientURI != "" {
+		agent.ClientURIs = []string{clientURI}
+	}
+	require.NoError(t, h.agents.Create(h.ctx, agent))
+	return agent
+}
+
+// clientAgents creates one Agent found by client ID and one found by client URI.
+func (h *objectMetadataHarness) clientAgents(t *testing.T, setID id.PermissionSetID, metadata model.ObjectMetadata) (*storage.Agent, id.ClientID, *storage.Agent, string) {
+	t.Helper()
+	clientID := id.ClientID("metadata-" + id.NewAgentID().String())
+	clientURI := "https://agent.metadata.example.test/" + id.NewAgentID().String() + ".json"
+	return h.agent(t, setID, metadata, &clientID, ""), clientID, h.agent(t, setID, metadata, nil, clientURI), clientURI
+}
+
+func (h *objectMetadataHarness) metadataColumns(table, rowID string) string {
+	return h.query(`SELECT labels::text || '|' || annotations::text FROM ` + table + ` WHERE id = '` + rowID + `'`)
+}
+
 func TestPostgresAgentObjectMetadata(t *testing.T) {
 	h := setupObjectMetadataHarness(t)
 	ps := h.permissionSet(t, model.ObjectMetadata{})
 	metadata := metadataFixture(t)
-	newAgent := func(clientID *id.ClientID, clientURI string) *storage.Agent {
-		external := id.ExternalID("registry/" + id.NewAgentID().String())
-		now := time.Now().UTC().Truncate(time.Second)
-		agent := &storage.Agent{
-			ID: id.NewAgentID(), ClientID: clientID, ExternalID: &external, DisplayName: "Agent", Description: "Agent",
-			PermissionSets: []storage.AgentPermissionSetEntry{{PermissionSetID: ps.ID, RequirementType: storage.RequirementTypeMandatory}},
-			ObjectMetadata: metadata, CreatedAt: now, UpdatedAt: now,
-		}
-		if clientURI != "" {
-			agent.ClientURIs = []string{clientURI}
-		}
-		require.NoError(t, h.agents.Create(h.ctx, agent))
-		return agent
-	}
-	clientID := id.ClientID("metadata-" + id.NewAgentID().String())
-	proxy := newAgent(&clientID, "")
-	clientURI := "https://agent.metadata.example.test/" + id.NewAgentID().String() + ".json"
-	cimd := newAgent(nil, clientURI)
 
 	t.Run("every read returns the stored metadata", func(t *testing.T) {
+		proxy, clientID, cimd, clientURI := h.clientAgents(t, ps.ID, metadata)
 		reads := map[string]func() (*storage.Agent, error){
 			"Get":             func() (*storage.Agent, error) { return h.agents.Get(h.ctx, proxy.ID) },
 			"GetByExternalID": func() (*storage.Agent, error) { return h.agents.GetByExternalID(h.ctx, *proxy.ExternalID) },
@@ -137,16 +160,18 @@ func TestPostgresAgentObjectMetadata(t *testing.T) {
 		}
 	})
 	t.Run("update replaces and empty metadata is stored as an empty object", func(t *testing.T) {
-		updated := proxy.Copy()
+		agent := h.agent(t, ps.ID, metadata, nil, "")
+		updated := agent.Copy()
 		updated.ObjectMetadata = model.ObjectMetadata{}
 		updated.UpdatedAt = time.Now().UTC().Truncate(time.Second)
 		require.NoError(t, h.agents.Update(h.ctx, updated))
-		stored, err := h.agents.Get(h.ctx, proxy.ID)
+		stored, err := h.agents.Get(h.ctx, agent.ID)
 		require.NoError(t, err)
 		assert.True(t, stored.ObjectMetadata.IsEmpty())
-		assert.Equal(t, "{}|{}", h.query(`SELECT labels::text || '|' || annotations::text FROM agents WHERE id = '`+proxy.ID.String()+`'`))
+		assert.Equal(t, "{}|{}", h.metadataColumns("agents", agent.ID.String()))
 	})
 	t.Run("stored keys outside the write rules read back unchanged", func(t *testing.T) {
+		proxy, clientID, cimd, clientURI := h.clientAgents(t, ps.ID, metadata)
 		h.exec(`UPDATE agents SET labels = '{"agenticidentitybroker.dev/x":"v","bad key":"v"}', annotations = '{"a.agenticidentitybroker.dev/y":""}' WHERE id IN ('` + proxy.ID.String() + `','` + cimd.ID.String() + `')`)
 		byClientID, err := h.agents.GetByClientID(h.ctx, clientID)
 		require.NoError(t, err)
@@ -158,6 +183,9 @@ func TestPostgresAgentObjectMetadata(t *testing.T) {
 		}
 	})
 	t.Run("a column that is not an object of strings fails closed", func(t *testing.T) {
+		proxy, clientID, cimd, clientURI := h.clientAgents(t, ps.ID, metadata)
+		h.restoreMetadataColumns(t, "agents", proxy.ID.String())
+		h.restoreMetadataColumns(t, "agents", cimd.ID.String())
 		h.exec(`UPDATE agents SET annotations = '{"k":1}' WHERE id IN ('` + proxy.ID.String() + `','` + cimd.ID.String() + `')`)
 		agent, err := h.agents.Get(h.ctx, proxy.ID)
 		assertMetadataStorageFailure(t, agent, err)
@@ -176,10 +204,10 @@ func TestPostgresAgentObjectMetadata(t *testing.T) {
 func TestPostgresPermissionSetObjectMetadata(t *testing.T) {
 	h := setupObjectMetadataHarness(t)
 	metadata := metadataFixture(t)
-	ps := h.permissionSet(t, metadata)
-	empty := h.permissionSet(t, model.ObjectMetadata{})
 
 	t.Run("every read returns the stored metadata", func(t *testing.T) {
+		ps := h.permissionSet(t, metadata)
+		empty := h.permissionSet(t, model.ObjectMetadata{})
 		get, err := h.sets.Get(h.ctx, ps.ID)
 		require.NoError(t, err)
 		batch, err := h.sets.GetByIDs(h.ctx, []id.PermissionSetID{ps.ID})
@@ -201,9 +229,10 @@ func TestPostgresPermissionSetObjectMetadata(t *testing.T) {
 		for _, candidate := range found {
 			assert.True(t, metadata.Equal(candidate.ObjectMetadata))
 		}
-		assert.Equal(t, "{}|{}", h.query(`SELECT labels::text || '|' || annotations::text FROM permission_sets WHERE id = '`+empty.ID.String()+`'`))
+		assert.Equal(t, "{}|{}", h.metadataColumns("permission_sets", empty.ID.String()))
 	})
 	t.Run("update replaces metadata in full", func(t *testing.T) {
+		ps := h.permissionSet(t, metadata)
 		replacement, err := model.NewObjectMetadata(map[string]string{"tier": "gold"}, nil)
 		require.NoError(t, err)
 		updated := ps.Copy()
@@ -213,15 +242,18 @@ func TestPostgresPermissionSetObjectMetadata(t *testing.T) {
 		stored, err := h.sets.Get(h.ctx, ps.ID)
 		require.NoError(t, err)
 		assert.True(t, replacement.Equal(stored.ObjectMetadata))
-		assert.Equal(t, `{"tier": "gold"}|{}`, h.query(`SELECT labels::text || '|' || annotations::text FROM permission_sets WHERE id = '`+ps.ID.String()+`'`))
+		assert.Equal(t, `{"tier": "gold"}|{}`, h.metadataColumns("permission_sets", ps.ID.String()))
 	})
 	t.Run("a stored reserved-prefix key reads back unchanged", func(t *testing.T) {
+		ps := h.permissionSet(t, metadata)
 		h.exec(`UPDATE permission_sets SET labels = '{"agenticidentitybroker.dev/x":"v"}' WHERE id = '` + ps.ID.String() + `'`)
 		stored, err := h.sets.Get(h.ctx, ps.ID)
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"agenticidentitybroker.dev/x": "v"}, stored.ObjectMetadata.Labels())
 	})
 	t.Run("a column that is not an object of strings fails closed", func(t *testing.T) {
+		ps := h.permissionSet(t, metadata)
+		h.restoreMetadataColumns(t, "permission_sets", ps.ID.String())
 		h.exec(`UPDATE permission_sets SET labels = '{"k":["v"]}' WHERE id = '` + ps.ID.String() + `'`)
 		stored, err := h.sets.Get(h.ctx, ps.ID)
 		assertMetadataStorageFailure(t, stored, err)
@@ -234,29 +266,42 @@ func TestPostgresPermissionSetObjectMetadata(t *testing.T) {
 	})
 }
 
-func TestPostgresServiceObjectMetadata(t *testing.T) {
-	h := setupObjectMetadataHarness(t)
-	metadata := metadataFixture(t)
-	canonicalID := "metadata-" + strings.ReplaceAll(id.NewServiceID().String(), "-", "")[:12]
-	stored, err := h.services.Get(h.ctx, h.service.ID)
+// annotatedService creates a Service whose stored metadata is the fixture and
+// whose canonical ID and protected resource are unique to the subtest.
+func (h *objectMetadataHarness) annotatedService(t *testing.T, metadata model.ObjectMetadata) *model.ThirdpartyOAuth2ProviderEntity {
+	t.Helper()
+	service := createTestService(id.NewServiceID().String(), "Metadata Service", []string{"https://api.metadata.example.test/" + id.NewServiceID().String()})
+	require.NoError(t, h.providers.Create(h.ctx, service))
+	stored, err := h.services.Get(h.ctx, service.ID)
 	require.NoError(t, err)
 	assert.True(t, stored.ObjectMetadata.IsEmpty())
-	assert.Equal(t, "{}|{}", h.query(`SELECT labels::text || '|' || annotations::text FROM thirdparty_oauth2_services WHERE id = '`+h.service.ID.String()+`'`))
+	assert.Equal(t, "{}|{}", h.metadataColumns("thirdparty_oauth2_services", service.ID.String()))
+	canonicalID := "metadata-" + strings.ReplaceAll(id.NewServiceID().String(), "-", "")[:12]
 	stored.ObjectMetadata, stored.ObjectMetadataProvided = metadata, true
 	stored.CanonicalID = &canonicalID
 	require.NoError(t, h.services.Update(h.ctx, stored, &stored.Version))
+	updated, err := h.services.Get(h.ctx, service.ID)
+	require.NoError(t, err)
+	updated.ProtectedResources = service.ProtectedResources
+	return updated
+}
+
+func TestPostgresServiceObjectMetadata(t *testing.T) {
+	h := setupObjectMetadataHarness(t)
+	metadata := metadataFixture(t)
 
 	t.Run("every read returns the stored metadata", func(t *testing.T) {
+		service := h.annotatedService(t, metadata)
 		reads := map[string]func() (*model.ThirdpartyOAuth2ProviderEntity, error){
-			"Get": func() (*model.ThirdpartyOAuth2ProviderEntity, error) { return h.services.Get(h.ctx, h.service.ID) },
+			"Get": func() (*model.ThirdpartyOAuth2ProviderEntity, error) { return h.services.Get(h.ctx, service.ID) },
 			"GetByCanonicalID": func() (*model.ThirdpartyOAuth2ProviderEntity, error) {
-				return h.services.GetByCanonicalID(h.ctx, canonicalID)
+				return h.services.GetByCanonicalID(h.ctx, *service.CanonicalID)
 			},
 			"FindByProtectedResource": func() (*model.ThirdpartyOAuth2ProviderEntity, error) {
-				return h.services.FindByProtectedResource(h.ctx, h.service.ProtectedResources[0])
+				return h.services.FindByProtectedResource(h.ctx, service.ProtectedResources[0])
 			},
 			"GetByIDs": func() (*model.ThirdpartyOAuth2ProviderEntity, error) {
-				batch, err := h.services.GetByIDs(h.ctx, []id.ServiceID{h.service.ID})
+				batch, err := h.services.GetByIDs(h.ctx, []id.ServiceID{service.ID})
 				if err != nil || len(batch) != 1 {
 					return nil, err
 				}
@@ -264,10 +309,12 @@ func TestPostgresServiceObjectMetadata(t *testing.T) {
 			},
 			"List": func() (*model.ThirdpartyOAuth2ProviderEntity, error) {
 				listed, err := h.services.List(h.ctx)
-				if err != nil || len(listed) != 1 {
-					return nil, err
+				for _, candidate := range listed {
+					if candidate.ID == service.ID {
+						return candidate, err
+					}
 				}
-				return listed[0], nil
+				return nil, err
 			},
 		}
 		for name, read := range reads {
@@ -281,32 +328,34 @@ func TestPostgresServiceObjectMetadata(t *testing.T) {
 		}
 	})
 	t.Run("an accepted change advances the row version", func(t *testing.T) {
-		current, err := h.services.Get(h.ctx, h.service.ID)
-		require.NoError(t, err)
+		current := h.annotatedService(t, metadata)
 		before := current.Version
 		current.ObjectMetadata = model.ObjectMetadata{}
 		require.NoError(t, h.services.Update(h.ctx, current, &before))
-		after, err := h.services.Get(h.ctx, h.service.ID)
+		after, err := h.services.Get(h.ctx, current.ID)
 		require.NoError(t, err)
 		assert.Equal(t, before+1, after.Version)
 		assert.True(t, after.ObjectMetadata.IsEmpty())
-		assert.Equal(t, "{}|{}", h.query(`SELECT labels::text || '|' || annotations::text FROM thirdparty_oauth2_services WHERE id = '`+h.service.ID.String()+`'`))
+		assert.Equal(t, "{}|{}", h.metadataColumns("thirdparty_oauth2_services", current.ID.String()))
 	})
 	t.Run("a stored reserved-prefix key reads back unchanged", func(t *testing.T) {
-		h.exec(`UPDATE thirdparty_oauth2_services SET annotations = '{"agenticidentitybroker.dev/x":"v"}' WHERE id = '` + h.service.ID.String() + `'`)
-		entity, err := h.services.Get(h.ctx, h.service.ID)
+		service := h.annotatedService(t, metadata)
+		h.exec(`UPDATE thirdparty_oauth2_services SET annotations = '{"agenticidentitybroker.dev/x":"v"}' WHERE id = '` + service.ID.String() + `'`)
+		entity, err := h.services.Get(h.ctx, service.ID)
 		require.NoError(t, err)
 		assert.Equal(t, map[string]string{"agenticidentitybroker.dev/x": "v"}, entity.ObjectMetadata.Annotations())
 	})
 	t.Run("a column that is not an object of strings fails closed", func(t *testing.T) {
-		h.exec(`UPDATE thirdparty_oauth2_services SET labels = '{"k":null}' WHERE id = '` + h.service.ID.String() + `'`)
-		entity, err := h.services.Get(h.ctx, h.service.ID)
+		service := h.annotatedService(t, metadata)
+		h.restoreMetadataColumns(t, "thirdparty_oauth2_services", service.ID.String())
+		h.exec(`UPDATE thirdparty_oauth2_services SET labels = '{"k":null}' WHERE id = '` + service.ID.String() + `'`)
+		entity, err := h.services.Get(h.ctx, service.ID)
 		assert.Error(t, err)
 		assert.Nil(t, entity)
 		listed, err := h.services.List(h.ctx)
 		if err == nil {
 			for _, candidate := range listed {
-				assert.NotEqual(t, h.service.ID, candidate.ID, "a corrupt service must not be returned")
+				assert.NotEqual(t, service.ID, candidate.ID, "a corrupt service must not be returned")
 			}
 		}
 	})

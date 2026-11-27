@@ -37,7 +37,6 @@ type metadataBroker struct {
 	serviceID id.ServiceID
 	setID     id.PermissionSetID
 	agent     *storagedomain.Agent
-	close     func()
 	// endUserBodies records every End-User response body the runtime journey read.
 	endUserBodies []string
 }
@@ -48,15 +47,21 @@ type adminReply struct {
 	raw    string
 }
 
-func newMetadataBroker(store *storageadapter.Adapter, closeStore func()) *metadataBroker {
+// newMetadataBroker must run in a setup node: it registers each resource's
+// cleanup as it acquires it, so a failed setup still tears down.
+func newMetadataBroker(store *storageadapter.Adapter) *metadataBroker {
 	ctx := context.Background()
 	logger, logs := bootstrap.NewBufferedJSONLogger(slog.LevelDebug)
 	tracerProvider, spans := bootstrap.NewInMemoryTracerProvider()
+	DeferCleanup(func() { Expect(tracerProvider.Shutdown(ctx)).To(Succeed()) })
 	metrics := sdkmetric.NewManualReader()
 	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(metrics))
+	DeferCleanup(func() { Expect(meterProvider.Shutdown(ctx)).To(Succeed()) })
 	previousMeterProvider := otel.GetMeterProvider()
 	otel.SetMeterProvider(meterProvider)
+	DeferCleanup(func() { otel.SetMeterProvider(previousMeterProvider) })
 	upstream := helpers.NewMockUpstreamOAuth2Server()
+	DeferCleanup(upstream.Close)
 	service := fixtures.GitHubService()
 	service.Endpoints.TokenEndpoint = upstream.URL() + "/oauth/token"
 	service.Endpoints.AuthorizeEndpoint = upstream.URL() + "/oauth/authorize"
@@ -68,41 +73,33 @@ func newMetadataBroker(store *storageadapter.Adapter, closeStore func()) *metada
 	Expect(err).NotTo(HaveOccurred())
 	enduser, err := bootstrap.NewEndUserTestServer(application, logger)
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(enduser.Close)
 	admin, err := bootstrap.NewAdminTestServer(application, logger)
 	Expect(err).NotTo(HaveOccurred())
-	broker := &metadataBroker{
+	DeferCleanup(admin.CloseListener)
+	return &metadataBroker{
 		store: store, admin: admin, enduser: enduser, upstream: upstream,
 		telemetry: helpers.TelemetryCapture{Logs: logs, Spans: spans, Metrics: metrics},
 		serviceID: service.ID, setID: fixtures.PlaceholderPermissionSetID, agent: agent,
 	}
-	broker.close = func() {
-		admin.CloseListener()
-		enduser.Close()
-		upstream.Close()
-		otel.SetMeterProvider(previousMeterProvider)
-		Expect(meterProvider.Shutdown(ctx)).To(Succeed())
-		Expect(tracerProvider.Shutdown(ctx)).To(Succeed())
-		closeStore()
-	}
-	return broker
 }
 
 func newMemoryMetadataBroker() *metadataBroker {
 	factory := bootstrap.NewStorageFactory(bootstrap.TestLogger(slog.LevelWarn))
 	store, err := factory.NewTestStorage()
 	Expect(err).NotTo(HaveOccurred())
-	return newMetadataBroker(store, func() { Expect(factory.CloseStorage(store)).To(Succeed()) })
+	DeferCleanup(func() { Expect(factory.CloseStorage(store)).To(Succeed()) })
+	return newMetadataBroker(store)
 }
 
 func newPostgresMetadataBroker() *metadataBroker {
 	ctx := context.Background()
 	fixture, err := bootstrap.NewPostgresFixture(ctx)
 	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { Expect(fixture.Close(ctx)).To(Succeed()) })
 	store := externalIDPostgresStorage(fixture)
-	return newMetadataBroker(store, func() {
-		Expect(store.Close(ctx)).To(Succeed())
-		Expect(fixture.Close(ctx)).To(Succeed())
-	})
+	DeferCleanup(func() { Expect(store.Close(ctx)).To(Succeed()) })
+	return newMetadataBroker(store)
 }
 
 func (b *metadataBroker) adminRequest(method, path, body string) adminReply {
@@ -206,13 +203,6 @@ func (b *metadataBroker) resourceCounts() [3]int {
 
 var _ = Describe("Labels and annotations on Agents, Services, and Permission Sets", func() {
 	var broker *metadataBroker
-
-	AfterEach(func() {
-		if broker != nil {
-			broker.close()
-			broker = nil
-		}
-	})
 
 	Context("when GitOps reconciles an Agent on PostgreSQL", Label("docker"), func() {
 		BeforeEach(func() {
@@ -473,13 +463,6 @@ var _ = Describe("Labels and annotations on Agents, Services, and Permission Set
 			annotated.annotate()
 		})
 
-		AfterEach(func() {
-			if annotated != nil {
-				annotated.close()
-				annotated = nil
-			}
-		})
-
 		// Scenario US3.5 from specs/20261127-093439-object-labels-annotations/spec.md
 		It("should leave consent, token claims, approvals, and end-user responses unchanged by metadata", func() {
 			plain := broker.runtimeJourney()
@@ -580,6 +563,11 @@ func (b *metadataBroker) runtimeJourney() map[string]any {
 	form := proactiveExchangeForm(b.upstream, principal, b.agent)
 	form.Set("metadata", fixtures.SentinelMetadataJSON())
 	outcome["token exchange"] = read(http.MethodPost, "/oauth2/token", form.Encode(), map[string]string{"Content-Type": "application/x-www-form-urlencoded"})
+	var exchanged struct {
+		ExpiresIn float64 `json:"expires_in"`
+	}
+	Expect(json.Unmarshal([]byte(b.endUserBodies[len(b.endUserBodies)-1]), &exchanged)).To(Succeed())
+	Expect(exchanged.ExpiresIn).To(BeNumerically("~", time.Hour.Seconds(), 60), "the session's remaining lifetime, which each run measures separately")
 	auth, err := helpers.NewApprovalRequestAuthFixture(b.upstream, b.agent.ID)
 	Expect(err).NotTo(HaveOccurred())
 	approval := helpers.CreateApprovalRequest{ToolName: "create_issue", Arguments: map[string]any{"repo": "acme/agents"}, Metadata: helpers.CreateApprovalMetadata{Description: "Create an issue"}}
@@ -599,6 +587,7 @@ var runtimeVolatileKeys = map[string]bool{
 	"expires_at": true, "expiresAt": true, "valid_until": true, "validUntil": true,
 	"approval_id": true, "approvalId": true, "grant_id": true, "grantId": true,
 	"lastUsedAt": true, "last_used_at": true, "connectedAt": true, "connected_at": true,
+	"expires_in": true,
 }
 
 func (b *metadataBroker) normalize(value any) any {
