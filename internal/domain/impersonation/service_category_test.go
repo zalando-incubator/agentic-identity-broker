@@ -22,24 +22,24 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 		human, unsigned, firstDenied, verifierError bool
 		subjectUnbound                              bool
 		wantCategory                                SubjectCategory
-		status                                      ports.UserDelegationStatus
+		status                                      ports.ConsentReason
 		wantRule                                    string
 		wantDelegation                              int
 	}{
 		{name: "ineligible first then independently eligible", categories: [][]string{{"human"}, {"agent"}}, wantRule: "second"},
 		{name: "false policy then later agent", categories: [][]string{{"agent"}, {"agent"}}, firstDenied: true, wantRule: "second"},
 		{name: "agent-only mismatch cannot fall back", categories: [][]string{{"agent"}}, human: true},
-		{name: "explicit collision with active human delegation", categories: [][]string{{"human"}}, status: ports.UserDelegationActive},
-		{name: "omitted collision with active human delegation", categories: [][]string{nil}, status: ports.UserDelegationActive},
-		{name: "dual human active", categories: [][]string{{"human", "agent"}}, human: true, status: ports.UserDelegationActive, wantRule: "first", wantDelegation: 1},
-		{name: "missing human is terminal", categories: [][]string{{"human", "agent"}, {"agent"}}, human: true, status: ports.UserDelegationMissing, wantDelegation: 1},
-		{name: "expired human is terminal", categories: [][]string{{"human", "agent"}, {"human", "agent"}}, human: true, status: ports.UserDelegationExpired, wantDelegation: 1},
+		{name: "explicit collision with active human delegation", categories: [][]string{{"human"}}, status: ports.ConsentReady},
+		{name: "omitted collision with active human delegation", categories: [][]string{nil}, status: ports.ConsentReady},
+		{name: "dual human active", categories: [][]string{{"human", "agent"}}, human: true, status: ports.ConsentReady, wantRule: "first", wantDelegation: 1},
+		{name: "missing human is terminal", categories: [][]string{{"human", "agent"}, {"agent"}}, human: true, status: ports.ConsentGrantMissing, wantDelegation: 1},
+		{name: "expired human is terminal", categories: [][]string{{"human", "agent"}, {"human", "agent"}}, human: true, status: ports.ConsentGrantExpired, wantDelegation: 1},
 		{name: "verifier failure is terminal", categories: [][]string{{"human", "agent"}, {"human", "agent"}}, human: true, verifierError: true, wantDelegation: 1},
 		{name: "unsigned exact target bound by predicate is agent", categories: [][]string{{"agent"}}, unsigned: true, wantRule: "first", wantCategory: SubjectCategoryAgent},
-		{name: "unsigned exact target bound by predicate on dual rule is agent", categories: [][]string{{"human", "agent"}}, unsigned: true, status: ports.UserDelegationActive, wantRule: "first", wantCategory: SubjectCategoryAgent},
-		{name: "unsigned exact target unbound by predicate is delegated human", categories: [][]string{{"human", "agent"}}, unsigned: true, subjectUnbound: true, status: ports.UserDelegationActive, wantDelegation: 1, wantRule: "first", wantCategory: SubjectCategoryHuman},
-		{name: "unsigned exact target unbound by predicate never agent", categories: [][]string{{"agent"}}, unsigned: true, subjectUnbound: true, status: ports.UserDelegationActive},
-		{name: "unsigned human bound by predicate stays human", categories: [][]string{{"agent"}}, unsigned: true, human: true, status: ports.UserDelegationActive},
+		{name: "unsigned exact target bound by predicate on dual rule is agent", categories: [][]string{{"human", "agent"}}, unsigned: true, status: ports.ConsentReady, wantRule: "first", wantCategory: SubjectCategoryAgent},
+		{name: "unsigned exact target unbound by predicate is delegated human", categories: [][]string{{"human", "agent"}}, unsigned: true, subjectUnbound: true, status: ports.ConsentReady, wantDelegation: 1, wantRule: "first", wantCategory: SubjectCategoryHuman},
+		{name: "unsigned exact target unbound by predicate never agent", categories: [][]string{{"agent"}}, unsigned: true, subjectUnbound: true, status: ports.ConsentReady},
+		{name: "unsigned human bound by predicate stays human", categories: [][]string{{"agent"}}, unsigned: true, human: true, status: ports.ConsentReady},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := testImpersonationConfig("first", "second")
@@ -61,7 +61,7 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 			}
 			key, keyset := signedValidationKey(t, "category-order")
 			issuer := &stubIssuer{}
-			verifier := &recordingDelegationVerifier{status: tc.status}
+			verifier := &recordingConsentChecker{status: tc.status}
 			if tc.verifierError {
 				verifier.err = context.DeadlineExceeded
 			}
@@ -99,10 +99,11 @@ func TestImpersonationCategoryRuleOrder(t *testing.T) {
 					require.Equal(t, "server_error", exchangeErr.Code())
 					require.Empty(t, exchangeErr.ErrorURI())
 				} else {
-					require.Equal(t, "access_denied", exchangeErr.Code())
 					if tc.human && tc.wantDelegation > 0 {
+						require.Equal(t, "invalid_grant", exchangeErr.Code())
 						require.Contains(t, exchangeErr.ErrorURI(), "/agents/")
 					} else {
+						require.Equal(t, "access_denied", exchangeErr.Code())
 						require.Empty(t, exchangeErr.ErrorURI())
 					}
 				}
@@ -123,7 +124,7 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 		unbound      bool
 		lookupErr    error
 		mappedOther  bool
-		status       ports.UserDelegationStatus
+		status       ports.ConsentReason
 		wantCode     string
 		wantCalls    int
 		wantCategory SubjectCategory
@@ -132,11 +133,11 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 		{name: "human-only rule", categories: []string{"human"}, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "omitted categories", subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "unsigned bound subject", categories: []string{"human", "agent"}, unsigned: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
-		{name: "unsigned unbound subject stays human", categories: []string{"human", "agent"}, unsigned: true, unbound: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "access_denied", wantCalls: 1},
-		{name: "unregistered uuid stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return id.NewAgentID().String() }, wantCode: "access_denied", wantCalls: 1},
-		{name: "non-canonical uuid text stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return strings.ToUpper(other.ID.String()) }, wantCode: "access_denied", wantCalls: 1},
-		{name: "extracted principal names another agent", categories: []string{"human", "agent"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.UserDelegationActive, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
-		{name: "extracted principal names another agent on human-only rule", categories: []string{"human"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.UserDelegationActive, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
+		{name: "unsigned unbound subject stays human", categories: []string{"human", "agent"}, unsigned: true, unbound: true, subject: func(*Target) string { return other.ID.String() }, wantCode: "invalid_grant", wantCalls: 1},
+		{name: "unregistered uuid stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return id.NewAgentID().String() }, wantCode: "invalid_grant", wantCalls: 1},
+		{name: "non-canonical uuid text stays human", categories: []string{"human", "agent"}, subject: func(*Target) string { return strings.ToUpper(other.ID.String()) }, wantCode: "invalid_grant", wantCalls: 1},
+		{name: "extracted principal names another agent", categories: []string{"human", "agent"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.ConsentReady, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
+		{name: "extracted principal names another agent on human-only rule", categories: []string{"human"}, subject: func(*Target) string { return "alice@example.com" }, mappedOther: true, status: ports.ConsentReady, wantCode: "access_denied", wantCategory: SubjectCategoryAgent},
 		{name: "agent lookup failure fails closed", categories: []string{"human", "agent"}, subject: func(*Target) string { return other.ID.String() }, lookupErr: context.DeadlineExceeded, wantCode: "server_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -168,9 +169,9 @@ func TestImpersonationRejectsCrossAgentSubject(t *testing.T) {
 			issuer := &stubIssuer{}
 			status := tc.status
 			if status == "" {
-				status = ports.UserDelegationMissing
+				status = ports.ConsentGrantMissing
 			}
-			verifier := &recordingDelegationVerifier{status: status}
+			verifier := &recordingConsentChecker{status: status}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
 			}, agents, issuer, 0, nil, verifier, "https://broker.example.com")

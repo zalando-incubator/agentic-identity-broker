@@ -399,22 +399,21 @@ token values (T024 covers S1–S3).
       without delegation return 403 `access_denied` plus the exact target-agent `error_uri` (US5.2–US5.4,
       Principles VIII, XIII).
 - [X] T089 [P] Write failing `internal/domain/impersonation/service_test.go` cases for active,
-      missing, expired, and unavailable user-delegation verification; prove predicate denial does
-      not query delegation and delegation denial is terminal. Write app classifier tests first.
-- [X] T090 Add `ports.UserDelegationVerifier` and `UserDelegationStatus` to
-      `internal/ports/oauth2.go`; add the app-boundary consent-service classifier and its tests in
-      `internal/app/impersonation_delegation.go` (FR-017, Principle VI).
+      missing, expired, and unavailable human consent. Prove that policy denial
+      does not query consent and that consent denial is terminal.
+- [X] T090 Add `ports.ConsentChecker` and its typed `ports.ConsentStatus` result in
+      `internal/ports/oauth2.go`; use the shared consent evaluator through
+      `internal/app/impersonation_consent.go` (FR-017, Principle VI).
 - [X] T091 Implement `consentRequired` in `internal/domain/impersonation/errors.go` and enforce
-      terminal user-delegation verification after rule authorization and before minting in
+      a terminal human consent check after rule authorization and before minting in
       `internal/domain/impersonation/service.go` (FR-017a/017b/018/019).
-- [X] T092 Wire the verifier and end-user public URL in `internal/app/builder.go`, failing startup
+- [X] T092 Wire the consent checker and end-user public URL in `internal/app/builder.go`, failing startup
       when mandatory dependencies are unavailable (CR-010).
 - [X] T093 Run the focused US5 E2E suite, `just check`, `just test`, and `just verify`; confirm the
       consent URL is actionable for a first-time delegation and audits remain credential-free.
 - [X] T094 [US5] Add a production-bootstrap E2E scenario for a delegation-storage lookup failure. Assert
       `500 server_error`, no token or `error_uri`, and a credential-free `user_grant_lookup_failed` audit event
       (US5.5, Principles VIII, XIII).
-
 
 ## Amendment 2026-09-04: canonical-ID audience targets
 
@@ -428,6 +427,22 @@ token values (T024 covers S1–S3).
 - [X] T089 Update the two-form activation contract in spec 037, `api/enduser/openapi.yaml`,
       `docs/`, `examples/config/`, `charts/`, and `ARCHITECTURE.md`.
 
+## Amendment 2026-11-20: browser consent parity (#367)
+
+Tasks T086–T094 describe the original agent-level delegation check. The accepted [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md) supersedes that narrow policy and response for human-category local impersonation.
+
+- [X] T095 Update the existing feature specification, OpenAPI, architecture, accepted decision, and end-user guides for a shared consent policy and human Bearer challenge.
+- [X] T096 Add shared consent checks in `internal/domain/consent/`, pass the resolved target through `ports.ConsentChecker`, and remove the browser's duplicate checks.
+- [X] T097 After rule authorization, deny human impersonation on the same consent prerequisites as browser authorization; keep eligible agent-category and third-party exchanges unchanged.
+- [X] T098 Map consent denials to terminal 403 `access_denied`, body `error_uri` and a safe Bearer `insufficient_scope` challenge; fail closed without recovery on repository errors.
+- [X] T099 Exercise browser redirect, impersonation denial and reconnect success in production-bootstrap E2E; run affected Go tests and the repository checks.
+
+## Amendment 2026-11-27: RFC 6749 consent error
+
+Review replaced the T098 response mapping. The token endpoint is not an RFC 6750 protected resource, so consent denials follow RFC 6749 §5.2.
+
+- [X] T100 Map human impersonation consent denials, including missing and expired delegation, to terminal 400 `invalid_grant` with body `error_uri`; remove the token-endpoint `WWW-Authenticate` challenge.
+- [X] T101 Update unit, handler and E2E assertions, the accepted decision, OpenAPI, architecture, specs and end-user guides for the new response.
 
 ---
 

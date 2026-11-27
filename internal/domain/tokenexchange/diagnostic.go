@@ -166,6 +166,18 @@ const (
 	// DetailGrantRepositoryUnavailable means the broker could not read the user's grant, or the permission sets that
 	// it references, from storage.
 	DetailGrantRepositoryUnavailable FailureDetail = "grant_repository_unavailable"
+	// DetailConsentIncludedSessionMissing means a service selected in the user's grant has no stored session,
+	// so the user must connect it from the agent's consent page.
+	DetailConsentIncludedSessionMissing FailureDetail = "consent_included_session_missing"
+	// DetailConsentIncludedSessionUnusable means a selected service's session needs reconnection before consent is ready.
+	DetailConsentIncludedSessionUnusable FailureDetail = "consent_included_session_unusable"
+	// DetailConsentMandatorySessionMissing means an agent-required service has no stored session,
+	// even when the grant did not select that service.
+	DetailConsentMandatorySessionMissing FailureDetail = "consent_mandatory_session_missing"
+	// DetailConsentMandatorySessionUnusable means an agent-required service's session needs reconnection.
+	DetailConsentMandatorySessionUnusable FailureDetail = "consent_mandatory_session_unusable"
+	// DetailConsentMandatoryScopeInsufficient means an agent-required service's session lacks a required scope.
+	DetailConsentMandatoryScopeInsufficient FailureDetail = "consent_mandatory_scope_insufficient"
 	// DetailSessionMissing means the user has no stored session for the service, so the user must connect it
 	// through the `error_uri` of the `invalid_grant` response.
 	DetailSessionMissing FailureDetail = "session_missing"
@@ -306,6 +318,11 @@ func NewDiagnostic(stage FailureStage, detail FailureDetail) Diagnostic {
 		DetailGrantPermissionSetMissing, DetailGrantServiceOmitted, DetailGrantServiceDefinitionMissing,
 		DetailGrantServiceRequirementExcluded, DetailGrantScopeIntersectionEmpty:
 		d.stage, d.outcome, d.action, d.target = StageGrantAuthorization, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent
+	case DetailConsentIncludedSessionMissing, DetailConsentIncludedSessionUnusable,
+		DetailConsentMandatorySessionMissing, DetailConsentMandatorySessionUnusable:
+		d.stage, d.outcome, d.action, d.target = StageSessionLookup, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent
+	case DetailConsentMandatoryScopeInsufficient:
+		d.stage, d.outcome, d.action, d.target = StageScopeValidation, OutcomeAuthorizationDenied, RecoveryReconsent, TargetConsent
 	case DetailGrantRepositoryUnavailable:
 		d.stage = StageGrantAuthorization
 	case DetailSessionMissing:

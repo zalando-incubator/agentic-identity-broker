@@ -345,21 +345,21 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 &subject_token_type=urn:ietf:params:oauth:token-type:jwt
 &subject_token=SYNTHETIC_HUMAN_JWS
 
-HTTP/1.1 403 Forbidden
+HTTP/1.1 400 Bad Request
 Content-Type: application/json
 
 {
-  "error": "access_denied",
-  "error_description": "user delegation is required before impersonation",
+  "error": "invalid_grant",
+  "error_description": "User authorization is insufficient. Please re-consent.",
   "error_uri": "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
-The response uses the existing contract; error descriptions are illustrative, not new stable identifiers. Expired delegation has the same external outcome. This feature introduces no new consent UI.
+The human request uses the existing consent page as its `error_uri`. Expired delegation has the same external outcome. Human grant and service-session requirements follow [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md). This feature introduces no new consent UI.
 
 **Step 3 — Operator compares outcomes**
 
-An otherwise authorized agent request on the dual-category rule follows Journey 1 with no consent requirement. A human request succeeds only after Alice has an active delegation through the existing process, yielding `sub: alice@example.com`, the target UUID as `agent_id`, and the same verified actor attribution. Existing rules with the setting omitted do not acquire machine access. An agent-only rule rejects nonmatching subjects. Human-only rules reject signed exact-equality requests as ineligible, including with active human delegation; they do not retry those requests as humans.
+An otherwise authorized agent request on the dual-category rule follows Journey 1 with no consent requirement. A human request succeeds only after Alice has consent through the existing process, yielding `sub: alice@example.com`, the target UUID as `agent_id`, and the same verified actor attribution. Existing rules with the setting omitted do not acquire machine access. An agent-only rule rejects nonmatching subjects. Human-only rules reject signed exact-equality requests as ineligible, including with active human delegation; they do not retry those requests as humans.
 
 **Observable result**: Explicit agent enablement permits consent-free issuance only for the exact signed target UUID. Nonmatching human subjects retain consent requirements. There is no new category-selection input in either HTTP journey.
 

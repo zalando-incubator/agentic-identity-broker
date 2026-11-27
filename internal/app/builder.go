@@ -1251,7 +1251,7 @@ func (b *Builder) Build() (_ *App, buildErr error) {
 			}
 		}
 
-		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient, localProviders), b.storage.Agents(), impersonationIssuer, 0, b.logger, newUserDelegationVerifier(app.ConsentService), consentBaseURL)
+		svc, err := impersonation.NewService(impCfg, b.newImpersonationJWKSFactory(upstreamClient, localProviders), b.storage.Agents(), impersonationIssuer, 0, b.logger, newImpersonationConsentChecker(app.ConsentService), consentBaseURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build impersonation service: %w", err)
 		}

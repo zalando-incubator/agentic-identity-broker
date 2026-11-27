@@ -466,7 +466,7 @@ func (h *OAuth2TokenHandler) observeTokenExchange(ctx context.Context, span trac
 	}
 }
 
-// handleTokenExchangeError keeps recovery links in the direct OAuth response only.
+// handleTokenExchangeError sends recovery links in the direct OAuth response.
 func (h *OAuth2TokenHandler) handleTokenExchangeError(w http.ResponseWriter, err error) error {
 	status := http.StatusInternalServerError
 	errBody := map[string]string{

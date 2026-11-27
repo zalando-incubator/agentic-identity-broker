@@ -275,17 +275,36 @@ type ImpersonationTokenIssuer interface {
 	IssueImpersonationToken(ctx context.Context, input ImpersonationMintInput) (string, error)
 }
 
-// UserDelegationStatus describes the active state of a principal's delegation to an agent.
-type UserDelegationStatus string
+// ConsentReason classifies a consent check, including repository failures.
+// An empty reason permits issuance. Lookup failures are not consent denials.
+type ConsentReason string
 
 const (
-	UserDelegationActive  UserDelegationStatus = "active"
-	UserDelegationMissing UserDelegationStatus = "missing"
-	UserDelegationExpired UserDelegationStatus = "expired"
+	ConsentReady                      ConsentReason = ""
+	ConsentGrantMissing               ConsentReason = "grant_missing"
+	ConsentGrantExpired               ConsentReason = "grant_expired"
+	ConsentPermissionSetUndeclared    ConsentReason = "permission_set_undeclared"
+	ConsentIncludedSessionMissing     ConsentReason = "included_session_missing"
+	ConsentIncludedSessionUnusable    ConsentReason = "included_session_unusable"
+	ConsentMandatorySessionMissing    ConsentReason = "mandatory_session_missing"
+	ConsentMandatorySessionUnusable   ConsentReason = "mandatory_session_unusable"
+	ConsentMandatoryScopeInsufficient ConsentReason = "mandatory_scope_insufficient"
+	ConsentGrantLookupFailed          ConsentReason = "grant_lookup_failed"
+	ConsentSessionLookupFailed        ConsentReason = "session_lookup_failed"
 )
 
-// UserDelegationVerifier reports whether a principal has an active delegation to an agent.
-// A non-nil error means the status could not be determined and callers must fail closed.
-type UserDelegationVerifier interface {
-	VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (UserDelegationStatus, error)
+// ConsentStatus carries a credential-free reason and the affected service.
+// RequiredScopes and SessionScopes are set only for ConsentMandatoryScopeInsufficient.
+// A non-nil error always fails closed, regardless of the reason.
+type ConsentStatus struct {
+	Reason         ConsentReason
+	ServiceID      id.ServiceID
+	RequiredScopes []string
+	SessionScopes  []string
+}
+
+// ConsentChecker checks whether a human needs the agent consent page after
+// the impersonation rule authorizes the request. Agent subjects skip this port.
+type ConsentChecker interface {
+	CheckConsent(ctx context.Context, principal id.Principal, agent *storage.Agent) (ConsentStatus, error)
 }

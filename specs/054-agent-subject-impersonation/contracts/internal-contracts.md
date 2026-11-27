@@ -49,10 +49,10 @@ func (e *CELEvaluator) IsAgentSubject(subjectTokenClaims map[string]interface{})
 | Rule does not allow the category | Fall-through `access_denied` (`subject_category_ineligible`) | Same |
 | CEL false | Fall-through `access_denied` | Same |
 | CEL error | Terminal `server_error` | Same |
-| Delegation | `UserDelegationVerifier` called; a missing or expired delegation is a terminal consent-required denial | **Not called** |
+| Human consent check | `ConsentChecker` called; an unmet grant or session condition is a terminal consent-required denial | **Not called** |
 | Mint | `Subject = extracted principal` | `Subject = target UUID`, `Email = nil` |
 
-Invariant (tested): no code path calls `VerifyUserDelegation` for an agent-category request, and no agent-category failure produces `error_uri`.
+Invariant (tested): no code path calls `CheckConsent` for an agent-category request, and no agent-category failure produces `error_uri` or a consent challenge.
 
 ## 4. `tokenexchange.TokenExchangeService.Exchange`
 

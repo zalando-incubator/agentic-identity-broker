@@ -1628,7 +1628,13 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 #### oauth2_authorization_server.impersonation
 
-**Description**: Configures RFC 8693 user impersonation on `POST /oauth2/token`. In `local` mode only, exactly one request `audience` of `<impersonation.audience_prefix>/<canonical lower-case AgentID UUID or canonical_id>` selects a registered target agent before the third-party `resource` guard. Both forms resolve the same target and retain its UUID as minted `agent_id`; the target supplies local-token CEL `agent.*`, while the validated client assertion remains privileged-client authorization and audit material. Every eligible human-category request must also have an active `UserGrant` for the extracted subject identity and selected target agent. The extracted human subject is used unchanged as the grant principal; this remains mandatory for signed and unverified humans, with no configuration opt-out. Accepted ADR 045 narrowly exempts eligible signed self-agent requests, as described below. A missing or expired grant returns generic `403 access_denied` plus `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` so the privileged client can direct the authenticated user to the existing consent-management page. A grant lookup failure returns `500 server_error` without `error_uri`. The routing prefix is never copied to an issued `aud`: `token_claims_expression` controls `aud`, including omission, exactly as normal local issuance. The subject role supports signed (`verification: jwks`) and broker-profile unverified (`verification: none`, ADR 031) JWTs.
+**Description**: Configures RFC 8693 impersonation on `POST /oauth2/token` in `local` mode. Exactly one `audience` of `<impersonation.audience_prefix>/<AgentID UUID or canonical_id>` selects the registered target before the third-party `resource` check. Both forms retain the target UUID as minted `agent_id`. The target supplies local-token CEL `agent.*`; the signed client assertion supplies privileged-client authorization and audit identity.
+
+After rule authorization, a human subject must pass the same consent criteria as browser `/oauth2/authorize`. The extracted subject is the grant principal without normalization. The broker checks an active grant with currently declared permission sets, usable sessions for selected services, and mandatory service sessions and scopes. This applies to signed and unverified humans with no configuration opt-out. Eligible self-agent subjects do not require human consent.
+
+When consent is required, the broker returns terminal `400 invalid_grant` with body `error_uri=<server.enduser.public_url>/agents/<target-agent-id>` and no `WWW-Authenticate` header. Repository errors return `500 server_error` without a recovery URI.
+
+The routing prefix never sets issued `aud`. The normal local `token_claims_expression` controls that claim. The subject role accepts signed (`verification: jwks`) JWTs and explicitly enabled broker-profile unverified (`verification: none`) JWTs.
 
 ##### Subject categories and self-agent issuance
 
@@ -1636,13 +1642,13 @@ Memory storage rejects a late successor after lifecycle revocation, including re
 
 The broker classifies a request as `agent` only after the rule's signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target's canonical UUID. An unsigned (`verification: none`) subject with that exact `sub` is `agent` only when the rule's authorization predicate binds `subject_token.sub`. The broker only checks that the predicate uses that field, so make it limit the agents, for example `subject_token.sub in ['agent-uuid-a', 'agent-uuid-b']`; the predicate is then the only control on which agent a client may represent, because agent issuance skips consent. `subject_token.sub == request.agent_id` does not limit anything: an agent request already requires `sub` to equal the target, which is `request.agent_id`. A `sub` or extracted subject principal that is the canonical UUID of a different registered agent is rejected on every rule as a cross-agent request, without falling back to human delegation. Everything else is `human`. No alias/case/UUID normalization, extracted-principal mapping, or request parameter selects agent issuance. Eligibility is checked separately, before CEL authorization and delegation. Ineligible rules fall through; no matching rule returns generic `403 access_denied` without consent recovery. Signed exact-target equality is rejected on human-only/omitted rules even with active same-text delegation.
 
-| Allowed categories | Human subject | Signed exact-target subject |
+| Allowed categories | Human subject | Exact-target agent subject |
 | --- | --- | --- |
-| Omitted / `[human]` | Active delegation required | Ineligible |
-| `[agent]` | Ineligible | No delegation required |
-| `[human, agent]` / `[agent, human]` | Active delegation required | No delegation required |
+| Omitted / `[human]` | Consent required | Ineligible |
+| `[agent]` | Ineligible | No human consent required |
+| `[human, agent]` / `[agent, human]` | Consent required | No human consent required |
 
-Every principal extraction and the CEL predicate remain mandatory for agents; the minted `sub` and reserved `agent_id` are the target UUID, and `act` retains verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email and creates no grant/session. Custom output claims, including policy-owned email and audience, retain their existing semantics. Human delegation failure is terminal, never agent fallback. Listing `agent` on an unsigned-subject rule is valid at startup but has no effect: `[agent]` cannot match it and `[human, agent]` acts as `[human]`. ADR 031's other controls are unchanged.
+Agents still require principal extraction and CEL authorization. The minted `sub` and reserved `agent_id` are the target UUID, and `act` keeps verified actor attribution. The broker skips agent email extraction, supplies no credential-derived email, and creates no human grant or session. Human consent denial is terminal; it never retries as agent. An unsigned-subject rule can list `agent`. If its predicate binds `subject_token.sub`, an exact-target `sub` is agent-category; a `sub` or extracted principal naming another registered agent is also agent-category but always ineligible. Client assertions and actor tokens still require signatures.
 
 See the complete [agent-subject configuration](../examples/config/impersonation-agent-subject.yaml), [human configuration](../examples/config/impersonation.yaml), and [examples index](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/examples/config/README.md).
 

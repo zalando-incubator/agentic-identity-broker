@@ -153,7 +153,7 @@ A successful third-party exchange returns `200 OK` with `Content-Type: applicati
 | `expires_in` | Optional | Remaining lifetime in whole seconds. Omitted means unknown; zero means less than one second remains and must not use default caching. |
 | `scope` | Optional | Scopes associated with the token, when they differ from the request. |
 | `refresh_token` | Optional | A refresh token — typically absent, since the broker manages refresh. |
-| `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs, when the exchange is scoped to specific permission sets. Deprecated in end-user API `1.3.0` in favor of the AuthZEN Grant Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)); still populated. Removal is scheduled for one release after the ExtProc grant-context resolver ships and requires end-user API `2.0.0`. `principal` and `agent_id` are not deprecated. |
+| `granted_permission_sets` | Optional, deprecated | Map of permission-set UUID → array of service UUIDs for a scoped third-party exchange. End-User API `2.0.0` still populates this field. Use the AuthZEN Grant Context ([AuthZEN Delegation Evaluation](../api/authzen-evaluation.md)) for new consumers. Removal needs a separately approved future major API version after the ExtProc grant-context resolver ships; `principal` and `agent_id` are not deprecated. |
 
 New enabled ExtProc policies should use canonical `input.context.permission_sets` and the
 effective ceiling in `input.context.resource.scopes`. The OPA compatibility fields
@@ -209,9 +209,9 @@ Descriptions are credential-free summaries, not stable diagnostic identifiers. C
 |---|---|---|
 | 400 | `invalid_request` | The request is malformed or missing a required parameter. |
 | 400 | `invalid_target` | The `resource` matches no configured service, or repeated resource values identify distinct targets. |
-| 400 | `invalid_grant` | Rejected subject credentials, or a missing or unusable provider session. |
+| 400 | `invalid_grant` | Rejected subject credentials, a missing or unusable provider session, or human impersonation consent that is not ready. |
 | 401 | `invalid_client` | The `client_assertion` (or broker credentials) cannot be verified. |
-| 403 | `access_denied` | Missing, expired, or insufficient consent, or CEL policy denial. |
+| 403 | `access_denied` | Missing, expired, or insufficient consent for third-party exchange, or CEL policy denial. |
 | 500 | `server_error` | Configuration or infrastructure failure, including ambiguous registered resources. |
 
 ### 400 invalid_request
@@ -326,6 +326,16 @@ Grant coverage denials use the first applicable detail below. Scope unions, agen
 
 `grant_missing` and `grant_expired` retain their existing meanings. An originally empty scope union remains covered. `RequireAllScopes` bypasses the ceiling; an agent with no service requirements uses the permission-set union directly.
 
+Human impersonation uses different session diagnostics from third-party token-vault exchange. These consent conditions, and the shared grant details above, return `400 invalid_grant` with the consent `error_uri` and `reconsent` targeting `consent`. A repository error instead returns `500 server_error` with `grant_repository_unavailable` or `session_repository_unavailable` and no recovery URI.
+
+| Impersonation detail | Consent condition |
+|---|---|
+| `consent_included_session_missing` | A service included in the grant has no session. |
+| `consent_included_session_unusable` | An included session requires reauthentication, including observed refresh rejection. |
+| `consent_mandatory_session_missing` | A mandatory service has no session. |
+| `consent_mandatory_session_unusable` | A mandatory session requires reauthentication. |
+| `consent_mandatory_scope_insufficient` | A mandatory session lacks a required scope. |
+
 Missing, locally expired, scope-deficient, or provider-rejected sessions require `reauthenticate` targeting `provider_session`.
 Their OAuth response is `invalid_grant` with the service-specific OAuth2 initiation URL as `error_uri`; the encoded return URI targets `/sessions`.
 Provider refresh rejection and recorded local expiry are distinct causes.
@@ -411,10 +421,10 @@ The existing request-security logger decorator supplies authenticated `actor` an
 ## User impersonation
 
 User impersonation is a separate RFC 8693 profile on this endpoint. It is available only
-when `oauth2_authorization_server.mode` is `local`. Proxy and hybrid modes reject the
-request without forwarding it upstream. Impersonation does not get a third-party token or
-accept `resource`. Eligible humans require an active user grant; eligible signed self-agent
-subjects do not, under ADR 045.
+when `oauth2_authorization_server.mode` is `local`. Proxy and hybrid modes reject it
+without upstream forwarding. Impersonation does not accept `resource` or return a
+third-party token. Human subjects require a browser-equivalent consent check.
+Eligible signed or predicate-bound unsigned self-agent subjects do not.
 
 The token contains subject claim `sub` and actor claim `act`. In RFC 8693 terms, this is
 delegation. This feature uses the name "impersonation" for operators. `act` preserves actor
@@ -478,7 +488,7 @@ issues an email claim.
 
 `allowed_subject_categories` is rule-local: omission means `[human]`; `[agent]` permits only agents and `[human, agent]` permits both (either order). A request is agent-category only when its signed subject credential verifies and its raw string `sub` exactly equals the audience-selected target UUID. An unsigned subject with that exact `sub` is agent-category only when the rule's authorization predicate binds `subject_token.sub`. A `sub` or extracted subject principal that is another registered agent's canonical UUID is rejected on every rule, without human fallback. Other subjects are human. No aliases, UUID normalization, principal-expression mapping or request category input selects agent issuance. Signed equality is ineligible on human-only/omitted rules even with active same-text delegation. Ineligibility falls through, and no eligible rule returns generic `403 access_denied` (`impersonation not permitted`) without `error_uri`.
 
-Every principal extraction and CEL authorization remains mandatory. Eligible agents skip delegation and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and delegation principal. Missing/expired delegation is terminal `403 access_denied` with the established target consent `error_uri`; verifier failure is `500 server_error` without one. A denied human never retries as agent. Unsigned rules may list `agent`, but it has no effect; ADR 031 controls remain intact.
+Every principal extraction and CEL authorization remains mandatory. Eligible agents skip the human consent check and credential email extraction, create no grant/session, and mint reserved `sub == agent_id == target UUID` with existing `act` and no category claim. Output email and audience remain policy-owned. Humans retain the extracted principal as minted subject and consent principal. Their consent status uses the same checks as local browser `/oauth2/authorize`: active grant, current declared permission sets, usable sessions for every included service, and mandatory service presence, usable sessions, and required scopes. Missing, expired, or stale grants and unmet service conditions are terminal consent denials. A denied human never retries as an agent. An unsigned rule may list `agent`, but only an unsigned subject with a target-matching `sub` and a predicate that binds `subject_token.sub` qualifies.
 
 ### Response and errors
 
@@ -502,6 +512,28 @@ non-reserved scope must be in the target allow list. An empty allow list permits
 untrusted client assertion returns `invalid_client`. A valid request with no permitted rule
 returns `access_denied`. Errors do not expose credentials, signing keys, trust sources, or
 rejected scopes.
+
+For human consent denials, the broker returns the RFC 6749 token error
+`invalid_grant` with the recovery URI in the body. The response has no
+`WWW-Authenticate` header:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+Cache-Control: no-store
+
+{"error":"invalid_grant","error_description":"User authorization is insufficient. Please re-consent.","error_uri":"https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"}
+```
+
+The consent page uses the target's canonical UUID, even when the request used a
+`canonical_id` audience suffix. Repository failures return `500 server_error`
+without `error_uri`. Browser `/oauth2/authorize` instead redirects to consent with
+sealed JWE state. Self-agent issuance does not check human consent.
+
+Third-party token-vault exchange reports the same grant problems as
+`403 access_denied` with the consent `error_uri`, and provider-session problems as
+`400 invalid_grant` with the service's authorization URL. Detect consent or session
+recovery by the presence of `error_uri`, not by status code.
 
 ### Audit events
 

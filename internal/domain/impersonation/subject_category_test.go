@@ -103,7 +103,7 @@ func TestImpersonateAgentSubject(t *testing.T) {
 				rule.Authorization.CEL.Expression = "subject_token.sub != '' && request.agent_id != ''"
 			}
 			issuer := &stubIssuer{}
-			verifier := &recordingDelegationVerifier{status: ports.UserDelegationMissing}
+			verifier := &recordingConsentChecker{status: ports.ConsentGrantMissing}
 			svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 				return configurableJWKSProvider{set: keyset}, nil
 			}, stubAgentRepository{}, issuer, 0, nil, verifier, "https://broker.example.com")
@@ -133,7 +133,11 @@ func TestImpersonateAgentSubject(t *testing.T) {
 			} else {
 				var exchangeErr *tokenexchange.TokenExchangeError
 				require.ErrorAs(t, err, &exchangeErr)
-				require.Equal(t, "access_denied", exchangeErr.Code())
+				if tc.wantDelegation > 0 {
+					require.Equal(t, "invalid_grant", exchangeErr.Code())
+				} else {
+					require.Equal(t, "access_denied", exchangeErr.Code())
+				}
 				if !tc.human {
 					require.Empty(t, exchangeErr.ErrorURI())
 				}

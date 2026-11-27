@@ -26,7 +26,7 @@ func TestAgentSubjectRequiresEveryPrincipalExtraction(t *testing.T) {
 				cfg.Rules[0].Roles[role] = entry
 				key, keyset := signedValidationKey(t, "extraction")
 				mint := &stubIssuer{}
-				verifier := &recordingDelegationVerifier{status: ports.UserDelegationActive}
+				verifier := &recordingConsentChecker{status: ports.ConsentReady}
 				svc, err := NewService(cfg, func(ports.TrustedTokenIssuerConfig) (tokenexchange.JWKSProvider, error) {
 					return configurableJWKSProvider{set: keyset}, nil
 				}, stubAgentRepository{}, mint, 0, nil, verifier, "https://broker.example.com")

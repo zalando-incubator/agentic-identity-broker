@@ -1237,6 +1237,11 @@ Created in `internal/domain/oauth2session/sweep.go`.
 | `client_expired` | The client assertion has expired, so the calling client must create a new one. |
 | `client_invalid` | The client assertion failed validation, is not trusted or lacks a required subject, or an access evaluation request carried no bearer assertion. |
 | `client_policy_denied` | The CEL authorization policy, or an impersonation rule's authorization predicate, denied the calling client. |
+| `consent_included_session_missing` | A service selected in the user's grant has no stored session, so the user must connect it from the agent's consent page. |
+| `consent_included_session_unusable` | A selected service's session needs reconnection before consent is ready. |
+| `consent_mandatory_scope_insufficient` | An agent-required service's session lacks a required scope. |
+| `consent_mandatory_session_missing` | An agent-required service has no stored session, even when the grant did not select that service. |
+| `consent_mandatory_session_unusable` | An agent-required service's session needs reconnection. |
 | `credential_identity_changed` | The service's configured client ID differs from the one that the session recorded, or the session recorded none, so the user must reconnect. |
 | `credential_source_unavailable` | No credential files are configured for the service, or the broker could not read them during refresh. |
 | `grant_empty` | The user's grant for the agent has no permission set entries. |

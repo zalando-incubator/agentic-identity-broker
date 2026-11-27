@@ -145,6 +145,11 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		Expect(store.UserGrants().Create(ctx, grant)).To(Succeed())
 		return grant
 	}
+	seedHumanSession := func(principal string) *storage.UserSession {
+		session := fixtures.SessionForServiceWithScopes(principal, fixtures.PlaceholderServiceID.String(), []string{"read"})
+		Expect(store.UserSessions().Create(ctx, session)).To(Succeed())
+		return session
+	}
 	mint := func(subject string) string {
 		status, body := post(requestFor(subject))
 		Expect(status).To(Equal(http.StatusOK), "%v", body)
@@ -166,12 +171,14 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 	}
 	assertDenied := func(form url.Values, consent bool) map[string]any {
 		status, body := post(form)
-		Expect(status).To(Equal(http.StatusForbidden), "%v", body)
-		Expect(body["error"]).To(Equal("access_denied"))
 		Expect(body).NotTo(HaveKey("access_token"))
 		if consent {
+			Expect(status).To(Equal(http.StatusBadRequest), "%v", body)
+			Expect(body["error"]).To(Equal("invalid_grant"))
 			Expect(body["error_uri"]).To(ContainSubstring("/agents/" + target.ID.String()))
 		} else {
+			Expect(status).To(Equal(http.StatusForbidden), "%v", body)
+			Expect(body["error"]).To(Equal("access_denied"))
 			Expect(body).NotTo(HaveKey("error_uri"))
 		}
 		return body
@@ -268,9 +275,14 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 	})
 
 	Context("category eligibility and human consent", func() {
+		BeforeEach(func() {
+			Expect(fixtures.SeedPlaceholderGrantData(ctx, store)).To(Succeed())
+		})
+
 		// US2.1 from specs/054-agent-subject-impersonation/spec.md
 		It("enforces all six category-rule combinations, including same-text delegation", func() {
 			seedGrant("alice@example.com", false)
+			seedHumanSession("alice@example.com")
 			seedGrant(target.ID.String(), false)
 			for _, categories := range [][]string{{"human"}, {"agent"}, {"human", "agent"}} {
 				boot(configFor(categories), false)
@@ -288,7 +300,9 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		// US2.2 from specs/054-agent-subject-impersonation/spec.md
 		It("uses consent-free agent issuance and delegated human issuance on a dual rule", func() {
 			boot(configFor([]string{"human", "agent"}), false)
+			assertDenied(requestFor("alice@example.com"), true)
 			seedGrant("alice@example.com", false)
+			seedHumanSession("alice@example.com")
 			Expect(decodeJWTClaims(mint(target.ID.String()))["sub"]).To(Equal(target.ID.String()))
 			Expect(decodeJWTClaims(mint("alice@example.com"))["sub"]).To(Equal("alice@example.com"))
 			assertNoState(target.ID.String())
@@ -309,6 +323,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			seedGrant("expired@example.com", true)
 			assertDenied(requestFor("expired@example.com"), true)
 			seedGrant("alice@example.com", false)
+			seedHumanSession("alice@example.com")
 			Expect(decodeJWTClaims(mint("alice@example.com"))["sub"]).To(Equal("alice@example.com"))
 			assertDenied(requestFor(target.ID.String()), false)
 			seedGrant(target.ID.String(), false)
@@ -491,7 +506,9 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 		// so their absence for an agent-subject token is meaningful.
 		assertHumanControls := func() {
 			grant := seedGrant("observation-control", false)
+			placeholderSession := seedHumanSession("observation-control")
 			token := mint("observation-control")
+			Expect(store.UserSessions().Delete(ctx, placeholderSession.ID)).To(Succeed())
 			Expect(store.UserGrants().Delete(ctx, grant.ID)).To(Succeed())
 			status, body, spans, _ := observe(token)
 			Expect(status).To(Equal(http.StatusForbidden))
@@ -609,6 +626,7 @@ var _ = Describe("Agent-Subject Impersonation", func() {
 			Expect(active).To(BeEmpty())
 
 			seedGrant("approval-control", false)
+			seedHumanSession("approval-control")
 			humanToken := mint("approval-control")
 			resp, err = postJSONWithHeaders(enduser, "/api/approvals", helpers.ApprovalCreateHeaders(humanToken, gateway, target.ID), request)
 			Expect(err).NotTo(HaveOccurred())

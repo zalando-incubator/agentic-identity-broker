@@ -101,7 +101,7 @@ info:
     - The header is additive only; no request or response body schema changes are introduced by this feature.
     - Emission is enabled by default and can be disabled only through `request_context.trace.response_enabled`.
 
-  version: 1.3.0
+  version: 2.0.0
   contact:
     name: Agentic Identity Broker Team
   license:
@@ -1344,10 +1344,14 @@ paths:
         - The broker never redirects to an unregistered `redirect_uri`.
 
         **Local/Hybrid Mode**:
-        When the broker acts as its own OAuth2 authorization server:
-        - If user has an active grant, redirects to `redirect_uri` with `code` and `state`
-        - If no active grant exists, redirects to the consent UI for user approval
-        - Supports PKCE (RFC 7636) with `code_challenge` and `code_challenge_method`
+        When the broker acts as its own OAuth2 authorization server, it uses the same
+        consent check as local human-category impersonation:
+        - A ready grant continues to authorization-code issuance.
+        - Missing, expired, or stale grants, unusable sessions for included services,
+          and missing, unusable, or scope-deficient mandatory services redirect the
+          browser to consent with sealed JWE state.
+        - A repository failure returns `server_error`, not a consent redirect.
+        - Supports PKCE (RFC 7636) with `code_challenge` and `code_challenge_method`.
 
         **Proxy Mode**:
         When proxying to an upstream OAuth2 server:
@@ -1628,32 +1632,51 @@ paths:
         whose target is unknown returns `invalid_target`.
         No-match precedence is `access_denied` > `invalid_request` > `invalid_client`.
 
-        After a rule authorizes a human-category request, the broker requires an active user
-        delegation for the extracted subject and target agent. A missing or expired delegation returns `403 access_denied`
-        with the existing RFC 6749 `error_uri` response member set to the authenticated user's
-        target-agent consent page. The response intentionally does not distinguish a missing delegation
-        from an expired one. An unverified subject has no exemption; a delegation lookup failure returns
-        `500 server_error` without `error_uri`.
+        After a rule authorizes a human-category request, the broker checks the extracted
+        subject and resolved target agent with the same consent criteria as
+        local `/oauth2/authorize`. Missing, expired, or stale grants require consent.
+        So does a missing or unusable session for an included service, or a missing,
+        unusable, or scope-deficient mandatory service. The denial is terminal
+        `400 invalid_grant` (RFC 6749 §5.2) with body `error_uri` set to
+        `<public URL>/agents/{target-agent-UUID}`. The response has no
+        `WWW-Authenticate` header: the token endpoint is not an RFC 6750 protected
+        resource, so the recovery URI travels only in the body.
+        The body does not disclose which consent condition failed. Repository failures
+        return `500 server_error` without `error_uri`. Unlike the browser flow,
+        impersonation returns no JWE consent redirect.
+
+        End-User API 2.0.0 changes two human impersonation outcomes. A missing or
+        expired delegation, previously `403 access_denied`, now returns this
+        `400 invalid_grant`. Requests that previously minted with an active agent-level
+        grant but incomplete browser consent receive the same denial. Clients must open
+        `error_uri`, complete the user action, and retry. The endpoint and request
+        parameters are unchanged. Other grant types and third-party token-vault exchange
+        retain their existing behavior.
 
         #### Agent subjects
         Each impersonation rule lists accepted `allowed_subject_categories`: `human`, `agent`,
         or both. Omission means `[human]`. No request parameter selects the category. A request
-        is agent-category only when the rule's subject role is signed, its credential verifies,
-        and its raw string `sub` is byte-for-byte equal to the canonical UUID of the target
-        selected by `audience`. Every other request is human-category, including every unsigned
-        (`verification: none`) subject. Aliases, display names, other agents' UUIDs and different
-        UUID spelling do not qualify. All configured principal extractions must still succeed;
-        an eligible agent's represented subject is the target UUID, not necessarily the extracted principal.
+        is agent-category when its raw string `sub` equals the target's canonical UUID
+        byte-for-byte and either its signed subject credential verifies or its unsigned
+        (`verification: none`) subject is covered by a rule predicate binding
+        `subject_token.sub`.
+        Aliases and different UUID spellings do not qualify. A signed subject, or a
+        predicate-bound unsigned subject, whose raw `sub` or extracted principal is
+        another registered agent's canonical UUID is rejected without human consent
+        lookup. All configured principal extractions must still succeed; an eligible
+        agent's represented subject is the target UUID, not necessarily the extracted principal.
 
         A category-ineligible rule falls through. No match returns the existing generic
-        `403 access_denied` (`impersonation not permitted`) without `error_uri`. Signed exact
-        equality on human-only or omitted-category rules is ineligible even with active same-text
-        human delegation. Eligible, CEL-authorized agents need no delegation, never return a
-        consent-required `error_uri`, and create no grant or session. Human delegation denials
+        `403 access_denied` (`impersonation not permitted`) without `error_uri`.
+        Signed exact equality on human-only or omitted-category
+        rules is ineligible even with active same-text human delegation. Eligible,
+        CEL-authorized agents need no human consent, never return a consent-required
+        `error_uri`, and create no grant or session. Human consent denials
         remain terminal and are never retried as agents.
 
-        Agent tokens have reserved `sub` and `agent_id` equal to the target UUID and existing
-        `act` (`iss`: verified actor issuer, `sub`: extracted actor). No category claim is added.
+        Agent tokens have reserved `sub` and `agent_id` equal to the target UUID and
+        existing `act` (`iss`: verified actor issuer, `sub`: extracted actor). No category
+        claim is added.
         `token_claims_expression` cannot override those reserved identities. Subject email
         extraction is not evaluated and no credential-derived email is supplied; output email
         remains policy-owned. Issuer, signing, lifetime, scope and audience policy are unchanged.
@@ -1815,7 +1838,7 @@ paths:
                     expires_in: 3600
                     scope: "read"
         "400":
-          description: Bad Request - Invalid parameters, malformed CIMD assertion parameters, invalid tokens, or no valid session
+          description: Bad Request - Invalid parameters, malformed CIMD assertion parameters, invalid tokens, no valid session, or human impersonation consent not ready
           content:
             application/json:
               schema:
@@ -1863,6 +1886,16 @@ paths:
                   value:
                     error: "invalid_request"
                     error_description: "resource must not be present for impersonation"
+                impersonation_consent_required:
+                  summary: Impersonation - human consent is not ready
+                  description: >-
+                    Terminal denial for a missing, expired, or stale grant, an included
+                    service without a usable session, or a mandatory service without a
+                    usable session or sufficient scopes.
+                  value:
+                    error: "invalid_grant"
+                    error_description: "User authorization is insufficient. Please re-consent."
+                    error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
         "401":
           description: Unauthorized - Invalid client authentication (client_assertion or client credentials)
           content:
@@ -1918,14 +1951,8 @@ paths:
                   value:
                     error: "access_denied"
                     error_description: "agent-subject tokens cannot be exchanged for third-party service tokens"
-                impersonation_consent_required:
-                  summary: Impersonation - user delegation required
-                  value:
-                    error: "access_denied"
-                    error_description: "user delegation is required before impersonation"
-                    error_uri: "https://broker.example.com/agents/550e8400-e29b-41d4-a716-446655440000"
         "500":
-          description: Internal Server Error
+          description: Internal Server Error; consent-check repository failures have no recovery URI
           content:
             application/json:
               schema:
@@ -4763,8 +4790,9 @@ components:
             Only present when the token exchange is scoped to specific permission sets.
 
             Deprecated: superseded by the AuthZEN Grant Context from
-            `POST /access/v1/evaluation`. Removal is scheduled for one release after the ExtProc
-            grant-context resolver ships and requires end-user API 2.0.0.
+            `POST /access/v1/evaluation`. End-User API 2.0.0 still returns this
+            field. A future, separately approved major version can remove it
+            after the ExtProc grant-context resolver ships.
         principal:
           type: string
           description: Verified subject-token principal; omitted when unresolved.

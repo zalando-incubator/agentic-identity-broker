@@ -17,7 +17,7 @@ identity only. Local
 `token_claims_expression` owns emitted `aud`, including omission. Every decision is credential-free
 audited.
 
-Every rule-authorized request additionally verifies the impersonated subject's active `UserGrant` for the resolved target agent before minting. The subject identity is the lookup `id.Principal`; the check is mandatory for signed and unverified subjects and has no opt-out. Missing or expired delegations stop evaluation with generic `access_denied` plus the existing RFC 6749 §5.2 `error_uri` to `<end-user-public-url>/consent/agent/<target-agent-id>`; storage failures return `server_error`. The port boundary and error signal are governed by proposed ADR [032](../../adrs/032-impersonation-requires-user-delegation.md).
+For human-category subjects, successful rule authorization is followed by the same consent check as browser `/oauth2/authorize`. The extracted subject is the lookup `id.Principal`; the resolved target agent is reused. The shared consent evaluator checks an active grant, currently declared permission sets, usable sessions for each included service, and mandatory service sessions and required scopes. A denial returns terminal `400 invalid_grant` with a body `error_uri` at `<end-user-public-url>/agents/<target-uuid>` and no `WWW-Authenticate` header. A repository error fails closed as `500 server_error` without a recovery URI. Eligible agent-category subjects remain exempt under [045-agent-subject-impersonation](../../adrs/045-agent-subject-impersonation.md). [20261120-145501-human-impersonation-consent-status](../../adrs/20261120-145501-human-impersonation-consent-status.md) governs this narrow supersession of [032-impersonation-requires-user-delegation](../../adrs/032-impersonation-requires-user-delegation.md).
 
 The design reuses existing machinery: the JWKS adapter (`internal/adapters/jwks`), the ADR-009 CEL
 pattern (`internal/domain/tokenexchange/cel_evaluator.go`), the signed-JWT validation pattern
@@ -134,12 +134,12 @@ internal/
 │       └── strategies.go              # impersonation mint through normal local access-token path with protected act.iss/act.sub and granted scope (FR-006a/008)
 ├── ports/
 │   ├── config.go                      # + ImpersonationConfig subtree under OAuth2AuthServerConfig
-│   └── oauth2.go                      # + ImpersonationTokenIssuer, UserDelegationVerifier + statuses
+│   └── oauth2.go                      # + ImpersonationTokenIssuer, ConsentChecker + result
 ├── config/
 │   └── validator.go                   # + impersonation static validation (CR-001..CR-010)
 ├── app/
-│   ├── impersonation_delegation.go     # Consent-service classifier implementing UserDelegationVerifier
-│   └── builder.go                     # DI: rules, JWKS, CEL, delegation verifier, local issuer
+│   ├── impersonation_consent.go      # Consent adapter implementing ConsentChecker
+│   └── builder.go                     # DI: rules, JWKS, CEL, consent checker, local issuer
 └── adapters/http/enduser/
     └── oauth2_token.go                # activation branch before resource guard + audit event
 
@@ -199,7 +199,7 @@ not extend the third-party exchange service, which would violate single-responsi
 | US2 S1–S5 | `impersonation_test.go` | rule validation, extraction, role/issuer mismatch, startup failure, first-match fall-through |
 | US3 S1–S5 | `impersonation_test.go` | unsigned signed-role rejection, credential-failure rejection, access_denied, extraction failure, unverified guards |
 | US4 S1–S3 | `impersonation_test.go` | success audit, failure audit, no-credential audit |
-| US5 S1–S5 | `impersonation_test.go` | active delegation mint; missing/expired delegation returns 403 `access_denied` plus consent `error_uri`; unverified subject remains gated; lookup failure is 500 |
+| US5 S1–S5 | `impersonation_test.go` | active delegation mint; missing/expired delegation returns 400 `invalid_grant` plus consent `error_uri`; unverified subject remains gated; lookup failure is 500 |
 | Edge cases | `impersonation_test.go` | target-allowed, target-rejected, unrestricted-empty-list, and absent scope; resource present, requested_token_type mismatch, actor==subject, JWKS unavailable; terminal delegation decision |
 
 **Red Phase Requirements**: tests compile with realistic assertions (status codes, decoded JWT
@@ -238,4 +238,4 @@ E2E 100% of acceptance scenarios (Principle XIII).
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
 | Unsigned (`alg:none`) JWT accepted on the unverified subject role (deviates from Principle I) | Privileged clients bridging non-OIDC subjects (chat users) hold no signed subject token but must convey multi-attribute subjects (principal id + email) | Plaintext identifier can't carry multiple attributes (clarification); requiring a signed subject is impossible (no issuer). Bounded to the subject role, protected by a verified client assertion and subject-binding predicate, and governed by accepted ADR 031 plus its paired Constitution Principle I carve-out. |
-| `ports.UserDelegationVerifier` + app-boundary consent classifier | Impersonation requires active user delegation without importing the consent bounded context | Calling `consent.Service` from impersonation leaks a sibling domain's concrete API and sentinels; reading `UserGrantRepository` directly duplicates consent's active-grant logic. |
+| `ports.ConsentChecker` + shared consent evaluator | Human impersonation and browser authorization need identical consent decisions without coupling impersonation to the consent implementation | The port passes the already-resolved target agent. Both paths use `consent.CheckConsent`, which avoids a second agent lookup and duplicate grant/session policy. |
