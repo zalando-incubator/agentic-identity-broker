@@ -44,6 +44,7 @@ Issues #472, #478 and #471 do not decide these points. The maintainer answered t
 - Q: Does the agent grant carry a strong ETag with an optional `If-Match`? → A: Yes, as service accounts do (#471). A stale `If-Match` on `PUT` or `DELETE` gets `412` and nothing changes; without `If-Match` the last writer wins. Recorded in FR-003, API-003, User Story 1 Scenario 12, and Edge Cases.
 - Q: What do the admin API and the service-account delete guard do with an agent grant whose `valid_until` has passed? → A: It stays visible and keeps protecting its accounts. The admin `GET` returns it (`200`, with its `valid_until`). Its bindings still block deletion of the accounts it binds until the grant is deleted or rewritten without them. A `PUT` replaces it (`200`), keeping its `id` and `created_at`, as consent renewal does. Expiry makes the grant absent only for decision paths (#473). Recorded in FR-006, FR-015, User Story 1 Scenario 13, User Story 4 Scenario 6, and Edge Cases.
 - Q: What does a `PUT` or `DELETE` that carries `If-Match` get when the agent has no agent grant? → A: `412`, and nothing is created or deleted, because `If-Match` evaluates false when no current representation exists (RFC 9110 §13.1.1). A stale writer therefore cannot re-create a grant that was just revoked. Without `If-Match`, `PUT` creates (`201`) and `DELETE` answers `404`. Recorded in FR-003, User Story 1 Scenario 14, and Edge Cases.
+- Q: When deleting a service account is refused because an agent grant binds it, how does the administrator find the binding agents? → A: The `409` body adds `bound_by_agents`, the sorted UUIDs of every agent whose grant binds the account, expired grants included. `error` and `message` stay as #471 defined them. The admin API is administrator-only, so naming the agents exposes nothing new. Recorded in FR-015, API-003, User Story 4 Scenarios 3 and 6, and Journey 1 Step 3.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -125,10 +126,10 @@ The administrator retires an agent's access by deleting its agent grant. While a
 
 1. **Given** an agent with an agent grant, **When** an administrator deletes the grant, **Then** the broker answers `204`, a later read answers `404`, and the agent's declared permission sets and any users' grants to it are unchanged.
 2. **Given** an agent without an agent grant, **When** an administrator deletes its grant, **Then** the broker answers `404`.
-3. **Given** an account bound by an agent grant, **When** an administrator deletes the account, **Then** the broker answers `409` with the conflict response defined by #471, and the account and the grant are unchanged.
+3. **Given** an account bound by an agent grant, **When** an administrator deletes the account, **Then** the broker answers `409` with the conflict response defined by #471 and `bound_by_agents` listing the UUIDs of every agent whose grant binds the account, and the account and the grant are unchanged.
 4. **Given** that account after the binding was removed, by deleting the grant or by writing it without that binding, **When** the administrator deletes the account, **Then** the broker answers `204`.
 5. **Given** an agent with an agent grant, **When** the agent is deleted, **Then** its agent grant is deleted with it, and the accounts it bound can be removed afterwards.
-6. **Given** an account bound only by an agent grant whose `valid_until` has passed, **When** an administrator deletes the account, **Then** the broker answers `409` with the conflict response defined by #471, and the account and the grant are unchanged.
+6. **Given** an account bound only by an agent grant whose `valid_until` has passed, **When** an administrator deletes the account, **Then** the broker answers `409` with the conflict response defined by #471, `bound_by_agents` names that agent, and the account and the grant are unchanged.
 
 ---
 
@@ -265,7 +266,11 @@ X-Remote-User: ops-admin@example.com
 HTTP/1.1 409 Conflict
 Content-Type: application/json
 
-{ "error": "conflict", "message": "service account is bound by an agent grant" }
+{
+  "error": "conflict",
+  "message": "service account is bound by an agent grant",
+  "bound_by_agents": ["550e8400-e29b-41d4-a716-446655440041"]
+}
 ```
 
 **Step 4 — 10:03:00: the operator reads triage-bot's grant**
@@ -409,7 +414,7 @@ Content-Type: application/json
 
 **Deletion and lifecycle**
 
-- **FR-015**: Deleting a service account MUST be refused with the `409` conflict defined by #471 while any agent grant binds it, including an expired one. Deleting an agent MUST delete its agent grant with it. Deleting a permission set keeps the existing rule (refused while an agent declares it).
+- **FR-015**: Deleting a service account MUST be refused with the `409` conflict defined by #471 while any agent grant binds it, including an expired one. The response MUST carry `bound_by_agents`: the UUIDs of all agents whose grants bind the account, sorted ascending, without duplicates. `error` and `message` stay as #471 defined them. Deleting an agent MUST delete its agent grant with it. Deleting a permission set keeps the existing rule (refused while an agent declares it).
 
 **Principal kind and separation from human paths**
 
@@ -500,7 +505,7 @@ The terms Agent Grant, Binding (service-account binding) and Principal Kind are 
 
 - **API-001**: The operations are defined in `api/admin/openapi.yaml` before implementation, on the admin server only: `PUT`, `GET` and `DELETE /api/agents/{agent-id}/self-grant`. `{agent-id}` keeps its existing meaning (UUID or canonical ID).
 - **API-002**: The request carries `permission_sets` (optional permission-set IDs to add; may be empty or omitted), `service_account_bindings` (service ID → service-account ID) and an optional `valid_until`. The representation carries all granted sets in `permission_sets`, the resolved coverage read-only in `granted_permission_sets` (permission set → covered services), the bindings and `valid_until`, plus `id`, `agent_id`, `created_at` and `updated_at`. IDs are UUIDs.
-- **API-003**: Errors use the existing envelope and the existing meanings of `400`, `401`, `404`, `409`, `412` and `500`. Responses that return the grant carry its strong ETag, and `If-Match` is optional on `PUT` and `DELETE` (FR-003). The `409` of #471's service-account delete is now reachable; its contract text is updated accordingly.
+- **API-003**: Errors use the existing envelope and the existing meanings of `400`, `401`, `404`, `409`, `412` and `500`. Responses that return the grant carry its strong ETag, and `If-Match` is optional on `PUT` and `DELETE` (FR-003). The `409` of #471's service-account delete is now reachable. Its contract text is updated, and the response gains the optional `bound_by_agents` array of agent UUIDs (FR-015), which is present only on this conflict.
 - **API-004**: No end-user API path or schema changes. End-user responses only stop being able to contain agent grants, which they never did by design.
 - **API-005**: The contract includes examples matching the journeys of this specification, including the refusals of Journey 2.
 - **API-006**: The change is additive; the Admin API version is raised by a minor step. The contract change is confirmed by the maintainer before implementation begins (Constitution Principle X).
