@@ -6,7 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/tests/integration/bootstrap"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -124,5 +126,90 @@ func TestObjectMetadataMigrationRejectsNonObjectValues(t *testing.T) {
 				require.NoError(t, err)
 			})
 		}
+	}
+}
+
+func objectMetadataColumns(t *testing.T, f *MigrationTestFramework) string {
+	t.Helper()
+	columns, err := f.QuerySQL(t, `SELECT COALESCE(string_agg(table_name || '.' || column_name, ',' ORDER BY table_name, column_name), '')
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND column_name IN ('labels', 'annotations')
+		  AND table_name IN ('agents', 'thirdparty_oauth2_services', 'permission_sets')`)
+	require.NoError(t, err)
+	return columns
+}
+
+// holdReadLock keeps an open transaction with an ACCESS SHARE lock on table,
+// as a live request would, until the returned function releases it.
+func holdReadLock(t *testing.T, f *MigrationTestFramework, table string) func() {
+	t.Helper()
+	traffic, err := f.db.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	_, err = traffic.ExecContext(context.Background(), "SELECT id FROM "+table)
+	require.NoError(t, err)
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			require.NoError(t, traffic.Rollback())
+		}
+	}
+	t.Cleanup(release)
+	return release
+}
+
+// boundLockWait makes a migration that queues for a lock fail after three
+// seconds instead of waiting for the blocking transaction to end.
+func boundLockWait(f *MigrationTestFramework) {
+	separator := "?"
+	if strings.Contains(f.connStr, "?") {
+		separator = "&"
+	}
+	f.connStr += separator + "options=-c%20lock_timeout%3D3000"
+}
+
+func expectLiveReads(t *testing.T, f *MigrationTestFramework) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for _, tc := range objectMetadataTables {
+		_, err := f.db.ExecContext(ctx, "SELECT id FROM "+tc.table)
+		require.NoError(t, err, "%s must stay readable while the migration is refused", tc.table)
+	}
+}
+
+func TestObjectMetadataMigrationBusyTablesFailWithoutQueueing(t *testing.T) {
+	for _, tc := range objectMetadataTables {
+		t.Run("up/"+tc.table, func(t *testing.T) {
+			f := objectMetadataMigrationFixture(t)
+			before := objectMetadataMigrationData(t, f)
+			boundLockWait(f)
+			release := holdReadLock(t, f, tc.table)
+			started := time.Now()
+			err := f.Up(t, 51)
+			require.ErrorContains(t, err, "could not obtain lock on relation", "a busy table must fail NOWAIT instead of queueing an exclusive lock")
+			assert.Less(t, time.Since(started), 5*time.Second)
+			assert.Empty(t, objectMetadataColumns(t, f), "contention must roll back every added column")
+			assert.Equal(t, before, objectMetadataMigrationData(t, f))
+			expectLiveReads(t, f)
+			release()
+			require.NoError(t, f.Force(t, 50))
+			require.NoError(t, f.Up(t, 51))
+		})
+		t.Run("down/"+tc.table, func(t *testing.T) {
+			f := objectMetadataMigrationFixture(t)
+			require.NoError(t, f.Up(t, 51))
+			columns := objectMetadataColumns(t, f)
+			boundLockWait(f)
+			release := holdReadLock(t, f, tc.table)
+			err := f.Down(t, 50)
+			require.ErrorContains(t, err, "could not obtain lock on relation")
+			assert.Equal(t, columns, objectMetadataColumns(t, f), "contention must keep every column")
+			expectLiveReads(t, f)
+			release()
+			require.NoError(t, f.Force(t, 51))
+			require.NoError(t, f.Down(t, 50))
+			assert.Empty(t, objectMetadataColumns(t, f))
+		})
 	}
 }

@@ -97,7 +97,7 @@ Re-check for the next unused slot when the migration is written.
 | `permission_sets` | `labels` | `JSONB NOT NULL DEFAULT '{}'` | `chk_permission_sets_labels_object` |
 | `permission_sets` | `annotations` | `JSONB NOT NULL DEFAULT '{}'` | `chk_permission_sets_annotations_object` |
 
-Each constraint is `CHECK (jsonb_typeof(<column>) = 'object')`. There is no index (DB-003), no
+Each constraint is `CHECK (jsonb_typeof(<column>) = 'object')`. Both directions lock the three tables `NOWAIT` under a one-second `statement_timeout`, so a busy table fails the migration at once and changes nothing. There is no index (DB-003), no
 backfill beyond the default, and no timestamp rewrite. Existing rows read as empty metadata. The
 down migration drops the six constraints and six columns, and rollback loses only metadata.
 
