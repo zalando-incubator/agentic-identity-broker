@@ -67,6 +67,7 @@ var _ = Describe("Service accounts", func() {
 					To(Equal([]string{service.ID.String(), "platform-triage-bot", "jwt_bearer", "none", "ready"}))
 				Expect(account.Scopes).To(Equal([]string{"read"}))
 				Expect(account.FailureReason).To(BeNil())
+				Expect(response.Object()).To(HaveKeyWithValue("failure_reason", BeNil()), "failure_reason is always present, null while ready")
 				Expect(account.CredentialSummary).To(Equal(helpers.ServiceAccountCredentialSummary{
 					Format: "signed_jwt", Use: "access_token", Iss: new(fixtures.ServiceAccountTokenIssuer), Sub: new(fixtures.ServiceAccountTokenSubject),
 					Kid: new(fixtures.ServiceAccountT1KeyID), Exp: &exp, Fingerprint: helpers.ServiceAccountFingerprint(token),

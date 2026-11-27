@@ -211,6 +211,7 @@ Content-Type: application/json
   "scopes": ["read"],
   "narrowing": "none",
   "status": "ready",
+  "failure_reason": null,
   "credential_summary": {
     "format": "signed_jwt",
     "use": "access_token",
@@ -246,6 +247,7 @@ Content-Type: application/json
     "scopes": ["read"],
     "narrowing": "none",
     "status": "ready",
+    "failure_reason": null,
     "credential_summary": { "format": "signed_jwt", "use": "access_token", "iss": "https://idp.example.com", "sub": "triage-bot", "kid": "2026-11", "exp": 1798675200, "fingerprint": "SHA256:fhbwk8g0dDlEiuXzadc7Ytx+R1pSlxRBBNgzBxN+3UQ" },
     "created_at": "2026-11-25T10:00:00Z",
     "updated_at": "2026-11-25T10:00:00Z"
@@ -261,7 +263,6 @@ Host: broker-admin.example.com
 X-Remote-User: ops-admin@example.com
 
 HTTP/1.1 200 OK
-ETag: "1"
 Content-Type: application/json
 
 { "status": "ready", "failure_reason": null, "credential_expires_at": "2026-12-31T00:00:00Z" }
@@ -293,6 +294,7 @@ Content-Type: application/json
   "scopes": ["read", "write"],
   "narrowing": "none",
   "status": "ready",
+  "failure_reason": null,
   "credential_summary": {
     "format": "signed_jwt",
     "use": "access_token",

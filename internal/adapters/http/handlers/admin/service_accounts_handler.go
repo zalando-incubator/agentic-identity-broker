@@ -57,7 +57,7 @@ type serviceAccountResponse struct {
 	Scopes            []string                `json:"scopes"`
 	Narrowing         string                  `json:"narrowing"`
 	Status            string                  `json:"status"`
-	FailureReason     *string                 `json:"failure_reason,omitempty"`
+	FailureReason     *string                 `json:"failure_reason"`
 	CredentialSummary model.CredentialSummary `json:"credential_summary"`
 	CreatedAt         string                  `json:"created_at"`
 	UpdatedAt         string                  `json:"updated_at"`
@@ -222,7 +222,6 @@ func (h *ServiceAccountsHandler) Status(w http.ResponseWriter, r *http.Request) 
 	if expiry := view.Account.CredentialExpiresAt; expiry != nil {
 		response.CredentialExpiresAt = new(expiry.UTC().Format(time.RFC3339))
 	}
-	w.Header().Set("ETag", strongETag(view.Account.Version))
 	h.writeJSON(w, http.StatusOK, response)
 }
 

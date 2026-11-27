@@ -276,7 +276,7 @@ var _ = Describe("Service accounts", func() {
 				response := read(statusPath)
 
 				Expect(response.StatusCode).To(Equal(http.StatusOK))
-				Expect(response.Header.Get("ETag")).To(Equal(`"1"`))
+				Expect(response.Header.Values("ETag")).To(BeEmpty())
 				exp, err := helpers.ServiceAccountTokenExp(token)
 				Expect(err).To(Succeed())
 				Expect(response.Object()).To(Equal(map[string]any{

@@ -278,7 +278,8 @@ func TestServiceAccountsHandler_CreateListGet(t *testing.T) {
 	assert.Equal(t, h.serviceID.String(), body["service_id"])
 	assert.Equal(t, "ready", body["status"])
 	assert.Equal(t, "none", body["narrowing"])
-	assert.NotContains(t, body, "failure_reason")
+	assert.Contains(t, body, "failure_reason")
+	assert.Nil(t, body["failure_reason"])
 	assert.NotContains(t, body, "credential")
 	summary := body["credential_summary"].(map[string]any)
 	assert.Equal(t, model.CredentialFingerprint(jwt), summary["fingerprint"])
@@ -468,7 +469,7 @@ func TestServiceAccountsHandler_Status(t *testing.T) {
 	w := h.do(t, http.MethodGet, h.path("company-platform", "/platform-triage-bot/status"), saTestOperator, nil, "")
 
 	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, `"1"`, w.Header().Get("ETag"))
+	assert.Empty(t, w.Header().Values("ETag"), "status is derived at read time and carries no ETag, like discovery status")
 	assert.JSONEq(t, `{"status":"ready","failure_reason":null,"credential_expires_at":"`+exp.UTC().Format(time.RFC3339)+`"}`, w.Body.String())
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

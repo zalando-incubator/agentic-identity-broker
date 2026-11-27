@@ -2006,6 +2006,7 @@ paths:
                       scopes: [read]
                       narrowing: none
                       status: ready
+                      failure_reason: null
                       credential_summary:
                         format: signed_jwt
                         use: access_token
@@ -2211,10 +2212,9 @@ paths:
       tags: [Service Accounts]
       responses:
         '200':
-          description: The account's status at the time of the request.
-          headers:
-            ETag:
-              $ref: '#/components/headers/ServiceAccountETag'
+          description: >-
+            The account's status at the time of the request. Derived at read time from the
+            stored credential expiry, so it carries no ETag, like service discovery status.
           content:
             application/json:
               schema:
@@ -3190,7 +3190,7 @@ components:
         Strong ETag of the stored account version, used with If-Match. Changes with every
         committed change to the account. `status` and `failure_reason` are derived from the
         stored credential expiry at the time of the request, so they can change while the ETag
-        stays the same; do not cache them by ETag.
+        stays the same; do not cache them by ETag. The status resource carries no ETag.
       schema:
         type: string
       example: '"1"'
@@ -5237,7 +5237,7 @@ components:
           description: Compact JWS. Stored exactly as submitted; never returned.
     ServiceAccount:
       type: object
-      required: [id, service_id, canonical_id, kind, scopes, narrowing, status, credential_summary, created_at, updated_at]
+      required: [id, service_id, canonical_id, kind, scopes, narrowing, status, failure_reason, credential_summary, created_at, updated_at]
       properties:
         id:
           type: string
@@ -5268,9 +5268,10 @@ components:
           readOnly: true
         failure_reason:
           type: string
-          enum: [credential_expired]
+          nullable: true
+          enum: [credential_expired, null]
           readOnly: true
-          description: Present only when `status` is `failed`.
+          description: Why `status` is `failed`; `null` while the account is `ready`.
         credential_summary:
           $ref: '#/components/schemas/CredentialSummary'
         created_at:
