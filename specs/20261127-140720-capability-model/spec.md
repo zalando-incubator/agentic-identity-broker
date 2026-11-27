@@ -20,6 +20,7 @@ Users see no change in this feature. The consent screen and the end-user grant r
 - Q: How should the migration record old grants in which the user left out an optional service, so that no grant gains access it didn't have before? → A: Split each legacy permission set into one capability per service scope entry. Each capability keeps that entry's `requirement_type`, and a left-out service becomes a capability that the grant does not hold.
 - Q: Should the list of granted capability IDs reach ExtProc policy through the token-exchange response, through the ADR 048 delegation permit, or through both? → A: Only through the ADR `048-authzen-delegation-pip` delegation permit. Capability-based policy requires `grant_context.enabled: true`, and disabled mode and the token-exchange response stay unchanged.
 - Q: How should the Admin API version and compatibility handle permission sets switching from `service_scopes` to `capabilities[]`? → A: Bump the Admin API to `4.0.0` on the existing routes and replace `service_scopes` cleanly. Requests that still send `service_scopes` are rejected with `400`, and there is no deprecated read-only field.
+- Q: On its branch, #580 has resolved its open question as "Full is stored as intent", which adds a per-set Full-intent marker to this feature's grant entry. Should this feature add that marker, or should #580 add it? → A: #580 adds it, with its own migration and reader changes. In this feature, every granted permission set entry holds explicit capability IDs only.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -246,7 +247,7 @@ The grant entry now holds the GitHub capability only. Migration cannot know whet
 
 **Grants and token exchange**
 
-- **FR-009**: For each granted set, the grant MUST store the granted capabilities, and this replaces the stored included-service list.
+- **FR-009**: For each granted set, the grant MUST store the granted capabilities as explicit capability IDs, and this replaces the stored included-service list. This feature MUST NOT add a Full-intent marker or any other stored preset; Feature 2 adds the marker with its own migration.
 - **FR-010**: Until Feature 2 ships capability selection, the end-user grant request MUST keep its current included-service shape. For each set, the broker MUST store every capability that the agent entry lists and whose services are all included. The request MUST be rejected with `400` when a capability that is mandatory for the agent needs a service that the request excludes. Every other grant validation stays as today.
 - **FR-011**: At token exchange, the scopes for each service MUST be the union of the granted capabilities' scopes for that service, capped by the agent's service-requirement ceiling as today.
 - **FR-012**: Token exchange and permit resolution MUST fail closed when a grant references a capability that its set no longer includes, with the same response and consent-page error URI as for a missing permission set.
@@ -382,7 +383,7 @@ flowchart LR
 ### Key Entities
 
 - **Capability Group**, **Capability**, **Capability Entry**: See Domain Model.
-- **Granted Permission Set Entry** (changed): The granted capabilities replace the stored included-service list.
+- **Granted Permission Set Entry** (changed): Explicit granted capability IDs replace the stored included-service list. Feature 2 adds a Full-intent alternative.
 
 ## Success Criteria *(mandatory)*
 
@@ -400,4 +401,4 @@ flowchart LR
 - Capability labels and descriptions are operator-supplied plain text, as permission-set names are today.
 - ADR `048-authzen-delegation-pip`'s permit freshness, result binding and deprecation timeline remain in force. This feature adds a member to the permit and to enabled-mode policy context, and changes no existing member.
 - A new ADR for the capability model, its invariants and the gateway-only enforcement assumption accompanies the plan of this feature.
-- Feature 2 depends on this feature and can start planning once this feature's API contracts are approved.
+- Feature 2 depends on this feature and can start planning once this feature's API contracts are approved. Feature 2 extends the granted permission set entry with its Full-intent marker in its own migration (FR-009).
