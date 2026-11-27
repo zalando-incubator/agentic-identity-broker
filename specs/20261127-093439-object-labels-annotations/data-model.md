@@ -14,7 +14,9 @@ Metadata**, **Label**, and **Annotation** to the `ARCHITECTURE.md` glossary befo
 
 | Operation | Behavior |
 |---|---|
-| `NewObjectMetadata(labels, annotations)` | Validates under [contracts/object-metadata.md](contracts/object-metadata.md) §3 and copies both inputs. A nil input means empty. On failure it returns one of the fixed errors in §4. |
+| `NewObjectMetadata(labels, annotations)` | Admin write constructor. Validates every rule of [contracts/object-metadata.md](contracts/object-metadata.md) §3, including the reserved prefix, and copies both inputs. A nil input means empty. On failure it returns one of the fixed errors in §4. |
+| `RestoreObjectMetadata(labels, annotations)` | Persistence constructor for the storage adapters. Copies both stored maps and applies no rule, so stored metadata cannot fail a read (FR-021). A nil input means empty. |
+| `Validate()` | Re-check called by the entity validators. Applies the grammar, NUL, count, and size rules, but not the reserved prefix, because `storage.Agent.Validate` also runs on non-Admin updates. Returns the same fixed errors. |
 | `Labels()`, `Annotations()` | Return copies. Callers cannot change the value. |
 | `Equal(other)` | Map equality of both maps, independent of key order. |
 | `IsEmpty()` | True when both maps are empty. |
@@ -102,8 +104,12 @@ Adapter rules:
   `annotations`. For Agents, these are `Get`, `GetByIDs`, `List`, `GetByExternalID`,
   `GetByClientID`, `GetByClientURI`, `Create`, and `Update`. Permission Sets and Services need the
   same coverage.
-- Reads rebuild the value with `model.NewObjectMetadata`. A failure becomes a storage error of
-  kind internal, and the adapter returns no partial entity.
+- Reads decode each column into a `map[string]string` and rebuild the value with
+  `model.RestoreObjectMetadata`, which applies no rule. A column that is not a JSON object of
+  strings becomes a storage error of kind internal, and the adapter returns no partial entity.
+  A stored key with the reserved prefix, or one that breaks the grammar, reads back unchanged.
+  Only a direct database edit or a later broker-defined key can store one, and the next write of
+  that entity rejects a grammar violation.
 - The memory adapter stores the value inside its existing records. Its tests prove that the
   value round-trips as in the PostgreSQL adapter, and that two entities with equal maps stay
   independent.

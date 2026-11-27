@@ -66,13 +66,13 @@ broker. A rejection never echoes the offending key or value.
 `exposure=external ` or a look-alike key, and broker-defined labels must not collide with operator
 keys. Validation that is lax now cannot be tightened later without breaking stored data.
 
-**Independent Test**: Submit each invalid input class from FR-006 to FR-012 on each resource and
+**Independent Test**: Submit each invalid input class from FR-005 to FR-011 on each resource and
 check for `400 validation failed`, an unchanged stored resource, and an error message that contains
 neither the key nor the value.
 
 **Acceptance Scenarios**:
 
-1. **US2.1 — Invalid label keys and values**: **Given** an authorized caller, **When** the caller writes an Agent, Service, or Permission Set with a label key or value that violates FR-006 or FR-007, such as a value with trailing whitespace, a 64-character name, an uppercase prefix, or two `/` separators, **Then** the broker returns `400 validation failed` and stores nothing.
+1. **US2.1 — Invalid label keys and values**: **Given** an authorized caller, **When** the caller writes an Agent, Service, or Permission Set with a label key or value that violates FR-005 or FR-006, such as a value with trailing whitespace, a 64-character name, an uppercase prefix, or two `/` separators, **Then** the broker returns `400 validation failed` and stores nothing.
 2. **US2.2 — Reserved prefix**: **Given** an authorized caller, **When** the caller writes a label or annotation whose key prefix is `agenticidentitybroker.dev` or a subdomain of it, such as `policy.agenticidentitybroker.dev/tier`, **Then** the broker returns `400 validation failed` and stores nothing. The prefix `example.agenticidentitybroker.dev.evil.com/` is an ordinary, allowed prefix.
 3. **US2.3 — Size limits**: **Given** an authorized caller, **When** the caller writes 65 labels, or annotations whose keys and values total 65,537 UTF-8 bytes, **Then** the broker returns `400 validation failed`. 64 labels and annotations of exactly 65,536 bytes are accepted.
 4. **US2.4 — No echo**: **Given** any rejected metadata write, **When** the caller reads the error response, **Then** the message names the failing map and rule category, for example `metadata.labels contains an invalid value`, and contains neither the submitted key nor the submitted value.
@@ -214,7 +214,13 @@ Content-Type: application/json
 
 {
   "id": "550e8400-e29b-41d4-a716-446655440020",
-  "metadata": {"labels": {"deployment": "local", "team.example.com/owner": "platform"}, "annotations": {...}},
+  "metadata": {
+    "labels": {"deployment": "local", "team.example.com/owner": "platform"},
+    "annotations": {
+      "gitops.example.com/revision": "4f2c9e1",
+      "gitops.example.com/source": "https://github.com/acme/agents/blob/main/review-bot.yaml"
+    }
+  },
   "updated_at": "2026-11-27T10:00:00Z"
 }
 ```
@@ -440,7 +446,7 @@ Content-Type: application/json
 **Validation** (shared by all three resources)
 
 - **FR-004**: The broker MUST match keys and values literally. It MUST NOT trim, case-fold, or apply Unicode normalization to them, before validation, in storage, or in responses.
-- **FR-005**: Label and annotation keys MUST have the form `[prefix/]name`. The optional prefix is a lowercase RFC 1123 DNS subdomain of at most 253 characters. The name has 1–63 characters, starts and ends with `[A-Za-z0-9]`, and contains only `[A-Za-z0-9]`, `-`, `_`, and `.` in between. A key contains at most one `/`.
+- **FR-005**: Label and annotation keys MUST have the form `[prefix/]name`. The optional prefix has 1–253 characters and matches `[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*`, the Kubernetes DNS-1123 subdomain rule. It has no separate length limit per dot-separated label. The name has 1–63 characters, starts and ends with `[A-Za-z0-9]`, and contains only `[A-Za-z0-9]`, `-`, `_`, and `.` in between. A key contains at most one `/`.
 - **FR-006**: Label values MUST be empty, or have 1–63 characters that start and end with `[A-Za-z0-9]` and contain only `[A-Za-z0-9]`, `-`, `_`, and `.` in between.
 - **FR-007**: An object MUST hold at most 64 labels.
 - **FR-008**: Annotation values MUST be valid UTF-8 without U+0000. The UTF-8 byte lengths of all annotation keys and values of one object MUST total at most 65,536 bytes, measured after JSON decoding.
@@ -511,7 +517,8 @@ flowchart TD
 
 **Value Objects**:
 - **Object Metadata**: an immutable pair of a label map and an annotation map, validated as a
-  whole on construction under FR-004 to FR-011. Equality is map equality, independent of order.
+  whole on an Admin write under FR-004 to FR-009. The Admin API enforces the JSON shape rules
+  of FR-010 and FR-011 before the value exists. Equality is map equality, independent of order.
   Agent, ThirdpartyOAuth2Service, and PermissionSet each embed exactly one.
 - **Label**: an identifying, categorizing key/value pair under FR-005 and FR-006. Designed as
   future policy input; until an accepted ADR says otherwise it has no runtime effect.

@@ -84,6 +84,8 @@ the map has been read.
 These conditions keep their existing codes, which are unaffected by metadata:
 - A body that cannot be read, or that exceeds the endpoint cap, returns `400 invalid request body`.
 - A body that is not JSON returns `400 invalid request body`.
+- Bytes after the request object keep their current treatment on each endpoint. `metadata` is
+  read only from the request object.
 - Other field errors keep their existing codes and messages.
 
 A failed write changes nothing. This holds even when the same request carries other valid

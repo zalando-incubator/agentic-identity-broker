@@ -28,8 +28,9 @@ is decoded, which is outside this feature's scope.
 ## 2. Locating the top-level `metadata` member
 
 **Decision:** The handler reads the body bytes once. It decodes the existing request struct with
-v1 as today; that struct has no metadata field. A separate top-level `jsontext` scan then finds
-`metadata` and is the only source of its value and presence. The scan allows invalid UTF-8 and
+v1 as today; that struct has no metadata field. A separate `jsontext` scan of the first top-level
+JSON value then finds `metadata` and is the only source of its value and presence. The scan stops
+when that value ends and does not inspect the bytes after it. The scan allows invalid UTF-8 and
 duplicate names in other members, so their current behavior does not change. Two cases are
 rejected: a repeated `metadata` member, and a member whose name matches `metadata` only when case
 is ignored (for example `Metadata`).
@@ -39,6 +40,16 @@ is ignored (for example `Metadata`).
 with a separate presence map could also disagree with that map. Silently ignoring a misspelled
 `Metadata` would be worse: Agent writes treat an omitted `metadata` as empty (FR-013), so a GitOps
 typo would clear stored metadata. Rejection fails closed (SR-001).
+
+**Body bytes on POST:** Agent `PUT`, collection `PUT`, Service `PUT`, and Permission Set `PUT`
+already read the body with `io.ReadAll`. The three `POST` handlers stream-decode instead, with
+`json.NewDecoder(r.Body).Decode` (`agents_handler.go` `CreateAgent`, `services_handler.go`
+`CreateService`, `permission_sets_handler.go` `Create`). That decoder ignores bytes after the first
+JSON value, which `json.Unmarshal` would reject. These handlers therefore read the body with
+`io.ReadAll` first and decode with `json.NewDecoder(bytes.NewReader(body)).Decode`. Decode errors
+and the treatment of trailing bytes stay as they are, and the metadata scan reads the same first
+value. No cap is added (§5). The whole body is now buffered, as the existing Service `PUT` already
+does, behind the same Admin authentication.
 
 **Precedence:** Existing body-read and v1 decode errors keep their current codes and messages.
 Metadata checks run after those errors and before any domain call, discovery, branch-key, or
@@ -96,13 +107,29 @@ metadata. Pagination and list shapes do not change, and label selectors are out 
 ## 6. Domain placement
 
 **Decision:** Add a `model.ObjectMetadata` value object in `internal/domain/model/`. Its label and
-annotation maps are unexported. `model.NewObjectMetadata(labels, annotations)` validates FR-004 to
-FR-009 and copies its inputs. It also has `Labels()` and `Annotations()`, which return copies, plus
-`Equal` and `IsEmpty`. The zero value is valid and empty. The HTTP adapter owns JSON shape:
-object, members, null, duplicates, UTF-8, and string types. The domain owns the semantic rules.
+annotation maps are unexported. It has three ways to obtain or check a value:
+- `model.NewObjectMetadata(labels, annotations)` is the Admin write constructor. It validates
+  FR-004 to FR-009, including the reserved prefix, and copies its inputs.
+- `model.RestoreObjectMetadata(labels, annotations)` is the persistence constructor. It copies
+  stored maps and applies no rule.
+- `Validate()` re-checks the grammar, NUL, count, and size rules, but not the reserved prefix.
+
+It also has `Labels()` and `Annotations()`, which return copies, plus `Equal` and `IsEmpty`. The
+zero value is valid and empty. The HTTP adapter owns JSON shape: object, members, null,
+duplicates, UTF-8, and string types. The domain owns the semantic rules.
 `storage.Agent.Validate`/`ValidateForCreate`, `storage.PermissionSet` validation, and the provider
-`ValidateForCreate`/`ValidateForUpdate`/`ValidateDiscoveryRequest` re-check the value, so domain
+`ValidateForCreate`/`ValidateForUpdate`/`ValidateDiscoveryRequest` call `Validate()`, so domain
 services enforce the invariant (Constitution VI).
+
+**Why reads apply no rule:** FR-009 reserves the prefix for the broker, and FR-021 forbids
+metadata from influencing token issuance. If reads rebuilt the value with `NewObjectMetadata`, the
+first broker-defined reserved key would make every read of its entity fail. A stored value that
+breaks a rule would also fail `GetByClientID` and `GetByClientURI`, which
+`internal/domain/oauth2/client_resolver.go` uses to resolve OAuth2 clients. The rules are
+therefore write policy, enforced on every Admin write (SR-001, SR-003). `Validate()` omits the
+reserved prefix because `storage.Agent.Validate` also runs on non-Admin updates. Only a direct
+database edit can store a value that breaks the grammar. That value reads back unchanged, and the
+next write of its entity rejects it.
 
 **Rationale:** `internal/domain/storage` already imports `internal/domain/model`, and `model` does
 not import `storage`. One value object can therefore serve all three entities without a new
@@ -118,7 +145,8 @@ context without behavior of its own.
 **Decision:**
 - **Agent:** The handler always passes a value; an omitted `metadata` becomes the empty value. The
   domain keeps the field-policy decision under ADR 047 ("handlers parse presence but do not decide
-  field policy"). `sameDefinition` in `internal/domain/agents/reconcile.go` adds
+  field policy"). For Agents, an omitted `metadata` and `{}` are equal under every write, so the
+  conversion loses no presence the domain could use and decides no policy. `sameDefinition` in `internal/domain/agents/reconcile.go` adds
   `a.Metadata.Equal(b.Metadata)`, which is map equality on both maps.
 - **Permission Set:** Create and `PUT` set the value from the request. Every `PUT` writes and
   advances `updated_at`, as today.
@@ -143,8 +171,9 @@ to `agents`, `thirdparty_oauth2_services`, and `permission_sets`. Each column ge
 Adapters always write `{}` for an empty map, never JSON `null`. Every explicit
 `SELECT`/`INSERT`/`UPDATE`/`RETURNING` list that builds or writes one of these entities gains
 both columns. This includes the hot paths `GetByClientID` and `GetByClientURI`, so that no adapter
-returns a partly loaded entity. Read paths rebuild the value through `model.NewObjectMetadata`. A
-stored value that fails validation is an internal storage error (fail closed).
+returns a partly loaded entity. Read paths decode each column into a string map and rebuild the
+value through `model.RestoreObjectMetadata`, which applies no rule (§6). A column that is not a
+JSON object of strings is an internal storage error (fail closed).
 
 **Rationale:** `NOT NULL` alone does not stop the JSON literal `null`, because v1 marshals a nil
 map as `null`. The type check does. JSONB reorders keys and keeps only the last of any duplicate
@@ -163,8 +192,11 @@ ascending byte order, which satisfies FR-003.
 ## 10. Telemetry and audit
 
 **Decision:** Add no log record, span, span attribute, or metric. The existing records stay as they
-are: `agents.agent.created`/`updated`, `permissionset.permission_set.created`/`updated`, and
-`service.thirdparty.provider_created`/`updated`. Each one logs named fields only, so it carries no
+are: `agents.agent.created`/`updated`, `permissionset.permission_set.created`/`updated`,
+`service.thirdparty.provider_created`/`updated`, and the Service branch records
+`service.thirdparty.discovered_service_created`/`updated`,
+`service.thirdparty.cimd_public_service_created`/`updated`, and
+`service.thirdparty.cimd_confidential_service_created`/`updated`. Each one logs named fields only, so it carries no
 metadata. Validation errors are fixed strings. The existing handler pattern
 `WarnContext(..., "error", err)` is therefore safe for metadata failures. Tests inject a buffered
 JSON logger, the span recorder, and a metric reader, and they assert that sentinel keys and values

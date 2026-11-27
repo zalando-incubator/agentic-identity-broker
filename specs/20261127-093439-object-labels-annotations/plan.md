@@ -110,9 +110,9 @@ internal/domain/agents/reconcile.go      # sameDefinition compares Metadata.Equa
 internal/domain/thirdparty/service.go    # prepareUpdate keeps persisted metadata when not provided
 internal/adapters/http/handlers/admin/
 ├── object_metadata.go                   # new: top-level scan, strict jsontext decode, fixed errors, response type
-├── agents_handler.go                    # POST/PUT/collection PUT wiring; 512 KiB caps on both PUTs
-├── services_handler.go                  # POST/PUT wiring; presence for PUT
-└── permission_sets_handler.go           # POST/PUT wiring
+├── agents_handler.go                    # POST/PUT/collection PUT wiring; POST reads body bytes; 512 KiB caps on both PUTs
+├── services_handler.go                  # POST/PUT wiring; POST reads body bytes; presence for PUT
+└── permission_sets_handler.go           # POST/PUT wiring; POST reads body bytes
 internal/adapters/storage/memory/        # agent, permission-set, service records carry the value
 internal/adapters/storage/postgres/      # explicit columns in every read/write; '{}' for empty
 migrations/050_object_metadata.{up,down}.sql
@@ -133,7 +133,7 @@ the Admin handler package. No new package boundary is needed.
 | Phase | Purpose |
 |---|---|
 | Phase 1, Setup | Read the nearest `AGENTS.md` files, `LOGGING.md`, and `OPENTELEMETRY.md`. Re-check the next unused migration number. |
-| Phase 2, Design preconditions | Record the maintainer's API confirmation. Write the ADR and the glossary and architecture updates. Publish the Admin OpenAPI 3.1.0 changes. Write the migration pair and its tests. Write the 15 E2E `It()` blocks and the unit tables before any behavior. |
+| Phase 2, Design preconditions | Record the maintainer's API confirmation. Write the ADR and the glossary and architecture updates. Publish the Admin OpenAPI 3.1.0 changes. Write the migration test, then the migration pair. Write the 15 E2E `It()` blocks and the unit tables before any behavior. |
 | Phase 2.5, Foundation | `model.ObjectMetadata` and the handler decoder, test-first. These are shared by every story. |
 | US1 (P1) | Agent wiring: create, ID-addressed PUT, and collection PUT, the no-op map equality, both adapters, and the body caps. |
 | US2 (P1) | Every rejection class on every write path of all three resources, with messages that contain no submitted text. |
@@ -154,6 +154,8 @@ the Admin handler package. No new package boundary is needed.
 | Metadata reaches end users or policy | End-user DTOs are explicit, and no consumer reads `Metadata` | US3.5 compares consent, token claims, and approval matching. Repository search shows no `Metadata` read outside Admin handlers and adapters |
 | Partial writes | Validation precedes discovery, branch-key, encryption, and repository calls. The whole write fails. | Service and Agent tests with a valid change and invalid metadata in the same request |
 | Partly loaded entities overwrite stored metadata | Every row scan loads both columns. Agent writes go only through the domain service. | Adapter column-list review, plus memory and PostgreSQL round-trip tests |
+| Stored metadata breaks OAuth2 client resolution or token exchange (FR-021) | Rules are write policy. Reads rebuild the value with `RestoreObjectMetadata`, which applies no rule, and fail only when a column is not a JSON object of strings. The entity re-check omits the reserved prefix. | PostgreSQL tests read a stored reserved-prefix key through `GetByClientID` and `GetByClientURI` |
+| The metadata scan changes how POST bodies decode | The three POST handlers read the body bytes, then decode with `json.NewDecoder(bytes.NewReader(body))`. The scan reads only the first JSON value. | Handler tests assert unchanged decode errors and trailing-byte treatment on all three POSTs |
 | Resource cost | 64 labels, 65,536 annotation bytes, and a 512 KiB cap on the two capped Agent paths | US2.3 boundary pair |
 
 ## Testing Strategy
@@ -170,7 +172,7 @@ the Admin handler package. No new package boundary is needed.
 | Spec Scenario | Suite | Canonical `It()` |
 |---|---|---|
 | US1.1 | Backend | `should return submitted labels and annotations on create, read, and list` |
-| US1.2 | Docker (PostgreSQL) | `should treat a reconcile with reordered metadata keys as a no-op without write or audit` |
+| US1.2 (and SC-002: 100 shuffled replays) | Docker (PostgreSQL) | `should treat a reconcile with reordered metadata keys as a no-op without write or audit` |
 | US1.3 | Backend | `should update and audit a label-only change without metadata in the audit record` |
 | US1.4 | Backend | `should store omitted or empty metadata maps as empty on every Agent write path` |
 | US1.5 | Backend | `should reject null metadata labels or annotations on every Agent write path without change` |
@@ -204,6 +206,8 @@ bootstrap. Run the same journey with metadata and without it, and compare the ou
   FR-005 to FR-009 class, the exact boundaries (63 and 64 characters, 253 and 254 prefix
   characters, 64 and 65 labels, 65,536 and 65,537 bytes), NUL, multi-byte UTF-8 counting, the
   reserved prefix and its look-alikes, copy isolation, and `Equal`.
+- **Domain** also covers `RestoreObjectMetadata`, which applies no rule, and `Validate`, which
+  omits the reserved prefix.
 - **Domain services**: Agent `sameDefinition` with reordered and changed maps. Service
   `prepareUpdate` with omitted, sent, and empty metadata, and no discovery or encryption call
   when metadata is invalid. Permission Set full replacement. Audit records contain no metadata
@@ -212,7 +216,8 @@ bootstrap. Run the same journey with metadata and without it, and compare the ou
   repetition of the top-level `metadata` member, the fixed message for each contract §4 row,
   existing error precedence, the 512 KiB caps, and response omission and ordering.
 - **Adapters**: round-trips in memory and PostgreSQL, `'{}'` and never `null`, column coverage
-  for every Agent read method, and fail-closed reads of invalid stored values.
+  for every Agent read method, fail-closed reads of a column that is not a JSON object of
+  strings, and unchanged reads of a stored reserved-prefix key.
 - **Migrations** (`tests/integration/migrations/object_metadata_migration_test.go`): up, down,
   and up again on the production chain. Pre-migration rows read as empty. The object-type checks
   reject a JSON `null`. Unrelated data is preserved.
