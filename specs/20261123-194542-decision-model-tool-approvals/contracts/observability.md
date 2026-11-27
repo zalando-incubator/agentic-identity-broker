@@ -39,6 +39,28 @@ comes from the response of the decision endpoint and no configuration bounds it
 In the `shadow` mode, the `action` of the second record is the action that the policy returns
 with the answers. The system does not use it (FR-009).
 
+The `action` of the record is the action of the policy result. It is not the outcome of the
+call, because the system applies its rules after the authorizer writes the record
+([policy-assessment.md](policy-assessment.md), section 4). The table shows how to find the
+outcome from the second record (FR-060).
+
+| `assessment_mode` | `result_code` | `action` | `assessment_status` | Outcome of the call |
+|---|---|---|---|---|
+| `shadow` | each value | each value | each value | The outcome of the first record |
+| `guidance` or `auto_approve` | `error` or `timeout` | `deny` | each value | Waits for a person, with the result of the first evaluation |
+| `guidance` or `auto_approve` | each other value | each action apart from `allow` and `approval_required` | each value | Denied |
+| `guidance` or `auto_approve` | `ok` | `approval_required` | each value | Waits for a person |
+| `guidance` | `ok` | `allow` | each value | Waits for a person |
+| `auto_approve` | `ok` | `allow` | not `complete` | Waits for a person |
+| `auto_approve` | `ok` | `allow` | `complete` | Proceeds without a person |
+
+A call that waits for a person is denied if the broker cannot create the pending approval, as
+before this feature.
+
+One case has no row. In the last row, if a permanent denial applied at that time, the system
+denied the call, and the record does not show this. The span `extproc.assessment` and the counter
+`extproc.assessment.requests` have the outcome of each assessed call in `assessment.outcome`.
+
 The record already goes through OpenTelemetry. The logger of ExtProc has a bridge to the
 OpenTelemetry log pipeline, which is active if `telemetry.enabled` and `telemetry.logs.enabled`
 are true. Each evaluation also has the existing span `extproc.opa.evaluate`. The span gets no new
@@ -72,7 +94,7 @@ attribute (D-12).
 
 | `event` | Level | Written by | Attributes |
 |---|---|---|---|
-| `assessment.question_set.loaded` | INFO | ExtProc at startup | `question_count`, `mode` |
+| `assessment.question_set.loaded` | INFO | ExtProc at startup, in each mode | `question_count`, `mode` (one of the four modes, including `disabled`) |
 
 The feature writes no separate record for one call.
 

@@ -48,15 +48,16 @@ The contracts are in [contracts/](contracts/).
 
 ## Constitution Check
 
-The feature adds no domain entity and no typed identifier. The broker does not change.
+The feature adds no domain entity and no typed identifier. The behavior of the broker does not
+change.
 
 | Principles | Decision and gate |
 |---|---|
 | I, III | The default mode is `disabled`, and automatic approval needs the mode `auto_approve` (D-19). Each failure keeps the call for a person or denies it (D-04). The system conditions of FR-041 are Go code that a policy cannot disable (D-05). The plan adds no cryptography. The assurance case gets the new trust boundary (SR-011). |
-| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-03, D-05, D-07, D-14, D-12, D-15, D-16, D-17, D-18, and D-19. It records that the leaf package `internal/domain/approval/toolpattern` of `adrs/035-shared-tool-pattern-matching.md` also owns the arguments hash. The import rule of that ADR stays. It supersedes in part two Accepted ADRs: the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md`, and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The new ADR names each superseded decision. The two older ADR files do not change (Principle II). The rule "no approval records in the policy input" of `adrs/036-extproc-approval-cache-and-gate.md` stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
+| II, V | Write `adrs/20261124-212043-decision-model-assessment.md`. It records D-01, D-02, D-03, D-05, D-07, D-12, D-14, D-15, D-16, D-17, D-18, and D-19. It records that the leaf package `internal/domain/approval/toolpattern` of `adrs/035-shared-tool-pattern-matching.md` also owns the arguments hash. The import rule of that ADR stays. It supersedes in part two Accepted ADRs: the request flow and the policy contract of `adrs/028-opa-extproc-authorization.md`, and the gate of `adrs/036-extproc-approval-cache-and-gate.md`. The new ADR names each superseded decision. The two older ADR files do not change (Principle II). The rule "no approval records in the policy input" of `adrs/036-extproc-approval-cache-and-gate.md` stays. Add the terms of the spec to the glossary in `ARCHITECTURE.md`. Correct the stale `OPADecision` entry there, because this feature changes that type. |
 | IV, X | The feature changes no OpenAPI document (API-001). The three contracts of API-006 are drafts. The stakeholder approved the direction of the spec but not these contracts. Approval of the contracts is a gate before implementation. |
 | VI, XII | ExtProc has its own structure under `adrs/011-extproc-standalone-binary.md`: packages under `internal/extproc/` and wiring in `cmd/extproc-token-exchange/root.go`. The new package has no import from broker adapters. The broker gets no change and no new wiring. |
-| VII | New keys are in the ExtProc configuration schema with defaults and validation ([contracts/assessment-configuration.md](contracts/assessment-configuration.md)). They include the organization values and the questions with their default. The plan adds no file format for these values. Update `docs/configuration.md`, the examples, `configs/config.extproc.docker.yaml`, and `internal/extproc/AGENTS.md`. The documentation states the minimum agentgateway release `v1.7.0` and the gateway requirements of [contracts/decision-request.md](contracts/decision-request.md). The Helm chart does not deploy ExtProc, thus it does not change. |
+| VII | New keys are in the ExtProc configuration schema with defaults and validation ([contracts/assessment-configuration.md](contracts/assessment-configuration.md)). They include the organization values and the questions with their default. Each key with a single value and the list `internal_domains` get a CLI flag and an environment variable, with the source order of the existing loader: CLI flags, environment variables, YAML file, defaults. The structured key `questions` is a YAML value only, as the existing structured keys of ExtProc are (`telemetry.exporter.headers`, `telemetry.resource_attributes`). The ADR records this boundary. The plan adds no file format for these values. Update `docs/configuration.md`, the examples, `configs/config.extproc.docker.yaml`, and `internal/extproc/AGENTS.md`. The documentation states the minimum agentgateway release `v1.7.0` and the gateway requirements of [contracts/decision-request.md](contracts/decision-request.md). The Helm chart does not deploy ExtProc, thus it does not change. |
 | VIII, XIII | Write one Ginkgo case for each of the 20 scenarios before behavior, with realistic assertions and no pending or skipped case. Write unit tests first for the parser, the context builder, the validation, the automatic approval conditions, and the telemetry. |
 | IX | The feature adds no migration, no column, and no repository change (DB-001). |
 | XI, XIV | The feature changes no page and no component, thus the design system rules have no subject and the spec needs no wireframe. The spec has three journeys with configuration, HTTP exchanges, and a table of the page values before and after. |
@@ -117,8 +118,10 @@ docs/guides/assess-tool-calls.md           # NEW: authoring rules with examples 
 ARCHITECTURE.md, adrs/, coding-standards/OPENTELEMETRY.md, internal/extproc/AGENTS.md
 ```
 
-The plan changes no file under `internal/adapters/`, `internal/domain/storage/`, `migrations/`,
-`api/`, `docs/api/`, or `web/`.
+The plan changes no file under `internal/adapters/`, `migrations/`, `api/`, `docs/api/`, or
+`web/`. Under `internal/domain/storage/`, only `tool_approval.go` changes: `ComputeArgumentsHash`
+calls the function of the leaf package, and each hash value stays the same (D-07). The behavior
+of the broker does not change.
 
 **Structure Decision**: The feature uses the existing structure. ExtProc gets one new package,
 because the assessment is one cohesive subject with no existing owner. The package receives its
@@ -169,28 +172,35 @@ responsible for the thresholds of each automatic approval rule (SR-010).
 Each row is one future Ginkgo `It` with its scenario identifier. The paths are design targets.
 The tests do not exist at this time. All cases use the ExtProc suite with the broker double.
 
+Some scenarios state that nothing changes or that no model request occurs. Such a result is also
+true before the feature exists. Thus, each row has a minimum of one result that is false without
+the feature: a status in the decision record of the second evaluation, an exact number of model
+requests, the startup event, or a control call in the same case. A control call is an assessed
+share that the case sends before the calls of the scenario. It proves that the double can show a
+model request (Principle XIII).
+
 | Scenario | Observable result |
 |---|---|
 | US1.1 | External editor share: the tool double gets no call. The create request at the broker double has `risk_level: critical` and the description "Share a Drive file with a party outside the organization". |
 | US1.2 | Internal reader share in the `guidance` mode: the create request has `risk_level: low` and the description "Share a Drive file inside the organization". |
-| US1.3 | The mode `disabled`: the model double gets no request, and the create request equals the request of today byte for byte. |
+| US1.3 | The mode `disabled`: the startup event `assessment.question_set.loaded` has `mode: disabled`. The model double gets no request, and the create request equals the request of today byte for byte. |
 | US1.4 | The `shadow` mode: one model request, the create request equals the request of today, and the decision record of the second evaluation has the answers. |
 | US2.1 | One model request with the default questions, the organization values, the server name, the listed definition, and the tool name and the arguments as the agent sent them. |
 | US2.2 | The request body has no principal, agent identifier, session identifier, credential, risk level, policy description, or other tool. |
-| US2.3 | Arguments that make the context larger than the limit: no model request, and the call waits in each mode. |
-| US2.4 | A server without a listing: no model request, and the create request equals the request of today. |
+| US2.3 | Arguments that make the context larger than the limit: no model request, and the call waits in each mode. In each mode apart from `disabled`, the decision record of the second evaluation has `assessment_status: context_too_large`. |
+| US2.4 | A server without a listing: no model request, and the decision record of the second evaluation has `assessment_status: definition_missing`. The create request equals the request of today. |
 | US2.5 | Two requests with equal bytes for the questions and the first three sections. The injected text is only in `call`. |
 | US2.6 | Startup fails for an invalid question in the configuration and for a missing organization value. The error names the question or the key. |
-| US2.7 | Calls with an `allow` or `deny` policy result cause no model request. |
-| US2.8 | An existing permanent denial and an existing session approval apply without a model request. |
-| US3.1 | Timeout in the `auto_approve` mode: the create request has the description and the risk level of the policy for the status `timeout`. |
-| US3.2 | A refusal, a missing answer, and an invalid probability each give `incomplete` and a create request. |
-| US3.3 | Endpoint not available: the create request arrives at the broker double as today. |
-| US3.4 | A second identical call causes no second model request and gets the same approval URL. |
-| US3.5 | With `incomplete`, an `allow` result ends as a pending approval. |
+| US2.7 | A control call causes one model request. The calls with an `allow` or `deny` policy result then cause no model request: the double still has one request. |
+| US2.8 | A control call causes one model request. The existing permanent denial then denies its call, and the existing session approval lets its call proceed. The double still has one request. |
+| US3.1 | Timeout in the `auto_approve` mode: the double received one request, and the decision record of the second evaluation has `assessment_status: timeout`. The create request has the description and the risk level of the policy for the status `timeout`. |
+| US3.2 | A refusal, a missing answer, and an invalid probability each give `assessment_status: incomplete` in the decision record of the second evaluation, and a create request. |
+| US3.3 | Endpoint not available: the decision record of the second evaluation has `assessment_status: unavailable`. The create request arrives at the broker double as today. |
+| US3.4 | Two identical calls cause exactly one model request and get the same approval URL. |
+| US3.5 | With `incomplete`, the decision record of the second evaluation has the action `allow`. The call ends as a pending approval. |
 | US4.1 | The call gets to the tool double, the broker double gets no create request, and the decision record of the second evaluation has the action `allow`, the answers, and no argument value. |
-| US4.2 | The external editor share waits for a person. |
-| US4.3 | The `guidance` mode with an `allow` result after the assessment: the call waits. |
+| US4.2 | The external editor share waits for a person. The create request has `risk_level: critical`, as in US1.1. |
+| US4.3 | The `guidance` mode with an `allow` result after the assessment: the decision record of the second evaluation has `assessment_mode: guidance` and the action `allow`. The call waits. |
 
 The cases are in `tests/e2e/extproc/tool_assessment_test.go`. This file contains only the 20
 scenario cases. The signal test is in `tests/e2e/extproc/assessment_signals_test.go`. It is not
@@ -208,8 +218,12 @@ The ExtProc suite uses the constructor that `root.go` uses for the assessment pa
 tests do not copy the wiring.
 
 New fixtures: the organization values in the test configuration, the policy of the spec under
-`tests/e2e/extproc/fixtures/policies/`, and one tool listing. The cases use the default question
-set. One fixture is a configuration with an invalid question for US2.6. All values are
+`tests/e2e/extproc/fixtures/policies/`, and one tool listing. The journey policy has only one
+tool. Thus, the fixture policy adds rules for four synthetic tools: one that the policy allows
+without an assessment (US2.7), one that only the default denies (US2.7), a second one that the
+policy sends to approval (US2.8), and one for which the policy returns `allow` for each
+assessment status (US3.5). The tool listing has a definition for each tool that a case assesses.
+The cases use the default question set. One fixture is a configuration with an invalid question for US2.6. All values are
 synthetic.
 
 ### Verification with agentgateway
@@ -250,8 +264,7 @@ Unit tests come first for each of these subjects:
 - The telemetry: the startup event, the span name with its attributes and status, the attribute set of each instrument, and no tool name in a signal of the feature.
 - The server: a batched MCP request and a request that is not MCP cause no assessment. The create request has no field that the request of today does not have (FR-038).
 - The failure conditions of SC-002: a minimum of 20 conditions in the `auto_approve` mode with a policy that allows the call. No condition lets the call proceed.
-- The configuration: defaults, each validation rule, and a missing organization value.
-- The example policy: the OPA library evaluates it against the inputs of journeys 1 to 3, and each description is a constant text of the policy.
+- The configuration: defaults, each validation rule, and a missing organization value. The source order for each key with a flag: CLI flag, environment variable, YAML file, default.- The example policy: the OPA library evaluates it against the inputs of journeys 1 to 3, and each description is a constant text of the policy.
 
 A fuzz test covers the listing parser, because it reads data from MCP servers.
 
@@ -274,7 +287,7 @@ reason:
 
 The plan does not add these items:
 
-- A change to the broker, its API, its database, or the approval page
+- A behavior change of the broker, or a change to its API, its database, or the approval page
 - A list of findings, a recommendation, or a notice for the approver
 - A catalog file, a question set file, or a key for an individual server or tool
 - A filter or a setting that withholds an argument from the model

@@ -18,7 +18,7 @@ change.
 | `authorization.assessment.model` | string | none | Required while assessment is enabled. |
 | `authorization.assessment.credential_file` | path | none | Optional. The file has a maximum of 4 KiB. |
 | `authorization.assessment.request_timeout` | duration | `500ms` | More than 0, maximum `2s`. |
-| `authorization.assessment.max_context_bytes` | integer | `16384` | 1,024 to 262,144. |
+| `authorization.assessment.max_context_bytes` | integer | `16384` | 1,024 to 262,144. The limit is for the full context. One tool definition has a fixed limit of 16 KiB, and this key does not change it (FR-020). |
 | `authorization.assessment.max_listing_bytes` | integer | `1048576` | 1,024 to 8,388,608. For a larger `tools/list` response, ExtProc removes the stored definitions of that server (D-02). |
 | `authorization.assessment.organization.name` | string | none | Required while assessment is enabled. Maximum 200 characters. |
 | `authorization.assessment.organization.description` | string | none | Required while assessment is enabled. Maximum 1,000 characters. |
@@ -26,9 +26,17 @@ change.
 | `authorization.assessment.questions` | list of questions | the default question set (section 2) | 1 to 16 entries. A list in the configuration replaces the full default list. |
 
 The schema has no key for an individual target server or tool (FR-016). The keys use the existing
-loader of `internal/extproc/config/`: the YAML file of `EXTPROC_CONFIG_PATH`, the `EXTPROC_`
-environment variables for single values, the defaults in `loader.go`, and the rules in
-`validate.go`. As for each other key, the loader ignores a key that the schema does not have.
+loader of `internal/extproc/config/`. Its source order is CLI flags, `EXTPROC_` environment
+variables, the YAML file of `EXTPROC_CONFIG_PATH`, then the defaults in `loader.go`. The rules
+are in `validate.go`. As for each other key, the loader ignores a key that the schema does not
+have.
+
+Each key of the table with a single value has a CLI flag with the name of the key and an
+`EXTPROC_` environment variable, as the existing keys have (Principle VII). The list
+`organization.internal_domains` has a string-list flag and an environment variable with
+comma-separated values. The key `questions` is a structured list. It is a YAML value only and has
+no flag, as the existing structured keys `telemetry.exporter.headers` and
+`telemetry.resource_attributes`. The ADR of the feature records this boundary.
 
 Path values obey the existing rule for `authorization.policy.config_file`: no `..` segment, and
 the path must be a file that exists at startup. A directory is not permitted, because each value

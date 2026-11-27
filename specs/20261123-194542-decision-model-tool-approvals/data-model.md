@@ -61,7 +61,7 @@ The source is a `tools/list` result as the client sees it through the gateway (D
 | `annotations` | JSON object | Optional. The system keeps the object as the server listed it. It adds no default hint value. |
 
 The store keeps a maximum of 10,000 definitions. One definition has a maximum of 16 KiB of
-canonical JSON. If the store is full, it removes the definition with the oldest listing time. A
+canonical JSON. This limit is fixed, and `max_context_bytes` does not change it (FR-020). If the store is full, it removes the definition with the oldest listing time. A
 larger definition replaces the stored entry with a marker. The status of a call to that tool is
 then `context_too_large`. A listing that ExtProc cannot read removes all definitions of its target
 server (D-02).
