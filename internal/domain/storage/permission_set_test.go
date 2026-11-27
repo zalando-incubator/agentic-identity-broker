@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -60,4 +61,25 @@ func TestPermissionSetCanonicalIDValidationAndCopy(t *testing.T) {
 	require.NotNil(t, copy.CanonicalID)
 	*copy.CanonicalID = "other-permission-set"
 	assert.Equal(t, canonicalID, *permissionSet.CanonicalID)
+}
+
+func TestPermissionSetObjectMetadata(t *testing.T) {
+	metadata, err := model.NewObjectMetadata(map[string]string{"exposure": "internal"}, nil)
+	require.NoError(t, err)
+	ps := &PermissionSet{
+		ID: id.NewPermissionSetID(), Name: "Read", Description: "Read",
+		ServiceScopes:  []ServiceScope{{ServiceID: id.NewServiceID(), Scopes: []string{"read"}, RequirementType: RequirementTypeMandatory}},
+		ObjectMetadata: metadata,
+	}
+
+	t.Run("survives Copy", func(t *testing.T) {
+		assert.True(t, ps.Copy().ObjectMetadata.Equal(metadata))
+	})
+	t.Run("validation applies the re-check", func(t *testing.T) {
+		invalid := ps.Copy()
+		invalid.ObjectMetadata = model.RestoreObjectMetadata(nil, map[string]string{"k": "\x00"})
+		assert.ErrorIs(t, invalid.Validate(), model.ErrMetadataAnnotationsInvalidValue)
+		assert.ErrorIs(t, invalid.ValidateForCreate(), model.ErrMetadataAnnotationsInvalidValue)
+		require.NoError(t, ps.Validate())
+	})
 }

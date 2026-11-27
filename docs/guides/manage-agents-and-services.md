@@ -881,6 +881,7 @@ Collection PUT's replacement policy is not a general patch:
 | Three metadata URLs | Clear | Clear | Replace |
 | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | Empty | Empty | Replace whole collection |
 | `display_name`, `description`, `permission_sets` | Reject | Reject | Replace; references must be valid |
+| `metadata` and its `labels` and `annotations` | Empty | `400 validation failed` | Replace both maps |
 
 For example, sending only the three required fields preserves existing client/canonical IDs but
 clears metadata and optional collections; replaying it is then unchanged. Adding
@@ -929,6 +930,77 @@ curl -X POST http://localhost:14000/api/agents \
 ```
 
 The fetched CIMD document must also list `github-app://oauth/callback`. Without the Agent entry, the broker rejects the whole document, including its web callbacks. The broker matches private-use callbacks character for character in both lists. Register the lowercase, unencoded URI shown in the document. Web callbacks for a CIMD client come from the document, not the Agent list.
+
+## Label and annotate agents, services, and permission sets
+
+Admin API 3.1.0 adds an optional `metadata` member to agents, services, and permission sets. Use
+labels to categorize an object, for example by deployment or owning team. Use annotations for
+notes that tools and people read, for example the GitOps revision that produced the object.
+
+```bash
+curl -X PUT 'http://localhost:14000/api/agents?external_id=urn%3Aexample%3Aai-registry%3Aagent%3Areview-bot' \
+  -H 'X-Remote-User: admin@example.com' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "display_name": "Review Bot",
+    "description": "Reviews pull requests",
+    "permission_sets": [{"permission_set_id":"github-read","requirement_type":"mandatory"}],
+    "metadata": {
+      "labels": {"deployment": "local", "team.example.com/owner": "platform"},
+      "annotations": {"gitops.example.com/revision": "4f2c9e1"}
+    }
+  }'
+```
+
+Responses return `metadata` with its keys in ascending byte order. They omit an empty `labels` or
+`annotations` map, and they omit `metadata` when both maps are empty.
+
+### Rules
+
+The broker checks keys and values exactly as you send them. It never trims, lowercases, or
+otherwise changes them, so `Exposure` and `exposure` are two different keys.
+
+| Item | Rule |
+| --- | --- |
+| Key (labels and annotations) | `[prefix/]name`. The optional prefix is a lowercase DNS subdomain of at most 253 characters. The name has 1–63 letters, digits, `-`, `_`, or `.`, and starts and ends with a letter or digit |
+| Reserved keys | A prefix of `agenticidentitybroker.dev`, or one that ends with `.agenticidentitybroker.dev`, is reserved for the broker. `example.agenticidentitybroker.dev.evil.com` is not reserved |
+| Label value | Empty, or 1–63 characters with the same rules as a key name |
+| Label count | At most 64 per object |
+| Annotation value | Any text, including whitespace and line breaks, without the NUL character |
+| Annotation size | All annotation keys and values of one object together use at most 65,536 bytes of UTF-8 |
+
+`null` is never accepted for `metadata`, `labels`, or `annotations`. Send `{}` to clear metadata. A
+key repeated in one map, an unknown member inside `metadata`, a misspelled member such as
+`Metadata`, and invalid UTF-8 are rejected.
+
+Every rejection returns `400` with `error: validation failed` and a fixed message that names the
+map and the rule, for example `metadata.labels contains a reserved key`. The message never repeats
+your key or value. A rejected request changes nothing, even when it also carries other valid
+changes.
+
+### Writes per object
+
+| Request `metadata` | Agent writes | Permission set writes | Service create | Service update |
+| --- | --- | --- | --- | --- |
+| Omitted | Cleared | Cleared | Empty | Kept |
+| `{}` | Cleared | Cleared | Empty | Cleared |
+| Sent | Both maps replaced; a missing map is empty | Same | Stored | Both maps replaced |
+| `null` | `400` | `400` | `400` | `400` |
+
+The broker never merges keys: a sent `metadata` replaces both maps. A collection `PUT` that sends
+the same labels and annotations in another key order is a no-op. It writes nothing and keeps
+`updated_at`. A changed label or annotation is an update. A service update that changes metadata
+also changes the service `ETag`.
+
+Agent `PUT` requests accept bodies up to 512 KiB, so an agent can carry the largest allowed
+annotations.
+
+### What metadata does not do
+
+Labels and annotations are for administrators only. Only the admin API reads or writes them. They
+have no effect on authorization, consent, token exchange, issued tokens, policies, or tool approvals.
+End-user screens and APIs never show them, and the broker does not write them to logs, traces, or
+metrics. Do not put secrets in metadata: every admin API caller can read it.
 
 ## Issue broker client credentials
 

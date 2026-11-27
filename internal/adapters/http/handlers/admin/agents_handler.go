@@ -132,9 +132,14 @@ type AgentResponse struct {
 	RedirectURIs         []string                           `json:"redirect_uris,omitempty"`
 	AllowedScopes        []string                           `json:"allowed_scopes,omitempty"`
 	ClientURIs           []string                           `json:"client_uris,omitempty"`
+	Metadata             *ObjectMetadataResponse            `json:"metadata,omitempty"`
 	CreatedAt            string                             `json:"created_at"`
 	UpdatedAt            string                             `json:"updated_at"`
 }
+
+// maxAgentWriteBody admits the largest valid metadata, with every annotation
+// byte escaped as \u00XX, beside the other Agent fields.
+const maxAgentWriteBody = 512 * 1024
 
 // ErrorResponse represents an error response.
 type ErrorResponse struct {
@@ -153,7 +158,7 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 		h.writeError(r.Context(), w, http.StatusBadRequest, "invalid external_id", message)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, maxAgentWriteBody)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.logger.WarnContext(r.Context(), "failed to read request body", "error", errors.New("request body exceeds limit or cannot be read"))
@@ -178,6 +183,10 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	metadata, ok := h.requestMetadata(w, r, body)
+	if !ok {
+		return
+	}
 	permissionSets, err := h.convertPermissionSetRequests(ctx, req.PermissionSets)
 	if err != nil {
 		h.logger.WarnContext(ctx, "permission set validation failed", "error", errors.New("invalid permission sets"))
@@ -198,8 +207,10 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 	_, canonicalPresent := fields["canonical_id"]
 	rawExternal, externalPresent := fields["external_id"]
 	input := agents.ReconcileInput{CanonicalIDPresent: canonicalPresent, ExternalIDPresent: externalPresent, ExternalIDNull: externalPresent && bytes.Equal(rawExternal, []byte("null"))}
+	desired := req.toAgent(serviceReqs, permissionSets)
+	desired.ObjectMetadata = metadata
 	httpmiddleware.FinalizeRequestSecurityContext(ctx)
-	agent, outcome, err := h.agentService.ReconcileByExternalID(ctx, selector, req.toAgent(serviceReqs, permissionSets), input)
+	agent, outcome, err := h.agentService.ReconcileByExternalID(ctx, selector, desired, input)
 	if err != nil {
 		var storageErr *storage.StorageError
 		if !errors.As(err, &storageErr) {
@@ -238,10 +249,20 @@ func (h *AgentsHandler) ReconcileAgent(w http.ResponseWriter, r *http.Request) {
 func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.logger.WarnContext(ctx, "failed to read request body", "error", err)
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
 	var req AgentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+	metadata, ok := h.requestMetadata(w, r, body)
+	if !ok {
 		return
 	}
 
@@ -268,6 +289,7 @@ func (h *AgentsHandler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	agent := req.toAgent(serviceReqs, permissionSets)
+	agent.ObjectMetadata = metadata
 	agent.CreatedAt = now
 	agent.UpdatedAt = now
 
@@ -343,7 +365,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	r.Body = http.MaxBytesReader(w, r.Body, maxAgentWriteBody)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
@@ -363,6 +385,10 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	rawClientID, clientIDPresent := rawFields["client_id"]
 	clearClientID := clientIDPresent && bytes.Equal(rawClientID, []byte("null"))
 	_, canonicalIDPresent := rawFields["canonical_id"]
+	metadata, ok := h.requestMetadata(w, r, body)
+	if !ok {
+		return
+	}
 
 	serviceReqs, err := h.convertServiceRequirements(ctx, req.ServiceRequirements)
 	if err != nil {
@@ -389,6 +415,7 @@ func (h *AgentsHandler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent := req.toAgent(serviceReqs, permissionSets)
+	agent.ObjectMetadata = metadata
 	agent.UpdatedAt = time.Now().UTC()
 
 	httpmiddleware.FinalizeRequestSecurityContext(r.Context())
@@ -555,6 +582,7 @@ func (h *AgentsHandler) toResponseWithServiceMap(agent *storage.Agent, serviceMa
 		RedirectURIs:         agent.RedirectURIs,
 		AllowedScopes:        agent.AllowedScopes,
 		ClientURIs:           slices.Sorted(slices.Values(agent.ClientURIs)),
+		Metadata:             objectMetadataResponse(agent.ObjectMetadata),
 		CreatedAt:            agent.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:            agent.UpdatedAt.UTC().Format(time.RFC3339),
 	}
@@ -784,4 +812,16 @@ func clientIDToString(c *id.ClientID) *string {
 	}
 	s := c.String()
 	return &s
+}
+
+// requestMetadata reads the metadata member. An omitted member is the empty
+// value, which equals an empty object under every Agent write.
+func (h *AgentsHandler) requestMetadata(w http.ResponseWriter, r *http.Request, body []byte) (model.ObjectMetadata, bool) {
+	metadata, _, err := decodeRequestMetadata(body)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "metadata validation failed", "error", err)
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		return model.ObjectMetadata{}, false
+	}
+	return metadata, true
 }

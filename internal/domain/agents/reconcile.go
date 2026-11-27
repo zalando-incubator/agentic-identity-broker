@@ -110,7 +110,8 @@ func sameDefinition(a, b *storage.Agent) bool {
 	if !samePointer(a.CanonicalID, b.CanonicalID) || !samePointer(a.ClientID, b.ClientID) || !samePointer(a.ExternalID, b.ExternalID) ||
 		a.DisplayName != b.DisplayName || a.Description != b.Description || !samePointer(a.GovernanceURL, b.GovernanceURL) ||
 		!samePointer(a.UserDocumentationURL, b.UserDocumentationURL) || !samePointer(a.AgentInterfaceURL, b.AgentInterfaceURL) ||
-		!slices.Equal(a.PermissionSets, b.PermissionSets) || !slices.Equal(a.RedirectURIs, b.RedirectURIs) || !slices.Equal(a.AllowedScopes, b.AllowedScopes) {
+		!slices.Equal(a.PermissionSets, b.PermissionSets) || !slices.Equal(a.RedirectURIs, b.RedirectURIs) || !slices.Equal(a.AllowedScopes, b.AllowedScopes) ||
+		!a.ObjectMetadata.Equal(b.ObjectMetadata) {
 		return false
 	}
 	if !slices.EqualFunc(a.ServiceRequirements, b.ServiceRequirements, func(x, y storage.ServiceRequirement) bool {

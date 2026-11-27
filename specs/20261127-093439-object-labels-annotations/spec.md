@@ -129,8 +129,7 @@ The trusted proxy authenticates both and sets `X-Remote-User`. Agent **Code Revi
 Code Review Bot at `https://broker.example.com`. All values are synthetic. Times are UTC on
 2026-11-27.
 
-The `metadata` fields below describe the contract proposed by this feature, not an existing
-capability. Response excerpts omit unrelated fields. No runtime configuration changes and no token
+The `metadata` fields below describe the contract this feature adds in Admin API 3.1.0. Response excerpts omit unrelated fields. No runtime configuration changes and no token
 claims are involved.
 
 ### Journey 1 — A GitOps controller labels an Agent, and Alice sees no metadata (US1.1–US1.3, US3.5)

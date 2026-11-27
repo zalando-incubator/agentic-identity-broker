@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,13 +68,14 @@ type ServiceScopeResponse struct {
 
 // PermissionSetResponse represents the response body for permission set operations.
 type PermissionSetResponse struct {
-	ID            string                 `json:"id"`
-	CanonicalID   *string                `json:"canonical_id"`
-	Name          string                 `json:"name"`
-	Description   string                 `json:"description"`
-	ServiceScopes []ServiceScopeResponse `json:"service_scopes"`
-	CreatedAt     string                 `json:"created_at"`
-	UpdatedAt     string                 `json:"updated_at"`
+	ID            string                  `json:"id"`
+	CanonicalID   *string                 `json:"canonical_id"`
+	Name          string                  `json:"name"`
+	Description   string                  `json:"description"`
+	ServiceScopes []ServiceScopeResponse  `json:"service_scopes"`
+	Metadata      *ObjectMetadataResponse `json:"metadata,omitempty"`
+	CreatedAt     string                  `json:"created_at"`
+	UpdatedAt     string                  `json:"updated_at"`
 }
 
 // PermissionSetListResponse represents a list of permission sets.
@@ -85,10 +87,21 @@ type PermissionSetListResponse struct {
 func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.logger.WarnContext(ctx, "failed to read request body", "error", err)
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
 	var req CreatePermissionSetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
+
+	metadata, ok := h.requestMetadata(w, r, body)
+	if !ok {
 		return
 	}
 
@@ -110,13 +123,14 @@ func (h *PermissionSetsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Create permission set entity
 	now := time.Now().UTC()
 	ps := &storage.PermissionSet{
-		ID:            id.NewPermissionSetID(),
-		CanonicalID:   req.CanonicalID,
-		Name:          req.Name,
-		Description:   req.Description,
-		ServiceScopes: serviceScopes,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:             id.NewPermissionSetID(),
+		CanonicalID:    req.CanonicalID,
+		Name:           req.Name,
+		Description:    req.Description,
+		ServiceScopes:  serviceScopes,
+		ObjectMetadata: metadata,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	// Create in service
@@ -262,6 +276,11 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	_, canonicalIDPresent := rawFields["canonical_id"]
 
+	metadata, ok := h.requestMetadata(w, r, body)
+	if !ok {
+		return
+	}
+
 	// Validate request
 	if err := h.validateCreateRequest(ctx, &req); err != nil {
 		h.logger.WarnContext(ctx, "validation failed", "error", err)
@@ -292,6 +311,7 @@ func (h *PermissionSetsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Name:             req.Name,
 		Description:      req.Description,
 		ServiceScopes:    serviceScopes,
+		ObjectMetadata:   metadata,
 		CreatedAt:        existing.CreatedAt,
 		UpdatedAt:        time.Now().UTC(),
 	}
@@ -436,6 +456,7 @@ func (h *PermissionSetsHandler) toResponse(ps *storage.PermissionSet) Permission
 		CanonicalID: ps.CanonicalID,
 		Name:        ps.Name,
 		Description: ps.Description,
+		Metadata:    objectMetadataResponse(ps.ObjectMetadata),
 		CreatedAt:   ps.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   ps.UpdatedAt.Format(time.RFC3339),
 	}
@@ -523,4 +544,16 @@ func (h *PermissionSetsHandler) writeError(ctx context.Context, w http.ResponseW
 		Message: message,
 	}
 	h.writeJSON(ctx, w, statusCode, resp)
+}
+
+// requestMetadata reads the metadata member. A PUT that omits it clears the
+// stored metadata, as it replaces every other field.
+func (h *PermissionSetsHandler) requestMetadata(w http.ResponseWriter, r *http.Request, body []byte) (model.ObjectMetadata, bool) {
+	metadata, _, err := decodeRequestMetadata(body)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "metadata validation failed", "error", err)
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		return model.ObjectMetadata{}, false
+	}
+	return metadata, true
 }

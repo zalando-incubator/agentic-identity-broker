@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/urivalidation"
 )
 
@@ -55,15 +56,19 @@ type Agent struct {
 	AllowedScopes        []string                  `json:"allowed_scopes" db:"allowed_scopes"`
 	// ClientURIs holds pre-registered Client ID Metadata Document URLs.
 	// Each entry must be a valid HTTPS URL, globally unique across all agents.
-	ClientURIs []string  `json:"client_uris,omitempty" db:"-"`
-	CreatedAt  time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
+	ClientURIs     []string             `json:"client_uris,omitempty" db:"-"`
+	ObjectMetadata model.ObjectMetadata `json:"-" db:"-"`
+	CreatedAt      time.Time            `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time            `json:"updated_at" db:"updated_at"`
 }
 
 // Validate performs validation on the Agent entity.
 // Returns an error if any validation rules are violated.
 func (a *Agent) validateFields() error {
 	if err := ValidateCanonicalID(a.CanonicalID); err != nil {
+		return err
+	}
+	if err := a.ObjectMetadata.Validate(); err != nil {
 		return err
 	}
 
@@ -219,11 +224,12 @@ func (a *Agent) Copy() *Agent {
 	}
 
 	copy := &Agent{
-		ID:          a.ID,
-		DisplayName: a.DisplayName,
-		Description: a.Description,
-		CreatedAt:   a.CreatedAt,
-		UpdatedAt:   a.UpdatedAt,
+		ID:             a.ID,
+		DisplayName:    a.DisplayName,
+		Description:    a.Description,
+		ObjectMetadata: a.ObjectMetadata,
+		CreatedAt:      a.CreatedAt,
+		UpdatedAt:      a.UpdatedAt,
 	}
 
 	if a.CanonicalID != nil {

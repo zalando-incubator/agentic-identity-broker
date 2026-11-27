@@ -1217,6 +1217,8 @@ Purpose: Persists agents, services, permission sets, user grants, encrypted thir
 
 Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
 
+`agents`, `thirdparty_oauth2_services`, and `permission_sets` each carry `labels` and `annotations` columns: `JSONB NOT NULL DEFAULT '{}'`, constrained to JSON objects (migration `050`, ADR `20261127-130441-object-labels-annotations`). They hold Object Metadata and are read in the same row scans as the rest of each entity. No index covers them.
+
 ### 4.2. DynamoDB branch-key store
 
 Name: AWS Encryption SDK branch-key store
@@ -1366,6 +1368,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
 | [048-authzen-delegation-pip.md](adrs/048-authzen-delegation-pip.md) | Accepted | AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc grant-context resolver, and permit-bound token reuse |
 | [20261119-211813-service-icons-image-mode.md](adrs/20261119-211813-service-icons-image-mode.md) | Accepted | Exact service-owned SVG metadata, authenticated JSON, named upload checks, and browser image-mode isolation |
+| [20261127-130441-object-labels-annotations.md](adrs/20261127-130441-object-labels-annotations.md) | Accepted | Admin-only labels and annotations on Agents, Services, and Permission Sets: strict decoding, reserved prefix, write semantics, migration `050`, and no runtime effect. Extends ADR `047-unique-agent-external-id-reconcile` |
 
 ## 11. Project Identification
 
@@ -1454,6 +1457,12 @@ The terms that follow describe domain models and their relationships.
 **External ID**: An optional opaque Agent identifier from an external governance system, such as a URN. Under approved ADR 047 it is non-empty when set and identifies at most one Agent by exact, case-sensitive equality. It is distinct from UUID, Canonical ID, Client ID, and Stable Identifier. Any number of Agents may have no External ID. All Agent writes and Admin filter/reconcile selectors accept 1–255 valid Unicode code points with no NUL and never select another identity namespace. Feature 055 supersedes feature 054's shared-ID behavior.
 
 **Agent Reconciliation**: Reconcile is the canonical term for applying the desired definition of an Agent selected by its External ID, creating it when absent or updating it while preserving UUID identity. Upsert and create-or-update are aliases for this Agent operation, distinct from UserGrant upsert. The `ReconcileUnchanged` outcome means no-op/replay: the effective definition already matches, so no write or mutation audit occurs and stored timestamps are preserved.
+
+**Object Metadata**: The immutable pair of a label map and an annotation map (`model.ObjectMetadata`) that each Agent, ThirdpartyOAuth2Service, and PermissionSet carries. Operators write it only through the Admin API, as the `metadata` member. It is unrelated to the CIMD Client ID Metadata Document, RFC 8414 authorization-server metadata (`Discovery.MetadataURL`), and gateway metadata (`036-extproc-metadata-token-exchange-input`). It has no runtime effect: no authorization, consent, token, CEL, OPA, approval, or Grant Context input reads it, and no End-User response, log, span, or metric carries it (ADR `20261127-130441-object-labels-annotations`).
+
+**Label**: An identifying, categorizing key/value pair in Object Metadata. The key is `[prefix/]name` in the Kubernetes qualified-name grammar, and the value is empty or a 1–63-character name. At most 64 per object. Keys and values are matched literally, so `Exposure` and `exposure` are distinct. A prefix of `agenticidentitybroker.dev`, or one ending in `.agenticidentitybroker.dev`, is reserved for the broker.
+
+**Annotation**: A non-identifying key/value pair in Object Metadata for tools and people. Keys follow the Label key rules. Values are any UTF-8 text without U+0000. All keys and values of one object total at most 65,536 decoded UTF-8 bytes.
 
 **Stable Identifier**: The UUID primary key of a managed resource. It remains the `id` in every API representation and is the only identifier persisted in relationships; a canonical ID is optional metadata and a valid administrative input alias.
 

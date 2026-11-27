@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -663,4 +664,29 @@ func TestAgentCanonicalIDValidationAndCopy(t *testing.T) {
 	assert.Equal(t, canonicalID, *copy.CanonicalID)
 	*copy.CanonicalID = "other-agent"
 	assert.Equal(t, canonicalID, *agent.CanonicalID)
+}
+
+func TestAgentObjectMetadata(t *testing.T) {
+	metadata, err := model.NewObjectMetadata(map[string]string{"tier": "gold"}, map[string]string{"note": "x"})
+	require.NoError(t, err)
+	agent := &Agent{
+		ID: id.NewAgentID(), DisplayName: "Agent", Description: "Agent", ObjectMetadata: metadata,
+		PermissionSets: []AgentPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), RequirementType: RequirementTypeMandatory}},
+	}
+
+	t.Run("survives Copy", func(t *testing.T) {
+		assert.True(t, agent.Copy().ObjectMetadata.Equal(metadata))
+	})
+	t.Run("Validate and ValidateForCreate apply the re-check", func(t *testing.T) {
+		invalid := agent.Copy()
+		invalid.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"bad key": "v"}, nil)
+		assert.ErrorIs(t, invalid.Validate(), model.ErrMetadataLabelsInvalidKey)
+		assert.ErrorIs(t, invalid.ValidateForCreate(), model.ErrMetadataLabelsInvalidKey)
+		require.NoError(t, agent.Validate())
+	})
+	t.Run("re-check accepts a reserved-prefix key", func(t *testing.T) {
+		reserved := agent.Copy()
+		reserved.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"agenticidentitybroker.dev/x": "v"}, nil)
+		assert.NoError(t, reserved.Validate())
+	})
 }

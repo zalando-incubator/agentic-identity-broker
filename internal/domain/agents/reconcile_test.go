@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
@@ -201,6 +202,7 @@ func TestReconcileDefinitionEquality(t *testing.T) {
 	base.RedirectURIs = []string{"https://example.com/a", "https://example.com/b"}
 	base.AllowedScopes = []string{"read", "write"}
 	base.PermissionSets = append(base.PermissionSets, storage.AgentPermissionSetEntry{PermissionSetID: id.NewPermissionSetID(), RequirementType: storage.RequirementTypeOptional})
+	base.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"a": "1", "b": "2"}, map[string]string{"note": "x"})
 	for _, tc := range []struct {
 		name   string
 		change func(*storage.Agent)
@@ -240,6 +242,16 @@ func TestReconcileDefinitionEquality(t *testing.T) {
 		{"require all scopes", func(a *storage.Agent) { a.ServiceRequirements[0].RequireAllScopes = true }, false},
 		{"redirects", func(a *storage.Agent) { a.RedirectURIs = []string{"https://example.com/cb"} }, false},
 		{"allowed scopes", func(a *storage.Agent) { a.AllowedScopes = []string{"read"} }, false},
+		{"metadata rebuilt in another key order", func(a *storage.Agent) {
+			a.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"b": "2", "a": "1"}, map[string]string{"note": "x"})
+		}, true},
+		{"one label", func(a *storage.Agent) {
+			a.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"a": "1", "b": "3"}, map[string]string{"note": "x"})
+		}, false},
+		{"one annotation", func(a *storage.Agent) {
+			a.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"a": "1", "b": "2"}, map[string]string{"note": "y"})
+		}, false},
+		{"metadata cleared", func(a *storage.Agent) { a.ObjectMetadata = model.ObjectMetadata{} }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := base.Copy()
@@ -274,6 +286,9 @@ func TestSameDefinitionCoversEveryAgentField(t *testing.T) {
 		"RedirectURIs":  func(a *storage.Agent) { a.RedirectURIs = []string{"https://example.com/cb"} },
 		"AllowedScopes": func(a *storage.Agent) { a.AllowedScopes = []string{"read"} },
 		"ClientURIs":    func(a *storage.Agent) { a.ClientURIs = []string{"https://example.com/client.json"} },
+		"ObjectMetadata": func(a *storage.Agent) {
+			a.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"tier": "gold"}, nil)
+		},
 	}
 	ignored := map[string]string{
 		"ID":        "UUID identity is retained independently of the desired definition",
@@ -365,5 +380,75 @@ func TestReconcileBoundedConflictReread(t *testing.T) {
 				assert.LessOrEqual(t, updates, 1)
 			})
 		}
+	}
+}
+
+func TestReconcileObjectMetadata(t *testing.T) {
+	const sentinel = "zz-metadata-sentinel"
+	ctx := context.Background()
+	repo := newMockAgentRepo()
+	repo.listByExternalIDFn = func(_ context.Context, key id.ExternalID) ([]*storage.Agent, error) {
+		result := []*storage.Agent{}
+		for _, a := range repo.agents {
+			if a.ExternalID != nil && *a.ExternalID == key {
+				result = append(result, a.Copy())
+			}
+		}
+		return result, nil
+	}
+	var logs bytes.Buffer
+	svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.NewJSONHandler(&logs, nil)), false, nil)
+	metadata := func(team, note string) model.ObjectMetadata {
+		value, err := model.NewObjectMetadata(
+			map[string]string{"deployment": "local", "team.example.com/owner": team, sentinel: sentinel},
+			map[string]string{"gitops.example.com/revision": note, "note": sentinel},
+		)
+		require.NoError(t, err)
+		return value
+	}
+	desired := desiredAgent()
+	desired.ObjectMetadata = metadata("platform", "4f2c9e1")
+	created, outcome, err := svc.ReconcileByExternalID(ctx, "registry", desired, ReconcileInput{})
+	require.NoError(t, err)
+	require.Equal(t, ReconcileCreated, outcome)
+	assert.True(t, created.ObjectMetadata.Equal(desired.ObjectMetadata))
+	assert.NotContains(t, logs.String(), sentinel)
+	logs.Reset()
+
+	writes := 0
+	repo.updateFn = func(_ context.Context, a *storage.Agent) error { writes++; repo.agents[a.ID] = a.Copy(); return nil }
+	t.Run("rebuilt maps are a no-op", func(t *testing.T) {
+		for range 10 {
+			replay := desired.Copy()
+			replay.ObjectMetadata = metadata("platform", "4f2c9e1")
+			result, outcome, err := svc.ReconcileByExternalID(ctx, "registry", replay, ReconcileInput{})
+			require.NoError(t, err)
+			assert.Equal(t, ReconcileUnchanged, outcome)
+			assert.Equal(t, created.UpdatedAt, result.UpdatedAt)
+		}
+		assert.Zero(t, writes)
+		assert.Empty(t, logs.String())
+	})
+	for _, tc := range []struct {
+		name  string
+		value model.ObjectMetadata
+	}{
+		{"one label changed", metadata("security", "4f2c9e1")},
+		{"one annotation changed", metadata("security", "5a3d0f2")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs.Reset()
+			before := writes
+			changed := desired.Copy()
+			changed.ObjectMetadata = tc.value
+			result, outcome, err := svc.ReconcileByExternalID(ctx, "registry", changed, ReconcileInput{})
+			require.NoError(t, err)
+			assert.Equal(t, ReconcileUpdated, outcome)
+			assert.True(t, result.ObjectMetadata.Equal(tc.value))
+			assert.False(t, result.UpdatedAt.Before(created.UpdatedAt))
+			assert.Equal(t, before+1, writes)
+			assert.Equal(t, 1, strings.Count(logs.String(), `"event":"agents.agent.updated"`))
+			assert.NotContains(t, logs.String(), sentinel)
+		})
 	}
 }

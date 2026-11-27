@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API
-  version: 3.0.0
+  version: 3.1.0
   description: |
     Administrative REST APIs for the Agentic Identity Broker running on Port 14000.
 
@@ -435,6 +435,21 @@ paths:
                       requirement_type: mandatory
                     - permission_set_id: b2c3d4e5-f6a7-8901-bcde-f12345678901
                       requirement_type: optional
+              with_metadata:
+                summary: Agent with labels and annotations
+                value:
+                  external_id: urn:example:ai-registry:agent:review-bot
+                  display_name: Review Bot
+                  description: Reviews pull requests
+                  permission_sets:
+                    - permission_set_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+                      requirement_type: mandatory
+                  metadata:
+                    labels:
+                      deployment: local
+                      team.example.com/owner: platform
+                    annotations:
+                      gitops.example.com/revision: 4f2c9e1
       responses:
         '201':
           description: Agent created successfully
@@ -454,6 +469,9 @@ paths:
                 permission_sets:
                   - permission_set_id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
                     requirement_type: mandatory
+                metadata:
+                  labels:
+                    deployment: local
                 created_at: '2025-12-19T10:30:00Z'
                 updated_at: '2025-12-19T10:30:00Z'
         '400':
@@ -494,6 +512,10 @@ paths:
         | `governance_url`, `user_documentation_url`, `agent_interface_url` | removed | removed | replaced |
         | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | emptied | emptied | replaced |
         | `display_name`, `description`, `permission_sets` | `400` | `400` | replaced |
+        | `metadata`, `metadata.labels`, `metadata.annotations` | emptied | `400 validation failed` | replaced |
+
+        The no-op comparison treats `metadata.labels` and `metadata.annotations` as maps, so a
+        replay that only reorders their keys writes nothing and emits no audit record.
 
         On creation, omitted optional fields are absent or empty and no `client_id` is generated.
         Grants and other relationships of an updated agent are not changed. To clear an existing
@@ -943,6 +965,26 @@ paths:
             schema:
               $ref: '#/components/schemas/ServiceCreateRequest'
             examples:
+              with_metadata:
+                summary: Create a service with labels and annotations
+                value:
+                  display_name: Atlas Files
+                  client_id: atlas-broker-public
+                  token_endpoint_auth_method: none
+                  issuer_uri: https://atlas.example.com
+                  discovery:
+                    enable_discovery: false
+                  endpoints:
+                    authorize_endpoint: https://atlas.example.com/authorize
+                    token_endpoint: https://atlas.example.com/token
+                  scopes:
+                    - scope_value: files.read
+                      description: Read files
+                  metadata:
+                    labels:
+                      sensitivity: high
+                    annotations:
+                      docs.example.com/runbook: 'Ask #platform before granting.'
               service_icon:
                 summary: Create Atlas Files with original SVG artwork
                 value:
@@ -1322,6 +1364,7 @@ paths:
         - `icon_svg` omitted: preserves the current icon. Explicit null clears it. A permitted string replaces it exactly
         - Empty, whitespace-only, non-string, URL, path, malformed, oversized, or prohibited SVG input returns `400` without changing any service properties
         - Icon validation precedes discovery, credential changes, and persistence. The broker never fetches resources referenced by an icon
+        - `metadata` omitted: preserves the stored labels and annotations. Sent: replaces both maps, and a missing member means empty. `{}` clears both. `null` returns `400`. Metadata validation precedes discovery, credential changes, and persistence
         - `created_at` timestamp is preserved
         - `updated_at` timestamp is set to current time
 
@@ -1967,6 +2010,20 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreatePermissionSetRequest'
+            examples:
+              with_metadata:
+                summary: Permission set with labels
+                value:
+                  name: GitHub Read Access
+                  description: Read repository contents and user profile from GitHub
+                  service_scopes:
+                    - service_id: 550e8400-e29b-41d4-a716-446655440000
+                      scopes:
+                        - repo:read
+                      requirement_type: mandatory
+                  metadata:
+                    labels:
+                      exposure: internal
       responses:
         '201':
           description: Permission set created successfully
@@ -2076,8 +2133,9 @@ paths:
       tags:
         - PermissionSets
       description: |
-        Fully replaces a permission set's name, description, and service_scopes.
-        All fields are required (PUT semantics — full replacement).
+        Fully replaces a permission set's name, description, service_scopes, and metadata.
+        All fields except `metadata` are required (PUT semantics — full replacement).
+        An omitted `metadata` clears the stored labels and annotations, and `null` returns `400`.
 
         **Note**: Changing `service_scopes` takes effect immediately; the next token exchange
         for any grant referencing this set will use the updated scopes (cache TTL ≤ 60s delay).
@@ -3065,6 +3123,8 @@ components:
           description: Timestamp when the agent was last updated (whole-second UTC RFC 3339 format)
           example: '2025-12-19T15:45:00Z'
           readOnly: true
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
 
     AgentCreateRequest:
       type: object
@@ -3207,6 +3267,8 @@ components:
             format: uri
           example:
             - https://chatgpt.com/oauth/codex/*/client.json
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
 
     AgentUpdateRequest:
       type: object
@@ -3357,6 +3419,8 @@ components:
             format: uri
           example:
             - https://chatgpt.com/oauth/codex/*/client.json
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
 
     ServiceRequirement:
       type: object
@@ -3946,6 +4010,8 @@ components:
           description: Timestamp when the service was last updated (RFC3339 format)
           example: '2025-12-19T15:45:00Z'
           readOnly: true
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
 
     ServiceCreateRequest:
       type: object
@@ -4137,6 +4203,8 @@ components:
             type: string
           example:
             business_partner_id: "12345"
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
 
     ServiceUpdateRequest:
       type: object
@@ -4362,6 +4430,8 @@ components:
             type: string
           example:
             business_partner_id: "12345"
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
 
     ProtectedResourceSet:
       type: object
@@ -4940,6 +5010,8 @@ components:
             $ref: '#/components/schemas/ServiceScope'
           minItems: 1
           description: One or more service/scope entries covered by this permission set
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
 
     PermissionSetResponse:
       type: object
@@ -4988,6 +5060,72 @@ components:
           description: Timestamp when the permission set was last updated (RFC3339 format)
           example: '2026-03-25T12:00:00Z'
           readOnly: true
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
+
+    ObjectMetadata:
+      type: object
+      additionalProperties: false
+      description: |
+        Admin-only labels and annotations. Responses omit this property when both maps are
+        empty, and omit an empty map. Map members appear in ascending byte order of their keys.
+        `null` is rejected for this object and for each member.
+
+        Requests: Agent POST, PUT, and collection PUT, and Permission Set POST and PUT, replace
+        both maps in full. An omitted `metadata` or member means empty. Service POST treats an
+        omitted `metadata` as empty. Service PUT keeps stored metadata when `metadata` is
+        omitted, and replaces both maps when it is sent. Keys are never merged.
+
+        Keys and values are matched literally. They are never trimmed, case-folded, or
+        normalized. A repeated key in one object is rejected. Keys with the prefix
+        `agenticidentitybroker.dev`, or a prefix ending in `.agenticidentitybroker.dev`, are
+        reserved and rejected.
+
+        Metadata has no effect on authorization, consent, token claims, CEL, ExtProc, OPA,
+        approvals, or AuthZEN Grant Context. It never appears in an End-User API response.
+      properties:
+        labels:
+          $ref: '#/components/schemas/MetadataLabels'
+        annotations:
+          $ref: '#/components/schemas/MetadataAnnotations'
+      example:
+        labels:
+          deployment: local
+          team.example.com/owner: platform
+        annotations:
+          gitops.example.com/revision: 4f2c9e1
+          gitops.example.com/source: https://github.com/acme/agents/blob/main/review-bot.yaml
+
+    MetadataLabels:
+      type: object
+      maxProperties: 64
+      description: |
+        Identifying, categorizing key/value pairs. Each key has the form `[prefix/]name`. The
+        optional prefix is a lowercase DNS subdomain of at most 253 characters
+        (`[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*`). The name has 1–63
+        characters matching `([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]`. Each value is empty, or
+        has 1–63 characters matching the same name pattern. OpenAPI 3.0 cannot constrain
+        property names, so the server enforces the key rules.
+      additionalProperties:
+        type: string
+        maxLength: 63
+        pattern: '^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$'
+      example:
+        deployment: local
+        sensitivity: high
+
+    MetadataAnnotations:
+      type: object
+      description: |
+        Non-identifying key/value pairs for tools and people. Keys follow the `MetadataLabels`
+        key rules, including the reserved prefix.
+        Values are any valid UTF-8 text without U+0000, and whitespace is stored exactly. The
+        UTF-8 byte lengths of all decoded keys and values must total at most 65,536 bytes.
+        OpenAPI keywords cannot express this byte bound.
+      additionalProperties:
+        type: string
+      example:
+        docs.example.com/runbook: 'Ask #platform before granting.'
 
   responses:
     AgentConflictError:
@@ -5026,6 +5164,14 @@ components:
               value:
                 error: invalid request body
                 message: display_name is required
+            metadata_reserved_key:
+              $ref: '#/components/examples/MetadataReservedKeyRejected'
+            metadata_invalid_value:
+              $ref: '#/components/examples/MetadataInvalidValueRejected'
+            metadata_null:
+              $ref: '#/components/examples/MetadataNullRejected'
+            metadata_annotations_too_large:
+              $ref: '#/components/examples/MetadataAnnotationsTooLarge'
             empty_external_id:
               summary: Empty agent external ID
               value:
@@ -5122,6 +5268,28 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error: internal server error
+
+  examples:
+    MetadataReservedKeyRejected:
+      summary: Reserved prefix rejected without echoing the key
+      value:
+        error: validation failed
+        message: metadata.labels contains a reserved key
+    MetadataInvalidValueRejected:
+      summary: Label value with trailing whitespace rejected
+      value:
+        error: validation failed
+        message: metadata.labels contains an invalid value
+    MetadataNullRejected:
+      summary: Null metadata rejected; send {} to clear
+      value:
+        error: validation failed
+        message: metadata must not be null
+    MetadataAnnotationsTooLarge:
+      summary: Annotations over 65,536 bytes rejected
+      value:
+        error: validation failed
+        message: metadata.annotations exceeds 65536 bytes
 
   securitySchemes:
     PreAuthProxy:

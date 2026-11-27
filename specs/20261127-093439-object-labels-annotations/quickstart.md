@@ -87,3 +87,22 @@ SEL='acme%2Freview-bot'
 3. Write metadata through the Admin API. Then run `migrate down 1` followed by `migrate up`. The
    other data in the three rows is unchanged, and the metadata is empty again. Rollback loses only
    metadata.
+
+## Recorded results
+
+Runs on 2026-11-27 in the implementation session on branch `speckit/issue-427`, in a Linux cloud
+container with Go 1.27.4 and a local Docker daemon. These are the actual outcomes. They are not a
+substitute for the CI workflow on the pushed commit.
+
+| Command | Result |
+|---|---|
+| `just check` | Passed: formatting, vet, and lint with 0 issues, and all 41 lint-rule fixtures rejected as expected |
+| `just telemetry-doc` | No change to `docs/reference/telemetry.md` |
+| `just test` | Feature packages pass. Two packages that this feature does not touch fail in this container, with or without the feature's changes: `internal/adapters/encryption/aws` (`TestBuildAWSConfig_DisableSSL`) and `internal/adapters/outboundhttp` (`TestNewGuardedTransport_BlocksPrivateDialsAndBypassesProxy`, `TestFetcher_SSRF_BlocksLoopbackIPv6`). They depend on the container's proxy and IPv6 setup |
+| `just test-integration-all` | Passed, including `object_metadata_migration_test.go` (up, down, up on the production chain; non-object values rejected by the named checks) and `tests/integration/storage/infra/object_metadata_test.go` |
+| `ginkgo --label-filter='!performance && !docker' ./tests/e2e/` (the `just test-e2e-backend` suite, after `just web-build`) | Passed: 1018 of 1018 specs, including US1.1, US1.3–US1.5, US2.1–US2.5, and US3.1–US3.5 |
+| `just test-e2e-docker` | 17 of 18 specs passed, including US1.2 on PostgreSQL. The external-ID upgrade specs needed migration `050` applied beside `049` for the legacy broker, as they already did for `049`. The remaining failure, the agentgateway token-exchange spec, cannot pull `cr.agentgateway.dev/agentgateway:v1.7.0` because the container's network policy denies that host |
+
+| `just verify` | Stopped at its security stage, before the test stages. gosec reports one issue (G304) in `tools/telemetrydoc/descriptions.go:24`, a file this feature does not change. The scan needed the repository's Go 1.27.4 toolchain first on `PATH`, because the container's base Go is 1.24.7 and the scan forces `GOTOOLCHAIN=local`. The test stages were run separately, as listed above. The frontend, ExtProc, CDK, and mock suites were not run |
+
+Infrastructure that was not available: the agentgateway image registry `cr.agentgateway.dev`.

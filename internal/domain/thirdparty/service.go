@@ -440,6 +440,9 @@ func (s *ThirdpartyOAuth2ProviderService) Create(
 	if err := model.ValidateServiceIcon(entity.IconSVG); err != nil {
 		return err
 	}
+	if err := entity.ObjectMetadata.Validate(); err != nil {
+		return err
+	}
 	discovered := entity.Discovery.ResourceURL != nil
 	var attemptedAt time.Time
 	var selected *model.ThirdpartyOAuth2ProviderEntity
@@ -713,6 +716,9 @@ func (s *ThirdpartyOAuth2ProviderService) prepareUpdate(ctx context.Context, ent
 	if err := model.ValidateServiceIcon(entity.IconSVG); err != nil {
 		return nil, err
 	}
+	if err := entity.ObjectMetadata.Validate(); err != nil {
+		return nil, err
+	}
 	if entity.Discovery.ResourceURL != nil {
 		candidate := *entity
 		if err := candidate.ValidateDiscoveryRequest(); err != nil {
@@ -738,6 +744,9 @@ func (s *ThirdpartyOAuth2ProviderService) prepareUpdate(ctx context.Context, ent
 	}
 	if entity.IconSVG == nil && !entity.IconSVGProvided {
 		entity.IconSVG = persisted.IconSVG
+	}
+	if !entity.ObjectMetadataProvided {
+		entity.ObjectMetadata = persisted.ObjectMetadata
 	}
 	previousSource := persisted.CredentialSource
 	if previousSource == "" {

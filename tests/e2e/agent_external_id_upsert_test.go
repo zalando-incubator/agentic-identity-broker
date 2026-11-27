@@ -559,8 +559,9 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			Expect(postgres.RecoverExternalIDMigration(ctx)).NotTo(Succeed())
 			db, err = sql.Open("pgx", postgres.ConnectionURL)
 			Expect(err).To(Succeed())
-			// Current provider repositories need the icon column while the legacy broker is running.
+			// Current repositories need the icon and metadata columns while the legacy broker is running.
 			Expect(postgres.ApplyMigrationFile(ctx, "049_service_icon_svg.up.sql")).To(Succeed())
+			Expect(postgres.ApplyMigrationFile(ctx, "050_object_metadata.up.sql")).To(Succeed())
 			legacyStore = externalIDPostgresStorage(postgres)
 			legacyServer = externalIDAdminServer(legacyStore)
 			legacy = nil
@@ -654,6 +655,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 			}
 			before := snapshot()
 			Expect(postgres.RecoverExternalIDMigration(ctx)).To(Succeed())
+			Expect(postgres.ApplyMigrationFile(ctx, "050_object_metadata.down.sql")).To(Succeed())
 			Expect(postgres.ApplyMigrationFile(ctx, "049_service_icon_svg.down.sql")).To(Succeed())
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))
@@ -669,6 +671,7 @@ var _ = Describe("Admin agent create-or-update by external ID", func() {
 		It("should preserve agents and relationships across rollback and reapply", func() {
 			setID(legacy[2], nil)
 			before := snapshot()
+			Expect(postgres.ApplyMigrationFile(ctx, "050_object_metadata.down.sql")).To(Succeed())
 			Expect(postgres.ApplyMigrationFile(ctx, "049_service_icon_svg.down.sql")).To(Succeed())
 			Expect(postgres.MigrateTo(0)).To(Succeed())
 			Expect(snapshot()).To(Equal(before))

@@ -1,6 +1,7 @@
 # Contract: Object Metadata on Agents, Services, and Permission Sets
 
-Status: draft for maintainer confirmation (API-004, Constitution X). The OpenAPI fragments are in
+Status: confirmed by the maintainer on 2026-11-27 (API-004, Constitution X) and published in
+`api/admin/openapi.yaml` 3.1.0. The OpenAPI fragments are in
 [admin-openapi-metadata.yaml](admin-openapi-metadata.yaml). This contract applies only to the
 Admin API. `api/enduser/openapi.yaml` does not change.
 

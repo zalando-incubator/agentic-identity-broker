@@ -57,7 +57,7 @@ func TestReconcileHandlerRejectsBeforeWrites(t *testing.T) {
 		{"null client", "/api/agents?external_id=a", strings.TrimSuffix(valid, "}") + `,"client_id":null}`, "validation failed"},
 		{"missing name", "/api/agents?external_id=a", `{"description":"Definition","permission_sets":[]}`, "validation failed"},
 		{"multiple JSON", "/api/agents?external_id=a", valid + valid, "invalid request body"},
-		{"limit", "/api/agents?external_id=a", `{"padding":"` + strings.Repeat("a", 65536) + `"}`, "invalid request body"},
+		{"limit", "/api/agents?external_id=a", `{"padding":"` + strings.Repeat("a", maxAgentWriteBody) + `"}`, "invalid request body"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := new(MockAgentRepository)
