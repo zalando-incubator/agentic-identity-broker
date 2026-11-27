@@ -2705,11 +2705,16 @@ paths:
         **Mode-specific behavior**:
         - `proxy` mode: `issuer` is the broker's own public URL. `jwks_uri` points to the
           broker's `/oauth2/jwks.json` endpoint, which republishes upstream keys.
-        - `local` mode: `issuer` is the broker's own public URL. `jwks_uri` points to the
-          broker's `/oauth2/jwks.json` endpoint, which serves locally-generated signing keys.
-        - `hybrid` mode: `issuer` is the broker's public URL. `jwks_uri` points to the
-          broker's `/oauth2/jwks.json` endpoint (union of local and upstream keys). The
-          metadata reflects the union of capabilities for both proxy and local grant types.
+        - `local` mode: `issuer` uses `oauth2_authorization_server.local.issuer_uri`
+          when configured; otherwise it uses `server.enduser.public_url`. `jwks_uri`
+          points to the issuer's `/oauth2/jwks.json`, which serves locally generated keys.
+        - `hybrid` mode: `issuer` follows the same rule as local mode. `jwks_uri`
+          points to the issuer's `/oauth2/jwks.json` (union of local and upstream keys).
+          Metadata reflects both grant strategies.
+
+        In every mode, the authorization, token, and JWKS endpoint URLs use the issuer
+        as their base. Consent links and AuthZEN metadata use `server.enduser.public_url`
+        independently of `oauth2_authorization_server.local.issuer_uri`.
 
         **Caching**: Responses include `Cache-Control: public, max-age=3600` to allow
         clients to cache metadata for 1 hour.
@@ -2768,7 +2773,9 @@ paths:
       description: |
         Returns the AuthZEN 1.0 PDP metadata. `policy_decision_point` is
         `server.enduser.public_url` without a trailing slash; consumers must compare it exactly
-        with their expected identifier before sending credentials. Batch and search endpoints
+        with their expected identifier before sending credentials. A distinct
+        `oauth2_authorization_server.local.issuer_uri` does not change this PDP or
+        `access_evaluation_endpoint`. Batch and search endpoints
         are not supported and are therefore omitted. Available only when token exchange is
         configured; otherwise this path returns 404. A supplied `X-Request-ID` is echoed on the
         200 response; the routing 404 does not echo it.
@@ -4066,8 +4073,11 @@ components:
           type: string
           format: uri
           description: |
-            The issuer identifier (this authorization server).
-            Must be an HTTPS URI with no query or fragment.
+            The issuer identifier of this authorization server. It defaults to
+            `server.enduser.public_url`. In local and hybrid modes,
+            `oauth2_authorization_server.local.issuer_uri` can override it.
+            Production uses HTTPS. HTTP is for local development only.
+            The issuer URI has no query or fragment.
           example: https://broker.example.com
 
         authorization_endpoint:
