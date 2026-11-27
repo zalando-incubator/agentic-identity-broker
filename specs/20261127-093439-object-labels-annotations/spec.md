@@ -12,17 +12,23 @@ Operators can attach Kubernetes-style **labels** and **annotations** to Agents, 
 Services, and Permission Sets through the Admin API. Labels categorize a resource, for example
 `deployment=local` or `team.example.com/owner=platform`, and are designed to become policy input in
 a later feature. Annotations hold non-identifying information for tools and people, such as the
-GitOps source and revision of an Agent definition. End users see an Agent's labels, read-only, in
-their delegation overview and agent detail. They never see annotations.
+GitOps source and revision of an Agent definition. Metadata is admin-only: no end-user response
+or view carries labels or annotations.
 
 This feature stores, validates, and returns metadata. Labels and annotations play no part in
 authorization, token claims, approval matching, or telemetry until a separate, accepted ADR wires
 labels into CEL and OPA.
 
+## Clarifications
+
+### Session 2026-11-27
+
+- Q: Should end users see an Agent's labels as read-only chips in their delegation overview and agent detail, or should all labels stay admin-only for now? → A: All metadata stays admin-only. End-user API, SPA chips, and the end-user story are out of scope and become a follow-up.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Each numbered acceptance scenario requires one corresponding E2E scenario under `tests/e2e/`
-(Constitution XIII). Browser scenarios also require Playwright coverage under `tests/e2e/frontend/`.
+(Constitution XIII). The feature has no browser scenarios.
 
 ### User Story 1 - Categorize and Annotate an Agent, Including by GitOps Reconciliation (Priority: P1)
 
@@ -73,27 +79,7 @@ neither the key nor the value.
 
 ---
 
-### User Story 3 - Show an Agent's Labels to End Users (Priority: P2)
-
-An end user sees an Agent's labels as read-only chips in the delegation overview and the agent
-detail view. The end user never sees annotations, and cannot change labels.
-
-**Why this priority**: Labels such as `deployment=local` help users judge an Agent before they
-delegate to it. Display depends on the storage and Admin API work in User Story 1.
-
-**Independent Test**: Give an Agent labels and annotations through the Admin API, then open the
-end user's delegation overview and agent detail, and inspect both the JSON responses and the page.
-
-**Acceptance Scenarios**:
-
-1. **US3.1 — Labels in end-user responses**: **Given** an Agent with labels and annotations and an end user with a delegation to it, **When** the end user requests the delegation overview and the agent detail, **Then** both responses carry `metadata.labels` with exactly the stored labels and carry no annotations anywhere in the body.
-2. **US3.2 — Label chips**: **Given** the same Agent, **When** the end user opens the delegation overview and the agent detail page, **Then** each view shows one read-only chip per label, ordered by key, showing `key=value`, or only `key` when the value is empty. The chips add no keyboard stop and no edit control.
-3. **US3.3 — No labels**: **Given** an Agent without labels, including Agents created before this feature, **When** the end user opens both views, **Then** the responses omit `metadata` and the views show no chip area and no placeholder.
-4. **US3.4 — Fresh labels after a change**: **Given** an end user who has seen an Agent's labels, **When** an operator changes them and the end user reloads the view, **Then** the view shows the new labels.
-
----
-
-### User Story 4 - Categorize Permission Sets and Services (Priority: P2)
+### User Story 3 - Categorize Permission Sets and Services (Priority: P2)
 
 An operator attaches labels and annotations to Permission Sets and Services. Each resource keeps
 its existing write policy: Permission Set writes replace metadata in full, and Service updates
@@ -108,11 +94,11 @@ Service with and without metadata, then read both back.
 
 **Acceptance Scenarios**:
 
-1. **US4.1 — Permission Set create and read**: **Given** an authorized caller, **When** the caller creates a Permission Set with labels and annotations, **Then** the response, reads, and listings return both maps unchanged.
-2. **US4.2 — Permission Set PUT without metadata clears it**: **Given** a Permission Set with metadata, **When** the caller replaces it with a `PUT` that omits `metadata`, **Then** the stored labels and annotations are empty, the response omits `metadata`, and `updated_at` advances.
-3. **US4.3 — Service update preserves omitted metadata**: **Given** a Service with labels and annotations, **When** the caller updates the Service without a `metadata` field, **Then** the stored metadata is unchanged.
-4. **US4.4 — Service update replaces whole metadata**: **Given** the same Service, **When** the caller updates it with `metadata: {"labels": {"tier": "gold"}}`, **Then** the stored labels are exactly `{"tier": "gold"}`, the stored annotations are empty, and no previously stored key survives. `metadata: {}` clears both maps.
-5. **US4.5 — Metadata has no runtime effect**: **Given** Agents, Services, and Permission Sets with labels and annotations, **When** a user consents, an agent exchanges a token, and a tool call needs approval, **Then** the consent decisions, issued token claims, and approval matching are identical to those for the same resources without metadata.
+1. **US3.1 — Permission Set create and read**: **Given** an authorized caller, **When** the caller creates a Permission Set with labels and annotations, **Then** the response, reads, and listings return both maps unchanged.
+2. **US3.2 — Permission Set PUT without metadata clears it**: **Given** a Permission Set with metadata, **When** the caller replaces it with a `PUT` that omits `metadata`, **Then** the stored labels and annotations are empty, the response omits `metadata`, and `updated_at` advances.
+3. **US3.3 — Service update preserves omitted metadata**: **Given** a Service with labels and annotations, **When** the caller updates the Service without a `metadata` field, **Then** the stored metadata is unchanged.
+4. **US3.4 — Service update replaces whole metadata**: **Given** the same Service, **When** the caller updates it with `metadata: {"labels": {"tier": "gold"}}`, **Then** the stored labels are exactly `{"tier": "gold"}`, the stored annotations are empty, and no previously stored key survives. `metadata: {}` clears both maps.
+5. **US3.5 — Metadata has no runtime effect**: **Given** Agents, Services, and Permission Sets with labels and annotations, **When** a user consents, an agent exchanges a token, and a tool call needs approval, **Then** the consent decisions, issued token claims, and approval matching are identical to those for the same resources without metadata, and no end-user response, including the delegation overview and agent detail, carries `metadata`.
 
 ### Edge Cases
 
@@ -145,7 +131,7 @@ The `metadata` fields below describe the contract proposed by this feature, not 
 capability. Response excerpts omit unrelated fields. No runtime configuration changes and no token
 claims are involved.
 
-### Journey 1 — A GitOps controller labels an Agent and Alice sees the labels (US1.1–US1.3, US3.1–US3.2)
+### Journey 1 — A GitOps controller labels an Agent, and Alice sees no metadata (US1.1–US1.3, US3.5)
 
 **Step 1 — 10:00:00: `agents-sync` reconciles Code Review Bot from its Git source for the first time**
 
@@ -288,9 +274,6 @@ Content-Type: application/json
     {
       "agentId": "550e8400-e29b-41d4-a716-446655440020",
       "displayName": "Code Review Bot",
-      "metadata": {
-        "labels": {"deployment": "external", "team.example.com/owner": "platform"}
-      },
       "activeGrantCount": 1,
       "lastModifiedAt": "2026-11-27T09:00:00Z"
     }
@@ -298,68 +281,13 @@ Content-Type: application/json
 }
 ```
 
-The body carries no `annotations` member. `GET /api/consent/agents/550e8400-e29b-41d4-a716-446655440020`
-returns the same `metadata.labels` in its `AgentDetail` body.
+`GET /api/consent/agents/550e8400-e29b-41d4-a716-446655440020` likewise returns its unchanged
+`AgentDetail` body. The SPA views are unchanged.
 
-State A — overview and detail of an Agent without labels:
+**Observable result**: the Admin API returns the Agent's current labels and annotations, and Alice's
+responses carry neither labels nor annotations.
 
-![State A: agent without label chips](wireframes/agent-labels-none.svg)
-
-<details><summary>Wireloom source</summary>
-
-```wireloom
-window "Delegations - agent without labels":
-  header:
-    text "Agentic Identity Broker" bold
-  section "My delegations":
-    panel:
-      row:
-        avatar "C" size=medium
-        text "Code Review Bot" bold
-      text "1 permission set granted" muted
-      button "Review"
-```
-
-</details>
-
-Action: `agents-sync` labels the Agent in steps 1–3. Alice reloads the overview and opens the agent
-detail.
-
-State B — label chips in the overview and the detail:
-
-![State B: label chips beside the agent](wireframes/agent-labels-chips.svg)
-
-<details><summary>Wireloom source</summary>
-
-```wireloom
-window "Delegations - agent with labels":
-  header:
-    text "Agentic Identity Broker" bold
-  section "My delegations":
-    panel:
-      row:
-        avatar "C" size=medium
-        text "Code Review Bot" bold
-      row:
-        chip "deployment=external"
-        chip "team.example.com/owner=platform"
-      text "1 permission set granted" muted
-      button "Review"
-  section "Agent detail":
-    panel:
-      text "Code Review Bot" bold
-      text "Reviews pull requests" muted
-      row:
-        chip "deployment=external"
-        chip "team.example.com/owner=platform"
-```
-
-</details>
-
-**Observable result**: Alice sees two read-only chips, `deployment=external` and
-`team.example.com/owner=platform`, in both views. She sees neither annotation.
-
-### Journey 2 — Olivia labels a Permission Set, then replaces it without metadata (US4.1–US4.2)
+### Journey 2 — Olivia labels a Permission Set, then replaces it without metadata (US3.1–US3.2)
 
 **Step 1 — 11:00:00: Olivia creates a sensitive Permission Set**
 
@@ -421,7 +349,7 @@ Content-Type: application/json
 **Observable result**: the response and later reads omit `metadata`; the stored labels and
 annotations are empty.
 
-### Journey 3 — Olivia updates a Service with and without metadata (US4.3–US4.4)
+### Journey 3 — Olivia updates a Service with and without metadata (US3.3–US3.4)
 
 Service `PUT` is a full replacement with documented omission exceptions. In the requests below,
 `...` stands for the Service's other required fields, repeated unchanged from its stored
@@ -528,10 +456,10 @@ Content-Type: application/json
 - **FR-017**: Any accepted change to labels or annotations of a Service or Permission Set MUST advance its `updated_at` and be audited as the resource's existing updates are.
 - **FR-018**: Only Admin API callers MUST be able to write metadata. No end-user, agent, OAuth2, or token-exchange endpoint accepts or changes it.
 
-**End-user exposure**
+**Admin-only exposure**
 
-- **FR-019**: The end-user `AgentDelegation` and `AgentDetail` representations MUST carry the Agent's labels, read-only, as `metadata.labels`, following FR-003. They MUST NOT carry annotations. Service and Permission Set metadata MUST NOT appear in any end-user response. [NEEDS CLARIFICATION: The issue's Decision 2 says "End-user visibility: admin-only for now", while its comparison table and scope items 2–3 expose Agent labels read-only to end users and show them as chips. Which applies? Recommended: Agent labels are shown to end users, annotations never; this spec assumes so.]
-- **FR-020**: The SPA delegation overview and agent detail MUST show each label as a read-only chip ordered by key, with the text `key=value`, or `key` when the value is empty. The views MUST offer no label filtering or editing.
+- **FR-019**: Labels and annotations of Agents, Services, and Permission Sets MUST NOT appear in any End-User API response, including `AgentDelegation` and `AgentDetail`.
+- **FR-020**: The End-User API contract and the SPA MUST remain unchanged by this feature.
 
 **Isolation from runtime behavior and telemetry**
 
@@ -595,8 +523,8 @@ flowchart TD
 ### API Requirements
 
 - **API-001**: The Admin API MUST add `metadata` to `Agent`, `AgentCreateRequest`, `AgentUpdateRequest`, `Service`, `ServiceCreateRequest`, `ServiceUpdateRequest`, `CreatePermissionSetRequest`, and `PermissionSetResponse` in `api/admin/openapi.yaml`, with the rules of FR-003 to FR-017, and bump its version from 3.0.0 to 3.1.0. The collection `PUT` field-policy table MUST gain a `metadata` row.
-- **API-002**: The End-User API MUST add read-only `metadata.labels` to `AgentDelegation` and `AgentDetail` in `api/enduser/openapi.yaml` and bump its minor version. The issue names 1.2.0 → 1.3.0; the document is already at 1.3.0, so the bump is 1.3.0 → 1.4.0.
-- **API-003**: Both documents MUST show examples with labels and annotations, the omission of empty maps, and the `validation failed` messages of FR-012.
+- **API-002**: `api/enduser/openapi.yaml` MUST NOT change; its version stays 1.3.0.
+- **API-003**: The Admin API document MUST show examples with labels and annotations, the omission of empty maps, and the `validation failed` messages of FR-012.
 - **API-004**: All API changes MUST be confirmed by the maintainer before implementation (Constitution X).
 
 ### Database Requirements
@@ -613,15 +541,6 @@ flowchart TD
 - **SR-004**: Error responses, logs, audit records, and telemetry MUST NOT contain metadata keys or values (FR-012, FR-022).
 - **SR-005**: An ADR MUST record the metadata model, the validation rules, the reserved prefix, the write semantics, and the decision that metadata has no runtime effect until a superseding ADR wires labels into CEL and OPA.
 
-### Frontend/Design System Requirements
-
-- Label chips MUST use the design system's existing badge or chip primitive and semantic tokens
-  from `web/src/design-system/`, as chosen through `DECISION_TREES.md`. No new universal component
-  is expected.
-- Chips are static text: they are not focusable and not interactive, and they wrap at narrow
-  viewports without truncating the key or value.
-- WCAG 2.1 AA contrast applies to chip text.
-
 ### Key Entities
 
 - **Agent**, **ThirdpartyOAuth2Service**, **PermissionSet**: existing entities, each gaining one
@@ -635,7 +554,7 @@ flowchart TD
 - **SC-001**: An operator can label and annotate an Agent, a Service, and a Permission Set in one Admin API request each, and reads return 100% of the submitted keys and values byte for byte.
 - **SC-002**: 100 consecutive reconciles of an unchanged Agent definition, with map keys shuffled in each request, produce zero writes, zero `updated_at` changes, and zero mutation audit records.
 - **SC-003**: Every input class of FR-005 to FR-011 is rejected on every write path of all three resources, and none of the error messages contains the offending key or value.
-- **SC-004**: End users see an Agent's labels in both the delegation overview and the agent detail, and no end-user response contains an annotation.
+- **SC-004**: No End-User API response produced by the E2E suite contains a label or annotation.
 - **SC-005**: Consent decisions, token claims, and approval matching are identical with and without metadata on the involved resources.
 - **SC-006**: No log record, audit record, span, or metric produced by the E2E suite contains a label or annotation key or value used by the suite.
 
@@ -646,14 +565,13 @@ flowchart TD
 - Label keys and values use the Kubernetes character rules; annotation keys use the same key rules, and annotation values are free UTF-8 text without NUL.
 - A repeated key in one JSON object is rejected rather than resolved last-wins, because the stored result would otherwise depend on parser behavior.
 - The existing mutation audit records for Agents, Services, and Permission Sets are reused unchanged; they name the resource and caller but not metadata values.
-- The delegation overview and agent detail already load fresh data on navigation or reload; no live push of label changes is required.
 
 ### Out of Scope
 
 - Label selectors on `GET /api/agents` and `GET /api/services`, and their index.
 - Admin UI display or filtering of metadata.
 - Exposing labels to CEL, ExtProc, OPA, or the AuthZEN Grant Context. This needs its own ADR, which also decides which labels reach OPA, their freshness, and any tighter write control for particular keys.
-- Showing Permission Set labels to end users on the consent screen.
+- Showing any metadata to end users, including Agent labels as read-only chips in the delegation overview and agent detail, and Permission Set labels on the consent screen.
 - Metadata on Protected Resources and on signing or CIMD keys.
 
 ### Dependencies
