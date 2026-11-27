@@ -129,7 +129,13 @@ An mcp-go client can read the URL from a tool-call error after initialization, b
 
 For automatic step-up, an MCP client must discover RFC 9728 protected-resource metadata for the gateway's MCP URL. This `jwtAuth` route does not provide metadata by itself. Add a separate gateway route for `/.well-known/oauth-protected-resource/mcp`. It must return the MCP resource URL and its authorization server. Match the MCP route on `/mcp`, so route order does not affect dispatch. [Feature 023's example journey](https://github.com/zalando-incubator/agentic-identity-broker/blob/main/specs/023-extproc-mcp-elicitation/spec.md) shows the route and authorization-code retry.
 
-The Compose gateway includes this public metadata route. It advertises `http://localhost:4000/mcp` as the resource and `http://localhost:3000` as the authorization server. Vite proxies the broker's authorization-server metadata and OAuth2 endpoints on port 3000. The `/mcp` route still applies strict JWT validation and ExtProc exchange. Compose also exposes `WWW-Authenticate` to browser clients through CORS.
+The Compose gateway advertises `http://localhost:4000/mcp` as the resource.
+It advertises `http://localhost:3000` as the authorization server.
+Vite proxies the broker's metadata and OAuth2 endpoints on port 3000.
+The broker uses `http://aib.localhost:3000` for browser consent and the AuthZEN PDP.
+Claude Code permits HTTP token requests to literal `localhost`, not to `aib.localhost`.
+The `/mcp` route still applies strict JWT validation and ExtProc exchange.
+Compose also exposes `WWW-Authenticate` to browser clients through CORS.
 
 The existing JWT 401 response has no `resource_metadata` link. Clients must try the well-known URL when that link is absent.
 
@@ -260,6 +266,19 @@ An upstream JWT must contain `token-exchange-broker` in `aud` and identify a reg
 A broker-issued CIMD token keeps its metadata URL in `agent_id`. Compose also signs the registered agent UUID as `azp`. The issuer-gated exchange policy uses that UUID only for broker-issued tokens. When upstream tokens do not carry an `agent_id`, token exchange resolves their `azp` through the client ID registry. Tokens issued before this policy change may lack `azp` and require a new authorization flow.
 
 Compose uses in-memory broker storage. A restart discards grants, provider sessions, signing keys, and manually registered agents. The startup script re-registers Visual Studio Code and Claude Code with new agent UUIDs. Obtain a new token, approve delegation, and reconnect the provider after a restart.
+
+### Connect Claude Code to the Compose gateway
+
+From the host, add the HTTP MCP server:
+
+```bash
+claude mcp add --transport http local-broker http://localhost:4000/mcp
+```
+
+Claude Code discovers the token endpoint at `http://localhost:3000/oauth2/token`.
+When the consent UI opens, connect the mock provider.
+Then grant **Claude Code** access.
+The broker uses the Vite development proxy to identify the user as `dev@example.com`.
 
 ### Use a sample-client token
 

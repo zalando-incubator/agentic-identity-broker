@@ -59,6 +59,9 @@ oauth2_authorization_server:
 
   # Local path: agents without a ClientID are issued tokens locally.
   local:
+    # Claude Code permits HTTP token requests only to literal loopback hosts.
+    # Keep the consent/AuthZEN public URL above reachable from Compose containers.
+    issuer_uri: http://localhost:3000
     token_ttl: 1h
     # For CIMD clients, agent_id is the metadata URL; agent.id is the registered UUID.
     # Sign the registered agent UUID in azp so token exchange can find its grant.
@@ -111,7 +114,7 @@ token_exchange:
     # Extract user principal from the subject_token's sub claim
     principal_expression: "subject_token.sub"
     # Trust local azp as an agent UUID only for broker-issued tokens.
-    agent_id_expression: 'has(subject_token.azp) && subject_token.iss == "http://aib.localhost:3000" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
+    agent_id_expression: 'has(subject_token.azp) && subject_token.iss == "http://localhost:3000" ? subject_token.azp : (has(subject_token.agent_id) ? subject_token.agent_id : resolveAgentIdByClientId(subject_token.azp))'
   authorization:
     type: "cel"
     cel:

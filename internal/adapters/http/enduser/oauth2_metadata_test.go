@@ -56,6 +56,45 @@ func TestOAuth2MetadataHandler_ServeHTTP_SuccessfulMetadata(t *testing.T) {
 	assert.NotEmpty(t, metadata.GrantTypesSupported)
 }
 
+func TestMetadataEndpoints_SeparateOAuthIssuerAndAuthZENPDP(t *testing.T) {
+	const publicURL = "http://aib.localhost:3000"
+	const issuer = "http://localhost:3000"
+	svc := oauth2.NewAuthorizationService(
+		newMockGrantRepo(),
+		&noopSessionRepository{},
+		oauth2.NewAgentClientResolver(newMockAgentRepo(), slog.New(slog.DiscardHandler)),
+		&oauth2.OAuth2Config{
+			ModeStrategy:           oauth2.NewHybridModeStrategy(),
+			PublicURL:              publicURL,
+			IssuerURI:              issuer,
+			SupportedResponseTypes: []string{"code"},
+			SupportedGrantTypes:    []string{"authorization_code"},
+		},
+		nil,
+		newTestSessionTokenSvc(),
+	)
+
+	oauthResponse := httptest.NewRecorder()
+	(&OAuth2MetadataHandler{Service: svc}).ServeHTTP(oauthResponse,
+		httptest.NewRequest(http.MethodGet, issuer+"/.well-known/oauth-authorization-server", nil))
+	require.Equal(t, http.StatusOK, oauthResponse.Code)
+	var oauthMetadata ports.MetadataResponse
+	require.NoError(t, json.Unmarshal(oauthResponse.Body.Bytes(), &oauthMetadata))
+	assert.Equal(t, issuer, oauthMetadata.Issuer)
+	assert.Equal(t, issuer+"/oauth2/authorize", oauthMetadata.AuthorizationEndpoint)
+	assert.Equal(t, issuer+"/oauth2/token", oauthMetadata.TokenEndpoint)
+	assert.Equal(t, issuer+"/oauth2/jwks.json", oauthMetadata.JWKSURI)
+
+	authzenResponse := httptest.NewRecorder()
+	NewAuthZENConfigurationHandler(publicURL).ServeHTTP(authzenResponse,
+		httptest.NewRequest(http.MethodGet, publicURL+"/.well-known/authzen-configuration", nil))
+	require.Equal(t, http.StatusOK, authzenResponse.Code)
+	var authzenMetadata AuthZENConfiguration
+	require.NoError(t, json.Unmarshal(authzenResponse.Body.Bytes(), &authzenMetadata))
+	assert.Equal(t, publicURL, authzenMetadata.PolicyDecisionPoint)
+	assert.Equal(t, publicURL+"/access/v1/evaluation", authzenMetadata.AccessEvaluationEndpoint)
+}
+
 // TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding tests proper JSON encoding
 func TestOAuth2MetadataHandler_ServeHTTP_JSONEncoding(t *testing.T) {
 	svc := oauth2.NewAuthorizationService(
