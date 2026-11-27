@@ -111,6 +111,7 @@ Service with and without metadata, then read both back.
 - An annotation value contains U+0000 or invalid UTF-8. It is invalid.
 - Annotation size is measured in UTF-8 bytes of the decoded keys and values, not of the JSON text or its escapes.
 - A request sends `metadata` with members other than `labels` and `annotations`. The broker rejects it with `400 validation failed`. This rule applies only inside `metadata`; the feature does not change how Agent, Service, and Permission Set requests treat unknown top-level fields.
+- A request body repeats the `metadata` member, or spells it with different capitalization such as `Metadata` or `METADATA`. The broker rejects it with `400 validation failed` rather than keeping either value or ignoring the misspelled member. Ignoring a misspelling would otherwise clear an Agent's stored metadata, because Agent writes treat an omitted `metadata` as empty.
 - A Service update sends `metadata: null`. The broker rejects it; `{}` is the way to clear.
 - A rejected metadata write carries other valid field changes. The entire write fails without partial changes.
 - Two concurrent reconciles of one External ID carry different labels. The existing last-writer-wins rule applies; each successful request stores its complete metadata.
@@ -444,7 +445,7 @@ Content-Type: application/json
 - **FR-007**: An object MUST hold at most 64 labels.
 - **FR-008**: Annotation values MUST be valid UTF-8 without U+0000. The UTF-8 byte lengths of all annotation keys and values of one object MUST total at most 65,536 bytes, measured after JSON decoding.
 - **FR-009**: Keys whose prefix is `agenticidentitybroker.dev` or ends with `.agenticidentitybroker.dev` are reserved for the broker. Admin API writes containing such a key in `labels` or `annotations` MUST be rejected.
-- **FR-010**: A `labels` or `annotations` object that repeats a key, and a `metadata` object with members other than `labels` and `annotations`, MUST be rejected.
+- **FR-010**: A `labels` or `annotations` object that repeats a key, a `metadata` object with members other than `labels` and `annotations`, and a request body that repeats `metadata` or spells it other than exactly `metadata`, MUST be rejected.
 - **FR-011**: `null` for `metadata`, `labels`, or `annotations` MUST be rejected on every write of every resource, including Service updates, unlike the Service `icon_svg` field. `{}` is the only way to clear.
 - **FR-012**: A failed metadata validation MUST return the existing `400 validation failed` envelope. Its message MUST name the map (`metadata.labels` or `metadata.annotations`) and the rule category, and MUST NOT contain the offending key or value. The whole write MUST fail without partial changes.
 
