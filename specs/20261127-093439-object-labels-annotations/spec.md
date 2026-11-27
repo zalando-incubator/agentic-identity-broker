@@ -24,6 +24,7 @@ labels into CEL and OPA.
 ### Session 2026-11-27
 
 - Q: Should end users see an Agent's labels as read-only chips in their delegation overview and agent detail, or should all labels stay admin-only for now? → A: All metadata stays admin-only. End-user API, SPA chips, and the end-user story are out of scope and become a follow-up.
+- Q: When a Service update sends `"metadata": null`, should the broker reject it with `400`, or treat it as clearing all labels and annotations? → A: Reject with `400 validation failed` on all three resources; `{}` is the only way to clear.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -97,7 +98,7 @@ Service with and without metadata, then read both back.
 1. **US3.1 — Permission Set create and read**: **Given** an authorized caller, **When** the caller creates a Permission Set with labels and annotations, **Then** the response, reads, and listings return both maps unchanged.
 2. **US3.2 — Permission Set PUT without metadata clears it**: **Given** a Permission Set with metadata, **When** the caller replaces it with a `PUT` that omits `metadata`, **Then** the stored labels and annotations are empty, the response omits `metadata`, and `updated_at` advances.
 3. **US3.3 — Service update preserves omitted metadata**: **Given** a Service with labels and annotations, **When** the caller updates the Service without a `metadata` field, **Then** the stored metadata is unchanged.
-4. **US3.4 — Service update replaces whole metadata**: **Given** the same Service, **When** the caller updates it with `metadata: {"labels": {"tier": "gold"}}`, **Then** the stored labels are exactly `{"tier": "gold"}`, the stored annotations are empty, and no previously stored key survives. `metadata: {}` clears both maps.
+4. **US3.4 — Service update replaces whole metadata**: **Given** the same Service, **When** the caller updates it with `metadata: {"labels": {"tier": "gold"}}`, **Then** the stored labels are exactly `{"tier": "gold"}`, the stored annotations are empty, and no previously stored key survives. `metadata: {}` clears both maps, and `metadata: null` returns `400 validation failed` without changing the Service.
 5. **US3.5 — Metadata has no runtime effect**: **Given** Agents, Services, and Permission Sets with labels and annotations, **When** a user consents, an agent exchanges a token, and a tool call needs approval, **Then** the consent decisions, issued token claims, and approval matching are identical to those for the same resources without metadata, and no end-user response, including the delegation overview and agent detail, carries `metadata`.
 
 ### Edge Cases
@@ -444,7 +445,7 @@ Content-Type: application/json
 - **FR-008**: Annotation values MUST be valid UTF-8 without U+0000. The UTF-8 byte lengths of all annotation keys and values of one object MUST total at most 65,536 bytes, measured after JSON decoding.
 - **FR-009**: Keys whose prefix is `agenticidentitybroker.dev` or ends with `.agenticidentitybroker.dev` are reserved for the broker. Admin API writes containing such a key in `labels` or `annotations` MUST be rejected.
 - **FR-010**: A `labels` or `annotations` object that repeats a key, and a `metadata` object with members other than `labels` and `annotations`, MUST be rejected.
-- **FR-011**: `null` for `metadata`, `labels`, or `annotations` MUST be rejected on every write of every resource.
+- **FR-011**: `null` for `metadata`, `labels`, or `annotations` MUST be rejected on every write of every resource, including Service updates, unlike the Service `icon_svg` field. `{}` is the only way to clear.
 - **FR-012**: A failed metadata validation MUST return the existing `400 validation failed` envelope. Its message MUST name the map (`metadata.labels` or `metadata.annotations`) and the rule category, and MUST NOT contain the offending key or value. The whole write MUST fail without partial changes.
 
 **Write semantics**
@@ -560,7 +561,6 @@ flowchart TD
 
 ## Assumptions
 
-- `null` is rejected for `metadata`, `labels`, and `annotations` on all three resources, including Service updates; `{}` clears. The issue states this for Agents only; applying it everywhere keeps one validation rule and one way to clear.
 - Inside a sent `metadata` object, an omitted `labels` or `annotations` member means empty for every resource, consistent with "keys are never merged".
 - Label keys and values use the Kubernetes character rules; annotation keys use the same key rules, and annotation values are free UTF-8 text without NUL.
 - A repeated key in one JSON object is rejected rather than resolved last-wins, because the stored result would otherwise depend on parser behavior.
