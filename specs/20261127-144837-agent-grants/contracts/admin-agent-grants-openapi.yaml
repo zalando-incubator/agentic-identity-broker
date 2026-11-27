@@ -1,0 +1,372 @@
+# Admin API 3.2.0 delta for agent grants (issue #472).
+#
+# Merge into api/admin/openapi.yaml before any handler is implemented (Constitution IV, X):
+#   - info.version: 3.1.0 -> 3.2.0
+#   - add the path /api/agents/{agent-id}/self-grant
+#   - add the parameter, header, schemas and responses under components
+#   - replace the 409 response and the description of deleteServiceAccount as shown at the end
+# Existing components referenced here: parameters AgentId; responses OperatorRequired,
+# NotFoundError, InternalServerError; schemas ErrorResponse.
+
+openapi: 3.0.3
+info:
+  title: Agentic Identity Broker - Admin Server API (agent grants delta)
+  version: 3.2.0
+
+paths:
+  /api/agents/{agent-id}/self-grant:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    get:
+      summary: Read the agent's agent grant
+      description: |
+        Returns the administrator's delegation to the agent for its own use. An expired grant is
+        still returned, with its past `valid_until`. Agent grants are never visible through the
+        end-user API.
+      operationId: getAgentGrant
+      tags: [Agent Grants]
+      responses:
+        '200':
+          description: The agent grant.
+          headers:
+            ETag:
+              $ref: '#/components/headers/AgentGrantETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentGrant'
+              example:
+                id: aa0e8400-e29b-41d4-a716-446655440061
+                agent_id: 550e8400-e29b-41d4-a716-446655440041
+                permission_sets: [770e8400-e29b-41d4-a716-446655440051]
+                granted_permission_sets:
+                  770e8400-e29b-41d4-a716-446655440051: [880e8400-e29b-41d4-a716-446655440020]
+                service_account_bindings:
+                  880e8400-e29b-41d4-a716-446655440020: 990e8400-e29b-41d4-a716-446655440031
+                valid_until: null
+                created_at: '2026-11-27T10:00:00Z'
+                updated_at: '2026-11-27T10:00:00Z'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/AgentGrantNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    put:
+      summary: Create or replace the agent's agent grant
+      description: |
+        Writes the agent's one agent grant whole. The broker always adds every permission set the
+        agent declares as mandatory; `permission_sets` lists only the optional sets to add, and
+        listing a mandatory set changes nothing. Each granted set covers every service it scopes,
+        limited to the agent's service requirements where the agent declares any.
+
+        `service_account_bindings` names, for each covered service the agent should reach, the
+        account of that service to use. There is no default binding. A covered service that is
+        mandatory for the agent must be bound. For every bound service, the agent's effective
+        scopes there must be contained in the account's ceiling, compared as exact strings.
+
+        The account's status and the agent's sessions are not consulted. A later ceiling,
+        permission-set or agent change never modifies a stored grant. The next write resolves
+        everything again.
+
+        The first write answers `201`, and later writes `200`. A write identical to the stored
+        grant answers `200` with the unchanged ETag and writes nothing. Replacing an expired grant
+        keeps its `id` and `created_at`.
+
+        `If-Match` is optional. A value that does not equal the current ETag, or any value when
+        the agent has no agent grant, answers `412` and changes nothing. Without it, the last
+        writer wins; a request that loses three successive races with concurrent writers
+        answers `412`. A request error (`400`, `404`) is reported before a failed precondition.
+
+        No token can be obtained with an agent grant in this version (#473).
+      operationId: putAgentGrant
+      tags: [Agent Grants]
+      parameters:
+        - $ref: '#/components/parameters/AgentGrantIfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentGrantRequest'
+            examples:
+              triage_bot_reader:
+                summary: Journey 1 Step 1 — only the mandatory set, bound to the agent's own account
+                value:
+                  permission_sets: []
+                  service_account_bindings:
+                    880e8400-e29b-41d4-a716-446655440020: 990e8400-e29b-41d4-a716-446655440031
+              planner_bot_operator:
+                summary: Journey 1 Step 2 — an optional set added
+                value:
+                  permission_sets: [770e8400-e29b-41d4-a716-446655440052]
+                  service_account_bindings:
+                    880e8400-e29b-41d4-a716-446655440020: 990e8400-e29b-41d4-a716-446655440032
+              unbound:
+                summary: Journey 2 Step 3 — a covered, non-mandatory service left unbound
+                value:
+                  permission_sets: []
+      responses:
+        '200':
+          description: The grant was replaced, or was already identical.
+          headers:
+            ETag:
+              $ref: '#/components/headers/AgentGrantETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentGrant'
+        '201':
+          description: The grant was created.
+          headers:
+            ETag:
+              $ref: '#/components/headers/AgentGrantETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentGrant'
+              example:
+                id: aa0e8400-e29b-41d4-a716-446655440062
+                agent_id: 550e8400-e29b-41d4-a716-446655440042
+                permission_sets:
+                  - 770e8400-e29b-41d4-a716-446655440051
+                  - 770e8400-e29b-41d4-a716-446655440052
+                granted_permission_sets:
+                  770e8400-e29b-41d4-a716-446655440051: [880e8400-e29b-41d4-a716-446655440020]
+                  770e8400-e29b-41d4-a716-446655440052: [880e8400-e29b-41d4-a716-446655440020]
+                service_account_bindings:
+                  880e8400-e29b-41d4-a716-446655440020: 990e8400-e29b-41d4-a716-446655440032
+                valid_until: null
+                created_at: '2026-11-27T10:01:00Z'
+                updated_at: '2026-11-27T10:01:00Z'
+        '400':
+          $ref: '#/components/responses/AgentGrantValidationError'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '412':
+          $ref: '#/components/responses/AgentGrantPreconditionFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    delete:
+      summary: Revoke the agent's agent grant
+      description: |
+        Deletes the agent grant and its bindings. The agent's declared permission sets and users'
+        consents to the agent are unchanged. `If-Match` is optional, as on `PUT`.
+      operationId: deleteAgentGrant
+      tags: [Agent Grants]
+      parameters:
+        - $ref: '#/components/parameters/AgentGrantIfMatch'
+      responses:
+        '204':
+          description: The grant was deleted.
+        '400':
+          description: Malformed `If-Match`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/AgentGrantNotFound'
+        '412':
+          $ref: '#/components/responses/AgentGrantPreconditionFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  parameters:
+    AgentGrantIfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        The agent grant's current strong ETag. Optional. A stale value, or any value when the
+        agent has no agent grant, answers `412`. A weak or malformed value answers `400`.
+      schema:
+        type: string
+      example: '"1"'
+
+  headers:
+    AgentGrantETag:
+      description: Strong ETag of the stored agent grant. Changes with every committed change.
+      schema:
+        type: string
+      example: '"1"'
+
+  schemas:
+    AgentGrantRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        permission_sets:
+          type: array
+          description: |
+            Optional permission sets to grant, each declared by the agent. The agent's mandatory
+            sets are always added. Duplicates are refused. Omitted means empty.
+          items:
+            type: string
+            format: uuid
+        service_account_bindings:
+          type: object
+          description: |
+            Service ID to service-account ID, at most one account per service. Each key must be a
+            covered service and each value an account of that service. Omitted means empty.
+          additionalProperties:
+            type: string
+            format: uuid
+        valid_until:
+          type: string
+          format: date-time
+          description: Optional expiry, in the future. Omitted means no expiry.
+    AgentGrant:
+      type: object
+      required: [id, agent_id, permission_sets, granted_permission_sets, service_account_bindings, valid_until, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        agent_id:
+          type: string
+          format: uuid
+        permission_sets:
+          type: array
+          description: Every granted permission set, mandatory ones included, in ascending order.
+          items:
+            type: string
+            format: uuid
+        granted_permission_sets:
+          type: object
+          readOnly: true
+          description: Permission set ID to the services it covers in this grant, resolved when the grant was written.
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              format: uuid
+        service_account_bindings:
+          type: object
+          description: Service ID to the bound service-account ID. A covered service without an entry has no account.
+          additionalProperties:
+            type: string
+            format: uuid
+        valid_until:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ServiceAccountBoundConflict:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          required: [bound_by_agents]
+          properties:
+            bound_by_agents:
+              type: array
+              description: UUIDs of every agent whose agent grant binds the account, expired grants included, ascending, without duplicates.
+              items:
+                type: string
+                format: uuid
+
+  responses:
+    AgentGrantNotFound:
+      description: The agent does not exist, or has no agent grant.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            agent_not_found:
+              value:
+                error: agent not found
+                message: Agent with ID 'unknown-bot' does not exist
+            grant_not_found:
+              value:
+                error: not found
+                message: agent grant not found
+    AgentGrantValidationError:
+      description: The grant is refused and nothing is stored or changed. `message` names the failed rule.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            ceiling_exceeded:
+              summary: Journey 2 Step 1
+              value:
+                error: validation failed
+                message: 'service_account_bindings[880e8400-e29b-41d4-a716-446655440020]: scopes [admin] exceed the ceiling of service account 990e8400-e29b-41d4-a716-446655440032'
+            service_not_covered:
+              summary: Journey 2 Step 2
+              value:
+                error: validation failed
+                message: 'service_account_bindings[880e8400-e29b-41d4-a716-446655440021]: service is not covered by the grant'
+            foreign_or_missing_account:
+              value:
+                error: validation failed
+                message: 'service_account_bindings[880e8400-e29b-41d4-a716-446655440020]: service account 990e8400-e29b-41d4-a716-446655440039 is not an account of this service'
+            mandatory_service_unbound:
+              value:
+                error: validation failed
+                message: 'service_account_bindings[880e8400-e29b-41d4-a716-446655440020]: service is mandatory for the agent and must be bound'
+            undeclared_permission_set:
+              value:
+                error: validation failed
+                message: permission set 770e8400-e29b-41d4-a716-446655440059 is not declared by the agent
+            duplicate_permission_set:
+              value:
+                error: validation failed
+                message: permission_sets must not contain duplicates
+            empty_grant:
+              value:
+                error: validation failed
+                message: agent grant must contain at least one permission set
+            set_covers_nothing:
+              value:
+                error: validation failed
+                message: permission set 770e8400-e29b-41d4-a716-446655440054 covers no service of the agent
+            past_valid_until:
+              value:
+                error: validation failed
+                message: valid_until must be in the future
+            malformed_if_match:
+              value:
+                error: invalid If-Match
+                message: If-Match must be one strong ETag
+    AgentGrantPreconditionFailed:
+      description: The supplied `If-Match` does not equal the grant's current ETag, the agent has no agent grant, or a request without `If-Match` lost three successive races with concurrent writers. Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: precondition failed
+            message: agent grant was changed or removed; read it again and retry
+
+# Replacement in the existing operation deleteServiceAccount
+# (/api/services/{service-id}/service-accounts/{service-account-id}, delete):
+#
+#   description: |
+#     Erases the account and its stored credential. `If-Match` is optional, as on update.
+#     Removal is refused with `409` while any agent grant binds the account, an expired one
+#     included; `bound_by_agents` names the agents whose grants bind it.
+#   responses:
+#     '409':
+#       description: An agent grant binds the account.
+#       content:
+#         application/json:
+#           schema:
+#             $ref: '#/components/schemas/ServiceAccountBoundConflict'
+#           example:
+#             error: conflict
+#             message: service account is bound by an agent grant
+#             bound_by_agents: [550e8400-e29b-41d4-a716-446655440041]
