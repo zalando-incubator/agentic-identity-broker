@@ -42,6 +42,7 @@ Issues #472, #478 and #471 do not decide these points. The maintainer answered t
 - Q: Does every covered service need a binding, now that granted sets cover all their services? → A: Only effectively mandatory services: a service the agent's service requirements mark mandatory, or one a granted permission set marks mandatory, within the agent's service requirements where it declares any. A write that leaves one unbound is refused. Other covered services may stay unbound and give no token (#472). This keeps the fixed part of the grant usable and puts every mandatory service under the write-time ceiling check (maintainer answer, 2026-11-27). Recorded in FR-004b, User Story 2 Scenarios 1 and 7, and Edge Cases.
 - Q: Is the agent grant the same domain object as a user's consent? → A: The same stored record, not the same domain object. It is persisted as a `UserGrant` with principal kind `agent`, so the shared grant resolution reads it unchanged (#472). An Agent Grant entity owns the agent-only rules and the service-account bindings, which are stored beside the grant record, not inside `UserGrant`. No new bounded context is created (maintainer answer, 2026-11-27). Recorded in the Domain Model and DB-002.
 - Q: Does the agent grant carry a strong ETag with an optional `If-Match`? → A: Yes, as service accounts do (#471). A stale `If-Match` on `PUT` or `DELETE` gets `412` and nothing changes; without `If-Match` the last writer wins. Recorded in FR-003, API-003, User Story 1 Scenario 12, and Edge Cases.
+- Q: What do the admin API and the service-account delete guard do with an agent grant whose `valid_until` has passed? → A: It stays visible and keeps protecting its accounts. The admin `GET` returns it (`200`, with its `valid_until`). Its bindings still block deletion of the accounts it binds until the grant is deleted or rewritten without them. A `PUT` replaces it (`200`), keeping its `id` and `created_at`, as consent renewal does. Expiry makes the grant absent only for decision paths (#473). Recorded in FR-006, FR-015, User Story 1 Scenario 13, User Story 4 Scenario 6, and Edge Cases.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -67,6 +68,7 @@ A platform administrator wants *triage-bot* to read the company platform as itse
 10. **Given** an agent that declares *Platform reader* as mandatory and *Platform operator* as optional, **When** an administrator writes a grant that lists only *Platform operator*, or lists both, **Then** the stored grant contains both. *Platform reader* is included either way, and listing it changes nothing.
 11. **Given** a stored agent grant, **When** the agent's declared mandatory permission sets change, **Then** the stored grant is unchanged. **When** the grant is next written, **Then** it contains the agent's current mandatory sets.
 12. **Given** a grant whose current ETag is `"2"`, **When** a write or a delete carries `If-Match: "1"`, **Then** the broker answers `412` and the grant is unchanged. **When** the same request carries `If-Match: "2"` or no `If-Match`, **Then** it is carried out.
+13. **Given** a stored grant whose `valid_until` has passed, **When** an administrator reads it, **Then** the broker answers `200` with the grant and its past `valid_until`. **When** the administrator writes a grant with a future or absent `valid_until`, **Then** the broker answers `200`, and the grant keeps its `id` and `created_at`.
 
 ---
 
@@ -124,6 +126,7 @@ The administrator retires an agent's access by deleting its agent grant. While a
 3. **Given** an account bound by an agent grant, **When** an administrator deletes the account, **Then** the broker answers `409` with the conflict response defined by #471, and the account and the grant are unchanged.
 4. **Given** that account after the binding was removed, by deleting the grant or by writing it without that binding, **When** the administrator deletes the account, **Then** the broker answers `204`.
 5. **Given** an agent with an agent grant, **When** the agent is deleted, **Then** its agent grant is deleted with it, and the accounts it bound can be removed afterwards.
+6. **Given** an account bound only by an agent grant whose `valid_until` has passed, **When** an administrator deletes the account, **Then** the broker answers `409` with the conflict response defined by #471, and the account and the grant are unchanged.
 
 ---
 
@@ -162,6 +165,7 @@ Agent grants live in the same records as users' consents. A person on the consen
 - **Agent with a user grant from a person whose principal text equals the agent's UUID**: both records coexist, because the principal kind is part of each record's identity. Neither is visible from or applied to the other's path, and deleting either leaves the other intact.
 - **Concurrent writes of one agent's grant**: each write is applied whole or not at all, and the agent never holds two agent grants. A writer that sends a stale `If-Match` is refused with `412`. Writers that send none overwrite each other, and the last writer wins.
 - **Agent's mandatory permission sets change later**: the agent update is accepted as it is for user consents. The stored agent grant is unchanged until it is next written, and that write includes the current mandatory sets (FR-004c). Editing an agent never widens its own access without a grant write and its audit record. Request-time handling belongs to #473.
+- **Expired agent grant**: absent for every decision path, but still the agent's grant for the admin API. `GET` returns it, its bindings still block deletion of the bound accounts, and a `PUT` renews it in place (`200`) (FR-006, FR-015).
 - **Mandatory service without an account**: a grant cannot be written until the service holds an account to bind (FR-004b).
 
 ## Concrete Example Journeys *(mandatory)*
@@ -385,7 +389,7 @@ Content-Type: application/json
 - **FR-004b**: Every effectively mandatory covered service MUST be bound. A service is effectively mandatory when the agent's service requirements mark it mandatory, or when a granted permission set marks it mandatory and it lies within the agent's service requirements where the agent declares any. A write that leaves one unbound MUST be refused, naming the service. Other covered services MAY stay unbound.
 - **FR-004c**: The granted sets and their coverage MUST be resolved when the grant is written and stored in the grant (copy on write). A later change to the agent's declared permission sets, to its service requirements or to a permission set's services MUST NOT modify a stored agent grant; the next write resolves them anew.
 - **FR-005**: Coverage MUST NOT depend on the agent's principal having a session with the service; the active-session requirement of user consent does not apply to agent grants.
-- **FR-006**: A `valid_until`, when given, MUST lie in the future. An expired agent grant is treated as absent by every reader, as an expired user grant is.
+- **FR-006**: A `valid_until`, when given, MUST lie in the future. An expired agent grant MUST be treated as absent by every decision path, as an expired user grant is (#473). The admin operations MUST still treat it as the agent's grant: `GET` returns it with its `valid_until`, `PUT` replaces it (`200`, keeping its `id` and `created_at`), `DELETE` removes it, and its bindings keep protecting the bound accounts (FR-015).
 
 **Service-account bindings**
 
@@ -403,7 +407,7 @@ Content-Type: application/json
 
 **Deletion and lifecycle**
 
-- **FR-015**: Deleting a service account MUST be refused with the `409` conflict defined by #471 while any agent grant binds it. Deleting an agent MUST delete its agent grant with it. Deleting a permission set keeps the existing rule (refused while an agent declares it).
+- **FR-015**: Deleting a service account MUST be refused with the `409` conflict defined by #471 while any agent grant binds it, including an expired one. Deleting an agent MUST delete its agent grant with it. Deleting a permission set keeps the existing rule (refused while an agent declares it).
 
 **Principal kind and separation from human paths**
 
