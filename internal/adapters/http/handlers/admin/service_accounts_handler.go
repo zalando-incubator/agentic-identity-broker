@@ -18,7 +18,9 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 )
 
-const serviceAccountMaxBodyBytes = 64 << 10
+// serviceAccountMaxBodyBytes fits the largest valid annotation map sent as \u00XX escapes
+// beside a 16 KiB JWT.
+const serviceAccountMaxBodyBytes = 512 << 10
 
 // ServiceAccountsHandler serves the service accounts of a third-party service. It parses input
 // and maps results; every rule lives in thirdparty.ServiceAccountService.
@@ -41,6 +43,7 @@ type serviceAccountRequest struct {
 	Kind        json.RawMessage `json:"kind"`
 	Scopes      json.RawMessage `json:"scopes"`
 	Credential  json.RawMessage `json:"credential"`
+	Metadata    json.RawMessage `json:"metadata"`
 }
 
 type serviceAccountCredentialRequest struct {
@@ -59,6 +62,7 @@ type serviceAccountResponse struct {
 	CredentialSummary model.CredentialSummary `json:"credential_summary"`
 	CreatedAt         string                  `json:"created_at"`
 	UpdatedAt         string                  `json:"updated_at"`
+	Metadata          *ObjectMetadataResponse `json:"metadata,omitempty"`
 }
 
 type serviceAccountStatusResponse struct {
@@ -85,7 +89,7 @@ func (h *ServiceAccountsHandler) Create(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	request, credential, ok := h.decode(w, r)
+	body, request, credential, ok := h.decode(w, r)
 	if !ok {
 		return
 	}
@@ -95,6 +99,11 @@ func (h *ServiceAccountsHandler) Create(w http.ResponseWriter, r *http.Request) 
 		!h.assign(w, request.Scopes, "scopes", &create.Scopes) {
 		return
 	}
+	metadata, _, ok := h.requestMetadata(w, body)
+	if !ok {
+		return
+	}
+	create.Metadata = metadata
 	view, err := h.accounts.Create(r.Context(), operator, serviceID, create)
 	if err != nil {
 		h.domainError(w, err, true)
@@ -153,7 +162,7 @@ func (h *ServiceAccountsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	request, credential, ok := h.decode(w, r)
+	body, request, credential, ok := h.decode(w, r)
 	if !ok {
 		return
 	}
@@ -172,6 +181,13 @@ func (h *ServiceAccountsHandler) Update(w http.ResponseWriter, r *http.Request) 
 	}
 	if !h.assign(w, request.Scopes, "scopes", &update.Scopes) {
 		return
+	}
+	metadata, present, ok := h.requestMetadata(w, body)
+	if !ok {
+		return
+	}
+	if present {
+		update.Metadata = &metadata
 	}
 	view, _, err := h.accounts.Update(r.Context(), operator, serviceID, accountID, update)
 	if err != nil {
@@ -275,38 +291,52 @@ func (h *ServiceAccountsHandler) ifMatch(w http.ResponseWriter, r *http.Request)
 	return nil, false
 }
 
-// decode reads the request body strictly: at most 64 KiB, one JSON object, known members only.
-func (h *ServiceAccountsHandler) decode(w http.ResponseWriter, r *http.Request) (serviceAccountRequest, *model.ServiceAccountCredentialInput, bool) {
+// decode reads the request body strictly: at most 512 KiB, one JSON object, known members only.
+// It returns the body so that metadata can be decoded from the same bytes.
+func (h *ServiceAccountsHandler) decode(w http.ResponseWriter, r *http.Request) ([]byte, serviceAccountRequest, *model.ServiceAccountCredentialInput, bool) {
 	var request serviceAccountRequest
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, serviceAccountMaxBodyBytes))
 	if err == nil {
 		err = strictUnmarshal(body, &request)
 	}
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, errInvalidBody.Error(), "request body must be one JSON object of at most 64 KiB with known members")
-		return request, nil, false
+		h.writeError(w, http.StatusBadRequest, errInvalidBody.Error(), invalidServiceAccountBody)
+		return nil, request, nil, false
 	}
 	if request.Credential == nil {
-		return request, nil, true
+		return body, request, nil, true
 	}
 	if isJSONNull(request.Credential) {
 		h.writeError(w, http.StatusBadRequest, "validation failed", errNullMember{"credential"}.Error())
-		return request, nil, false
+		return nil, request, nil, false
 	}
 	var credential serviceAccountCredentialRequest
 	if err := strictUnmarshal(request.Credential, &credential); err != nil {
-		h.writeError(w, http.StatusBadRequest, errInvalidBody.Error(), "request body must be one JSON object of at most 64 KiB with known members")
-		return request, nil, false
+		h.writeError(w, http.StatusBadRequest, errInvalidBody.Error(), invalidServiceAccountBody)
+		return nil, request, nil, false
 	}
 	input := &model.ServiceAccountCredentialInput{}
 	var jwt string
 	if !h.assign(w, credential.Format, "credential.format", &input.Format) ||
 		!h.assign(w, credential.Use, "credential.use", &input.Use) ||
 		!h.assign(w, credential.JWT, "credential.jwt", &jwt) {
-		return request, nil, false
+		return nil, request, nil, false
 	}
 	input.JWT = model.NewPlaintextSecret(jwt)
-	return request, input, true
+	return body, request, input, true
+}
+
+const invalidServiceAccountBody = "request body must be one JSON object of at most 512 KiB with known members"
+
+// requestMetadata decodes the metadata member. Its errors are fixed messages that never carry
+// request content, and the request log already records the refusal.
+func (h *ServiceAccountsHandler) requestMetadata(w http.ResponseWriter, body []byte) (model.ObjectMetadata, bool, bool) {
+	metadata, present, err := decodeRequestMetadata(body)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "validation failed", err.Error())
+		return model.ObjectMetadata{}, false, false
+	}
+	return metadata, present, true
 }
 
 func strictUnmarshal(data []byte, target any) error {
@@ -335,7 +365,7 @@ func (h *ServiceAccountsHandler) assign(w http.ResponseWriter, raw json.RawMessa
 		return false
 	}
 	if err := json.Unmarshal(raw, target); err != nil {
-		h.writeError(w, http.StatusBadRequest, errInvalidBody.Error(), "request body must be one JSON object of at most 64 KiB with known members")
+		h.writeError(w, http.StatusBadRequest, errInvalidBody.Error(), invalidServiceAccountBody)
 		return false
 	}
 	return true
@@ -389,6 +419,7 @@ func toServiceAccountResponse(view *thirdparty.ServiceAccountView) serviceAccoun
 		CredentialSummary: account.Summary,
 		CreatedAt:         account.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:         account.UpdatedAt.UTC().Format(time.RFC3339),
+		Metadata:          objectMetadataResponse(account.ObjectMetadata),
 	}
 	return response
 }

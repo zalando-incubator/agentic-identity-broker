@@ -4,7 +4,7 @@
 
 **Object Metadata** (`model.ObjectMetadata` in `internal/domain/model/object_metadata.go`) is an
 immutable pair of a label map and an annotation map. It has no ID, repository, or lifecycle of its
-own. Agent, ThirdpartyOAuth2Service, and PermissionSet each embed exactly one. Add **Object
+own. Agent, ThirdpartyOAuth2Service, PermissionSet, and ServiceAccount each embed exactly one. Add **Object
 Metadata**, **Label**, and **Annotation** to the `ARCHITECTURE.md` glossary before implementation.
 
 | Member | Type | Admin write rule |
@@ -37,6 +37,12 @@ still stored and compared exactly as sent.
 | `storage.Agent` | `internal/domain/storage/agent.go` | `ObjectMetadata model.ObjectMetadata` |
 | `storage.PermissionSet` | `internal/domain/storage/permission_set.go` | `ObjectMetadata model.ObjectMetadata` |
 | `model.ThirdpartyOAuth2ProviderEntity` | `internal/domain/model/thirdparty_oauth2_provider.go` | `ObjectMetadata model.ObjectMetadata`, `ObjectMetadataProvided bool` (transient request flag, never persisted) |
+| `model.ServiceAccount` | `internal/domain/model/service_account.go` | `ObjectMetadata model.ObjectMetadata` |
+
+The Service Account request types in `internal/domain/thirdparty/service_account_service.go`
+carry the parsed value: `ServiceAccountCreate.Metadata model.ObjectMetadata` and
+`ServiceAccountUpdate.Metadata *model.ObjectMetadata`, where nil keeps the stored value like the
+other nil members of that update.
 
 `Copy()` on Agent and PermissionSet keeps the value. The value is immutable, so it needs no deep
 copy. The memory Service record copies the value and clears `ObjectMetadataProvided`. These fields get
@@ -46,15 +52,15 @@ and gain no field (FR-019).
 
 ## Write transitions
 
-| Request `metadata` | Agent POST / PUT / collection PUT | Permission Set POST / PUT | Service POST | Service PUT |
-|---|---|---|---|---|
-| Omitted | Empty | Empty | Empty | Keep stored value |
-| `{}` | Empty | Empty | Empty | Empty |
-| `{"labels": L}` | labels = L, annotations empty | same | same | same |
-| `{"labels": L, "annotations": A}` | Replace both | Replace both | Store both | Replace both |
-| `{"labels": null}` or `{"annotations": null}` | That map empty, as for an omitted member | same | same | same |
-| `"metadata": null`, or a `null` map value | `400`, nothing changes | `400` | `400` | `400` |
-| Invalid | `400`, nothing changes | `400` | `400` | `400` |
+| Request `metadata` | Agent POST / PUT / collection PUT | Permission Set POST / PUT | Service POST | Service PUT | Service Account POST | Service Account PUT |
+|---|---|---|---|---|---|---|
+| Omitted | Empty | Empty | Empty | Keep stored value | Empty | Keep stored value |
+| `{}` | Empty | Empty | Empty | Empty | Empty | Empty |
+| `{"labels": L}` | labels = L, annotations empty | same | same | same | same | same |
+| `{"labels": L, "annotations": A}` | Replace both | Replace both | Store both | Replace both | Store both | Replace both |
+| `{"labels": null}` or `{"annotations": null}` | That map empty, as for an omitted member | same | same | same | same | same |
+| `"metadata": null`, or a `null` map value | `400`, nothing changes | `400` | `400` | `400` | `400` | `400` |
+| Invalid | `400`, nothing changes | `400` | `400` | `400` | `400` | `400` |
 
 Keys are never merged. A `metadata` value that is sent always replaces both maps.
 
@@ -66,6 +72,14 @@ writes nothing and emits no audit record (FR-014, SC-002).
 **Service update**: `prepareUpdate` sets `entity.ObjectMetadata = persisted.ObjectMetadata` when
 `!entity.ObjectMetadataProvided`. A failed metadata validation returns before discovery, branch-key
 provisioning, encryption, and repository calls.
+
+**Service Account update**: `ServiceAccountService.Update` checks `Validate()` with the other
+request rules, before credential validation and encryption. `applyUpdate` copies the sent value
+onto the candidate, and `!candidate.ObjectMetadata.Equal(stored.ObjectMetadata)` adds `metadata`
+to `changes`. With no change the update is a no-op. `updateEvent` picks
+`service.service_account.metadata_changed` only when `metadata` is the sole change. The record
+carries no metadata and no `previous_observed_metadata`. Create checks `Validate()` before the
+credential.
 
 **Permission Set update**: the handler builds the entity from the request, as it does today.
 Every accepted `PUT` advances `updated_at` and emits `permissionset.permission_set.updated`
@@ -103,13 +117,24 @@ Each constraint is `CHECK (jsonb_typeof(<column>) = 'object')`. Both directions 
 backfill beyond the default, and no timestamp rewrite. Existing rows read as empty metadata. The
 down migration drops the six constraints and six columns, and rollback loses only metadata.
 
+Migration `052_service_account_metadata.{up,down}.sql` adds the same two columns to
+`service_accounts`, which `050_create_service_accounts` created. It is atomic and follows `051`
+with the same lock rules on that one table.
+
+| Table | Column | Definition | Named constraint |
+|---|---|---|---|
+| `service_accounts` | `labels` | `JSONB NOT NULL DEFAULT '{}'` | `chk_service_accounts_labels_object` |
+| `service_accounts` | `annotations` | `JSONB NOT NULL DEFAULT '{}'` | `chk_service_accounts_annotations_object` |
+
 Adapter rules:
 - The PostgreSQL adapter marshals the copies returned by `Labels()` and `Annotations()`. It
   writes `'{}'` when a map is empty, never JSON `null`.
 - Every explicit column list that reads or writes these entities includes `labels` and
   `annotations`. For Agents, these are `Get`, `GetByIDs`, `List`, `GetByExternalID`,
-  `GetByClientID`, `GetByClientURI`, `Create`, and `Update`. Permission Sets and Services need the
-  same coverage.
+  `GetByClientID`, `GetByClientURI`, `Create`, and `Update`. Permission Sets, Services, and
+  Service Accounts need the same coverage. For Service Accounts, the shared
+  `serviceAccountColumns` list serves `Get`, `GetByCanonicalID`, and `ListByService`, and
+  `Create` and `Update` write both columns.
 - Reads decode each column into a `map[string]string` and rebuild the value with
   `model.RestoreObjectMetadata`, which applies no rule. A column that is not a JSON object of
   strings becomes a storage error of kind internal, and the adapter returns no partial entity.

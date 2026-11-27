@@ -333,9 +333,9 @@ func TestServiceAccountsHandler_NotFound(t *testing.T) {
 func TestServiceAccountsHandler_RequestBodyLimits(t *testing.T) {
 	h := newSAHandlerHarness(t)
 	jwt := h.jwt(t, "k", time.Now().Add(time.Hour))
-	oversized := `{"canonical_id":"a","kind":"jwt_bearer","scopes":["read"],"credential":{"format":"signed_jwt","jwt":"` + strings.Repeat("a", 64<<10) + `"}}`
+	oversized := `{"canonical_id":"a","kind":"jwt_bearer","scopes":["read"],"credential":{"format":"signed_jwt","jwt":"` + strings.Repeat("a", serviceAccountMaxBodyBytes) + `"}}`
 	for name, body := range map[string]string{
-		"over 64 KiB":                    oversized,
+		"over 512 KiB":                   oversized,
 		"unknown member":                 `{"canonical_id":"a","kind":"jwt_bearer","scopes":["read"],"credentials":{"format":"signed_jwt","jwt":"` + jwt + `"}}`,
 		"unknown credential member":      `{"canonical_id":"a","kind":"jwt_bearer","scopes":["read"],"credential":{"format":"signed_jwt","token":"` + jwt + `"}}`,
 		"not JSON":                       `{"canonical_id":`,

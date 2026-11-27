@@ -60,6 +60,7 @@ type ServiceAccount struct {
 	Credential          Secret
 	Summary             CredentialSummary
 	CredentialExpiresAt *time.Time
+	ObjectMetadata      ObjectMetadata
 	Version             int64
 	CreatedAt           time.Time
 	UpdatedAt           time.Time

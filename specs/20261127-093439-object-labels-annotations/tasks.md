@@ -200,6 +200,36 @@ Service with and without metadata, and read both back (US3.1–US3.5).
 
 ---
 
+## Phase 6: User Story 4 - Categorize Service Accounts (Priority: P2) — Amendment
+
+**Goal**: Service Accounts carry Object Metadata. Create treats an omitted `metadata` as empty;
+update keeps it when omitted and replaces it whole when sent. A metadata change is audited as
+`service.service_account.metadata_changed` without values and does not re-encrypt the
+credential.
+
+**Independent Test**: Create a Service Account with metadata, update it with and without
+metadata, and read it back (US4.1–US4.4).
+
+### Tests for User Story 4 [MANDATORY - Principle VIII] ⚠️
+
+- [X] T076 [P] [US4] Write new `internal/domain/thirdparty/service_account_metadata_test.go`: create stores metadata and validates it before the credential is encrypted; an omitted update member keeps the stored value; a sent value replaces both maps; `{}` clears; equal metadata in any order is a no-op without a write or record; a metadata-only change writes one `service.service_account.metadata_changed` record with `changes: ["metadata"]` and no values; metadata is last in the event precedence (FR-023, FR-024, FR-022).
+- [X] T077 [P] [US4] Write new `internal/adapters/http/handlers/admin/service_accounts_metadata_test.go`: create and update matrix, `ETag` behavior, byte-order presentation in single read and list, no `metadata` on the status resource, every contract §4 rejection row on POST and PUT with no write, no record, and no sentinel in the response or log, the error precedence of contract §5, and the 512 KiB body limit that fits the largest escaped annotation map (FR-010–FR-012, FR-023, API-005).
+- [X] T078 [P] [US4] Add metadata to `tests/integration/storage/contract/service_account_repository.go` so both adapters round-trip it through every read and write, and add `TestPostgresServiceAccountObjectMetadata` to `tests/integration/storage/infra/object_metadata_test.go`: `'{}'` for empty maps, a reserved-prefix key reads back unchanged, and a non-object column fails closed (DB-002, DB-004; FR-021; SR-001).
+- [X] T079 [P] [US4] Write new `tests/integration/migrations/service_account_metadata_migration_test.go` for migration `052`: up, down, up preserves existing rows, the columns are `JSONB NOT NULL DEFAULT '{}'`, both constraints reject non-object values, and a busy table fails `NOWAIT` in both directions without queueing (DB-004).
+- [X] T080 [US4] Add the US4.1–US4.4 `It()` blocks to `tests/e2e/object_metadata_test.go`, one per scenario, with scenario comments (Constitution XIII).
+
+### Implementation for User Story 4
+
+- [X] T081 [US4] Write `migrations/052_service_account_metadata.{up,down}.sql`, atomic, with `NOWAIT` under a one-second `statement_timeout`. Make T079 pass (DB-004).
+- [X] T082 [US4] Add `ObjectMetadata` to `model.ServiceAccount`, `Metadata` to `ServiceAccountCreate` and `*Metadata` to `ServiceAccountUpdate`, `Validate()` calls, the `metadata` change, and the `metadata_changed` event in `internal/domain/thirdparty/service_account_service.go`. Make T076 pass (FR-023, FR-024).
+- [X] T083 [P] [US4] Add both columns to `internal/adapters/storage/postgres/service_account_repository.go` through `marshalObjectMetadata` and `restoreObjectMetadata`. The memory adapter copies the immutable value with its record. Make T078 pass (DB-002).
+- [X] T084 [US4] Decode `metadata` in `internal/adapters/http/handlers/admin/service_accounts_handler.go` with `decodeRequestMetadata` after the member reads and before the domain call, present it with `objectMetadataResponse`, and raise the body limit to 512 KiB. Make T077 and T080 pass (API-005).
+- [X] T085 [US4] Amend `api/admin/openapi.yaml`, `contracts/object-metadata.md`, `contracts/admin-openapi-metadata.yaml`, `data-model.md`, the ADR `20261127-130441-object-labels-annotations`, `specs/20261125-152113-service-accounts-stored-jwt/contracts/observability.md`, `ARCHITECTURE.md`, root `AGENTS.md`, and `docs/guides/manage-agents-and-services.md` (Constitution II, IV, V).
+
+**Checkpoint**: All four stories work, and all 19 acceptance cases pass.
+
+---
+
 ## 🔒 Phase N: Constitution Compliance Verification [MANDATORY]
 
 ### Design Phase Verification

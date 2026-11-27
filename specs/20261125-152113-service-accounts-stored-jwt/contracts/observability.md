@@ -19,7 +19,8 @@ this table.
 | `service.service_account.created` | An account was created |
 | `service.service_account.credential_rotated` | An update replaced the stored credential |
 | `service.service_account.ceiling_changed` | An update changed the ceiling and not the credential |
-| `service.service_account.renamed` | An update changed only the `canonical_id` |
+| `service.service_account.renamed` | An update changed the `canonical_id` and neither the credential nor the ceiling |
+| `service.service_account.metadata_changed` | An update changed only labels or annotations (added by the object-metadata amendment, `specs/20261127-093439-object-labels-annotations/spec.md` FR-024) |
 | `service.service_account.deleted` | An account and its credential were erased |
 
 One record per committed write. When one update changes several aspects, `event` is the first
@@ -34,10 +35,12 @@ match in the order above and `changes` lists all of them.
 | `kind` | `jwt_bearer` | all |
 | `scopes` | The ceiling after the write (before it, for `deleted`) | all |
 | `credential` | Credential summary group, section 3 | all |
-| `changes` | List from the closed set `credential`, `scopes`, `canonical_id` | the three update events |
+| `changes` | List from the closed set `credential`, `scopes`, `canonical_id`, `metadata` | the four update events |
 | `previous_observed_canonical_id` | Name before the write | update events, when `changes` has `canonical_id` |
 | `previous_observed_scopes` | Ceiling before the write | update events, when `changes` has `scopes` |
 | `previous_observed_credential` | Credential summary group before the write | `credential_rotated` |
+
+No record carries a label or annotation key or value, before or after the write.
 
 `trace_id`, `actor` and `calling_peer` come from the context handler.
 

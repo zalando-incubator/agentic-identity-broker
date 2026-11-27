@@ -45,6 +45,7 @@ type adminReply struct {
 	status int
 	body   map[string]any
 	raw    string
+	header http.Header
 }
 
 // newMetadataBroker must run in a setup node: it registers each resource's
@@ -103,16 +104,24 @@ func newPostgresMetadataBroker() *metadataBroker {
 }
 
 func (b *metadataBroker) adminRequest(method, path, body string) adminReply {
+	return b.adminRequestWithHeaders(method, path, body, nil)
+}
+
+func (b *metadataBroker) adminRequestWithHeaders(method, path, body string, headers map[string]string) adminReply {
 	var reader io.Reader
 	if body != "" {
 		reader = strings.NewReader(body)
 	}
-	response, err := b.admin.DirectRequest(method, path, fixtures.AdminPrincipal().String(), map[string]string{"Content-Type": "application/json"}, reader)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	requestHeaders := map[string]string{"Content-Type": "application/json"}
+	for name, value := range headers {
+		requestHeaders[name] = value
+	}
+	response, err := b.admin.DirectRequest(method, path, fixtures.AdminPrincipal().String(), requestHeaders, reader)
+	ExpectWithOffset(2, err).NotTo(HaveOccurred())
 	defer func() { _ = response.Body.Close() }()
 	raw, err := io.ReadAll(response.Body)
-	ExpectWithOffset(1, err).NotTo(HaveOccurred())
-	reply := adminReply{status: response.StatusCode, raw: string(raw)}
+	ExpectWithOffset(2, err).NotTo(HaveOccurred())
+	reply := adminReply{status: response.StatusCode, raw: string(raw), header: response.Header}
 	_ = json.Unmarshal(raw, &reply.body)
 	return reply
 }
@@ -201,7 +210,32 @@ func (b *metadataBroker) resourceCounts() [3]int {
 	return [3]int{len(agents), len(services), len(sets)}
 }
 
-var _ = Describe("Labels and annotations on Agents, Services, and Permission Sets", func() {
+func metadataServiceAccountBody(canonicalID, jwt, metadata string) string {
+	body := `{"canonical_id":"` + canonicalID + `","kind":"jwt_bearer","scopes":["read"],` +
+		`"credential":{"format":"signed_jwt","jwt":"` + jwt + `"}}`
+	if metadata == "" {
+		return body
+	}
+	return strings.TrimSuffix(body, "}") + `,"metadata":` + metadata + `}`
+}
+
+func (b *metadataBroker) serviceAccountsPath(rest string) string {
+	return "/api/services/" + b.serviceID.String() + "/service-accounts" + rest
+}
+
+func (b *metadataBroker) storedServiceAccounts() []*model.ServiceAccount {
+	accounts, err := b.store.ServiceAccounts().ListByService(context.Background(), b.serviceID)
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return accounts
+}
+
+func (b *metadataBroker) storedCiphertext(account *model.ServiceAccount) []byte {
+	ciphertext, err := account.Credential.GetCiphertext()
+	ExpectWithOffset(1, err).NotTo(HaveOccurred())
+	return ciphertext
+}
+
+var _ = Describe("Labels and annotations on Agents, Services, Permission Sets, and Service Accounts", func() {
 	var broker *metadataBroker
 
 	Context("when GitOps reconciles an Agent on PostgreSQL", Label("docker"), func() {
@@ -458,6 +492,124 @@ var _ = Describe("Labels and annotations on Agents, Services, and Permission Set
 				cleared := broker.expectAdmin(http.MethodPut, path, metadataServiceBody("Atlas", `{}`), http.StatusOK)
 				Expect(cleared.body).NotTo(HaveKey("metadata"))
 				Expect(broker.expectAdmin(http.MethodGet, path, "", http.StatusOK).body).NotTo(HaveKey("metadata"))
+			})
+		})
+
+		Context("when an operator manages Service Account metadata", func() {
+			var jwt string
+
+			BeforeEach(func() {
+				jwt = fixtures.ServiceAccountTokenT1()
+			})
+
+			// Scenario US4.1 from specs/20261127-093439-object-labels-annotations/spec.md
+			It("should return Service Account labels and annotations on create, read, and list, but not on status", func() {
+				random := rand.New(rand.NewPCG(4, 1))
+				body := metadataServiceAccountBody("platform-triage-bot", jwt, helpers.ShuffledMetadataJSON(fixtures.SentinelLabels(), fixtures.SentinelAnnotations(), random))
+				created := broker.expectAdmin(http.MethodPost, broker.serviceAccountsPath(""), body, http.StatusCreated)
+				want := map[string]any{"labels": stringMap(fixtures.SentinelLabels()), "annotations": stringMap(fixtures.SentinelAnnotations())}
+				Expect(created.body["metadata"]).To(Equal(want))
+				Expect(created.raw).To(ContainSubstring(`"labels":{"deployment":"local","sentinel.example.com/zz-label-7f3a9c":"zz-label-value-7f3a9c","team.example.com/owner":"platform"}`))
+				read := broker.expectAdmin(http.MethodGet, broker.serviceAccountsPath("/platform-triage-bot"), "", http.StatusOK)
+				Expect(read.body["metadata"]).To(Equal(want))
+				list := broker.expectAdmin(http.MethodGet, broker.serviceAccountsPath(""), "", http.StatusOK)
+				Expect(list.raw).To(ContainSubstring(`"metadata":{"labels":{"deployment":"local",`))
+				status := broker.expectAdmin(http.MethodGet, broker.serviceAccountsPath("/platform-triage-bot/status"), "", http.StatusOK)
+				Expect(status.body).NotTo(HaveKey("metadata"))
+				for _, reply := range []adminReply{created, read, list, status} {
+					Expect(reply.raw).NotTo(ContainSubstring(jwt))
+					Expect(reply.raw).NotTo(ContainSubstring(`"credential":`))
+				}
+				broker.expectNoSentinelLeaks()
+			})
+
+			// Scenario US4.2 from specs/20261127-093439-object-labels-annotations/spec.md
+			It("should keep Service Account metadata on an update that omits it", func() {
+				created := broker.expectAdmin(http.MethodPost, broker.serviceAccountsPath(""), metadataServiceAccountBody("platform-triage-bot", jwt, fixtures.SentinelMetadataJSON()), http.StatusCreated)
+				path := broker.serviceAccountsPath("/platform-triage-bot")
+				unchanged := broker.adminRequestWithHeaders(http.MethodPut, path, `{"scopes":["read"]}`, map[string]string{"If-Match": `"1"`})
+				Expect(unchanged.status).To(Equal(http.StatusOK), unchanged.raw)
+				Expect(unchanged.header.Get("ETag")).To(Equal(`"1"`))
+				Expect(unchanged.body["updated_at"]).To(Equal(created.body["updated_at"]))
+				Expect(unchanged.body["metadata"]).To(Equal(created.body["metadata"]))
+				widened := broker.adminRequestWithHeaders(http.MethodPut, path, `{"scopes":["read","write"]}`, map[string]string{"If-Match": `"1"`})
+				Expect(widened.status).To(Equal(http.StatusOK), widened.raw)
+				Expect(widened.header.Get("ETag")).To(Equal(`"2"`))
+				Expect(widened.body["metadata"]).To(Equal(created.body["metadata"]))
+				Expect(broker.expectAdmin(http.MethodGet, path, "", http.StatusOK).body["metadata"]).To(Equal(created.body["metadata"]))
+				broker.expectNoSentinelLeaks()
+			})
+
+			// Scenario US4.3 from specs/20261127-093439-object-labels-annotations/spec.md
+			It("should replace whole Service Account metadata, audit it without values, clear it with {}, and reject null", func() {
+				broker.expectAdmin(http.MethodPost, broker.serviceAccountsPath(""), metadataServiceAccountBody("platform-triage-bot", jwt, fixtures.SentinelMetadataJSON()), http.StatusCreated)
+				path := broker.serviceAccountsPath("/platform-triage-bot")
+				before := broker.storedServiceAccounts()[0]
+				broker.telemetry.Logs.Reset()
+
+				relabel := `{"scopes":["read"],"metadata":{"labels":{"environment":"` + fixtures.MetadataSentinelLabelValue + `"}}}`
+				replaced := broker.adminRequestWithHeaders(http.MethodPut, path, relabel, map[string]string{"If-Match": `"1"`})
+
+				Expect(replaced.status).To(Equal(http.StatusOK), replaced.raw)
+				Expect(replaced.header.Get("ETag")).To(Equal(`"2"`))
+				Expect(replaced.body["metadata"]).To(Equal(map[string]any{"labels": map[string]any{"environment": fixtures.MetadataSentinelLabelValue}}))
+				after := broker.storedServiceAccounts()[0]
+				Expect(after.UpdatedAt).To(BeTemporally(">", before.UpdatedAt))
+				Expect(broker.storedCiphertext(after)).To(Equal(broker.storedCiphertext(before)), "the credential is not re-encrypted")
+				records, err := broker.telemetry.Logs.Records()
+				Expect(err).NotTo(HaveOccurred())
+				var audit []map[string]any
+				for _, record := range records {
+					if event, _ := record["event"].(string); strings.HasPrefix(event, "service.service_account.") {
+						audit = append(audit, record)
+					}
+				}
+				Expect(audit).To(HaveLen(1))
+				Expect(audit[0]).To(HaveKeyWithValue("event", "service.service_account.metadata_changed"))
+				Expect(audit[0]).To(HaveKeyWithValue("changes", []any{"metadata"}))
+				broker.expectNoSentinelLeaks()
+
+				rejected := broker.expectAdmin(http.MethodPut, path, `{"scopes":["admin"],"metadata":null}`, http.StatusBadRequest)
+				Expect(rejected.body).To(Equal(map[string]any{"error": "validation failed", "message": "metadata must not be null"}))
+				unchanged := broker.expectAdmin(http.MethodGet, path, "", http.StatusOK)
+				Expect(unchanged.header.Get("ETag")).To(Equal(`"2"`))
+				Expect(unchanged.body["scopes"]).To(Equal([]any{"read"}))
+				cleared := broker.expectAdmin(http.MethodPut, path, `{"scopes":["read"],"metadata":{}}`, http.StatusOK)
+				Expect(cleared.body).NotTo(HaveKey("metadata"))
+				Expect(broker.storedServiceAccounts()[0].ObjectMetadata.IsEmpty()).To(BeTrue())
+				broker.expectNoSentinelLeaks()
+			})
+
+			// Scenario US4.4 from specs/20261127-093439-object-labels-annotations/spec.md
+			It("should apply the shared metadata rules to Service Account writes and store nothing on refusal", func() {
+				invalid := map[string]string{
+					`{"labels":{"agenticidentitybroker.dev/tier":"gold"}}`:               "metadata.labels contains a reserved key",
+					`{"labels":{"deployment":"local "}}`:                                 "metadata.labels contains an invalid value",
+					fixtures.MetadataJSON(nil, fixtures.AnnotationsOfDecodedSize(65537)): "metadata.annotations exceeds 65536 bytes",
+				}
+				for metadata, message := range invalid {
+					reply := broker.expectAdmin(http.MethodPost, broker.serviceAccountsPath(""), metadataServiceAccountBody("refused-bot", jwt, metadata), http.StatusBadRequest)
+					Expect(reply.body).To(Equal(map[string]any{"error": "validation failed", "message": message}))
+				}
+				Expect(broker.storedServiceAccounts()).To(BeEmpty())
+				Expect(broker.auditRecords("service.service_account.created")).To(BeZero())
+				Expect(broker.auditRecords("service.service_account.credential_rejected")).To(BeZero())
+
+				largest := fixtures.MetadataJSON(fixtures.LabelsOfCount(64), fixtures.EscapedAnnotationsOfDecodedSize(65536))
+				created := broker.expectAdmin(http.MethodPost, broker.serviceAccountsPath(""), metadataServiceAccountBody("platform-triage-bot", jwt, largest), http.StatusCreated)
+				Expect(len(metadataServiceAccountBody("platform-triage-bot", jwt, largest))).To(BeNumerically(">", 64<<10))
+				Expect(created.body["metadata"].(map[string]any)["labels"]).To(HaveLen(64))
+
+				path := broker.serviceAccountsPath("/platform-triage-bot")
+				for metadata, message := range invalid {
+					reply := broker.expectAdmin(http.MethodPut, path, `{"scopes":["admin"],"metadata":`+metadata+`}`, http.StatusBadRequest)
+					Expect(reply.body["message"]).To(Equal(message))
+				}
+				stored := broker.storedServiceAccounts()
+				Expect(stored).To(HaveLen(1))
+				Expect(stored[0].Version).To(Equal(int64(1)))
+				Expect(stored[0].Scopes).To(Equal([]string{"read"}))
+				Expect(fixtures.DecodedMetadataSize(stored[0].ObjectMetadata.Annotations())).To(Equal(65536))
 			})
 		})
 	})

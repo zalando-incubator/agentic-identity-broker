@@ -106,3 +106,32 @@ substitute for the CI workflow on the pushed commit.
 | `just verify` | Stopped at its security stage, before the test stages. gosec reports one issue (G304) in `tools/telemetrydoc/descriptions.go:24`, a file this feature does not change. The scan needed the repository's Go 1.27.4 toolchain first on `PATH`, because the container's base Go is 1.24.7 and the scan forces `GOTOOLCHAIN=local`. The test stages were run separately, as listed above. The frontend, ExtProc, CDK, and mock suites were not run |
 
 Infrastructure that was not available: the agentgateway image registry `cr.agentgateway.dev`.
+
+## Service Account amendment (User Story 4)
+
+```bash
+curl -X POST http://localhost:14000/api/services/company-platform/service-accounts \
+  -H 'X-Remote-User: admin@example.com' -H 'Content-Type: application/json' \
+  -d '{"canonical_id":"platform-triage-bot","kind":"jwt_bearer","scopes":["read"],
+       "credential":{"format":"signed_jwt","jwt":"eyJ..."},
+       "metadata":{"labels":{"environment":"production"}}}'
+```
+
+Expect `201` with `metadata`. A `PUT` with only `{"scopes":["read"]}` keeps it and the `ETag`.
+A `PUT` with `"metadata":{}` clears it and advances the `ETag`. The status read never shows it.
+
+### Recorded results
+
+Runs on 2026-11-27 on branch `speckit/service-account-metadata`, in the same kind of container
+(Go 1.27.4, local Docker daemon). They are not a substitute for CI on the pushed commit.
+
+| Command | Result |
+|---|---|
+| `just check` | Passed: 0 lint issues, 41 lint-rule fixtures rejected as expected |
+| `just telemetry-doc` | No change to `docs/reference/telemetry.md` |
+| `just test` | Feature packages pass. The same three environment-dependent tests as above fail in `internal/adapters/encryption/aws` and `internal/adapters/outboundhttp` |
+| `just test-integration-all` | Passed, including `service_account_metadata_migration_test.go` and `TestPostgresServiceAccountObjectMetadata` |
+| `ginkgo --procs=4 --label-filter='!performance && !docker' ./tests/e2e/` | Passed: 1049 specs, 0 failed, including US4.1–US4.4 |
+| `ginkgo --label-filter=docker --focus='Labels and annotations\|external\|External' ./tests/e2e/` | Passed: 8 of 8, including US1.2 on PostgreSQL and the external-ID upgrade specs with migration `052` in the chain |
+
+The full `just verify` gate was not run for the amendment.

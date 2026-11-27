@@ -1218,7 +1218,7 @@ Purpose: Persists agents, services, encrypted service-account credentials, permi
 
 Key tables: `agents`, `thirdparty_oauth2_services`, `service_accounts` (migration `050`; `ON DELETE RESTRICT` to its service), `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
 
-`agents`, `thirdparty_oauth2_services`, and `permission_sets` each carry `labels` and `annotations` columns: `JSONB NOT NULL DEFAULT '{}'`, constrained to JSON objects (migration `051`, ADR `20261127-130441-object-labels-annotations`). They hold Object Metadata and are read in the same row scans as the rest of each entity. No index covers them.
+`agents`, `thirdparty_oauth2_services`, `permission_sets`, and `service_accounts` each carry `labels` and `annotations` columns: `JSONB NOT NULL DEFAULT '{}'`, constrained to JSON objects (migrations `051` and `052`, ADR `20261127-130441-object-labels-annotations`). They hold Object Metadata and are read in the same row scans as the rest of each entity. No index covers them.
 
 ### 4.2. DynamoDB branch-key store
 
@@ -1381,7 +1381,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [048-authzen-delegation-pip.md](adrs/048-authzen-delegation-pip.md) | Accepted | AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc grant-context resolver, and permit-bound token reuse |
 | [20261119-211813-service-icons-image-mode.md](adrs/20261119-211813-service-icons-image-mode.md) | Accepted | Exact service-owned SVG metadata, authenticated JSON, named upload checks, and browser image-mode isolation |
 | [20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md) | Accepted | Service accounts on third-party services: repository port, stored-JWT posture (not a Constitution I exception), `service_id` encryption, derived status, optional `If-Match`, `RESTRICT` service deletion, migration `050`, Admin API `3.1.0` |
-| [20261127-130441-object-labels-annotations.md](adrs/20261127-130441-object-labels-annotations.md) | Accepted | Admin-only labels and annotations on Agents, Services, and Permission Sets: strict decoding, reserved prefix, write semantics, migration `051`, and no runtime effect. Extends ADR `047-unique-agent-external-id-reconcile` |
+| [20261127-130441-object-labels-annotations.md](adrs/20261127-130441-object-labels-annotations.md) | Accepted | Admin-only labels and annotations on Agents, Services, Permission Sets, and Service Accounts: strict decoding, reserved prefix, write semantics, migrations `051` and `052`, and no runtime effect. Extends ADR `047-unique-agent-external-id-reconcile` |
 
 ## 11. Project Identification
 
@@ -1471,7 +1471,7 @@ The terms that follow describe domain models and their relationships.
 
 **Agent Reconciliation**: Reconcile is the canonical term for applying the desired definition of an Agent selected by its External ID, creating it when absent or updating it while preserving UUID identity. Upsert and create-or-update are aliases for this Agent operation, distinct from UserGrant upsert. The `ReconcileUnchanged` outcome means no-op/replay: the effective definition already matches, so no write or mutation audit occurs and stored timestamps are preserved.
 
-**Object Metadata**: The immutable pair of a label map and an annotation map (`model.ObjectMetadata`) that each Agent, ThirdpartyOAuth2Service, and PermissionSet carries. Operators write it only through the Admin API, as the `metadata` member. It is unrelated to the CIMD Client ID Metadata Document, RFC 8414 authorization-server metadata (`Discovery.MetadataURL`), and gateway metadata (`036-extproc-metadata-token-exchange-input`). It has no runtime effect: no authorization, consent, token, CEL, OPA, approval, or Grant Context input reads it, and no End-User response, log, span, or metric carries it (ADR `20261127-130441-object-labels-annotations`).
+**Object Metadata**: The immutable pair of a label map and an annotation map (`model.ObjectMetadata`) that each Agent, ThirdpartyOAuth2Service, PermissionSet, and Service Account carries. Operators write it only through the Admin API, as the `metadata` member. It is unrelated to the CIMD Client ID Metadata Document, RFC 8414 authorization-server metadata (`Discovery.MetadataURL`), and gateway metadata (`036-extproc-metadata-token-exchange-input`). It has no runtime effect: no authorization, consent, token, CEL, OPA, approval, or Grant Context input reads it, and no End-User response, log, span, or metric carries it (ADR `20261127-130441-object-labels-annotations`).
 
 **Label**: An identifying, categorizing key/value pair in Object Metadata. The key is `[prefix/]name` in the Kubernetes qualified-name grammar, and the value is empty or a 1–63-character name. At most 64 per object. Keys and values are matched literally, so `Exposure` and `exposure` are distinct. A prefix of `agenticidentitybroker.dev`, or one ending in `.agenticidentitybroker.dev`, is reserved for the broker.
 

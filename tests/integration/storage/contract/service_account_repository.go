@@ -59,8 +59,12 @@ func contractAccount(serviceID id.ServiceID, canonicalID string) *model.ServiceA
 			Fingerprint: "SHA256:fhbwk8g0dDlEiuXzadc7Ytx+R1pSlxRBBNgzBxN+3UQ",
 		},
 		CredentialExpiresAt: &expiry,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		ObjectMetadata: model.RestoreObjectMetadata(
+			map[string]string{"team.example.com/owner": "platform", "Tier": "gold", "tier": ""},
+			map[string]string{"note": "Owned by 東京 équipe\n"},
+		),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 }
 
@@ -97,6 +101,8 @@ func assertSameAccount(t *testing.T, want, got *model.ServiceAccount) {
 		require.NotNil(t, got.CredentialExpiresAt)
 		assert.True(t, want.CredentialExpiresAt.Equal(*got.CredentialExpiresAt))
 	}
+	assert.True(t, want.ObjectMetadata.Equal(got.ObjectMetadata), "metadata %v %v != %v %v",
+		want.ObjectMetadata.Labels(), want.ObjectMetadata.Annotations(), got.ObjectMetadata.Labels(), got.ObjectMetadata.Annotations())
 	assert.Equal(t, want.Version, got.Version)
 	assert.True(t, want.CreatedAt.Equal(got.CreatedAt), "created_at %v != %v", want.CreatedAt, got.CreatedAt)
 	assert.True(t, want.UpdatedAt.Equal(got.UpdatedAt), "updated_at %v != %v", want.UpdatedAt, got.UpdatedAt)
@@ -132,6 +138,30 @@ func RunServiceAccountRepository(t *testing.T, newStorage NewStorage) {
 		stored, err := repo.Get(ctx, account.ServiceID, account.ID)
 		require.NoError(t, err)
 		assertSameAccount(t, account, stored)
+	})
+
+	t.Run("an account without metadata round-trips as empty and can gain and lose it", func(t *testing.T) {
+		st := newStorage(t)
+		repo := st.ServiceAccounts()
+		account := contractAccount(contractService(t, st), "no-metadata")
+		account.ObjectMetadata = model.ObjectMetadata{}
+		require.NoError(t, repo.Create(ctx, account))
+		stored, err := repo.Get(ctx, account.ServiceID, account.ID)
+		require.NoError(t, err)
+		assert.True(t, stored.ObjectMetadata.IsEmpty())
+
+		stored.ObjectMetadata = model.RestoreObjectMetadata(nil, map[string]string{"note": "added"})
+		require.NoError(t, repo.Update(ctx, stored, nil))
+		listed, err := repo.ListByService(ctx, account.ServiceID)
+		require.NoError(t, err)
+		require.Len(t, listed, 1)
+		assertSameAccount(t, stored, listed[0])
+
+		stored.ObjectMetadata = model.ObjectMetadata{}
+		require.NoError(t, repo.Update(ctx, stored, nil))
+		cleared, err := repo.GetByCanonicalID(ctx, account.ServiceID, "no-metadata")
+		require.NoError(t, err)
+		assert.True(t, cleared.ObjectMetadata.IsEmpty())
 	})
 
 	t.Run("create under an unknown service is not found", func(t *testing.T) {
@@ -206,6 +236,7 @@ func RunServiceAccountRepository(t *testing.T, newStorage NewStorage) {
 		changed.Credential = model.NewEncryptedSecret([]byte("rotated ciphertext"))
 		changed.Summary.Kid = new("2026-12")
 		changed.CredentialExpiresAt = nil
+		changed.ObjectMetadata = model.RestoreObjectMetadata(map[string]string{"tier": "silver"}, nil)
 		changed.UpdatedAt = account.UpdatedAt.Add(time.Minute)
 		require.NoError(t, repo.Update(ctx, &changed, nil))
 

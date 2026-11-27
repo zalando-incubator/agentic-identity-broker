@@ -831,6 +831,8 @@ optional:
   status are recomputed, and the previous token is no longer stored.
 - `canonical_id` renames the account. The old name stops working at once and becomes free.
 - `kind`, when sent, must be the account's kind. It cannot change.
+- `metadata` replaces the account's labels and annotations. When you omit it, they are kept. See
+  [Label and annotate agents, services, permission sets, and service accounts](#label-and-annotate-agents-services-permission-sets-and-service-accounts).
 - `null` is not accepted for any member.
 
 ```bash
@@ -1061,9 +1063,10 @@ curl -X POST http://localhost:14000/api/agents \
 
 The fetched CIMD document must also list `github-app://oauth/callback`. Without the Agent entry, the broker rejects the whole document, including its web callbacks. The broker matches private-use callbacks character for character in both lists. Register the lowercase, unencoded URI shown in the document. Web callbacks for a CIMD client come from the document, not the Agent list.
 
-## Label and annotate agents, services, and permission sets
+## Label and annotate agents, services, permission sets, and service accounts
 
-Admin API 3.1.0 adds an optional `metadata` member to agents, services, and permission sets. Use
+Admin API 3.1.0 adds an optional `metadata` member to agents, services, permission sets, and
+service accounts. Use
 labels to categorize an object, for example by deployment or owning team. Use annotations for
 notes that tools and people read, for example the GitOps revision that produced the object.
 
@@ -1113,7 +1116,7 @@ changes.
 
 ### Writes per object
 
-| Request `metadata` | Agent writes | Permission set writes | Service create | Service update |
+| Request `metadata` | Agent writes | Permission set writes | Service and service account create | Service and service account update |
 | --- | --- | --- | --- | --- |
 | Omitted | Cleared | Cleared | Empty | Kept |
 | `{}` | Cleared | Cleared | Empty | Cleared |
@@ -1122,11 +1125,26 @@ changes.
 
 The broker never merges keys: a sent `metadata` replaces both maps. A collection `PUT` that sends
 the same labels and annotations in another key order is a no-op. It writes nothing and keeps
-`updated_at`. A changed label or annotation is an update. A service update that changes metadata
-also changes the service `ETag`.
+`updated_at`. A changed label or annotation is an update. A service or service account update
+that changes metadata also changes its `ETag`. A service account update that sends the stored
+metadata again, in any key order, and changes nothing else keeps the `ETag`. A metadata change
+leaves a service account's stored token untouched.
 
-Agent `PUT` requests accept bodies up to 512 KiB, so an agent can carry the largest allowed
-annotations.
+```bash
+curl -X PUT http://localhost:14000/api/services/company-platform/service-accounts/platform-triage-bot \
+  -H "X-Remote-User: admin@example.com" \
+  -H "Content-Type: application/json" \
+  -H 'If-Match: "2"' \
+  -d '{
+    "scopes": ["read", "write"],
+    "metadata": { "labels": { "environment": "staging" } }
+  }'
+```
+
+The service account status read does not include `metadata`.
+
+Agent `PUT` requests and service account requests accept bodies up to 512 KiB, so they can carry
+the largest allowed annotations.
 
 ### What metadata does not do
 

@@ -1,4 +1,4 @@
-# Implementation Plan: Labels and Annotations on Agents, Services, and Permission Sets
+# Implementation Plan: Labels and Annotations on Agents, Services, Permission Sets, and Service Accounts
 
 **Branch**: `speckit/issue-427` | **Date**: 2026-11-27 | **Spec**: [spec.md](spec.md)
 
@@ -7,12 +7,13 @@
 ## Summary
 
 Add one immutable **Object Metadata** value, a label map and an annotation map, to the existing
-Agent, ThirdpartyOAuth2Service, and PermissionSet entities. Operators set it through the Admin API
-only. The broker validates it strictly and literally and stores it in two JSONB columns per
+Agent, ThirdpartyOAuth2Service, and PermissionSet entities, and, by the amendment of User Story 4,
+to ServiceAccount. Operators set it through the Admin API only. The broker validates it strictly and literally and stores it in two JSONB columns per
 table. Admin responses return it with keys in byte order. Nothing at runtime reads it: no
 authorization path, token, approval, End-User API response, log, span, or metric. The work extends
-existing write paths, so there is no new entity, repository, endpoint, configuration, or
-telemetry.
+existing write paths, so there is no new entity, repository, endpoint, configuration, span, or
+metric. The amendment adds one audit event, `service.service_account.metadata_changed`, because
+Service Account updates are audited per changed aspect.
 
 The [contract](contracts/object-metadata.md) defines the shape, rules, fixed error messages, and
 write matrix. [admin-openapi-metadata.yaml](contracts/admin-openapi-metadata.yaml) holds the
@@ -139,6 +140,7 @@ the Admin handler package. No new package boundary is needed.
 | US1 (P1) | Agent wiring: create, ID-addressed PUT, and collection PUT, the no-op map equality, both adapters, and the body caps. |
 | US2 (P1) | Every rejection class on every write path of all three resources, with messages that contain no submitted text. |
 | US3 (P2) | Permission Set full replacement, Service keep and replace in `prepareUpdate`, and the runtime-isolation journey. |
+| US4 (P2), amendment | Service Account metadata after PR #577 merged: migration `052`, domain keep and replace with the `metadata_changed` audit event, both adapters, the handler with a 512 KiB body limit, and the OpenAPI, contract, ADR, and guide amendments. |
 | Phase N, Compliance | `just check`, `just telemetry-doc`, migration and PostgreSQL suites, the absence checks for logs, spans, and metrics, documentation, and the full `CONTRIBUTING.md` gate. |
 
 - [x] Phase 0 (refactoring): skip. No structural blocker. The existing presence handling and the

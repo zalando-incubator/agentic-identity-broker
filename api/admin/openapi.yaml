@@ -2076,6 +2076,8 @@ paths:
         as a compact JWS whose payload is a JWT claims set. Its header must state an `alg` other
         than `none`, and, when it states an `exp`, the token must not be expired. A JWT without
         `exp` is accepted. The token is stored exactly as submitted.
+
+        The request body is at most 512 KiB. An omitted `metadata` stores empty metadata.
       operationId: createServiceAccount
       tags: [Service Accounts]
       requestBody:
@@ -2094,6 +2096,20 @@ paths:
                     format: signed_jwt
                     use: access_token
                     jwt: eyJ...T1
+              with_metadata:
+                value:
+                  canonical_id: platform-triage-bot
+                  kind: jwt_bearer
+                  scopes: [read]
+                  credential:
+                    format: signed_jwt
+                    jwt: eyJ...T1
+                  metadata:
+                    labels:
+                      environment: production
+                      team.example.com/owner: platform
+                    annotations:
+                      tickets.example.com/request: SEC-1042
       responses:
         '201':
           description: "Account created. Its credential was not expired at the time of the request."
@@ -2153,7 +2169,11 @@ paths:
         - `canonical_id`, when present and different, renames the account within the service.
           When omitted, it is kept.
         - `kind`, when present, must equal the account's kind.
+        - `metadata`, when present, replaces both maps; a missing `labels` or `annotations`
+          member means empty, and `{}` clears both. When omitted, the stored metadata is kept.
+          A metadata change increments the ETag and does not re-encrypt the credential.
         - `null` is not accepted for any member.
+        - The request body is at most 512 KiB.
 
         The account's `id` and `service_id` never change. A request that changes nothing answers
         `200` with the unchanged representation and the same ETag.
@@ -2185,6 +2205,12 @@ paths:
                 value:
                   canonical_id: platform-triage
                   scopes: [read]
+              relabel:
+                value:
+                  scopes: [read]
+                  metadata:
+                    labels:
+                      environment: staging
       responses:
         '200':
           description: The account after the update, or unchanged when nothing differed.
@@ -5264,6 +5290,8 @@ components:
           description: The ceiling. Not compared with anything inside the stored JWT.
         credential:
           $ref: '#/components/schemas/ServiceAccountCredential'
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
     ServiceAccountCreateRequest:
       allOf:
         - $ref: '#/components/schemas/ServiceAccountRequest'
@@ -5338,6 +5366,8 @@ components:
         updated_at:
           type: string
           format: date-time
+        metadata:
+          $ref: '#/components/schemas/ObjectMetadata'
     CredentialSummary:
       readOnly: true
       oneOf:
@@ -5556,9 +5586,10 @@ components:
         map. A `null` value inside a map is rejected.
 
         Requests: Agent POST, PUT, and collection PUT, and Permission Set POST and PUT, replace
-        both maps in full. An omitted `metadata` or member means empty. Service POST treats an
-        omitted `metadata` as empty. Service PUT keeps stored metadata when `metadata` is
-        omitted, and replaces both maps when it is sent. Keys are never merged.
+        both maps in full. An omitted `metadata` or member means empty. Service POST and Service
+        Account POST treat an omitted `metadata` as empty. Service PUT and Service Account PUT
+        keep stored metadata when `metadata` is omitted, and replace both maps when it is sent.
+        Keys are never merged.
 
         Keys and values are matched literally. They are never trimmed or normalized, and they are
         stored and compared exactly as sent. As in Kubernetes, an annotation key's grammar and
