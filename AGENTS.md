@@ -215,7 +215,8 @@ See Principle II in `.specify/memory/constitution.md`.
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
 | 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc grant-context resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
-| 20261127-130441 | `adrs/20261127-130441-object-labels-annotations.md` | Admin-only labels and annotations on Agents, Services, and Permission Sets; strict `jsontext` decoding, reserved `agenticidentitybroker.dev` prefix, per-resource write semantics, migration `050`, no runtime effect; extends `047-unique-agent-external-id-reconcile` |
+| 20261125-154231 | `adrs/20261125-154231-service-accounts-stored-jwt.md` | Service accounts on third-party services: stored JWT checked for form only and never verified (not a Principle I exception), `service_id` encryption, derived status, optional `If-Match`, `RESTRICT` service deletion, migration `050` |
+| 20261127-130441 | `adrs/20261127-130441-object-labels-annotations.md` | Admin-only labels and annotations on Agents, Services, and Permission Sets; strict `jsontext` decoding, reserved `agenticidentitybroker.dev` prefix, per-resource write semantics, migration `051`, no runtime effect; extends `047-unique-agent-external-id-reconcile` |
 
 ## Domain Glossary
 
@@ -253,6 +254,12 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **Label** | Identifying key/value in Object Metadata: Kubernetes qualified-name key, empty or 1–63-character value, at most 64; matched literally; `agenticidentitybroker.dev` prefix reserved. |
 | **Annotation** | Non-identifying key/value in Object Metadata: label key rules, UTF-8 value without U+0000, at most 65,536 decoded bytes per object. |
 | **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
+| **Service Account** | Provider-issued machine credential attached to one ThirdpartyOAuth2Service for life, with a Ceiling; ID and Kind fixed, `canonical_id` unique within the service and renamable. Stored encrypted under the service's `service_id` context, never returned; a service holding one cannot be deleted. |
+| **Kind** | How a Service Account obtains tokens; selects the accepted Credential Formats; fixed after creation. First kind: `jwt_bearer`. |
+| **Credential Format** | Shape of a Service Account secret within its Kind; discriminates the encrypted credential document. First format: `signed_jwt`, a JWT signed outside the broker, checked for form only and never verified. |
+| **Ceiling** | Non-empty set of unique scopes bounding what a Service Account may ever obtain; never compared with the stored credential. |
+| **Narrowing** | Whether the broker can ask for less than the Ceiling; derived from Kind and Credential Format, never settable; `none` for `signed_jwt`. |
+| **Credential Summary** | Non-secret recognition data shown instead of a Service Account credential: format, use, unverified `iss`/`sub`/`kid`/`exp`, and a `SHA256:` fingerprint. Display and status only, never authorization. |
 
 ## Development Workflow
 

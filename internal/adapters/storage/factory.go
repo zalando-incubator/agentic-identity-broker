@@ -65,6 +65,7 @@ type Adapter struct {
 	authorizationCodes     ports.AuthorizationCodeRepository
 	pkceSessions           ports.PKCESessionRepository
 	clientAssertionReplays ports.ClientAssertionReplayRepository
+	serviceAccounts        ports.ServiceAccountRepository
 }
 
 // NewAdapter creates a storage adapter based on configuration.
@@ -106,6 +107,8 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 	signingKeys := memory.NewSigningKeyStore()
 	sessions := memory.NewInMemoryUserSessionRepository()
 	providerRepo := memory.NewInMemoryThirdpartyOAuth2ProviderRepository().WithUserSessionRepository(sessions)
+	serviceAccounts := memory.NewServiceAccountRepository().WithProviderRepository(providerRepo)
+	providerRepo.WithServiceAccountRepository(serviceAccounts)
 	return &Adapter{
 		lifecycle:              memAdapter,
 		users:                  memAdapter,
@@ -129,6 +132,7 @@ func newMemoryAdapter(config *ports.StorageConfig) (*Adapter, error) {
 		transactions:           noOpStorageTransactionManager{},
 		pkceSessions:           memory.NewPKCESessionStore(),
 		clientAssertionReplays: memory.NewClientAssertionReplayStore(),
+		serviceAccounts:        serviceAccounts,
 	}, nil
 }
 
@@ -170,6 +174,7 @@ func newPostgresAdapter(config *ports.StorageConfig, logger *slog.Logger) (*Adap
 		transactions:           pgAdapter,
 		pkceSessions:           postgres.NewPKCESessionRepo(pgAdapter),
 		clientAssertionReplays: postgres.NewClientAssertionReplayRepo(pgAdapter),
+		serviceAccounts:        postgres.NewServiceAccountRepository(pgAdapter),
 	}, nil
 }
 
@@ -234,6 +239,11 @@ func (a *Adapter) Services() ports.ThirdpartyOAuth2ProviderRepository {
 // DiscoveryStatusWriter records failed discovery without changing active services.
 func (a *Adapter) DiscoveryStatusWriter() ports.ThirdpartyOAuth2ProviderDiscoveryStatusWriter {
 	return a.discoveryStatusWriter
+}
+
+// ServiceAccounts returns the service-account repository.
+func (a *Adapter) ServiceAccounts() ports.ServiceAccountRepository {
+	return a.serviceAccounts
 }
 
 // UserGrants returns the UserGrantRepository interface implementation.

@@ -23,6 +23,9 @@ type AdminHandlers struct {
 	// ProtectedResources handler manages a service's protected-resource set.
 	ProtectedResources *admin.ProtectedResourcesHandler
 
+	// ServiceAccounts manages the service accounts of a third-party service.
+	ServiceAccounts *admin.ServiceAccountsHandler
+
 	// PermissionSets handler for admin API - manages permission set CRUD operations
 	PermissionSets *admin.PermissionSetsHandler
 

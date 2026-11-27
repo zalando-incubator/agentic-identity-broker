@@ -171,6 +171,7 @@ These data classes are prohibited at all levels, including `Debug`.
 | Request method, path, client IP | `middleware.SanitizeLogValue` (`internal/adapters/http/middleware`). Take values from `SecurityContext`. |
 | Caller-supplied header (for example `X-Request-ID`) | Validate the format and limit the length before you log it. If it is not valid, generate a new value. |
 | JWT | Header and claim metadata only: `kid`, `alg`, `iss`, `aud`, `jti`, `exp`, validation failure reason |
+| Credential fingerprint | `SHA256:` and the base64 SHA-256 digest of a stored service-account credential, only in `service.service_account.*` audit records. Never the credential, a fragment of it, or its ciphertext. |
 | JWK Set | `kid` list or diff (`DiffKeyIDs()`), not the set |
 | Scope, tool name | Only values that configuration bounds. Do not echo values that are not validated. |
 

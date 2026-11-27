@@ -45,7 +45,7 @@ constraint only when it adds to or narrows that rule.
 **Purpose**: Load the governing instructions and confirm the migration slot.
 
 - [X] T001 Confirm that `.specify/feature.json` selects `specs/20261127-093439-object-labels-annotations`. Read `internal/AGENTS.md`, `internal/domain/AGENTS.md`, `internal/adapters/AGENTS.md`, `tests/AGENTS.md`, `tests/e2e/AGENTS.md`, `tests/integration/AGENTS.md`, `coding-standards/LOGGING.md`, `coding-standards/OPENTELEMETRY.md`, and `adrs/047-unique-agent-external-id-reconcile.md` before changing those areas (Constitution II, XV).
-- [X] T002 List `migrations/` and confirm that `050` is still the next unused number. If another branch has taken it, update the migration number in `specs/20261127-093439-object-labels-annotations/data-model.md`, `plan.md`, and `quickstart.md` before T008 (DB-001; Constitution IX).
+- [X] T002 List `migrations/` and confirm that `050` is still the next unused number (it was later taken by `050_create_service_accounts` from `release/v0.2`, so this feature uses `051`). If another branch has taken it, update the migration number in `specs/20261127-093439-object-labels-annotations/data-model.md`, `plan.md`, and `quickstart.md` before T008 (DB-001; Constitution IX).
 
 ---
 
@@ -70,8 +70,8 @@ API confirmation in T006.
 
 ### Phase 2d: Database Design
 
-- [X] T008 [P] Write `tests/integration/migrations/object_metadata_migration_test.go` on the production migration chain, following `tests/integration/migrations/service_icons_migration_test.go`, before the migration exists. Run up, down, and up again. Rows inserted at version `049` read as `{}` for each `data-model.md` Persistence column. Each named check rejects JSON `null` and a non-object value. Unrelated columns survive both directions. Use explicit column lists. The test compiles and fails because migration `050` does not exist yet (DB-002; Constitution VIII, IX).
-- [X] T009 After T006, write `migrations/050_object_metadata.up.sql` and `migrations/050_object_metadata.down.sql` (number from T002). Implement the six columns and six named constraints in the `data-model.md` Persistence table: `agents.labels`, `agents.annotations`, `thirdparty_oauth2_services.labels`, `thirdparty_oauth2_services.annotations`, `permission_sets.labels`, and `permission_sets.annotations`. Both directions are atomic. Add no index, backfill, or timestamp rewrite. The down migration drops the constraints, then the columns. Make T008 pass (DB-001, DB-003; Constitution IX).
+- [X] T008 [P] Write `tests/integration/migrations/object_metadata_migration_test.go` on the production migration chain, following `tests/integration/migrations/service_icons_migration_test.go`, before the migration exists. Run up, down, and up again. Rows inserted at version `050` read as `{}` for each `data-model.md` Persistence column. Each named check rejects JSON `null` and a non-object value. Unrelated columns survive both directions. Use explicit column lists. The test compiles and fails because migration `051` does not exist yet (DB-002; Constitution VIII, IX).
+- [X] T009 After T006, write `migrations/051_object_metadata.up.sql` and `migrations/051_object_metadata.down.sql` (number from T002). Implement the six columns and six named constraints in the `data-model.md` Persistence table: `agents.labels`, `agents.annotations`, `thirdparty_oauth2_services.labels`, `thirdparty_oauth2_services.annotations`, `permission_sets.labels`, and `permission_sets.annotations`. Both directions are atomic. Add no index, backfill, or timestamp rewrite. The down migration drops the constraints, then the columns. Make T008 pass (DB-001, DB-003; Constitution IX).
 
 ### Phase 2e: Frontend/Design System Review
 
@@ -208,7 +208,7 @@ Service with and without metadata, and read both back (US3.1–US3.5).
 - [X] T053 [P] Verify the Object Metadata, Label, and Annotation glossary entries in `ARCHITECTURE.md` and root `AGENTS.md` (Constitution V).
 - [X] T054 [P] Verify that `examples/config/`, `examples/config/README.md`, `internal/ports/config.go`, and `charts/agentic-identity-broker/` are unchanged, as no configuration was added (Constitution VII).
 - [X] T055 Verify that `api/admin/openapi.yaml` is 3.1.0 with the confirmed fragments, that `api/enduser/openapi.yaml` is unchanged at 1.3.0, and that the T006 confirmation is recorded in plan.md and referenced in the PR description (Constitution IV, X).
-- [X] T056 [P] Verify that the migration design in data-model.md matches `migrations/050_object_metadata.{up,down}.sql` (Constitution IX).
+- [X] T056 [P] Verify that the migration design in data-model.md matches `migrations/051_object_metadata.{up,down}.sql` (Constitution IX).
 - [X] T057 [P] Verify that no frontend change was made, so no design-system review, Playwright test, or screenshot applies (Constitution XI).
 - [X] T058 Verify that spec.md Journeys 1–4 link their scenarios and match the published contract (Constitution XIV).
 - [X] T059 Verify that the 15 E2E cases were written before the behavior, with realistic assertions and no pending, skipped, or placeholder cases, and no red-phase comments (Constitution XIII).

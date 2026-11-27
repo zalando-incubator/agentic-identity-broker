@@ -25,8 +25,8 @@ var objectMetadataTables = []struct {
 func objectMetadataMigrationFixture(t *testing.T) *MigrationTestFramework {
 	t.Helper()
 	pg := bootstrap.RequireSharedPostgres(t)
-	name, url, cleanup := pg.SetupDatabaseFromTemplate(t, "object_metadata_49", func(t *testing.T, name string) {
-		pg.ApplyMigrationsUpTo(t, name, 49)
+	name, url, cleanup := pg.SetupDatabaseFromTemplate(t, "object_metadata_50", func(t *testing.T, name string) {
+		pg.ApplyMigrationsUpTo(t, name, 50)
 	})
 	db, err := sql.Open("pgx", url)
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func objectMetadataMigrationData(t *testing.T, f *MigrationTestFramework) string
 func TestObjectMetadataMigrationUpDownUpPreservesExistingData(t *testing.T) {
 	f := objectMetadataMigrationFixture(t)
 	before := objectMetadataMigrationData(t, f)
-	require.NoError(t, f.Up(t, 50))
+	require.NoError(t, f.Up(t, 51))
 	assert.Equal(t, before, objectMetadataMigrationData(t, f))
 	for _, tc := range objectMetadataTables {
 		for _, column := range []string{"labels", "annotations"} {
@@ -88,7 +88,7 @@ func TestObjectMetadataMigrationUpDownUpPreservesExistingData(t *testing.T) {
 			assert.Equal(t, "true", empty, "pre-migration rows of %s read as empty %s", tc.table, column)
 		}
 	}
-	require.NoError(t, f.Down(t, 49))
+	require.NoError(t, f.Down(t, 50))
 	for _, tc := range objectMetadataTables {
 		for _, column := range []string{"labels", "annotations"} {
 			exists, err := f.ColumnExists(t, tc.table, column)
@@ -97,17 +97,17 @@ func TestObjectMetadataMigrationUpDownUpPreservesExistingData(t *testing.T) {
 		}
 	}
 	assert.Equal(t, before, objectMetadataMigrationData(t, f), "rollback loses only metadata")
-	require.NoError(t, f.Up(t, 50))
+	require.NoError(t, f.Up(t, 51))
 	assert.Equal(t, before, objectMetadataMigrationData(t, f))
 	version, dirty, err := f.Version(t)
 	require.NoError(t, err)
-	assert.Equal(t, uint(50), version)
+	assert.Equal(t, uint(51), version)
 	assert.False(t, dirty)
 }
 
 func TestObjectMetadataMigrationRejectsNonObjectValues(t *testing.T) {
 	f := objectMetadataMigrationFixture(t)
-	require.NoError(t, f.Up(t, 50))
+	require.NoError(t, f.Up(t, 51))
 	for _, tc := range objectMetadataTables {
 		for column, constraint := range map[string]string{"labels": tc.labels, "annotations": tc.annotations} {
 			for _, value := range []string{"null", "[]", `"text"`, "1"} {

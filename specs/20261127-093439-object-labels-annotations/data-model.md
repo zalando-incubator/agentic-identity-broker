@@ -85,7 +85,7 @@ metadata failure to `400 validation failed`.
 
 ## Persistence
 
-Migration `050_object_metadata.{up,down}.sql` is atomic. The inspected sequence ends at `049`.
+Migration `051_object_metadata.{up,down}.sql` is atomic. It follows `050_create_service_accounts`, which the service-accounts feature added to `release/v0.2`.
 Re-check for the next unused slot when the migration is written.
 
 | Table | Column | Definition | Named constraint |

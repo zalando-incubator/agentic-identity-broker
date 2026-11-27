@@ -26,7 +26,7 @@ and [data-model.md](data-model.md) records the value object and the persistence 
 decoding, which rejects duplicates and invalid UTF-8, and `regexp` for the Kubernetes-compatible
 grammar. The existing chi, sqlx/pgx v5, and slog stack. No new module.
 **Storage**: Two `JSONB NOT NULL DEFAULT '{}'` columns, with object-type checks, on `agents`,
-`thirdparty_oauth2_services`, and `permission_sets`, added by atomic migration `050`. The
+`thirdparty_oauth2_services`, and `permission_sets`, added by atomic migration `051`. The
 in-memory adapter has equivalent fields. Repository interfaces do not change.
 **Testing**: Table-driven Go unit tests (testify), handler tests with `httptest`, PostgreSQL
 integration and migration tests against the production chain, and Ginkgo E2E with the buffered
@@ -66,7 +66,7 @@ OpenAPI documents, of which only the Admin document changes (3.0.0 → 3.1.0).
 | Glossary terms | Done: **Object Metadata**, **Label**, and **Annotation** in `ARCHITECTURE.md` §12 and the root `AGENTS.md` Domain Glossary |
 | Configuration design | Not applicable, confirmed (T005): no configuration parameter. `internal/ports/config.go`, `examples/config/`, `examples/config/README.md`, `charts/agentic-identity-broker/`, and ExtProc configuration are unchanged |
 | API design | **Confirmed (API-004)**: the maintainer confirmed `contracts/object-metadata.md` and `contracts/admin-openapi-metadata.yaml` as written, including the §4 messages, the §5 write matrix, and the §6 512 KiB caps. Given on 2026-11-27 in the `/speckit-implement` session for this branch (`speckit/issue-427`), in answer to an explicit confirmation question, and recorded in the [PR #577 confirmation comment](https://github.com/zalando-incubator/agentic-identity-broker/pull/577#issuecomment-7219784410). Published in `api/admin/openapi.yaml` 3.1.0 |
-| Database design | Done: data-model.md, migration `050` (still the next unused number when written) |
+| Database design | Done: data-model.md, migration `051` (renumbered from `050` after `release/v0.2` added `050_create_service_accounts`) |
 | E2E design (1:1 mapping) | Done: table below. Tests are in `tests/e2e/object_metadata_test.go` |
 | Frontend, Playwright, screenshots | Not applicable, confirmed (T010): `web/` and `api/enduser/openapi.yaml` do not change, so no design-system review, Wireloom, Playwright, or screenshot work applies |
 | Observability (T017) | No log event, span, attribute, or metric is added or changed. Sentinel-absence assertions cover the existing audit records `agents.agent.created`/`updated`, `permissionset.permission_set.created`/`updated`, `service.thirdparty.provider_created`/`updated`, the branch records `service.thirdparty.discovered_service_created`/`updated`, `service.thirdparty.cimd_public_service_created`/`updated`, and `service.thirdparty.cimd_confidential_service_created`/`updated`, and the Admin handler `WarnContext(..., "error", err)` validation-failure calls. A metadata rejection uses that same diagnostic pattern: one constant `Warn` message, `metadata validation failed`, with the fixed error and no `event` attribute (`coding-standards/LOGGING.md` §2.2) |
@@ -116,7 +116,7 @@ internal/adapters/http/handlers/admin/
 └── permission_sets_handler.go           # POST/PUT wiring; POST reads body bytes
 internal/adapters/storage/memory/        # agent, permission-set, service records carry the value
 internal/adapters/storage/postgres/      # explicit columns in every read/write; '{}' for empty
-migrations/050_object_metadata.{up,down}.sql
+migrations/051_object_metadata.{up,down}.sql
 api/admin/openapi.yaml                   # 3.1.0; schemas, field-policy row, examples
 tests/e2e/object_metadata_test.go        # new: 15 canonical It() blocks
 tests/integration/migrations/object_metadata_migration_test.go  # new

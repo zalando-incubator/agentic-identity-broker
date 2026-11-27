@@ -151,13 +151,19 @@ Each admin endpoint requires `X-Remote-User`. The proxy enforces administrator p
 | POST | `/api/services` | Register a third-party OAuth2 service. |
 | GET | `/api/services/{service-id}` | Get a service (secret redacted). |
 | PUT | `/api/services/{service-id}` | Update a service. |
-| DELETE | `/api/services/{service-id}` | Delete a service (`409 conflict` if grants reference it). |
+| DELETE | `/api/services/{service-id}` | Delete a service (`409 conflict` if grants reference it or it holds a service account). |
 | GET | `/api/services/{service-id}/discovery-status` | Read stored discovery status without contacting the provider. |
 | GET | `/api/services/{service-id}/protected-resources` | List the service's protected-resource URIs. |
 | POST | `/api/services/{service-id}/protected-resources` | Add one protected-resource URI. |
 | PUT | `/api/services/{service-id}/protected-resources/{resource}` | Add one URI by its encoded path segment. |
 | PATCH | `/api/services/{service-id}/protected-resources/{resource}` | Rename a protected-resource URI. |
 | DELETE | `/api/services/{service-id}/protected-resources/{resource}` | Remove a protected-resource URI. |
+| GET | `/api/services/{service-id}/service-accounts` | List the service's service accounts (bare array, ordered by `canonical_id`; no credentials). |
+| POST | `/api/services/{service-id}/service-accounts` | Attach a service account with a stored credential. |
+| GET | `/api/services/{service-id}/service-accounts/{service-account-id}` | Read one service account by UUID or `canonical_id`. |
+| PUT | `/api/services/{service-id}/service-accounts/{service-account-id}` | Rotate the credential, change the ceiling or rename (optional `If-Match`). |
+| DELETE | `/api/services/{service-id}/service-accounts/{service-account-id}` | Remove a service account and its credential (optional `If-Match`). |
+| GET | `/api/services/{service-id}/service-accounts/{service-account-id}/status` | Read whether the account is `ready` or `failed`. |
 
 ### Protected-resource discovery
 

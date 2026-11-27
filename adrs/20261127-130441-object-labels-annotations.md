@@ -55,7 +55,7 @@ Services follow the `IconSVG` precedent with a transient `ObjectMetadataProvided
 
 ### Persistence
 
-Atomic migration `050_object_metadata` adds `labels` and `annotations` as `JSONB NOT NULL DEFAULT '{}'` to `agents`, `thirdparty_oauth2_services`, and `permission_sets`, each with a named `CHECK (jsonb_typeof(...) = 'object')`. `NOT NULL` alone would admit the JSON literal `null`. There is no index or backfill, and existing rows read as empty. Rollback loses only metadata.
+Atomic migration `051_object_metadata` adds `labels` and `annotations` as `JSONB NOT NULL DEFAULT '{}'` to `agents`, `thirdparty_oauth2_services`, and `permission_sets`, each with a named `CHECK (jsonb_typeof(...) = 'object')`. `NOT NULL` alone would admit the JSON literal `null`. There is no index or backfill, and existing rows read as empty. Rollback loses only metadata.
 
 Adapters write `'{}'` for an empty map. Every explicit column list that reads or writes these entities includes both columns, including the OAuth2 hot paths `GetByClientID` and `GetByClientURI`. Reads decode each column into a string map and rebuild the value with `RestoreObjectMetadata`. Reads apply no write rule, so a broker-defined reserved key or a row edited directly in the database can never fail an OAuth2 client lookup or token exchange. A column that is not a JSON object of strings is an internal storage error, and the adapter returns no partial entity. Repository interfaces do not change.
 

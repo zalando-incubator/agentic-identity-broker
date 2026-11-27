@@ -166,7 +166,7 @@ state, and not only in `ValidateUpdate`, which validates a copy.
 
 ## 8. Persistence
 
-**Decision:** Add migration `050_object_metadata` (the inspected sequence ends at `049`). It is
+**Decision:** Add migration `051_object_metadata` (the sequence ends at `050_create_service_accounts`). It is
 atomic and adds `labels JSONB NOT NULL DEFAULT '{}'` and `annotations JSONB NOT NULL DEFAULT '{}'`
 to `agents`, `thirdparty_oauth2_services`, and `permission_sets`. Each column gets a named
 `CHECK (jsonb_typeof(<column>) = 'object')`. The down migration drops the constraints and columns.
