@@ -269,4 +269,34 @@ describe('ThirdPartySessionDetailPage', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
     expect(screen.queryByText('Session token refreshed successfully.')).not.toBeInTheDocument();
   });
+  it('closes the termination dialog when navigating to another service while termination is pending', async () => {
+    const user = userEvent.setup();
+    const previous = { ...detail(activeSession), service: { ...detail(activeSession).service, display_name: 'Previous Service' } };
+    vi.mocked(sessionsApi.getServiceSessionDetail).mockImplementation((identifier) =>
+      Promise.resolve(identifier === 'previous' ? previous : detail(activeSession)),
+    );
+    let finishTermination!: () => void;
+    vi.mocked(sessionsApi.terminateSession).mockImplementation(
+      () => new Promise<void>((resolve) => {
+        finishTermination = resolve;
+      }),
+    );
+    const router = createMemoryRouter(
+      [{ path: '/sessions/:service', element: <ThirdPartySessionDetailPage /> }],
+      { initialEntries: ['/sessions/previous'] },
+    );
+    render(<RouterProvider router={router} />);
+    await screen.findByRole('heading', { level: 2, name: 'Previous Service' });
+
+    await user.click(screen.getByRole('button', { name: 'Terminate' }));
+    await user.click(await screen.findByRole('button', { name: 'Terminate session with Previous Service' }));
+    await act(() => router.navigate('/sessions/github'));
+    expect(await screen.findByRole('heading', { level: 2, name: 'GitHub Production' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await act(async () => finishTermination());
+    await act(async () => {});
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByText('Session terminated successfully.')).not.toBeInTheDocument();
+  });
 });

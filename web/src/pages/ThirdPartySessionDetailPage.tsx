@@ -82,6 +82,10 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
 
   useEffect(() => {
     setState({ kind: 'loading' });
+    setConfirmingTermination(false);
+    setTerminationError(null);
+    setTerminating(false);
+    setRefreshing(false);
     void load();
   }, [load]);
 
@@ -124,7 +128,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
           : extractApiError(err, 'Failed to refresh session token. Please try again.'),
       });
     } finally {
-      setRefreshing(false);
+      if (isCurrent(requested)) setRefreshing(false);
     }
   };
 
@@ -134,8 +138,8 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
     setTerminationError(null);
     try {
       await sessionsApi.terminateSession(serviceID);
-      setConfirmingTermination(false);
       if (!isCurrent(requested)) return;
+      setConfirmingTermination(false);
       await load();
       if (!isCurrent(requested)) return;
       setAlert({ type: 'success', message: 'Session terminated successfully.' });
@@ -143,7 +147,7 @@ export const ThirdPartySessionDetailPage: React.FC = () => {
       if (!isCurrent(requested)) return;
       setTerminationError(extractApiError(err, 'Failed to terminate session. Please try again.'));
     } finally {
-      setTerminating(false);
+      if (isCurrent(requested)) setTerminating(false);
     }
   };
 
