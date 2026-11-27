@@ -72,7 +72,7 @@ OpenAPI documents, of which only the Admin document changes (3.0.0 → 3.1.0).
 
 **Gate outcome:** No violation, and no complexity exception is needed. Implementation starts only
 after the maintainer confirms the contracts and the plan records that confirmation. The spec
-wording issue in research §12 should be corrected before `/speckit-tasks`.
+wording on unknown `metadata` members is corrected (research §12).
 
 **Post-design re-check (Phase 1):** The contracts keep the Admin-only boundary, the additive
 versioning, and the existing audit records. The design keeps the hexagonal boundaries. The body

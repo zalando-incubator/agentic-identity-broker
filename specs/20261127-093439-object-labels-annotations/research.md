@@ -182,10 +182,10 @@ stays at 1.3.0 (API-002). A new timestamp-named ADR records the decisions in sec
 states that metadata has no runtime effect until a superseding ADR wires labels into CEL and OPA
 (SR-005). API-004 requires maintainer confirmation of `contracts/` before implementation.
 
-## 12. Spec inconsistency to resolve
+## 12. Unknown members (spec wording corrected)
 
-The spec's edge case says an unknown `metadata` member is rejected "as for other unknown request
-fields". Agent, Permission Set, and Service requests do not reject unknown top-level fields today.
-Only named Service credential-file fields are refused. This plan follows FR-010: only members
-inside `metadata` are checked, and unknown top-level behavior does not change. The spec wording
-should be corrected before `/speckit-tasks`.
+The spec's edge case first said an unknown `metadata` member is rejected "as for other unknown
+request fields". Agent, Permission Set, and Service requests do not reject unknown top-level fields
+today. Only named Service credential-file fields are refused. The edge case now states that the
+rule applies only inside `metadata` and that top-level behavior does not change, which matches
+FR-010 and this plan.

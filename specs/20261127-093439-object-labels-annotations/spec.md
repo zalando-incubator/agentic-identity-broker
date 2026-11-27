@@ -110,7 +110,7 @@ Service with and without metadata, then read both back.
 - A key prefix uses uppercase (`Team.example.com/owner`). Prefixes are lowercase DNS subdomains, so it is invalid. The name part may use uppercase.
 - An annotation value contains U+0000 or invalid UTF-8. It is invalid.
 - Annotation size is measured in UTF-8 bytes of the decoded keys and values, not of the JSON text or its escapes.
-- A request sends `metadata` with unknown members besides `labels` and `annotations`. The broker rejects it with `400 validation failed`, as for other unknown request fields.
+- A request sends `metadata` with members other than `labels` and `annotations`. The broker rejects it with `400 validation failed`. This rule applies only inside `metadata`; the feature does not change how Agent, Service, and Permission Set requests treat unknown top-level fields.
 - A Service update sends `metadata: null`. The broker rejects it; `{}` is the way to clear.
 - A rejected metadata write carries other valid field changes. The entire write fails without partial changes.
 - Two concurrent reconciles of one External ID carry different labels. The existing last-writer-wins rule applies; each successful request stores its complete metadata.
