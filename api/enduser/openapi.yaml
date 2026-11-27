@@ -2705,16 +2705,11 @@ paths:
         **Mode-specific behavior**:
         - `proxy` mode: `issuer` is the broker's own public URL. `jwks_uri` points to the
           broker's `/oauth2/jwks.json` endpoint, which republishes upstream keys.
-        - `local` mode: `issuer` is the configured local issuer (the public URL by
-          default). The authorization, token, and JWKS URLs use that issuer as their base.
-          The JWKS endpoint serves locally-generated signing keys.
-        - `hybrid` mode: `issuer` uses the same configurable local issuer. `jwks_uri`
-          points to the broker's `/oauth2/jwks.json` endpoint (union of local and upstream
-          keys). The metadata reflects the union of both grant strategies.
-
-        When the local issuer differs from `server.enduser.public_url`, AuthZEN metadata and
-        consent links continue to use the public URL. Local Compose uses an HTTP loopback
-        OAuth2 issuer for clients that require TLS for non-loopback token endpoints.
+        - `local` mode: `issuer` is the broker's own public URL. `jwks_uri` points to the
+          broker's `/oauth2/jwks.json` endpoint, which serves locally-generated signing keys.
+        - `hybrid` mode: `issuer` is the broker's public URL. `jwks_uri` points to the
+          broker's `/oauth2/jwks.json` endpoint (union of local and upstream keys). The
+          metadata reflects the union of capabilities for both proxy and local grant types.
 
         **Caching**: Responses include `Cache-Control: public, max-age=3600` to allow
         clients to cache metadata for 1 hour.
@@ -2773,11 +2768,10 @@ paths:
       description: |
         Returns the AuthZEN 1.0 PDP metadata. `policy_decision_point` is
         `server.enduser.public_url` without a trailing slash; consumers must compare it exactly
-        with their expected identifier before sending credentials. A separate OAuth2 issuer
-        configured in local or hybrid mode does not change this PDP or its evaluation endpoint.
-        Batch and search endpoints are not supported and are therefore omitted. Available only
-        when token exchange is configured; otherwise this path returns 404. A supplied
-        `X-Request-ID` is echoed on the 200 response; the routing 404 does not echo it.
+        with their expected identifier before sending credentials. Batch and search endpoints
+        are not supported and are therefore omitted. Available only when token exchange is
+        configured; otherwise this path returns 404. A supplied `X-Request-ID` is echoed on the
+        200 response; the routing 404 does not echo it.
       operationId: getAuthZENConfiguration
       tags:
         - AuthZEN
@@ -4072,9 +4066,8 @@ components:
           type: string
           format: uri
           description: |
-            The issuer identifier (this authorization server). Defaults to the end-user
-            public URL and can differ from the AuthZEN PDP when configured. Use HTTPS
-            outside local development. The URI must have no query or fragment.
+            The issuer identifier (this authorization server).
+            Must be an HTTPS URI with no query or fragment.
           example: https://broker.example.com
 
         authorization_endpoint:
