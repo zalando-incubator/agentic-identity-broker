@@ -44,9 +44,13 @@ func (r *PermissionSetRepository) Create(ctx context.Context, ps *storage.Permis
 	defer func() { _ = tx.Rollback() }()
 
 	// Insert into permission_sets
-	query := `INSERT INTO permission_sets (id, canonical_id, name, description, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6)`
-	_, err = tx.ExecContext(ctxTimeout, query, ps.ID, ps.CanonicalID, ps.Name, ps.Description, ps.CreatedAt, ps.UpdatedAt)
+	labels, annotations, err := marshalObjectMetadata(ps.ObjectMetadata)
+	if err != nil {
+		return storage.NewStorageError("CreatePermissionSet", storage.ErrorKindValidation, err, "failed to marshal metadata to JSON")
+	}
+	query := `INSERT INTO permission_sets (id, canonical_id, name, description, labels, annotations, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+	_, err = tx.ExecContext(ctxTimeout, query, ps.ID, ps.CanonicalID, ps.Name, ps.Description, labels, annotations, ps.CreatedAt, ps.UpdatedAt)
 	if err != nil {
 		return r.handlePostgresError("CreatePermissionSet", err)
 	}
@@ -68,16 +72,20 @@ func (r *PermissionSetRepository) Get(ctx context.Context, psID id.PermissionSet
 	ctxTimeout, cancel := context.WithTimeout(ctx, r.adapter.timeouts.Read)
 	defer cancel()
 
-	query := `SELECT id, canonical_id, name, description, created_at, updated_at FROM permission_sets WHERE id = $1`
+	query := `SELECT id, canonical_id, name, description, labels, annotations, created_at, updated_at FROM permission_sets WHERE id = $1`
 	var ps storage.PermissionSet
+	var labels, annotations []byte
 	err := r.adapter.db.QueryRowContext(ctxTimeout, query, psID).Scan(
-		&ps.ID, &ps.CanonicalID, &ps.Name, &ps.Description, &ps.CreatedAt, &ps.UpdatedAt,
+		&ps.ID, &ps.CanonicalID, &ps.Name, &ps.Description, &labels, &annotations, &ps.CreatedAt, &ps.UpdatedAt,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, storage.NewStorageError("GetPermissionSet", storage.ErrorKindNotFound, ports.ErrNotFound, "permission set not found")
 		}
 		return nil, r.handlePostgresError("GetPermissionSet", err)
+	}
+	if ps.ObjectMetadata, err = restoreObjectMetadata("GetPermissionSet", labels, annotations); err != nil {
+		return nil, err
 	}
 
 	scopes, err := r.loadServiceScopes(ctxTimeout, ps.ID)
@@ -152,7 +160,7 @@ func (r *PermissionSetRepository) GetByIDs(ctx context.Context, ids []id.Permiss
 		idStrings[i] = psID.String()
 	}
 
-	query := `SELECT id, canonical_id, name, description, created_at, updated_at FROM permission_sets WHERE id = ANY($1::uuid[])`
+	query := `SELECT id, canonical_id, name, description, labels, annotations, created_at, updated_at FROM permission_sets WHERE id = ANY($1::uuid[])`
 	rows, err := r.adapter.db.QueryContext(ctxTimeout, query, pq.Array(idStrings))
 	if err != nil {
 		return nil, r.handlePostgresError("GetByIDsPermissionSet", err)
@@ -162,9 +170,15 @@ func (r *PermissionSetRepository) GetByIDs(ctx context.Context, ids []id.Permiss
 	var results []*storage.PermissionSet
 	for rows.Next() {
 		var ps storage.PermissionSet
-		if err := rows.Scan(&ps.ID, &ps.CanonicalID, &ps.Name, &ps.Description, &ps.CreatedAt, &ps.UpdatedAt); err != nil {
+		var labels, annotations []byte
+		if err := rows.Scan(&ps.ID, &ps.CanonicalID, &ps.Name, &ps.Description, &labels, &annotations, &ps.CreatedAt, &ps.UpdatedAt); err != nil {
 			return nil, storage.NewStorageError("GetByIDsPermissionSet", storage.ErrorKindUnknown, err, "failed to scan row")
 		}
+		metadata, err := restoreObjectMetadata("GetByIDsPermissionSet", labels, annotations)
+		if err != nil {
+			return nil, err
+		}
+		ps.ObjectMetadata = metadata
 		results = append(results, &ps)
 	}
 
@@ -212,14 +226,18 @@ func (r *PermissionSetRepository) Update(ctx context.Context, ps *storage.Permis
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	labels, annotations, err := marshalObjectMetadata(ps.ObjectMetadata)
+	if err != nil {
+		return storage.NewStorageError("UpdatePermissionSet", storage.ErrorKindValidation, err, "failed to marshal metadata to JSON")
+	}
 	canonicalIDOmitted := !ps.ClearCanonicalID && ps.CanonicalID == nil
 	query := `
 		UPDATE permission_sets
 		SET canonical_id = CASE WHEN $2 THEN NULL WHEN $3 THEN canonical_id ELSE $4 END,
-		    name = $5, description = $6, updated_at = $7
+		    name = $5, description = $6, labels = $7, annotations = $8, updated_at = $9
 		WHERE id = $1
 	`
-	result, err := tx.ExecContext(ctxTimeout, query, ps.ID, ps.ClearCanonicalID, canonicalIDOmitted, ps.CanonicalID, ps.Name, ps.Description, ps.UpdatedAt)
+	result, err := tx.ExecContext(ctxTimeout, query, ps.ID, ps.ClearCanonicalID, canonicalIDOmitted, ps.CanonicalID, ps.Name, ps.Description, labels, annotations, ps.UpdatedAt)
 	if err != nil {
 		return r.handlePostgresError("UpdatePermissionSet", err)
 	}
@@ -338,11 +356,11 @@ func (r *PermissionSetRepository) List(ctx context.Context, serviceID id.Service
 	var err error
 
 	if serviceID.IsZero() {
-		query := `SELECT id, canonical_id, name, description, created_at, updated_at FROM permission_sets ORDER BY name`
+		query := `SELECT id, canonical_id, name, description, labels, annotations, created_at, updated_at FROM permission_sets ORDER BY name`
 		rows, err = r.adapter.db.QueryContext(ctxTimeout, query)
 	} else {
 		query := `
-			SELECT DISTINCT ps.id, ps.canonical_id, ps.name, ps.description, ps.created_at, ps.updated_at
+			SELECT DISTINCT ps.id, ps.canonical_id, ps.name, ps.description, ps.labels, ps.annotations, ps.created_at, ps.updated_at
 			FROM permission_sets ps
 			JOIN permission_set_service_scopes psss ON psss.permission_set_id = ps.id
 			WHERE psss.service_id = $1
@@ -358,9 +376,15 @@ func (r *PermissionSetRepository) List(ctx context.Context, serviceID id.Service
 	var results []*storage.PermissionSet
 	for rows.Next() {
 		var ps storage.PermissionSet
-		if err := rows.Scan(&ps.ID, &ps.CanonicalID, &ps.Name, &ps.Description, &ps.CreatedAt, &ps.UpdatedAt); err != nil {
+		var labels, annotations []byte
+		if err := rows.Scan(&ps.ID, &ps.CanonicalID, &ps.Name, &ps.Description, &labels, &annotations, &ps.CreatedAt, &ps.UpdatedAt); err != nil {
 			return nil, storage.NewStorageError("ListPermissionSets", storage.ErrorKindUnknown, err, "failed to scan row")
 		}
+		metadata, err := restoreObjectMetadata("ListPermissionSets", labels, annotations)
+		if err != nil {
+			return nil, err
+		}
+		ps.ObjectMetadata = metadata
 		results = append(results, &ps)
 	}
 

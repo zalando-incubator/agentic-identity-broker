@@ -1,0 +1,117 @@
+# Draft fragments for api/admin/openapi.yaml (Admin API 3.0.0 -> 3.1.0).
+# The prose rules and error messages are in object-metadata.md. The maintainer confirmed them on
+# 2026-11-27, and these fragments are merged into api/admin/openapi.yaml (API-001, API-003, API-004).
+
+info:
+  version: 3.1.0
+
+components:
+  schemas:
+    ObjectMetadata:
+      type: object
+      additionalProperties: false
+      description: |
+        Admin-only labels and annotations. Responses omit this property when both maps are
+        empty, and omit an empty map. Map members appear in ascending byte order of their keys.
+        `"metadata": null` is rejected. A `null` `labels` or `annotations` member means an empty
+        map. A `null` value inside a map is rejected.
+
+        Requests: Agent POST, PUT, and collection PUT, and Permission Set POST and PUT, replace
+        both maps in full. An omitted `metadata` or member means empty. Service POST treats an
+        omitted `metadata` as empty. Service PUT keeps stored metadata when `metadata` is
+        omitted, and replaces both maps when it is sent. Keys are never merged.
+
+        Keys and values are matched literally. They are never trimmed or normalized, and they are
+        stored and compared exactly as sent. As in Kubernetes, an annotation key's grammar and
+        reserved-prefix checks ignore ASCII case. A repeated key in one object is rejected. Keys with the prefix
+        `agenticidentitybroker.dev`, or a prefix ending in `.agenticidentitybroker.dev`, are
+        reserved and rejected.
+
+        Metadata has no effect on authorization, consent, token claims, CEL, ExtProc, OPA,
+        approvals, or AuthZEN Grant Context. It never appears in an End-User API response.
+      properties:
+        labels:
+          $ref: '#/components/schemas/MetadataLabels'
+        annotations:
+          $ref: '#/components/schemas/MetadataAnnotations'
+      example:
+        labels:
+          deployment: local
+          team.example.com/owner: platform
+        annotations:
+          gitops.example.com/revision: 4f2c9e1
+          gitops.example.com/source: https://github.com/acme/agents/blob/main/review-bot.yaml
+
+    MetadataLabels:
+      type: object
+      nullable: true
+      maxProperties: 64
+      description: |
+        Identifying, categorizing key/value pairs. Each key has the form `[prefix/]name`. The
+        optional prefix is a lowercase DNS subdomain of at most 253 characters
+        (`[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*`). The name has 1–63
+        characters matching `([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]`. Each value is empty, or
+        has 1–63 characters matching the same name pattern. OpenAPI 3.0 cannot constrain
+        property names, so the server enforces the key rules.
+      additionalProperties:
+        type: string
+        maxLength: 63
+        pattern: '^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$'
+      example:
+        deployment: local
+        sensitivity: high
+
+    MetadataAnnotations:
+      type: object
+      nullable: true
+      description: |
+        Non-identifying key/value pairs for tools and people. Keys follow the `MetadataLabels`
+        key rules, including the reserved prefix.
+        Values are any valid UTF-8 text without U+0000, and whitespace is stored exactly. The
+        UTF-8 byte lengths of all decoded keys and values must total at most 65,536 bytes.
+        OpenAPI keywords cannot express this byte bound.
+      additionalProperties:
+        type: string
+      example:
+        docs.example.com/runbook: 'Ask #platform before granting.'
+
+    # Add to each schema below:
+    #   metadata:
+    #     $ref: '#/components/schemas/ObjectMetadata'
+    # Agent, AgentCreateRequest, AgentUpdateRequest,
+    # Service, ServiceCreateRequest, ServiceUpdateRequest,
+    # CreatePermissionSetRequest, PermissionSetResponse.
+
+  examples:
+    MetadataReservedKeyRejected:
+      summary: Reserved prefix rejected without echoing the key
+      value:
+        error: validation failed
+        message: metadata.labels contains a reserved key
+    MetadataInvalidValueRejected:
+      summary: Label value with trailing whitespace rejected
+      value:
+        error: validation failed
+        message: metadata.labels contains an invalid value
+    MetadataNullRejected:
+      summary: Null metadata rejected; send {} to clear
+      value:
+        error: validation failed
+        message: metadata must not be null
+    MetadataAnnotationsTooLarge:
+      summary: Annotations over 65,536 bytes rejected
+      value:
+        error: validation failed
+        message: metadata.annotations exceeds 65536 bytes
+
+# Operation description changes:
+# - PUT /api/agents?external_id=...: add this row to the update-branch field-policy table:
+#     | `metadata` | emptied | `400 validation failed` | replaced |
+#     | `metadata.labels`, `metadata.annotations` | emptied | emptied | replaced |
+#   Also state that the no-op comparison treats labels and annotations as maps, independent of key order.
+# - PUT /api/services/{service-id}: add `metadata` to the documented omission exceptions:
+#     omitted -> preserved; sent -> both maps replaced, a missing member means empty; null -> 400.
+# - PUT /api/permission-sets/{permission-set-id}: an omitted `metadata` clears stored metadata.
+# - POST /api/agents, PUT /api/agents/{agent-id}, PUT /api/agents?external_id=...,
+#   POST/PUT /api/services, POST/PUT /api/permission-sets: add a request example with labels and
+#   annotations, a response example that omits empty maps, and one 400 example from above.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ptr"
@@ -693,4 +694,26 @@ func TestDeleteAuditCarriesContextAndNoInventedIdentity(t *testing.T) {
 	require.Len(t, fields, 2)
 	assert.Equal(t, "agents.agent.deleted", fields["event"])
 	assert.Equal(t, agentID, fields["agent_id"])
+}
+
+func TestUpdateReplacesObjectMetadata(t *testing.T) {
+	stored, err := model.NewObjectMetadata(map[string]string{"tier": "gold"}, map[string]string{"note": "x"})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name  string
+		value model.ObjectMetadata
+	}{
+		{"omitted becomes empty", model.ObjectMetadata{}},
+		{"labels only", model.RestoreObjectMetadata(map[string]string{"tier": "silver"}, nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newMockAgentRepo()
+			existing := &storage.Agent{ID: id.NewAgentID(), DisplayName: "A", Description: "A", PermissionSets: testPermissionSets(), ObjectMetadata: stored}
+			repo.agents[existing.ID] = existing
+			svc := NewService(repo, &mockServiceReqValidator{}, slog.New(slog.DiscardHandler), false, nil)
+			desired := &storage.Agent{DisplayName: "A", Description: "A", PermissionSets: testPermissionSets(), ObjectMetadata: tc.value}
+			require.NoError(t, svc.Update(context.Background(), existing.ID, desired, UpdateInput{}))
+			assert.True(t, repo.agents[existing.ID].ObjectMetadata.Equal(tc.value))
+		})
+	}
 }

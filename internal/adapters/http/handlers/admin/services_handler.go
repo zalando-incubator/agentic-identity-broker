@@ -157,6 +157,7 @@ type ServiceResponse struct {
 	Scopes                  []OAuthScopeResponse     `json:"scopes"`
 	ProtectedResources      []string                 `json:"protected_resources,omitempty"` // RFC 8693 resource URIs
 	AuthorizationParams     map[string]string        `json:"authorization_params,omitempty"`
+	Metadata                *ObjectMetadataResponse  `json:"metadata,omitempty"`
 	CreatedAt               string                   `json:"created_at"`
 	UpdatedAt               string                   `json:"updated_at"`
 }
@@ -246,8 +247,14 @@ func (h *ServicesHandler) setDiscoveryResponseDeadline(w http.ResponseWriter, r 
 func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.logger.WarnContext(ctx, "failed to read request body", "error", err)
+		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
+		return
+	}
 	var req ServiceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil {
 		h.logger.WarnContext(ctx, "failed to decode request body", "error", err)
 		h.writeError(ctx, w, http.StatusBadRequest, "invalid request body", err.Error())
 		return
@@ -257,6 +264,10 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		h.logger.WarnContext(ctx, "service validation failed", "error", err)
 		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
+		return
+	}
+	metadata, metadataProvided, ok := h.requestMetadata(w, r, body)
+	if !ok {
 		return
 	}
 
@@ -298,6 +309,8 @@ func (h *ServicesHandler) CreateService(w http.ResponseWriter, r *http.Request) 
 		Discovery:                  model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
 		ProtectedResources:         req.ProtectedResources,
 		AuthorizationParams:        req.AuthorizationParams,
+		ObjectMetadata:             metadata,
+		ObjectMetadataProvided:     metadataProvided,
 		CreatedAt:                  now,
 		UpdatedAt:                  now,
 	}
@@ -477,6 +490,10 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		h.writeError(ctx, w, http.StatusBadRequest, "validation failed", err.Error())
 		return
 	}
+	metadata, metadataProvided, ok := h.requestMetadata(w, r, body)
+	if !ok {
+		return
+	}
 
 	if req.Discovery.ResourceURL != nil && !h.setDiscoveryResponseDeadline(w, r) {
 		return
@@ -526,6 +543,8 @@ func (h *ServicesHandler) UpdateService(w http.ResponseWriter, r *http.Request) 
 		Discovery:                  model.DiscoveryConfig{EnableDiscovery: req.Discovery.EnableDiscovery, MetadataURL: req.Discovery.MetadataURL, ResourceURL: req.Discovery.ResourceURL},
 		ProtectedResources:         req.ProtectedResources,
 		AuthorizationParams:        req.AuthorizationParams,
+		ObjectMetadata:             metadata,
+		ObjectMetadataProvided:     metadataProvided,
 		UpdatedAt:                  time.Now().UTC(),
 	}
 
@@ -739,6 +758,7 @@ func (h *ServicesHandler) toResponse(entity *model.ThirdpartyOAuth2ProviderEntit
 		CanonicalID:        entity.CanonicalID,
 		DisplayName:        entity.DisplayName,
 		IconSVG:            entity.IconSVG,
+		Metadata:           objectMetadataResponse(entity.ObjectMetadata),
 		CredentialSource:   credentialSource,
 		ClientRegistration: entity.ClientRegistration,
 		OAuth2Flavor:       flavor.String(),
@@ -944,4 +964,16 @@ func (h *ServicesHandler) writeError(ctx context.Context, w http.ResponseWriter,
 		Message: message,
 	}
 	h.writeJSON(ctx, w, statusCode, resp)
+}
+
+// requestMetadata reads the metadata member and its presence. A Service
+// update that omits it keeps the stored value.
+func (h *ServicesHandler) requestMetadata(w http.ResponseWriter, r *http.Request, body []byte) (model.ObjectMetadata, bool, bool) {
+	metadata, present, err := decodeRequestMetadata(body)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "metadata validation failed", "error", err)
+		h.writeError(r.Context(), w, http.StatusBadRequest, "validation failed", err.Error())
+		return model.ObjectMetadata{}, false, false
+	}
+	return metadata, present, true
 }

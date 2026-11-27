@@ -263,6 +263,8 @@ func TestRecordToEntity_SecretIsEncryptedState(t *testing.T) {
 		CredentialSource:   string(model.CredentialSourceStored),
 		ClientRegistration: string(model.ClientRegistrationStatic),
 		IssuerURI:          "https://issuer.example.com",
+		Labels:             []byte(`{}`),
+		Annotations:        []byte(`{}`),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}

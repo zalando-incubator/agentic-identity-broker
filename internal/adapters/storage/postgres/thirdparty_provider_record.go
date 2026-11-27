@@ -28,6 +28,8 @@ type ThirdpartyOAuth2ProviderRecord struct {
 	CanonicalID                  *string                     `db:"canonical_id"`
 	DisplayName                  string                      `db:"display_name"`
 	IconSVG                      *string                     `db:"icon_svg"`
+	Labels                       []byte                      `db:"labels"`
+	Annotations                  []byte                      `db:"annotations"`
 	ClientID                     *string                     `db:"client_id"`
 	SecretCiphertext             []byte                      `db:"client_secret_encrypted"`
 	TokenEndpointAuthMethod      *string                     `db:"token_endpoint_auth_method"`
@@ -197,6 +199,11 @@ func entityToRecord(entity *model.ThirdpartyOAuth2ProviderEntity) (*ThirdpartyOA
 		source := *entity.IconSVG
 		record.IconSVG = &source
 	}
+	labels, annotations, err := marshalObjectMetadata(entity.ObjectMetadata)
+	if err != nil {
+		return nil, err
+	}
+	record.Labels, record.Annotations = labels, annotations
 
 	if entity.Discovery.MetadataURL != nil {
 		s := *entity.Discovery.MetadataURL
@@ -290,6 +297,9 @@ func recordToEntity(record *ThirdpartyOAuth2ProviderRecord) (*model.ThirdpartyOA
 	if record.IconSVG != nil {
 		source := *record.IconSVG
 		entity.IconSVG = &source
+	}
+	if entity.ObjectMetadata, err = restoreObjectMetadata("recordToEntity", record.Labels, record.Annotations); err != nil {
+		return nil, err
 	}
 	if record.ClientID != nil {
 		entity.ClientID = id.ClientID(*record.ClientID)

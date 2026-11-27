@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 )
 
 // ServiceScope pairs a ThirdpartyOAuth2Service reference with a list of OAuth2 scopes.
@@ -17,19 +18,23 @@ type ServiceScope struct {
 
 // PermissionSet is an admin-defined bundle of OAuth2 scopes spanning one or more third-party services.
 type PermissionSet struct {
-	ID               id.PermissionSetID `json:"id" db:"id"`
-	CanonicalID      *string            `json:"canonical_id,omitempty" db:"canonical_id"`
-	ClearCanonicalID bool               `json:"-" db:"-"`
-	Name             string             `json:"name" db:"name"`
-	Description      string             `json:"description" db:"description"`
-	ServiceScopes    []ServiceScope     `json:"service_scopes" db:"service_scopes"`
-	CreatedAt        time.Time          `json:"created_at" db:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at" db:"updated_at"`
+	ID               id.PermissionSetID   `json:"id" db:"id"`
+	CanonicalID      *string              `json:"canonical_id,omitempty" db:"canonical_id"`
+	ClearCanonicalID bool                 `json:"-" db:"-"`
+	Name             string               `json:"name" db:"name"`
+	Description      string               `json:"description" db:"description"`
+	ServiceScopes    []ServiceScope       `json:"service_scopes" db:"service_scopes"`
+	ObjectMetadata   model.ObjectMetadata `json:"-" db:"-"`
+	CreatedAt        time.Time            `json:"created_at" db:"created_at"`
+	UpdatedAt        time.Time            `json:"updated_at" db:"updated_at"`
 }
 
 // validateCommon validates fields shared between Validate and ValidateForCreate.
 func (ps *PermissionSet) validateCommon() error {
 	if err := ValidateCanonicalID(ps.CanonicalID); err != nil {
+		return err
+	}
+	if err := ps.ObjectMetadata.Validate(); err != nil {
 		return err
 	}
 
@@ -101,11 +106,12 @@ func (ps *PermissionSet) Copy() *PermissionSet {
 	}
 
 	copy := &PermissionSet{
-		ID:          ps.ID,
-		Name:        ps.Name,
-		Description: ps.Description,
-		CreatedAt:   ps.CreatedAt,
-		UpdatedAt:   ps.UpdatedAt,
+		ID:             ps.ID,
+		Name:           ps.Name,
+		Description:    ps.Description,
+		ObjectMetadata: ps.ObjectMetadata,
+		CreatedAt:      ps.CreatedAt,
+		UpdatedAt:      ps.UpdatedAt,
 	}
 
 	if ps.CanonicalID != nil {
