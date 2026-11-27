@@ -8,7 +8,12 @@ storage adapters, `migrations/`, `api/admin/openapi.yaml`, and
 
 ## 1. JSON decoding of the metadata member
 
-**Decision:** Decode the `metadata` value with the standard library's `encoding/json/jsontext`
+**Decision (revised in review of #577):** Decode the `metadata` value with the standard library's
+`encoding/json/v2` and `RejectUnknownMembers`, and map each error from its JSON pointer to a fixed
+message. Keep the `jsontext` scan only for the top-level member (§2), because v2 cannot detect a
+case-variant `Metadata`. Reject a `null` map value explicitly, because v2 decodes it as `""`.
+
+**Original decision:** Decode the `metadata` value with the standard library's `encoding/json/jsontext`
 token decoder, not with `encoding/json` v1. Track member names in a set per object, so a repeated
 key gets a fixed message. Treat any `jsontext` error as a fixed-message validation failure. Never
 return, wrap, or log the `jsontext` error text.

@@ -282,22 +282,27 @@ var _ = Describe("Labels and annotations on Agents, Services, and Permission Set
 			})
 
 			// Scenario US1.5 from specs/20261127-093439-object-labels-annotations/spec.md
-			It("should reject null metadata labels or annotations on every Agent write path without change", func() {
+			It("should reject null metadata and treat null labels or annotations as empty on every Agent write path", func() {
 				selector := "/api/agents?external_id=review-bot"
 				created := broker.expectAdmin(http.MethodPut, selector, metadataAgentBody(broker.setID, fixtures.SentinelMetadataJSON()), http.StatusCreated)
 				before := broker.storedAgent(created.body["id"].(string))
-				paths := map[string]string{http.MethodPost + " /api/agents": "/api/agents", http.MethodPut + " id": "/api/agents/" + created.body["id"].(string), http.MethodPut + " selector": selector}
-				for name, path := range paths {
-					method := strings.Fields(name)[0]
-					for metadata, message := range map[string]string{`null`: "metadata must not be null", `{"labels":null}`: "metadata.labels must not be null", `{"annotations":null}`: "metadata.annotations must not be null"} {
-						rejected := broker.expectAdmin(method, path, metadataAgentBody(broker.setID, metadata), http.StatusBadRequest)
-						Expect(rejected.body).To(Equal(map[string]any{"error": "validation failed", "message": message}), name)
-					}
+				idPath := "/api/agents/" + created.body["id"].(string)
+				for _, write := range [][2]string{{http.MethodPost, "/api/agents"}, {http.MethodPut, idPath}, {http.MethodPut, selector}} {
+					rejected := broker.expectAdmin(write[0], write[1], metadataAgentBody(broker.setID, `null`), http.StatusBadRequest)
+					Expect(rejected.body).To(Equal(map[string]any{"error": "validation failed", "message": "metadata must not be null"}), write[1])
 				}
 				after := broker.storedAgent(created.body["id"].(string))
 				Expect(after.UpdatedAt).To(Equal(before.UpdatedAt))
 				Expect(after.ObjectMetadata.Equal(before.ObjectMetadata)).To(BeTrue())
 				Expect(broker.resourceCounts()[0]).To(Equal(2), "no Agent was created")
+
+				goClient := `{"labels":null,"annotations":{"note":"x"}}`
+				for _, write := range [][2]string{{http.MethodPut, selector}, {http.MethodPut, idPath}} {
+					updated := broker.expectAdmin(write[0], write[1], metadataAgentBody(broker.setID, goClient), http.StatusOK)
+					Expect(updated.body["metadata"]).To(Equal(map[string]any{"annotations": map[string]any{"note": "x"}}), write[1])
+				}
+				posted := broker.expectAdmin(http.MethodPost, "/api/agents", metadataAgentBody(broker.setID, `{"labels":{"tier":"gold"},"annotations":null}`), http.StatusCreated)
+				Expect(posted.body["metadata"]).To(Equal(map[string]any{"labels": map[string]any{"tier": "gold"}}))
 			})
 		})
 
@@ -388,9 +393,12 @@ var _ = Describe("Labels and annotations on Agents, Services, and Permission Set
 			// Scenario US2.5 from specs/20261127-093439-object-labels-annotations/spec.md
 			It("should keep keys that differ only in case distinct and exactly as sent", func() {
 				for resource, create := range broker.metadataCreators() {
-					reply := create(`{"labels":{"exposure":"internal","Exposure":"public"}}`)
-					Expect(reply.status).To(Equal(http.StatusCreated), resource)
+					reply := create(`{"labels":{"exposure":"internal","Exposure":"public"},"annotations":{"Example.com/Owner":"x","example.com/owner":"y"}}`)
+					Expect(reply.status).To(Equal(http.StatusCreated), resource+" "+reply.raw)
 					Expect(reply.raw).To(ContainSubstring(`"labels":{"Exposure":"public","exposure":"internal"}`), resource)
+					Expect(reply.raw).To(ContainSubstring(`"annotations":{"Example.com/Owner":"x","example.com/owner":"y"}`), resource)
+					rejected := create(`{"labels":{"Example.com/owner":"x"}}`)
+					Expect(rejected.body["message"]).To(Equal("metadata.labels contains an invalid key"), "label prefixes stay lowercase")
 				}
 			})
 		})

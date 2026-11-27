@@ -23,7 +23,7 @@ The maintainer confirmed the API draft ([object-metadata.md](../specs/20261127-0
 
 ### Rules
 
-Every rule runs on the decoded string exactly as received. Nothing trims, case-folds, or normalizes it.
+Every rule runs on the decoded string exactly as received. Nothing trims or normalizes it, and keys and values are stored and compared exactly as sent. As in Kubernetes, the grammar and reserved-prefix checks of an annotation key ignore ASCII case, so `Example.com/owner` is a valid annotation key. Only A–Z are folded: `strings.ToLower` would also fold non-ASCII look-alikes such as the Kelvin sign onto `k`. Label keys stay case-sensitive.
 
 - A key is `[prefix/]name` with at most one `/`. The prefix is 1–253 characters of a lowercase DNS subdomain. The name is 1–63 characters matching `([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]`. This mirrors Kubernetes qualified names. The patterns use the standard `regexp` package.
 - A label value is empty, or 1–63 characters matching the name pattern. An annotation value is valid UTF-8 without U+0000.
@@ -34,7 +34,7 @@ Every rule runs on the decoded string exactly as received. Nothing trims, case-f
 
 The Admin handlers keep their existing `encoding/json` decoding of every other field. A separate scan with the standard `encoding/json/jsontext` package reads the first top-level JSON value of the same body bytes, finds the member spelled exactly `metadata`, and stops when that value ends. A repeated `metadata` member, or a case variant such as `Metadata`, is rejected, because v1 would resolve it last-wins and a GitOps typo would otherwise clear Agent metadata. Other members keep their current lenient treatment of duplicates and invalid UTF-8.
 
-The `metadata` value is decoded strictly. `null` at any level, unknown or repeated members, duplicate map keys, non-string values, invalid UTF-8, and unpaired surrogate escapes are rejected. v1 would silently keep the last duplicate and replace invalid text with U+FFFD. Checks run in a fixed order: request member, metadata shape, labels, then annotations. Within a map, entries are checked in document order. The count and size limits apply after the map is read.
+The `metadata` value is decoded strictly with the standard `encoding/json/v2` package and `RejectUnknownMembers`. It rejects unknown or repeated members, duplicate map keys, non-string values, invalid UTF-8, and unpaired surrogate escapes. v1 would silently keep the last duplicate and replace invalid text with U+FFFD. `"metadata": null` is rejected. A `null` `labels` or `annotations` member means an empty map, as Kubernetes accepts it and Go clients send it for an empty map. A `null` value inside a map is rejected: v2 would otherwise decode it as an empty string. Each decoding error is mapped from its JSON pointer to the fixed message for the map or entry it names, and v2's own text, which quotes submitted names, is discarded. Checks run in a fixed order: the request member, then decoding errors in document order, then the label rules, then the annotation rules. Within a map, entries are checked in ascending key order. The count and size limits apply after the map's entries.
 
 Every failure returns `400 validation failed` with one of the fixed messages in contract §4. A message names the map and the rule and never contains a submitted key, a value, or `jsontext` error text, so the existing `WarnContext(..., "error", err)` calls stay free of metadata. Existing body-read and decode errors keep their codes and precedence. Metadata checks run before any domain call, discovery, branch-key, or encryption step.
 
@@ -47,7 +47,7 @@ The three `POST` handlers now read the body with `io.ReadAll` and decode with `j
 | Omitted | Empty | Empty | Empty | Keep stored value |
 | `{}` | Empty | Empty | Empty | Empty |
 | Sent | Both maps replaced; a missing member is empty | same | same | same |
-| `null` or invalid | `400`, nothing changes | `400` | `400` | `400` |
+| `"metadata": null` or invalid | `400`, nothing changes | `400` | `400` | `400` |
 
 Keys are never merged. For Agents the handler passes the empty value when `metadata` is omitted. An omitted `metadata` and `{}` are equal under every Agent write, so this conversion decides no field policy, and the domain keeps field policy under `047-unique-agent-external-id-reconcile`. `sameDefinition` adds `Equal` on Object Metadata, so a collection `PUT` that only reorders keys is a no-op with no write or audit record, and any map difference is an update. This extends `047-unique-agent-external-id-reconcile` without deviating from it: `metadata` joins the update-branch fields that are emptied when omitted and replaced when sent.
 

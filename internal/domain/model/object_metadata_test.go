@@ -56,6 +56,13 @@ func TestNewObjectMetadataAnnotationKeys(t *testing.T) {
 		{"reserved domain", "agenticidentitybroker.dev/x", ErrMetadataAnnotationsReservedKey},
 		{"reserved subdomain", "a.agenticidentitybroker.dev/x", ErrMetadataAnnotationsReservedKey},
 		{"look-alike domain", "example.agenticidentitybroker.dev.evil.com/x", nil},
+		{"uppercase prefix ignores ASCII case", "Example.com/owner", nil},
+		{"mixed-case prefix ignores ASCII case", "Team.Example.COM/owner", nil},
+		{"uppercase reserved domain", "AgenticIdentityBroker.dev/x", ErrMetadataAnnotationsReservedKey},
+		{"uppercase reserved subdomain", "Policy.AGENTICIDENTITYBROKER.DEV/x", ErrMetadataAnnotationsReservedKey},
+		{"Kelvin sign is not folded to k", "\u212aey.example.com/owner", ErrMetadataAnnotationsInvalidKey},
+		{"non-ASCII uppercase is not folded", "\u00c9xample.com/owner", ErrMetadataAnnotationsInvalidKey},
+		{"whitespace still invalid", "Example.com/ owner", ErrMetadataAnnotationsInvalidKey},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -261,4 +268,12 @@ func labelsOfCount(count int) map[string]string {
 func annotationsOfSize(size int) map[string]string {
 	const key = "note"
 	return map[string]string{key: strings.Repeat("a", size-len(key))}
+}
+
+func TestAnnotationKeysKeepTheirCase(t *testing.T) {
+	value, err := NewObjectMetadata(nil, map[string]string{"Example.com/Owner": "x", "example.com/owner": "y"})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"Example.com/Owner": "x", "example.com/owner": "y"}, value.Annotations(), "keys are stored as sent and stay distinct")
+	_, err = NewObjectMetadata(map[string]string{"Example.com/owner": "x"}, nil)
+	assert.ErrorIs(t, err, ErrMetadataLabelsInvalidKey, "label key prefixes stay case-sensitive")
 }

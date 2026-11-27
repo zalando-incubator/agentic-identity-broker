@@ -26,8 +26,9 @@ break them (see Persistence). The rules are write policy, not type invariants.
 | `IsEmpty()` | True when both maps are empty. |
 | zero value | Valid and empty. |
 
-The grammar and size checks run on the strings exactly as received. No step trims, case-folds, or
-normalizes them (FR-004).
+The grammar and size checks run on the strings exactly as received. No step trims or normalizes
+them (FR-004). The annotation-key check alone ignores ASCII case, as Kubernetes does; the key is
+still stored and compared exactly as sent.
 
 ## Embedding entities
 
@@ -51,7 +52,8 @@ and gain no field (FR-019).
 | `{}` | Empty | Empty | Empty | Empty |
 | `{"labels": L}` | labels = L, annotations empty | same | same | same |
 | `{"labels": L, "annotations": A}` | Replace both | Replace both | Store both | Replace both |
-| `null`, or a `null` member | `400`, nothing changes | `400` | `400` | `400` |
+| `{"labels": null}` or `{"annotations": null}` | That map empty, as for an omitted member | same | same | same |
+| `"metadata": null`, or a `null` map value | `400`, nothing changes | `400` | `400` | `400` |
 | Invalid | `400`, nothing changes | `400` | `400` | `400` |
 
 Keys are never merged. A `metadata` value that is sent always replaces both maps.
@@ -75,7 +77,7 @@ Every accepted `PUT` advances `updated_at` and emits `permissionset.permission_s
 flowchart LR
     B["Body bytes"] --> V1["v1 decode of existing fields (unchanged errors)"]
     V1 --> S["Top-level jsontext scan: find exact 'metadata', reject repeats and case variants"]
-    S --> P["Strict jsontext decode of metadata: object, members, null, duplicates, UTF-8, strings"]
+    S --> P["Strict encoding/json/v2 decode of metadata: object, members, duplicates, UTF-8, string values; null maps are empty"]
     P --> D["model.NewObjectMetadata: grammar, reserved prefix, count, bytes, NUL"]
     D --> SVC["Domain service: field policy, entity Validate re-check, persist"]
 ```

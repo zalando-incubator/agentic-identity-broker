@@ -89,8 +89,7 @@ func TestAgentMetadataNullRejectedWithoutChange(t *testing.T) {
 	for _, path := range agentWritePaths {
 		for metadata, message := range map[string]string{
 			`null`:                     "metadata must not be null",
-			`{"labels":null}`:          "metadata.labels must not be null",
-			`{"annotations":null}`:     "metadata.annotations must not be null",
+			`{"labels":{"k":null}}`:    "metadata.labels contains an invalid value",
 			`{"labels":{"k":"bad v"}}`: "metadata.labels contains an invalid value",
 		} {
 			t.Run(path+"/"+metadata, func(t *testing.T) {
@@ -108,6 +107,28 @@ func TestAgentMetadataNullRejectedWithoutChange(t *testing.T) {
 				assert.Len(t, after, seeded, "no agent is created")
 				for _, agent := range after {
 					assert.Equal(t, map[string]string{"stored": "value"}, agent.ObjectMetadata.Labels(), "stored metadata is unchanged")
+				}
+			})
+		}
+	}
+}
+
+func TestAgentMetadataNullMapsAreEmpty(t *testing.T) {
+	for _, path := range agentWritePaths {
+		for metadata, want := range map[string]any{
+			`{"labels":null}`:                               nil,
+			`{"annotations":null}`:                          nil,
+			`{"labels":null,"annotations":{"note":"x"}}`:    map[string]any{"annotations": map[string]any{"note": "x"}},
+			`{"labels":{"tier":"gold"},"annotations":null}`: map[string]any{"labels": map[string]any{"tier": "gold"}},
+		} {
+			t.Run(path+"/"+metadata, func(t *testing.T) {
+				f := newAgentMetadataFixture(t)
+				status, body, raw := f.agentWrite(t, path, metadata)
+				require.Contains(t, []int{http.StatusOK, http.StatusCreated}, status, raw)
+				if want == nil {
+					assert.NotContains(t, body, "metadata", "a null map is empty and replaces the stored one")
+				} else {
+					assert.Equal(t, want, body["metadata"])
 				}
 			})
 		}

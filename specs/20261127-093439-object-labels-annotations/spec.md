@@ -52,7 +52,7 @@ mutation audit records.
 2. **US1.2 — Reordered replay is a no-op**: **Given** an Agent reconciled by External ID with labels and annotations, **When** the caller reconciles it again with an otherwise identical definition whose map keys appear in a different order, **Then** the response is `200` with the unchanged representation, `updated_at` is unchanged, nothing is written, and no mutation audit record is emitted.
 3. **US1.3 — Label-only change is an update**: **Given** the same Agent, **When** the caller reconciles it with one label value changed and nothing else changed, **Then** the response is `200` with the new label, `updated_at` advances, and one mutation audit record is emitted. The audit record contains no label or annotation keys or values.
 4. **US1.4 — Full replacement on Agent writes**: **Given** an Agent with labels and annotations, **When** the caller sends an ID-addressed `PUT` or an External-ID reconcile that omits `metadata`, or sends `metadata: {}`, or omits only `annotations`, **Then** each omitted or empty map is stored as empty, and the response omits empty maps.
-5. **US1.5 — Null is rejected**: **Given** an Agent with metadata, **When** the caller sends `metadata`, `labels`, or `annotations` as `null` on create, update, or reconcile, **Then** the broker returns `400 validation failed` and the stored Agent is unchanged.
+5. **US1.5 — Null metadata is rejected, null maps are empty**: **Given** an Agent with metadata, **When** the caller sends `metadata` as `null` on create, update, or reconcile, **Then** the broker returns `400 validation failed` and the stored Agent is unchanged. **When** the caller sends `labels` or `annotations` as `null`, as Go clients do for an empty map, **Then** the broker treats that map as empty.
 
 ---
 
@@ -107,12 +107,12 @@ Service with and without metadata, then read both back.
 - A label value is the empty string. It is valid and is displayed as the key alone.
 - A label value or annotation key contains trailing whitespace, a tab, or a non-ASCII letter. Label keys and values reject all of these. Annotation values accept any UTF-8 text without NUL, including whitespace, which is stored exactly.
 - A key has a prefix but an empty name (`team.example.com/`), or an empty prefix (`/owner`). Both are invalid.
-- A key prefix uses uppercase (`Team.example.com/owner`). Prefixes are lowercase DNS subdomains, so it is invalid. The name part may use uppercase.
+- A key prefix uses uppercase (`Team.example.com/owner`). Prefixes are lowercase DNS subdomains, so it is an invalid label key. As in Kubernetes, an annotation key's grammar ignores ASCII case, so it is a valid annotation key, stored exactly as sent. The name part may use uppercase in both maps.
 - An annotation value contains U+0000 or invalid UTF-8. It is invalid.
 - Annotation size is measured in UTF-8 bytes of the decoded keys and values, not of the JSON text or its escapes.
 - A request sends `metadata` with members other than `labels` and `annotations`. The broker rejects it with `400 validation failed`. This rule applies only inside `metadata`; the feature does not change how Agent, Service, and Permission Set requests treat unknown top-level fields.
 - A request body repeats the `metadata` member, or spells it with different capitalization such as `Metadata` or `METADATA`. The broker rejects it with `400 validation failed` rather than keeping either value or ignoring the misspelled member. Ignoring a misspelling would otherwise clear an Agent's stored metadata, because Agent writes treat an omitted `metadata` as empty.
-- A Service update sends `metadata: null`. The broker rejects it; `{}` is the way to clear.
+- A Service update sends `metadata: null`. The broker rejects it; `{}` is the way to clear. A `null` `labels` or `annotations` member means that map is empty, so a Service update that sends one replaces the stored map with an empty one.
 - A rejected metadata write carries other valid field changes. The entire write fails without partial changes.
 - Two concurrent reconciles of one External ID carry different labels. The existing last-writer-wins rule applies; each successful request stores its complete metadata.
 - Existing rows created before the migration have empty labels and annotations, and their responses omit `metadata`.
@@ -444,14 +444,14 @@ Content-Type: application/json
 
 **Validation** (shared by all three resources)
 
-- **FR-004**: The broker MUST match keys and values literally. It MUST NOT trim, case-fold, or apply Unicode normalization to them, before validation, in storage, or in responses.
+- **FR-004**: The broker MUST match keys and values literally. It MUST NOT trim, case-fold, or apply Unicode normalization to them in storage, in comparison, or in responses. The one exception is validation of an annotation key, which ignores ASCII case as Kubernetes does.
 - **FR-005**: Label and annotation keys MUST have the form `[prefix/]name`. The optional prefix has 1–253 characters and matches `[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*`, the Kubernetes DNS-1123 subdomain rule. It has no separate length limit per dot-separated label. The name has 1–63 characters, starts and ends with `[A-Za-z0-9]`, and contains only `[A-Za-z0-9]`, `-`, `_`, and `.` in between. A key contains at most one `/`.
 - **FR-006**: Label values MUST be empty, or have 1–63 characters that start and end with `[A-Za-z0-9]` and contain only `[A-Za-z0-9]`, `-`, `_`, and `.` in between.
 - **FR-007**: An object MUST hold at most 64 labels.
 - **FR-008**: Annotation values MUST be valid UTF-8 without U+0000. The UTF-8 byte lengths of all annotation keys and values of one object MUST total at most 65,536 bytes, measured after JSON decoding.
 - **FR-009**: Keys whose prefix is `agenticidentitybroker.dev` or ends with `.agenticidentitybroker.dev` are reserved for the broker. Admin API writes containing such a key in `labels` or `annotations` MUST be rejected.
 - **FR-010**: A `labels` or `annotations` object that repeats a key, a `metadata` object with members other than `labels` and `annotations`, and a request body that repeats `metadata` or spells it other than exactly `metadata`, MUST be rejected.
-- **FR-011**: `null` for `metadata`, `labels`, or `annotations` MUST be rejected on every write of every resource, including Service updates, unlike the Service `icon_svg` field. `{}` is the only way to clear.
+- **FR-011**: `null` for `metadata` MUST be rejected on every write of every resource, including Service updates, unlike the Service `icon_svg` field. `{}` is the way to clear. A `null` `labels` or `annotations` member MUST mean an empty map. A `null` value inside a map MUST be rejected.
 - **FR-012**: A failed metadata validation MUST return the existing `400 validation failed` envelope. Its message MUST name the map (`metadata.labels` or `metadata.annotations`) and the rule category, and MUST NOT contain the offending key or value. The whole write MUST fail without partial changes.
 
 **Write semantics**
@@ -501,7 +501,7 @@ erDiagram
 
 ```mermaid
 flowchart TD
-    A["Admin write with metadata"] --> B{"Shape valid and no null?"}
+    A["Admin write with metadata"] --> B{"Shape valid and metadata not null?"}
     B -- no --> X["400 validation failed, nothing stored"]
     B -- yes --> C{"Keys, values, limits, reserved prefix valid?"}
     C -- no --> X

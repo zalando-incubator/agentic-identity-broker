@@ -176,7 +176,7 @@ the Admin handler package. No new package boundary is needed.
 | US1.2 (and SC-002: 100 shuffled replays) | Docker (PostgreSQL) | `should treat a reconcile with reordered metadata keys as a no-op without write or audit` |
 | US1.3 | Backend | `should update and audit a label-only change without metadata in the audit record` |
 | US1.4 | Backend | `should store omitted or empty metadata maps as empty on every Agent write path` |
-| US1.5 | Backend | `should reject null metadata labels or annotations on every Agent write path without change` |
+| US1.5 | Backend | `should reject null metadata and treat null labels or annotations as empty on every Agent write path` |
 | US2.1 | Backend | `should reject invalid label keys and values on all three resources and store nothing` |
 | US2.2 | Backend | `should reject reserved-prefix keys and accept look-alike prefixes on all three resources` |
 | US2.3 | Backend | `should accept 64 labels and 65536 annotation bytes and reject one more` |

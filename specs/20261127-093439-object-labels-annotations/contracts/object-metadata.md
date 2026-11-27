@@ -21,7 +21,7 @@ Admin API. `api/enduser/openapi.yaml` does not change.
 - `metadata` has only the members `labels` and `annotations`, spelled exactly that way. Both are
   optional. Each is a JSON object whose member values are strings.
 - The top-level request member must be spelled exactly `metadata` and appear at most once.
-- `null` is never accepted for `metadata`, `labels`, or `annotations`.
+- `"metadata": null` is rejected. `"labels": null` and `"annotations": null` mean an empty map, as Kubernetes accepts them and Go clients send them for empty maps. A `null` value inside a map is rejected.
 
 ## 2. Presentation
 
@@ -34,8 +34,10 @@ Admin API. `api/enduser/openapi.yaml` does not change.
 
 ## 3. Rules
 
-Each rule is checked on the decoded string exactly as received. No step trims, case-folds, or
-normalizes it.
+Each rule is checked on the decoded string exactly as received. No step trims or normalizes it,
+and keys and values are stored and compared exactly as sent. The one exception follows
+Kubernetes: the grammar and reserved-prefix checks of an annotation key ignore ASCII case, so
+`Example.com/owner` is a valid annotation key. Label keys stay case-sensitive.
 
 | Item | Rule |
 |---|---|
@@ -50,16 +52,23 @@ normalizes it.
 | Duplicates | A key repeated within one `labels` or `annotations` object is rejected. So is a repeated member within `metadata` |
 | Encoding | Invalid UTF-8 and unpaired surrogate escapes are rejected |
 
-Because the grammar has no case-folding, `Exposure` and `exposure` are distinct keys.
+Keys are matched literally, so `Exposure` and `exposure` are distinct keys in both maps. Only
+ASCII letters are folded for the annotation-key check, so a non-ASCII look-alike such as the
+Kelvin sign (U+212A) never passes as `k`.
 
 ## 4. Errors
 
 Every metadata failure returns `400` with the existing envelope `{"error": "validation failed",
 "message": <fixed message>}`. Messages are fixed strings and never contain a submitted key or
-value. The first failure wins. Checks run in this order: request-level member, then `metadata`
-shape, then `labels`, then `annotations`. Within a map, entries are checked in document order:
-duplicate, key grammar, reserved prefix, then value. The count and size limits are checked after
-the map has been read.
+value. The first failure wins. Checks run in this order:
+
+1. The request-level member.
+2. Decoding of `metadata` with `encoding/json/v2`, in document order: `null` or non-object
+   `metadata`, unknown or repeated members, non-object maps, duplicate keys, invalid UTF-8,
+   unpaired surrogates, and non-string or `null` values.
+3. The `labels` rules, then the `annotations` rules. Within a map, entries are checked in
+   ascending key order: key grammar, reserved prefix, then value. The count and size limits are
+   checked after the map's entries.
 
 | Condition | `message` |
 |---|---|
@@ -67,19 +76,17 @@ the map has been read.
 | `metadata` is `null` | `metadata must not be null` |
 | `metadata` is not an object | `metadata must be an object` |
 | `metadata` has a member other than `labels` or `annotations`, or repeats one | `metadata contains an unknown or repeated member` |
-| `labels` is `null` | `metadata.labels must not be null` |
 | `labels` is not an object | `metadata.labels must be an object` |
 | A label key is repeated | `metadata.labels contains a duplicate key` |
 | A label key is invalid, including invalid UTF-8 | `metadata.labels contains an invalid key` |
 | A label key is reserved | `metadata.labels contains a reserved key` |
-| A label value is invalid, including a non-string or invalid UTF-8 | `metadata.labels contains an invalid value` |
+| A label value is invalid, including a non-string, `null`, or invalid UTF-8 | `metadata.labels contains an invalid value` |
 | There are more than 64 labels | `metadata.labels contains more than 64 entries` |
-| `annotations` is `null` | `metadata.annotations must not be null` |
 | `annotations` is not an object | `metadata.annotations must be an object` |
 | An annotation key is repeated | `metadata.annotations contains a duplicate key` |
 | An annotation key is invalid | `metadata.annotations contains an invalid key` |
 | An annotation key is reserved | `metadata.annotations contains a reserved key` |
-| An annotation value is invalid: a non-string, invalid UTF-8, or U+0000 | `metadata.annotations contains an invalid value` |
+| An annotation value is invalid: a non-string, `null`, invalid UTF-8, or U+0000 | `metadata.annotations contains an invalid value` |
 | Annotation keys and values exceed 65,536 bytes | `metadata.annotations exceeds 65536 bytes` |
 
 These conditions keep their existing codes, which are unaffected by metadata:
@@ -126,4 +133,5 @@ expose labels to CEL and OPA, and that ADR decides scope, freshness, and write c
 
 | Fields | Omitted | `null` | Value |
 | --- | --- | --- | --- |
-| `metadata`, `metadata.labels`, `metadata.annotations` | emptied | `400 validation failed` | replaced |
+| `metadata` | emptied | `400 validation failed` | replaced |
+| `metadata.labels`, `metadata.annotations` | emptied | emptied | replaced |

@@ -13,15 +13,17 @@ components:
       description: |
         Admin-only labels and annotations. Responses omit this property when both maps are
         empty, and omit an empty map. Map members appear in ascending byte order of their keys.
-        `null` is rejected for this object and for each member.
+        `"metadata": null` is rejected. A `null` `labels` or `annotations` member means an empty
+        map. A `null` value inside a map is rejected.
 
         Requests: Agent POST, PUT, and collection PUT, and Permission Set POST and PUT, replace
         both maps in full. An omitted `metadata` or member means empty. Service POST treats an
         omitted `metadata` as empty. Service PUT keeps stored metadata when `metadata` is
         omitted, and replaces both maps when it is sent. Keys are never merged.
 
-        Keys and values are matched literally. They are never trimmed, case-folded, or
-        normalized. A repeated key in one object is rejected. Keys with the prefix
+        Keys and values are matched literally. They are never trimmed or normalized, and they are
+        stored and compared exactly as sent. As in Kubernetes, an annotation key's grammar and
+        reserved-prefix checks ignore ASCII case. A repeated key in one object is rejected. Keys with the prefix
         `agenticidentitybroker.dev`, or a prefix ending in `.agenticidentitybroker.dev`, are
         reserved and rejected.
 
@@ -42,6 +44,7 @@ components:
 
     MetadataLabels:
       type: object
+      nullable: true
       maxProperties: 64
       description: |
         Identifying, categorizing key/value pairs. Each key has the form `[prefix/]name`. The
@@ -60,6 +63,7 @@ components:
 
     MetadataAnnotations:
       type: object
+      nullable: true
       description: |
         Non-identifying key/value pairs for tools and people. Keys follow the `MetadataLabels`
         key rules, including the reserved prefix.
@@ -102,7 +106,8 @@ components:
 
 # Operation description changes:
 # - PUT /api/agents?external_id=...: add this row to the update-branch field-policy table:
-#     | `metadata`, `metadata.labels`, `metadata.annotations` | emptied | `400 validation failed` | replaced |
+#     | `metadata` | emptied | `400 validation failed` | replaced |
+#     | `metadata.labels`, `metadata.annotations` | emptied | emptied | replaced |
 #   Also state that the no-op comparison treats labels and annotations as maps, independent of key order.
 # - PUT /api/services/{service-id}: add `metadata` to the documented omission exceptions:
 #     omitted -> preserved; sent -> both maps replaced, a missing member means empty; null -> 400.

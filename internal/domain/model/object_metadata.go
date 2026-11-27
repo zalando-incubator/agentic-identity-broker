@@ -108,7 +108,7 @@ func checkLabelEntry(key, value string, reserved bool) error {
 }
 
 func checkAnnotationEntry(key, value string, reserved bool) error {
-	switch keyStatus(key) {
+	switch keyStatus(asciiLower(key)) {
 	case keyInvalid:
 		return ErrMetadataAnnotationsInvalidKey
 	case keyReserved:
@@ -171,6 +171,18 @@ func keyStatus(key string) metadataKeyStatus {
 		return keyReserved
 	}
 	return keyValid
+}
+
+// asciiLower folds only A-Z. Annotation keys ignore ASCII case in their
+// grammar, as Kubernetes does, while strings.ToLower would also map non-ASCII
+// look-alikes such as the Kelvin sign onto ASCII letters.
+func asciiLower(key string) string {
+	return strings.Map(func(r rune) rune {
+		if 'A' <= r && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, key)
 }
 
 func validNameSegment(segment string, maxLength int) bool {

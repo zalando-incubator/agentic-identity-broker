@@ -1010,7 +1010,8 @@ Collection PUT's replacement policy is not a general patch:
 | Three metadata URLs | Clear | Clear | Replace |
 | `service_requirements`, `redirect_uris`, `allowed_scopes`, `client_uris` | Empty | Empty | Replace whole collection |
 | `display_name`, `description`, `permission_sets` | Reject | Reject | Replace; references must be valid |
-| `metadata` and its `labels` and `annotations` | Empty | `400 validation failed` | Replace both maps |
+| `metadata` | Empty | `400 validation failed` | Replace both maps |
+| `metadata.labels`, `metadata.annotations` | Empty | Empty | Replace that map |
 
 For example, sending only the three required fields preserves existing client/canonical IDs but
 clears metadata and optional collections; replaying it is then unchanged. Adding
@@ -1087,7 +1088,9 @@ Responses return `metadata` with its keys in ascending byte order. They omit an 
 ### Rules
 
 The broker checks keys and values exactly as you send them. It never trims, lowercases, or
-otherwise changes them, so `Exposure` and `exposure` are two different keys.
+otherwise changes them, so `Exposure` and `exposure` are two different keys. As in Kubernetes,
+an annotation key may use uppercase letters in its prefix, such as `Example.com/owner`; the
+broker stores it exactly as sent. A label key's prefix must be lowercase.
 
 | Item | Rule |
 | --- | --- |
@@ -1098,9 +1101,10 @@ otherwise changes them, so `Exposure` and `exposure` are two different keys.
 | Annotation value | Any text, including whitespace and line breaks, without the NUL character |
 | Annotation size | All annotation keys and values of one object together use at most 65,536 bytes of UTF-8 |
 
-`null` is never accepted for `metadata`, `labels`, or `annotations`. Send `{}` to clear metadata. A
-key repeated in one map, an unknown member inside `metadata`, a misspelled member such as
-`Metadata`, and invalid UTF-8 are rejected.
+`"metadata": null` is rejected. Send `{}` to clear metadata. A `null` `labels` or `annotations`
+member means that map is empty, which is what Go clients send for an empty map. A `null` value
+inside a map, a key repeated in one map, an unknown member inside `metadata`, a misspelled member
+such as `Metadata`, and invalid UTF-8 are rejected.
 
 Every rejection returns `400` with `error: validation failed` and a fixed message that names the
 map and the rule, for example `metadata.labels contains a reserved key`. The message never repeats
@@ -1114,7 +1118,7 @@ changes.
 | Omitted | Cleared | Cleared | Empty | Kept |
 | `{}` | Cleared | Cleared | Empty | Cleared |
 | Sent | Both maps replaced; a missing map is empty | Same | Stored | Both maps replaced |
-| `null` | `400` | `400` | `400` | `400` |
+| `"metadata": null` | `400` | `400` | `400` | `400` |
 
 The broker never merges keys: a sent `metadata` replaces both maps. A collection `PUT` that sends
 the same labels and annotations in another key order is a no-op. It writes nothing and keeps
