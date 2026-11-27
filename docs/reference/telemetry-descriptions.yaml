@@ -39,6 +39,7 @@ spans:
   storage.create.service_account: Inserts a service account with its encrypted credential; a missing service is not found and a taken canonical ID is a conflict.
   storage.create.tool_approval: Inserts a tool approval, or returns the existing pending duplicate.
   storage.create.user_grant: Creates a user grant, or updates the grant of the same principal and agent.
+  storage.create_successor.refresh_token_session: Inserts the successor refresh token session in the rotation transaction, carrying over the scope and service scope bindings of the previous session.
   storage.delete.client_credential: Deletes the client credential of an agent.
   storage.delete.pkce_session: Deletes a PKCE session by its signature.
   storage.delete.service_account: Deletes a service account and its credential, optionally only at an expected version.

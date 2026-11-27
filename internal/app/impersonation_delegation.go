@@ -18,20 +18,20 @@ func newUserDelegationVerifier(consentService *consent.Service) ports.UserDelega
 	return userDelegationVerifier{consentService: consentService}
 }
 
-func (v userDelegationVerifier) VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (ports.UserDelegationStatus, error) {
+func (v userDelegationVerifier) VerifyUserDelegation(ctx context.Context, principal id.Principal, agentID id.AgentID) (ports.UserDelegation, error) {
 	if v.consentService == nil {
-		return "", fmt.Errorf("user delegation verifier is not configured")
+		return ports.UserDelegation{}, fmt.Errorf("user delegation verifier is not configured")
 	}
 
-	_, err := v.consentService.VerifyAgentAccess(ctx, principal, agentID)
+	grant, err := v.consentService.VerifyAgentAccess(ctx, principal, agentID)
 	if err == nil {
-		return ports.UserDelegationActive, nil
+		return ports.UserDelegation{Status: ports.UserDelegationActive, GrantedPermissionSets: grant.GrantedPermissionSets}, nil
 	}
 	if errors.Is(err, consent.ErrAgentAccessDenied) {
-		return ports.UserDelegationMissing, nil
+		return ports.UserDelegation{Status: ports.UserDelegationMissing}, nil
 	}
 	if errors.Is(err, consent.ErrGrantExpired) {
-		return ports.UserDelegationExpired, nil
+		return ports.UserDelegation{Status: ports.UserDelegationExpired}, nil
 	}
-	return "", fmt.Errorf("verify user delegation: %w", err)
+	return ports.UserDelegation{}, fmt.Errorf("verify user delegation: %w", err)
 }

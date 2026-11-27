@@ -39,23 +39,24 @@ func (s *stubIssuer) IssueImpersonationToken(_ context.Context, input ports.Impe
 
 type allowDelegationVerifier struct{}
 
-func (allowDelegationVerifier) VerifyUserDelegation(context.Context, id.Principal, id.AgentID) (ports.UserDelegationStatus, error) {
-	return ports.UserDelegationActive, nil
+func (allowDelegationVerifier) VerifyUserDelegation(context.Context, id.Principal, id.AgentID) (ports.UserDelegation, error) {
+	return ports.UserDelegation{Status: ports.UserDelegationActive}, nil
 }
 
 type recordingDelegationVerifier struct {
 	status    ports.UserDelegationStatus
+	selection []storage.GrantedPermissionSetEntry
 	err       error
 	calls     int
 	principal id.Principal
 	agentID   id.AgentID
 }
 
-func (v *recordingDelegationVerifier) VerifyUserDelegation(_ context.Context, principal id.Principal, agentID id.AgentID) (ports.UserDelegationStatus, error) {
+func (v *recordingDelegationVerifier) VerifyUserDelegation(_ context.Context, principal id.Principal, agentID id.AgentID) (ports.UserDelegation, error) {
 	v.calls++
 	v.principal = principal
 	v.agentID = agentID
-	return v.status, v.err
+	return ports.UserDelegation{Status: v.status, GrantedPermissionSets: v.selection}, v.err
 }
 
 type stubAgentRepository struct {

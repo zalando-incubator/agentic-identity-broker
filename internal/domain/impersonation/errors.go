@@ -25,6 +25,8 @@ func invalidScope(description string) *tokenexchange.TokenExchangeError {
 		WithDiagnostic(impersonationDiagnostic(tokenexchange.StageRequestValidation, tokenexchange.DetailRequestMalformed))
 }
 
+const serviceScopeNotPermittedDescription = "requested service scope is not permitted"
+
 // invalidClient builds an invalid_client (401) error for a client assertion that fails
 // validation or that no rule trusts (FR-011).
 func invalidClient(description string) *tokenexchange.TokenExchangeError {

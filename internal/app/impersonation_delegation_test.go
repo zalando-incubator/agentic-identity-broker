@@ -21,13 +21,15 @@ func TestUserDelegationVerifier(t *testing.T) {
 	newVerifier := func(repo ports.UserGrantRepository) ports.UserDelegationVerifier {
 		return newUserDelegationVerifier(consent.NewService(nil, nil, repo, nil, memorystorage.NewRefreshTokenSessionStore(), nil, nil))
 	}
+	selection := []storage.GrantedPermissionSetEntry{{PermissionSetID: id.NewPermissionSetID(), IncludedServiceIDs: []id.ServiceID{id.NewServiceID()}}}
 	createGrant := func(t *testing.T, repo ports.UserGrantRepository, validUntil time.Time) {
 		t.Helper()
 		require.NoError(t, repo.Create(context.Background(), &storage.UserGrant{
-			ID:         id.NewGrantID(),
-			Principal:  principal,
-			AgentID:    agentID,
-			ValidUntil: &validUntil,
+			ID:                    id.NewGrantID(),
+			Principal:             principal,
+			AgentID:               agentID,
+			ValidUntil:            &validUntil,
+			GrantedPermissionSets: selection,
 		}))
 	}
 
@@ -35,29 +37,32 @@ func TestUserDelegationVerifier(t *testing.T) {
 		repo := memorystorage.NewUserGrantRepository()
 		createGrant(t, repo, time.Now().Add(time.Hour))
 
-		status, err := newVerifier(repo).VerifyUserDelegation(context.Background(), principal, agentID)
+		delegation, err := newVerifier(repo).VerifyUserDelegation(context.Background(), principal, agentID)
 		require.NoError(t, err)
-		assert.Equal(t, ports.UserDelegationActive, status)
+		assert.Equal(t, ports.UserDelegationActive, delegation.Status)
+		assert.Equal(t, selection, delegation.GrantedPermissionSets)
 	})
 
 	t.Run("classifies missing delegation", func(t *testing.T) {
-		status, err := newVerifier(memorystorage.NewUserGrantRepository()).VerifyUserDelegation(context.Background(), principal, agentID)
+		delegation, err := newVerifier(memorystorage.NewUserGrantRepository()).VerifyUserDelegation(context.Background(), principal, agentID)
 		require.NoError(t, err)
-		assert.Equal(t, ports.UserDelegationMissing, status)
+		assert.Equal(t, ports.UserDelegationMissing, delegation.Status)
+		assert.Empty(t, delegation.GrantedPermissionSets)
 	})
 
 	t.Run("classifies expired delegation", func(t *testing.T) {
 		repo := memorystorage.NewUserGrantRepository()
 		createGrant(t, repo, time.Now().Add(-time.Hour))
 
-		status, err := newVerifier(repo).VerifyUserDelegation(context.Background(), principal, agentID)
+		delegation, err := newVerifier(repo).VerifyUserDelegation(context.Background(), principal, agentID)
 		require.NoError(t, err)
-		assert.Equal(t, ports.UserDelegationExpired, status)
+		assert.Equal(t, ports.UserDelegationExpired, delegation.Status)
+		assert.Empty(t, delegation.GrantedPermissionSets)
 	})
 
 	t.Run("fails closed when no consent service is available", func(t *testing.T) {
-		status, err := userDelegationVerifier{}.VerifyUserDelegation(context.Background(), principal, agentID)
+		delegation, err := userDelegationVerifier{}.VerifyUserDelegation(context.Background(), principal, agentID)
 		require.Error(t, err)
-		assert.Empty(t, status)
+		assert.Empty(t, delegation.Status)
 	})
 }

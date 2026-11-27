@@ -49,7 +49,7 @@ Error status: whether the span can end with status `Error`.
 | [`extproc.token_exchange`](#extproctoken_exchange) | Server | `extproc` | Yes | Handles the request headers of one gateway request in ExtProc. It validates the request metadata and gets an exchanged token from ExtProc's cache or from the broker. For a request with a body, the OPA decision on the body comes after the span ends. |
 | [`http.request`](#httprequest) | Client | `telemetryhttp` | Yes | Outbound HTTP call through `telemetryhttp`. The span does not record URLs, headers, bodies or error messages. |
 | [`jwks.fetch`](#jwksfetch) | Internal | `jwks` | Yes | Returns the JSON Web Key Set that the URL or file adapter holds, and fails when the set is stale. The URL adapter fetches the set on the first call. |
-| [`oauth2.token_proxy`](#oauth2token_proxy) | Internal | `upstream` | No | Forwards a token request to the upstream authorization server and returns its response. |
+| [`oauth2.token_proxy`](#oauth2token_proxy) | Internal | `upstream` | Yes | Forwards a token request to the upstream authorization server and returns its response. |
 | [`oauth2session.background_refresh`](#oauth2sessionbackground_refresh) | Internal | `oauth2session` | No | Third-party session refresh in the background. It is a new root span, with a link to the span of the request that triggered the refresh. |
 | [`storage.approve.tool_approval`](#storageapprovetool_approval) | Client | `storage` | Yes | Transitions a pending tool approval to approved in PostgreSQL. |
 | [`storage.consume.client_assertion_replay`](#storageconsumeclient_assertion_replay) | Client | `storage` | Yes | Records the `jti` of a client assertion, or reports a conflict when it is already recorded. |
@@ -63,6 +63,7 @@ Error status: whether the span can end with status `Error`.
 | [`storage.create.service_account`](#storagecreateservice_account) | Client | `storage` | Yes | Inserts a service account with its encrypted credential; a missing service is not found and a taken canonical ID is a conflict. |
 | [`storage.create.tool_approval`](#storagecreatetool_approval) | Client | `storage` | Yes | Inserts a tool approval, or returns the existing pending duplicate. |
 | [`storage.create.user_grant`](#storagecreateuser_grant) | Client | `storage` | Yes | Creates a user grant, or updates the grant of the same principal and agent. |
+| [`storage.create_successor.refresh_token_session`](#storagecreate_successorrefresh_token_session) | Client | `storage` | Yes | Inserts the successor refresh token session in the rotation transaction, carrying over the scope and service scope bindings of the previous session. |
 | [`storage.delete.client_credential`](#storagedeleteclient_credential) | Client | `storage` | Yes | Deletes the client credential of an agent. |
 | [`storage.delete.pkce_session`](#storagedeletepkce_session) | Client | `storage` | Yes | Deletes a PKCE session by its signature. |
 | [`storage.delete.service_account`](#storagedeleteservice_account) | Client | `storage` | Yes | Deletes a service account and its credential, optionally only at an expected version. |
@@ -373,8 +374,9 @@ Started in `internal/adapters/http/enduser/token_grant_strategy.go`.
 
 | Attribute | Values |
 |---|---|
+| `error.type` | `definitive`, `transient` |
 | `http.request.method` | `POST` |
-| `http.response.status_code` | any `int` |
+| `http.response.status_code` | `400`, `500`, any `int` |
 
 ### oauth2session.background_refresh
 
@@ -539,6 +541,19 @@ Started in `internal/adapters/storage/postgres/user_grants.go`.
 | Attribute | Values |
 |---|---|
 | `db.operation` | `CreateUserGrant` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
+### storage.create_successor.refresh_token_session
+
+Inserts the successor refresh token session in the rotation transaction, carrying over the scope and service scope bindings of the previous session.
+
+Started in `internal/adapters/storage/postgres/refresh_token_session_repo.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `RefreshTokenSessionRepo.CreateSuccessor` |
 | `db.system` | `postgresql` |
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |

@@ -23,6 +23,10 @@ type RefreshTokenSession struct {
 	ExpiresAt        time.Time    `db:"expires_at"`
 	UsedAt           *time.Time   `db:"used_at"`
 	CreatedAt        time.Time    `db:"created_at"`
+	// ServiceScopeBindings is the immutable original assurance set. After scope narrowing it
+	// may include keys outside Scope; those require continuing-service checks but never
+	// authorize re-granting a removed scope.
+	ServiceScopeBindings ServiceScopeBindings `db:"-"`
 }
 
 // Validate checks that all required fields are present.
@@ -48,5 +52,5 @@ func (s *RefreshTokenSession) Validate() error {
 	if s.ClientAuthMethod != nil && *s.ClientAuthMethod != string(model.TokenEndpointAuthMethodPrivateKeyJWT) {
 		return NewStorageError("RefreshTokenSession.Validate", ErrorKindValidation, nil, "client_auth_method is unsupported")
 	}
-	return nil
+	return s.ServiceScopeBindings.Validate(s.Scope, false)
 }

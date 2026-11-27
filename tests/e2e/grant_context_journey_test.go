@@ -196,7 +196,7 @@ func expectSessionRecovery(j *grantContextJourney, headersResp *extprocv3.Proces
 	Expect(err).NotTo(HaveOccurred())
 	const message = "User session is unavailable. Please re-authenticate."
 	recoveryURI := j.broker.Enduser.BaseURL() + "/api/third-party/" + j.broker.Repo.ID.String() +
-		"/oauth2/authorize?redirect_uri=" + url.QueryEscape(j.broker.Enduser.BaseURL()+"/sessions")
+		"/oauth2/authorize?redirect_uri=" + url.QueryEscape(j.broker.Enduser.BaseURL()+"/sessions/"+*j.broker.Repo.CanonicalID)
 	expected, err := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": nil,
 		"error": map[string]any{"code": -32042, "message": message,
