@@ -1,4 +1,4 @@
-# Feature Specification: Labels and Annotations on Agents, Services, and Permission Sets
+# Feature Specification: Labels and Annotations on Agents, Services, Permission Sets, and Service Accounts
 
 **Feature Branch**: `speckit/issue-427`
 
@@ -8,8 +8,10 @@
 
 **Input**: [Issue #427 — Kubernetes-style labels and annotations on Agents, Services, and Permission Sets](https://github.com/zalando-incubator/agentic-identity-broker/issues/427)
 
+**Amended**: 2026-11-27, after PR #577 merged into `release/v0.2`, to add Service Accounts (User Story 4)
+
 Operators can attach Kubernetes-style **labels** and **annotations** to Agents, third-party OAuth2
-Services, and Permission Sets through the Admin API. Labels categorize a resource, for example
+Services, Permission Sets, and Service Accounts through the Admin API. Labels categorize a resource, for example
 `deployment=local` or `team.example.com/owner=platform`, and are designed to become policy input in
 a later feature. Annotations hold non-identifying information for tools and people, such as the
 GitOps source and revision of an Agent definition. Metadata is admin-only: no end-user response
@@ -25,6 +27,13 @@ labels into CEL and OPA.
 
 - Q: Should end users see an Agent's labels as read-only chips in their delegation overview and agent detail, or should all labels stay admin-only for now? → A: All metadata stays admin-only. End-user API, SPA chips, and the end-user story are out of scope and become a follow-up.
 - Q: When a Service update sends `"metadata": null`, should the broker reject it with `400`, or treat it as clearing all labels and annotations? → A: Reject with `400 validation failed` on all three resources; `{}` is the only way to clear.
+
+### Amendment 2026-11-27 — Service Accounts
+
+- Q: Should Service Accounts carry labels and annotations as well? → A: Yes, in a follow-up PR against `release/v0.2` that amends this specification (maintainer request).
+- Q: What does a Service Account `PUT` that omits `metadata` do? → A: It keeps the stored metadata, as that `PUT` already keeps an omitted `canonical_id` and `credential`, and as Service `PUT` keeps omitted metadata. Making omission uniform across resources is tracked in issue #581.
+- Q: How is a metadata-only change audited, given that Service Account updates are audited per changed aspect? → A: With a new `service.service_account.metadata_changed` event, last in precedence, whose `changes` list gains `metadata`. No record carries a metadata key or value.
+- Q: The Service Account request body is capped at 64 KiB, which cannot hold the largest valid annotation map. → A: Raise the cap to 512 KiB, as for Agent `PUT`. No new cap is introduced.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -100,6 +109,27 @@ Service with and without metadata, then read both back.
 3. **US3.3 — Service update preserves omitted metadata**: **Given** a Service with labels and annotations, **When** the caller updates the Service without a `metadata` field, **Then** the stored metadata is unchanged.
 4. **US3.4 — Service update replaces whole metadata**: **Given** the same Service, **When** the caller updates it with `metadata: {"labels": {"tier": "gold"}}`, **Then** the stored labels are exactly `{"tier": "gold"}`, the stored annotations are empty, and no previously stored key survives. `metadata: {}` clears both maps, and `metadata: null` returns `400 validation failed` without changing the Service.
 5. **US3.5 — Metadata has no runtime effect**: **Given** Agents, Services, and Permission Sets with labels and annotations, **When** a user consents, an agent exchanges a token, and a tool call needs approval, **Then** the consent decisions, issued token claims, and approval matching are identical to those for the same resources without metadata, and no end-user response, including the delegation overview and agent detail, carries `metadata`.
+
+### User Story 4 - Categorize Service Accounts (Priority: P2)
+
+An operator labels the Service Accounts of a Service, for example `environment=production`, and
+annotates them with the ticket that requested the credential. Service Accounts keep their
+existing write policy: an update keeps every member it omits, so an update that omits `metadata`
+keeps the stored metadata.
+
+**Why this priority**: Service Accounts are machine credentials whose ownership and purpose are
+not visible from the credential summary. They need the same categorization as the Service that
+holds them, with the shared validation from User Story 2.
+
+**Independent Test**: Create a Service Account with metadata, update it with and without
+metadata, and read it back through the single read and the list.
+
+**Acceptance Scenarios**:
+
+1. **US4.1 — Service Account create and read**: **Given** an authorized caller and a Service, **When** the caller creates a Service Account with labels and annotations, **Then** the response, the single read, and the list return both maps unchanged, the status resource carries no `metadata`, and no response carries the credential.
+2. **US4.2 — Service Account update preserves omitted metadata**: **Given** a Service Account with metadata, **When** the caller updates it without a `metadata` member, **Then** the stored metadata is unchanged; when nothing else changes either, the response keeps the same `ETag` and `updated_at`.
+3. **US4.3 — Service Account update replaces whole metadata**: **Given** the same Service Account, **When** the caller sends only new metadata `{"labels": {"environment": "staging"}}` with an `If-Match` of the current `ETag`, **Then** the stored labels are exactly `{"environment": "staging"}`, the annotations are empty, the `ETag` and `updated_at` advance, the credential is not re-encrypted, and one `service.service_account.metadata_changed` audit record lists `metadata` in `changes` without any key or value. `metadata: {}` clears both maps, and `metadata: null` returns `400 validation failed` without changing the Service Account.
+4. **US4.4 — Service Account metadata follows the shared rules**: **Given** an authorized caller, **When** the caller creates or updates a Service Account with a reserved-prefix label, an invalid label value, or 65,537 annotation bytes, **Then** the broker returns `400 validation failed` with the fixed message of User Story 2, stores nothing, encrypts no credential, and writes no audit or credential record. A request carrying the largest valid annotation map, sent entirely as `\u00XX` escapes beside a credential, is accepted.
 
 ### Edge Cases
 
@@ -432,17 +462,125 @@ Content-Type: application/json
 
 **Observable result**: no Agent is created, and the message contains neither the key nor the value.
 
+### Journey 5 — Olivia labels a Service Account, then changes only its metadata (US4.1–US4.3)
+
+Service Account **platform-triage-bot** (`990e8400-e29b-41d4-a716-446655440031`) belongs to
+GitHub Production. `eyJ...T1` stands for a signed JWT; the broker never returns it.
+
+**Step 1 — 14:00:00: Olivia attaches the account with labels and an annotation**
+
+```http
+POST /api/services/880e8400-e29b-41d4-a716-446655440010/service-accounts HTTP/1.1
+Host: admin.broker.example.com
+X-Remote-User: olivia@example.com
+Content-Type: application/json
+
+{
+  "canonical_id": "platform-triage-bot",
+  "kind": "jwt_bearer",
+  "scopes": ["read"],
+  "credential": {"format": "signed_jwt", "jwt": "eyJ...T1"},
+  "metadata": {
+    "labels": {"environment": "production", "team.example.com/owner": "platform"},
+    "annotations": {"tickets.example.com/request": "SEC-1042"}
+  }
+}
+
+HTTP/1.1 201 Created
+Location: /api/services/880e8400-e29b-41d4-a716-446655440010/service-accounts/990e8400-e29b-41d4-a716-446655440031
+ETag: "1"
+Content-Type: application/json
+
+{
+  "id": "990e8400-e29b-41d4-a716-446655440031",
+  "canonical_id": "platform-triage-bot",
+  "scopes": ["read"],
+  "credential_summary": {"format": "signed_jwt", "use": "access_token", "fingerprint": "SHA256:fhbwk8g0dDlEiuXzadc7Ytx+R1pSlxRBBNgzBxN+3UQ"},
+  "created_at": "2026-11-27T14:00:00Z",
+  "updated_at": "2026-11-27T14:00:00Z",
+  "metadata": {
+    "labels": {"environment": "production", "team.example.com/owner": "platform"},
+    "annotations": {"tickets.example.com/request": "SEC-1042"}
+  }
+}
+```
+
+**Step 2 — 14:10:00: Olivia widens the ceiling without sending metadata**
+
+```http
+PUT /api/services/880e8400-e29b-41d4-a716-446655440010/service-accounts/platform-triage-bot HTTP/1.1
+Host: admin.broker.example.com
+X-Remote-User: olivia@example.com
+If-Match: "1"
+Content-Type: application/json
+
+{"scopes": ["read", "write"]}
+
+HTTP/1.1 200 OK
+ETag: "2"
+Content-Type: application/json
+
+{
+  "id": "990e8400-e29b-41d4-a716-446655440031",
+  "scopes": ["read", "write"],
+  "updated_at": "2026-11-27T14:10:00Z",
+  "metadata": {
+    "labels": {"environment": "production", "team.example.com/owner": "platform"},
+    "annotations": {"tickets.example.com/request": "SEC-1042"}
+  }
+}
+```
+
+**Step 3 — 14:20:00: Olivia moves the account to staging and drops the annotation**
+
+```http
+PUT /api/services/880e8400-e29b-41d4-a716-446655440010/service-accounts/platform-triage-bot HTTP/1.1
+Host: admin.broker.example.com
+X-Remote-User: olivia@example.com
+If-Match: "2"
+Content-Type: application/json
+
+{"scopes": ["read", "write"], "metadata": {"labels": {"environment": "staging"}}}
+
+HTTP/1.1 200 OK
+ETag: "3"
+Content-Type: application/json
+
+{
+  "id": "990e8400-e29b-41d4-a716-446655440031",
+  "scopes": ["read", "write"],
+  "updated_at": "2026-11-27T14:20:00Z",
+  "metadata": {"labels": {"environment": "staging"}}
+}
+```
+
+The broker writes one audit record. Its key attributes are:
+
+```json
+{
+  "event": "service.service_account.metadata_changed",
+  "operator_principal": "olivia@example.com",
+  "service_id": "880e8400-e29b-41d4-a716-446655440010",
+  "service_account_id": "990e8400-e29b-41d4-a716-446655440031",
+  "changes": ["metadata"]
+}
+```
+
+**Observable result**: Step 2 kept the metadata. Step 3 replaced both maps whole, advanced the
+`ETag`, and left the stored credential untouched. Neither the audit record nor any other signal
+contains `staging`, `platform`, or `SEC-1042`.
+
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 **Shape**
 
-- **FR-001**: The Admin API representations of Agent, Service, and Permission Set MUST accept and return an optional `metadata` object whose only members are `labels` and `annotations`. Each is an object that maps string keys to string values.
+- **FR-001**: The Admin API representations of Agent, Service, Permission Set, and Service Account MUST accept and return an optional `metadata` object whose only members are `labels` and `annotations`. Each is an object that maps string keys to string values.
 - **FR-002**: `id`, `external_id`, `canonical_id`, `display_name`, `name`, and timestamps MUST stay at the top level. The change MUST be additive for existing clients that never send `metadata`.
 - **FR-003**: Responses MUST omit an empty `labels` or `annotations` map, and MUST omit `metadata` when both are empty. Map members MUST be serialized in ascending byte order of their keys.
 
-**Validation** (shared by all three resources)
+**Validation** (shared by all four resources)
 
 - **FR-004**: The broker MUST match keys and values literally. It MUST NOT trim, case-fold, or apply Unicode normalization to them in storage, in comparison, or in responses. The one exception is validation of an annotation key, which ignores ASCII case as Kubernetes does.
 - **FR-005**: Label and annotation keys MUST have the form `[prefix/]name`. The optional prefix has 1–253 characters and matches `[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*`, the Kubernetes DNS-1123 subdomain rule. It has no separate length limit per dot-separated label. The name has 1–63 characters, starts and ends with `[A-Za-z0-9]`, and contains only `[A-Za-z0-9]`, `-`, `_`, and `.` in between. A key contains at most one `/`.
@@ -461,11 +599,13 @@ Content-Type: application/json
 - **FR-015**: Permission Set create and `PUT` MUST replace metadata in full; an omitted `metadata` means empty.
 - **FR-016**: Service create MUST treat an omitted `metadata` as empty. Service update (`PUT`) MUST add `metadata` to its documented omission exceptions: it MUST keep stored metadata when `metadata` is omitted and MUST replace both maps whole when `metadata` is sent, treating an omitted member as empty. Keys are never merged.
 - **FR-017**: Any accepted change to labels or annotations of a Service or Permission Set MUST advance its `updated_at` and be audited as the resource's existing updates are.
+- **FR-023**: Service Account create MUST treat an omitted `metadata` as empty. Service Account update (`PUT`) MUST keep stored metadata when `metadata` is omitted, as it keeps an omitted `canonical_id` and `credential`, and MUST replace both maps whole when `metadata` is sent, treating an omitted member as empty. Keys are never merged. An update whose metadata equals the stored metadata, independent of key order, and that changes nothing else MUST write nothing and keep the `ETag`.
+- **FR-024**: An accepted change to labels or annotations of a Service Account MUST advance its `updated_at` and version, and with them its `ETag`. It MUST NOT re-encrypt the credential. The update audit record MUST list `metadata` in `changes`; when metadata is the only change, its `event` MUST be `service.service_account.metadata_changed`. The Service Account status resource MUST NOT carry `metadata`.
 - **FR-018**: Only Admin API callers MUST be able to write metadata. No end-user, agent, OAuth2, or token-exchange endpoint accepts or changes it.
 
 **Admin-only exposure**
 
-- **FR-019**: Labels and annotations of Agents, Services, and Permission Sets MUST NOT appear in any End-User API response, including `AgentDelegation` and `AgentDetail`.
+- **FR-019**: Labels and annotations of Agents, Services, Permission Sets, and Service Accounts MUST NOT appear in any End-User API response, including `AgentDelegation` and `AgentDetail`.
 - **FR-020**: The End-User API contract and the SPA MUST remain unchanged by this feature.
 
 **Isolation from runtime behavior and telemetry**
@@ -490,6 +630,11 @@ erDiagram
         uuid id PK
         ObjectMetadata metadata
     }
+    ServiceAccount {
+        uuid id PK
+        uuid service_id FK
+        ObjectMetadata metadata
+    }
     ObjectMetadata {
         map labels
         map annotations
@@ -497,6 +642,8 @@ erDiagram
     Agent ||--|| ObjectMetadata : "embeds"
     ThirdpartyOAuth2Service ||--|| ObjectMetadata : "embeds"
     PermissionSet ||--|| ObjectMetadata : "embeds"
+    ServiceAccount ||--|| ObjectMetadata : "embeds"
+    ThirdpartyOAuth2Service ||--o{ ServiceAccount : "holds"
 ```
 
 ```mermaid
@@ -507,10 +654,10 @@ flowchart TD
     C -- no --> X
     C -- yes --> D{"Resource write policy"}
     D -- "Agent or Permission Set" --> E["Replace both maps; omitted means empty"]
-    D -- "Service update, metadata omitted" --> F["Keep stored maps"]
-    D -- "Service update, metadata sent" --> E
+    D -- "Service or Service Account update, metadata omitted" --> F["Keep stored maps"]
+    D -- "Service or Service Account update, metadata sent" --> E
     E --> G{"Maps or other fields changed?"}
-    G -- no --> H["Agent reconcile no-op: no write, no audit"]
+    G -- no --> H["Agent reconcile or Service Account update no-op: no write, no audit"]
     G -- yes --> I["Store, advance updated_at, audit without metadata values"]
 ```
 
@@ -518,13 +665,15 @@ flowchart TD
 - **Object Metadata**: an immutable pair of a label map and an annotation map, validated as a
   whole on an Admin write under FR-004 to FR-009. The Admin API enforces the JSON shape rules
   of FR-010 and FR-011 before the value exists. Equality is map equality, independent of order.
-  Agent, ThirdpartyOAuth2Service, and PermissionSet each embed exactly one.
+  Agent, ThirdpartyOAuth2Service, PermissionSet, and ServiceAccount each embed exactly one.
 - **Label**: an identifying, categorizing key/value pair under FR-005 and FR-006. Designed as
   future policy input; until an accepted ADR says otherwise it has no runtime effect.
 - **Annotation**: a non-identifying key/value pair for tools and people under FR-005 and FR-008.
   Never policy input.
 
-**Domain Events**: none new. Metadata changes are ordinary updates of the embedding resource.
+**Domain Events**: none new for Agents, Services, and Permission Sets; metadata changes are
+ordinary updates of the embedding resource. Service Account updates are audited per changed
+aspect, so they gain the `service.service_account.metadata_changed` audit event (FR-024).
 
 *Label, Annotation, and Object Metadata MUST be added to the `ARCHITECTURE.md` glossary.*
 
@@ -534,12 +683,14 @@ flowchart TD
 - **API-002**: `api/enduser/openapi.yaml` MUST NOT change; its version stays 1.3.0.
 - **API-003**: The Admin API document MUST show examples with labels and annotations, the omission of empty maps, and the `validation failed` messages of FR-012.
 - **API-004**: All API changes MUST be confirmed by the maintainer before implementation (Constitution X).
+- **API-005**: The Admin API MUST add `metadata` to `ServiceAccountRequest` and `ServiceAccount`, with the rules of FR-003 to FR-012, FR-023, and FR-024, without a further version bump: Admin API 3.1.0 is unreleased on `release/v0.2` and already adds Service Accounts. The Service Account request body limit MUST rise from 64 KiB to 512 KiB, and its `invalid request body` message MUST name the new limit.
 
 ### Database Requirements
 
 - **DB-001**: One atomic migration MUST add `labels JSONB NOT NULL DEFAULT '{}'` and `annotations JSONB NOT NULL DEFAULT '{}'` to `agents`, `thirdparty_oauth2_services`, and `permission_sets`, with a down migration that removes them.
 - **DB-002**: The in-memory and PostgreSQL adapters MUST both store and return metadata, with integration tests for both and for the migration in both directions.
 - **DB-003**: No index on the new columns is added; label selectors and their index are a follow-up.
+- **DB-004**: A second atomic migration MUST add the same two columns and object `CHECK` constraints to `service_accounts`, under the lock rules of DB-001, with a down migration that removes them. It is separate because migration `051` is already merged into `release/v0.2`.
 
 ### Security Requirements
 
@@ -551,17 +702,17 @@ flowchart TD
 
 ### Key Entities
 
-- **Agent**, **ThirdpartyOAuth2Service**, **PermissionSet**: existing entities, each gaining one
-  Object Metadata value.
+- **Agent**, **ThirdpartyOAuth2Service**, **PermissionSet**, **ServiceAccount**: existing
+  entities, each gaining one Object Metadata value.
 - **Object Metadata**, **Label**, **Annotation**: new value objects; see Domain Model.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: An operator can label and annotate an Agent, a Service, and a Permission Set in one Admin API request each, and reads return 100% of the submitted keys and values byte for byte.
+- **SC-001**: An operator can label and annotate an Agent, a Service, a Permission Set, and a Service Account in one Admin API request each, and reads return 100% of the submitted keys and values byte for byte.
 - **SC-002**: 100 consecutive reconciles of an unchanged Agent definition, with map keys shuffled in each request, produce zero writes, zero `updated_at` changes, and zero mutation audit records.
-- **SC-003**: Every input class of FR-005 to FR-011 is rejected on every write path of all three resources, and none of the error messages contains the offending key or value.
+- **SC-003**: Every input class of FR-005 to FR-011 is rejected on every write path of all four resources, and none of the error messages contains the offending key or value.
 - **SC-004**: No End-User API response produced by the E2E suite contains a label or annotation.
 - **SC-005**: Consent decisions, token claims, and approval matching are identical with and without metadata on the involved resources.
 - **SC-006**: No log record, audit record, span, or metric produced by the E2E suite contains a label or annotation key or value used by the suite.
@@ -571,7 +722,7 @@ flowchart TD
 - Inside a sent `metadata` object, an omitted `labels` or `annotations` member means empty for every resource, consistent with "keys are never merged".
 - Label keys and values use the Kubernetes character rules; annotation keys use the same key rules, and annotation values are free UTF-8 text without NUL.
 - A repeated key in one JSON object is rejected rather than resolved last-wins, because the stored result would otherwise depend on parser behavior.
-- The existing mutation audit records for Agents, Services, and Permission Sets are reused unchanged; they name the resource and caller but not metadata values.
+- The existing mutation audit records for Agents, Services, and Permission Sets are reused unchanged; they name the resource and caller but not metadata values. Service Account update records gain `metadata` in `changes` and one event (FR-024), and carry no metadata values.
 
 ### Out of Scope
 
@@ -580,9 +731,11 @@ flowchart TD
 - Exposing labels to CEL, ExtProc, OPA, or the AuthZEN Grant Context. This needs its own ADR, which also decides which labels reach OPA, their freshness, and any tighter write control for particular keys.
 - Showing any metadata to end users, including Agent labels as read-only chips in the delegation overview and agent detail, and Permission Set labels on the consent screen.
 - Metadata on Protected Resources and on signing or CIMD keys.
+- Metadata on the Service Account status resource.
 
 ### Dependencies
 
 - `adrs/047-unique-agent-external-id-reconcile.md`: External-ID reconcile, full-replacement policy, and the no-op rule extended by FR-013 and FR-014.
 - `adrs/048-authzen-delegation-pip.md`: the Grant Context that a later ADR may extend with labels.
+- `adrs/20261125-154231-service-accounts-stored-jwt.md` and `specs/20261125-152113-service-accounts-stored-jwt/`: the Service Account resource, its update policy, its audit events, and its body limit, extended by FR-023, FR-024, and API-005.
 - `coding-standards/LOGGING.md` and `coding-standards/OPENTELEMETRY.md`: the basis for FR-022.

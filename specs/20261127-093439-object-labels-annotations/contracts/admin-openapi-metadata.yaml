@@ -17,9 +17,10 @@ components:
         map. A `null` value inside a map is rejected.
 
         Requests: Agent POST, PUT, and collection PUT, and Permission Set POST and PUT, replace
-        both maps in full. An omitted `metadata` or member means empty. Service POST treats an
-        omitted `metadata` as empty. Service PUT keeps stored metadata when `metadata` is
-        omitted, and replaces both maps when it is sent. Keys are never merged.
+        both maps in full. An omitted `metadata` or member means empty. Service POST and Service
+        Account POST treat an omitted `metadata` as empty. Service PUT and Service Account PUT
+        keep stored metadata when `metadata` is omitted, and replace both maps when it is sent.
+        Keys are never merged.
 
         Keys and values are matched literally. They are never trimmed or normalized, and they are
         stored and compared exactly as sent. As in Kubernetes, an annotation key's grammar and
@@ -80,7 +81,9 @@ components:
     #     $ref: '#/components/schemas/ObjectMetadata'
     # Agent, AgentCreateRequest, AgentUpdateRequest,
     # Service, ServiceCreateRequest, ServiceUpdateRequest,
-    # CreatePermissionSetRequest, PermissionSetResponse.
+    # CreatePermissionSetRequest, PermissionSetResponse,
+    # ServiceAccountRequest, ServiceAccount (amendment, User Story 4).
+    # ServiceAccountStatus gains no metadata.
 
   examples:
     MetadataReservedKeyRejected:
@@ -115,3 +118,8 @@ components:
 # - POST /api/agents, PUT /api/agents/{agent-id}, PUT /api/agents?external_id=...,
 #   POST/PUT /api/services, POST/PUT /api/permission-sets: add a request example with labels and
 #   annotations, a response example that omits empty maps, and one 400 example from above.
+# - PUT /api/services/{service-id}/service-accounts/{service-account-id} (amendment): add
+#   `metadata` to the bullets: omitted -> kept; sent -> both maps replaced, a missing member means
+#   empty; null -> 400. A metadata-only change increments the ETag; equal metadata is a no-op.
+# - POST and PUT /api/services/{service-id}/service-accounts...: raise the documented body limit
+#   from 64 KiB to 512 KiB, and add a request example with labels and annotations.

@@ -20,7 +20,7 @@ import (
 var _ ports.ServiceAccountRepository = (*ServiceAccountRepository)(nil)
 
 const serviceAccountColumns = `id, service_id, canonical_id, kind, scopes, credential_encrypted, credential_summary,
-	credential_expires_at, version, created_at, updated_at`
+	credential_expires_at, labels, annotations, version, created_at, updated_at`
 
 // ServiceAccountRepository stores service accounts in PostgreSQL. The credential column holds
 // ciphertext only.
@@ -42,6 +42,8 @@ type serviceAccountRecord struct {
 	Credential  []byte              `db:"credential_encrypted"`
 	Summary     []byte              `db:"credential_summary"`
 	ExpiresAt   sql.NullTime        `db:"credential_expires_at"`
+	Labels      []byte              `db:"labels"`
+	Annotations []byte              `db:"annotations"`
 	Version     int64               `db:"version"`
 	CreatedAt   time.Time           `db:"created_at"`
 	UpdatedAt   time.Time           `db:"updated_at"`
@@ -61,9 +63,13 @@ func serviceAccountToRecord(account *model.ServiceAccount) (serviceAccountRecord
 	if err != nil {
 		return serviceAccountRecord{}, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "invalid service account summary")
 	}
+	labels, annotations, err := marshalObjectMetadata(account.ObjectMetadata)
+	if err != nil {
+		return serviceAccountRecord{}, storage.NewStorageError(operation, storage.ErrorKindValidation, err, "invalid service account metadata")
+	}
 	record := serviceAccountRecord{
 		ID: account.ID, ServiceID: account.ServiceID, CanonicalID: account.CanonicalID, Kind: string(account.Kind),
-		Scopes: scopes, Credential: ciphertext, Summary: summary, Version: account.Version,
+		Scopes: scopes, Credential: ciphertext, Summary: summary, Labels: labels, Annotations: annotations, Version: account.Version,
 		CreatedAt: account.CreatedAt.UTC(), UpdatedAt: account.UpdatedAt.UTC(),
 	}
 	if account.CredentialExpiresAt != nil {
@@ -85,6 +91,11 @@ func (r serviceAccountRecord) toEntity() (*model.ServiceAccount, error) {
 	if err := json.Unmarshal(r.Summary, &account.Summary); err != nil {
 		return nil, storage.NewStorageError(operation, storage.ErrorKindUnknown, err, "stored service account summary is invalid")
 	}
+	metadata, err := restoreObjectMetadata(operation, r.Labels, r.Annotations)
+	if err != nil {
+		return nil, err
+	}
+	account.ObjectMetadata = metadata
 	if r.ExpiresAt.Valid {
 		expiry := r.ExpiresAt.Time.UTC()
 		account.CredentialExpiresAt = &expiry
@@ -140,10 +151,10 @@ func (r *ServiceAccountRepository) Create(ctx context.Context, account *model.Se
 	defer cancel()
 	_, err = r.adapter.db.ExecContext(execCtx, `INSERT INTO service_accounts
 		(id, service_id, canonical_id, kind, scopes, credential_encrypted, credential_summary,
-		 credential_expires_at, version, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, $9, $10)`,
+		 credential_expires_at, labels, annotations, version, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $12)`,
 		record.ID, record.ServiceID, record.CanonicalID, record.Kind, record.Scopes, record.Credential, record.Summary,
-		record.ExpiresAt, record.CreatedAt, record.UpdatedAt)
+		record.ExpiresAt, record.Labels, record.Annotations, record.CreatedAt, record.UpdatedAt)
 	if err != nil {
 		return classifyServiceAccountError(operation, err)
 	}
@@ -233,11 +244,11 @@ func (r *ServiceAccountRepository) Update(ctx context.Context, account *model.Se
 	var version int64
 	err = r.adapter.db.QueryRowContext(execCtx, `UPDATE service_accounts
 		SET canonical_id = $3, scopes = $4, credential_encrypted = $5, credential_summary = $6,
-		    credential_expires_at = $7, updated_at = $8, version = version + 1
-		WHERE id = $1 AND service_id = $2 AND ($9::bigint IS NULL OR version = $9)
+		    credential_expires_at = $7, labels = $8, annotations = $9, updated_at = $10, version = version + 1
+		WHERE id = $1 AND service_id = $2 AND ($11::bigint IS NULL OR version = $11)
 		RETURNING version`,
 		record.ID, record.ServiceID, record.CanonicalID, record.Scopes, record.Credential, record.Summary,
-		record.ExpiresAt, record.UpdatedAt, expectedVersion).Scan(&version)
+		record.ExpiresAt, record.Labels, record.Annotations, record.UpdatedAt, expectedVersion).Scan(&version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r.preconditionFailure(execCtx, operation, account.ServiceID, account.ID)
 	}

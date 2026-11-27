@@ -1,7 +1,9 @@
-# Contract: Object Metadata on Agents, Services, and Permission Sets
+# Contract: Object Metadata on Agents, Services, Permission Sets, and Service Accounts
 
 Status: confirmed by the maintainer on 2026-11-27 ([confirmation](https://github.com/zalando-incubator/agentic-identity-broker/pull/577#issuecomment-7219784410); API-004, Constitution X) and published in
-`api/admin/openapi.yaml` 3.1.0. The OpenAPI fragments are in
+`api/admin/openapi.yaml` 3.1.0. The Service Account rows were added on 2026-11-27 by the
+follow-up amendment to `release/v0.2` (User Story 4) and are confirmed in its pull request. The
+OpenAPI fragments are in
 [admin-openapi-metadata.yaml](admin-openapi-metadata.yaml). This contract applies only to the
 Admin API. `api/enduser/openapi.yaml` does not change.
 
@@ -16,8 +18,9 @@ Admin API. `api/enduser/openapi.yaml` does not change.
 
 - `metadata` is optional on these schemas: `AgentCreateRequest` (used by POST and collection
   PUT), `AgentUpdateRequest`, `ServiceCreateRequest`, `ServiceUpdateRequest`, and
-  `CreatePermissionSetRequest` (used by POST and PUT). The responses `Agent`, `Service`, and
-  `PermissionSetResponse` carry it as well.
+  `CreatePermissionSetRequest` (used by POST and PUT), and `ServiceAccountRequest` (used by POST
+  and PUT). The responses `Agent`, `Service`, `PermissionSetResponse`, and `ServiceAccount` carry
+  it as well. `ServiceAccountStatus` does not.
 - `metadata` has only the members `labels` and `annotations`, spelled exactly that way. Both are
   optional. Each is a JSON object whose member values are strings.
 - The top-level request member must be spelled exactly `metadata` and appear at most once.
@@ -101,12 +104,12 @@ changes (FR-012).
 
 ## 5. Write semantics
 
-| Request `metadata` | Agent (POST, PUT, collection PUT) | Permission Set (POST, PUT) | Service POST | Service PUT |
-|---|---|---|---|---|
-| Omitted | Empty | Empty | Empty | Keep stored value |
-| `{}` | Empty | Empty | Empty | Empty |
-| Sent with one member | That map replaced, the other empty | same | same | same |
-| Sent with both | Both replaced | Both replaced | Both stored | Both replaced |
+| Request `metadata` | Agent (POST, PUT, collection PUT) | Permission Set (POST, PUT) | Service POST | Service PUT | Service Account POST | Service Account PUT |
+|---|---|---|---|---|---|---|
+| Omitted | Empty | Empty | Empty | Keep stored value | Empty | Keep stored value |
+| `{}` | Empty | Empty | Empty | Empty | Empty | Empty |
+| Sent with one member | That map replaced, the other empty | same | same | same | same | same |
+| Sent with both | Both replaced | Both replaced | Both stored | Both replaced | Both stored | Both replaced |
 
 - Keys are never merged.
 - On Agent collection PUT, labels and annotations are compared as maps for the no-op rule. A
@@ -115,12 +118,25 @@ changes (FR-012).
 - Accepted changes advance `updated_at` and emit the resource's existing mutation audit record.
   The record contains no metadata. Service writes also increment the row version, and with it
   the `ETag`, as any Service update does.
+- Service Account updates follow the same rule with their own audit records. A metadata change
+  adds `metadata` to `changes`. When metadata is the only change, the record's `event` is
+  `service.service_account.metadata_changed`, last in the existing precedence. A metadata change
+  increments the version and the `ETag` and does not re-encrypt the credential. A Service Account
+  `PUT` whose metadata equals the stored metadata, in any key order, and that changes nothing
+  else is a no-op: `200` with the same `ETag`, no write, and no record.
+- On Service Account writes, the metadata checks run after the body is decoded and the
+  `canonical_id`, `kind`, `scopes`, and `credential` members are read, and before any domain
+  rule, credential validation, or encryption. A `null` member error therefore wins over a
+  metadata error, and a metadata error wins over a Service Account rule.
 - Only Admin API callers can write metadata (FR-018).
 
 ## 6. Request-body caps
 
 Agent ID-addressed `PUT` and collection `PUT` accept bodies up to 512 KiB. Their previous
-undocumented cap was 64 KiB. Other write endpoints keep their current behavior.
+undocumented cap was 64 KiB. Service Account `POST` and `PUT` also accept bodies up to 512 KiB,
+up from their documented 64 KiB, and the `invalid request body` message for a larger body reads
+`request body must be one JSON object of at most 512 KiB with known members`. Other write
+endpoints keep their current behavior.
 
 ## 7. Runtime isolation
 

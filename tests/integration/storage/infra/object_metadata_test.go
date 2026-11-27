@@ -22,6 +22,7 @@ import (
 
 type objectMetadataHarness struct {
 	ctx       context.Context
+	adapter   *postgres.Adapter
 	exec      func(string)
 	query     func(string) string
 	agents    *postgres.AgentRepository
@@ -43,6 +44,7 @@ func setupObjectMetadataHarness(t *testing.T) *objectMetadataHarness {
 	require.NoError(t, providerService.Create(ctx, service))
 	return &objectMetadataHarness{
 		ctx:       ctx,
+		adapter:   adapter,
 		exec:      func(statement string) { shared.ExecuteSQL(t, dbName, statement) },
 		query:     func(statement string) string { return strings.TrimSpace(shared.QuerySQL(t, dbName, statement)) },
 		agents:    postgres.NewAgentRepository(adapter),
@@ -358,5 +360,65 @@ func TestPostgresServiceObjectMetadata(t *testing.T) {
 				assert.NotEqual(t, service.ID, candidate.ID, "a corrupt service must not be returned")
 			}
 		}
+	})
+}
+
+func TestPostgresServiceAccountObjectMetadata(t *testing.T) {
+	h := setupObjectMetadataHarness(t)
+	repo := postgres.NewServiceAccountRepository(h.adapter)
+	account := func(t *testing.T, metadata model.ObjectMetadata) *model.ServiceAccount {
+		t.Helper()
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		created := &model.ServiceAccount{
+			ID: id.NewServiceAccountID(), ServiceID: h.service.ID, CanonicalID: "bot-" + id.NewServiceAccountID().String(),
+			Kind: model.ServiceAccountKindJWTBearer, Scopes: []string{"read"}, Credential: model.NewEncryptedSecret([]byte("opaque")),
+			Summary:        model.CredentialSummary{Format: model.CredentialFormatSignedJWT, Use: model.CredentialUseAccessToken, Fingerprint: "SHA256:x"},
+			ObjectMetadata: metadata, CreatedAt: now, UpdatedAt: now,
+		}
+		require.NoError(t, repo.Create(h.ctx, created))
+		return created
+	}
+
+	t.Run("every read returns the stored metadata byte for byte", func(t *testing.T) {
+		metadata := metadataFixture(t)
+		created := account(t, metadata)
+		byID, err := repo.Get(h.ctx, h.service.ID, created.ID)
+		require.NoError(t, err)
+		assert.True(t, metadata.Equal(byID.ObjectMetadata))
+		byName, err := repo.GetByCanonicalID(h.ctx, h.service.ID, created.CanonicalID)
+		require.NoError(t, err)
+		assert.True(t, metadata.Equal(byName.ObjectMetadata))
+		listed, err := repo.ListByService(h.ctx, h.service.ID)
+		require.NoError(t, err)
+		for _, candidate := range listed {
+			if candidate.ID == created.ID {
+				assert.True(t, metadata.Equal(candidate.ObjectMetadata))
+			}
+		}
+	})
+	t.Run("empty metadata is written as empty objects", func(t *testing.T) {
+		created := account(t, model.ObjectMetadata{})
+		assert.Equal(t, "{}|{}", h.metadataColumns("service_accounts", created.ID.String()))
+		created.ObjectMetadata = metadataFixture(t)
+		require.NoError(t, repo.Update(h.ctx, created, nil))
+		created.ObjectMetadata = model.ObjectMetadata{}
+		require.NoError(t, repo.Update(h.ctx, created, nil))
+		assert.Equal(t, "{}|{}", h.metadataColumns("service_accounts", created.ID.String()))
+	})
+	t.Run("a stored reserved-prefix key reads back unchanged", func(t *testing.T) {
+		created := account(t, model.ObjectMetadata{})
+		h.exec(`UPDATE service_accounts SET labels = '{"agenticidentitybroker.dev/x":"v"}' WHERE id = '` + created.ID.String() + `'`)
+		stored, err := repo.Get(h.ctx, h.service.ID, created.ID)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"agenticidentitybroker.dev/x": "v"}, stored.ObjectMetadata.Labels())
+	})
+	t.Run("a column that is not an object of strings fails closed", func(t *testing.T) {
+		created := account(t, model.ObjectMetadata{})
+		h.restoreMetadataColumns(t, "service_accounts", created.ID.String())
+		h.exec(`UPDATE service_accounts SET annotations = '{"k":1}' WHERE id = '` + created.ID.String() + `'`)
+		stored, err := repo.Get(h.ctx, h.service.ID, created.ID)
+		assertMetadataStorageFailure(t, stored, err)
+		listed, err := repo.ListByService(h.ctx, h.service.ID)
+		assertMetadataStorageFailure(t, listed, err)
 	})
 }

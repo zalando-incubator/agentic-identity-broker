@@ -47,15 +47,17 @@ type ServiceAccountCreate struct {
 	Kind        model.ServiceAccountKind
 	Scopes      []string
 	Credential  *model.ServiceAccountCredentialInput
+	Metadata    model.ObjectMetadata
 }
 
 // ServiceAccountUpdate is an update request after input parsing. Nil members keep the stored
-// value; Scopes always replaces the ceiling.
+// value; Scopes always replaces the ceiling, and Metadata replaces both maps.
 type ServiceAccountUpdate struct {
 	CanonicalID     *string
 	Kind            *model.ServiceAccountKind
 	Scopes          []string
 	Credential      *model.ServiceAccountCredentialInput
+	Metadata        *model.ObjectMetadata
 	ExpectedVersion *int64
 }
 
@@ -120,6 +122,9 @@ func (s *ServiceAccountService) Create(ctx context.Context, operator id.Principa
 	if err != nil {
 		return nil, err
 	}
+	if err := request.Metadata.Validate(); err != nil {
+		return nil, err
+	}
 	if request.Credential == nil {
 		return nil, &model.ServiceAccountValidationError{Message: "credential is required"}
 	}
@@ -130,7 +135,8 @@ func (s *ServiceAccountService) Create(ctx context.Context, operator id.Principa
 	}
 	account := &model.ServiceAccount{
 		ID: id.NewServiceAccountID(), ServiceID: serviceID, CanonicalID: request.CanonicalID, Kind: request.Kind, Scopes: scopes,
-		Summary: validated.Summary, CredentialExpiresAt: validated.ExpiresAt, CreatedAt: now, UpdatedAt: now,
+		Summary: validated.Summary, CredentialExpiresAt: validated.ExpiresAt, ObjectMetadata: request.Metadata,
+		CreatedAt: now, UpdatedAt: now,
 	}
 	if account.Credential, err = s.encrypt(ctx, operator, account, operationCreate, validated.Document); err != nil {
 		return nil, err
@@ -212,6 +218,11 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 	if err != nil {
 		return nil, "", err
 	}
+	if request.Metadata != nil {
+		if err := request.Metadata.Validate(); err != nil {
+			return nil, "", err
+		}
+	}
 	now := s.now().UTC()
 	var validated *model.ValidatedCredential
 	if request.Credential != nil {
@@ -220,7 +231,7 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 		}
 	}
 	for attempt := 1; ; attempt++ {
-		view, outcome, err := s.applyUpdate(ctx, operator, stored, request.CanonicalID, scopes, validated, request.ExpectedVersion, now)
+		view, outcome, err := s.applyUpdate(ctx, operator, stored, request, scopes, validated, now)
 		if request.ExpectedVersion != nil || attempt == unconditionalWriteAttempts || !errors.Is(err, ports.ErrServiceAccountVersionMismatch) {
 			return view, outcome, err
 		}
@@ -238,14 +249,17 @@ const unconditionalWriteAttempts = 3
 // applyUpdate writes the requested state over stored. The write is always conditional on the
 // version that was read, so a concurrent change is never overwritten with stale members; without
 // If-Match the caller re-reads and applies the request again.
-func (s *ServiceAccountService) applyUpdate(ctx context.Context, operator id.Principal, stored *model.ServiceAccount, canonicalID *string, scopes []string, validated *model.ValidatedCredential, expectedVersion *int64, now time.Time) (*ServiceAccountView, ServiceAccountUpdateOutcome, error) {
-	if expectedVersion != nil && *expectedVersion != stored.Version {
+func (s *ServiceAccountService) applyUpdate(ctx context.Context, operator id.Principal, stored *model.ServiceAccount, request ServiceAccountUpdate, scopes []string, validated *model.ValidatedCredential, now time.Time) (*ServiceAccountView, ServiceAccountUpdateOutcome, error) {
+	if request.ExpectedVersion != nil && *request.ExpectedVersion != stored.Version {
 		return nil, "", storage.NewStorageError("UpdateServiceAccount", storage.ErrorKindConflict, ports.ErrServiceAccountVersionMismatch, "service account version mismatch")
 	}
 	candidate := *stored
 	candidate.Scopes = scopes
-	if canonicalID != nil {
-		candidate.CanonicalID = *canonicalID
+	if request.CanonicalID != nil {
+		candidate.CanonicalID = *request.CanonicalID
+	}
+	if request.Metadata != nil {
+		candidate.ObjectMetadata = *request.Metadata
 	}
 
 	changes := []string{}
@@ -259,6 +273,9 @@ func (s *ServiceAccountService) applyUpdate(ctx context.Context, operator id.Pri
 	}
 	if candidate.CanonicalID != stored.CanonicalID {
 		changes = append(changes, changeCanonicalID)
+	}
+	if !candidate.ObjectMetadata.Equal(stored.ObjectMetadata) {
+		changes = append(changes, changeMetadata)
 	}
 	if len(changes) == 0 {
 		return s.view(stored, s.now().UTC()), ServiceAccountUnchanged, nil
@@ -334,6 +351,7 @@ const (
 	changeCredential  = "credential"
 	changeScopes      = "scopes"
 	changeCanonicalID = "canonical_id"
+	changeMetadata    = "metadata"
 )
 
 // updateEvent picks the event of an update by precedence; changes lists every changed aspect.
@@ -343,8 +361,10 @@ func updateEvent(changes []string) string {
 		return "service.service_account.credential_rotated"
 	case slices.Contains(changes, changeScopes):
 		return "service.service_account.ceiling_changed"
-	default:
+	case slices.Contains(changes, changeCanonicalID):
 		return "service.service_account.renamed"
+	default:
+		return "service.service_account.metadata_changed"
 	}
 }
 
