@@ -1258,7 +1258,8 @@ maintainer approval.
 
 **Admin API 3.1.0 (issue #471)** is additive. It adds create, list, read, update, delete and
 status for service accounts under `/api/services/{service-id}/service-accounts`, with strong
-ETags and an optional `If-Match`. `DELETE /api/services/{service-id}` gains one cause for its
+ETags of the stored version and an optional `If-Match`. The ETag versions the stored account,
+not the derived `status`, which can change at credential expiry without a write. `DELETE /api/services/{service-id}` gains one cause for its
 existing `409`: a service that holds a service account. No existing request or successful
 response changes, and the end-user and ExtProc contracts are unchanged. The maintainer confirms
 the contract in the review of the PR that introduces it

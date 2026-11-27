@@ -185,8 +185,8 @@ func ValidateServiceAccountCredential(input ServiceAccountCredentialInput, now t
 	if err != nil || len(message.Signatures()) != 1 {
 		return rejectCredential(CredentialRejectionMalformed)
 	}
-	claims, err := jwt.ParseInsecure([]byte(token))
-	if err != nil {
+	claims := jwt.New()
+	if err := json.Unmarshal(message.Payload(), claims); err != nil {
 		return rejectCredential(CredentialRejectionMalformed)
 	}
 	headers := message.Signatures()[0].ProtectedHeaders()

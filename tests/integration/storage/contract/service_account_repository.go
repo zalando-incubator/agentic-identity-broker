@@ -257,6 +257,28 @@ func RunServiceAccountRepository(t *testing.T, newStorage NewStorage) {
 		assert.Equal(t, int64(3), unconditional.Version)
 	})
 
+	t.Run("a credential that is not ciphertext is refused and nothing is stored", func(t *testing.T) {
+		st := newStorage(t)
+		repo := st.ServiceAccounts()
+		serviceID := contractService(t, st)
+		plaintext := contractAccount(serviceID, "platform-triage-bot")
+		plaintext.Credential = model.NewPlaintextSecret("plaintext")
+		requireKind(t, repo.Create(ctx, plaintext), storage.ErrorKindValidation)
+		count, err := repo.CountByService(ctx, serviceID)
+		require.NoError(t, err)
+		assert.Zero(t, count)
+
+		account := contractAccount(serviceID, "platform-triage-bot")
+		require.NoError(t, repo.Create(ctx, account))
+		changed := *account
+		changed.Scopes = []string{"changed"}
+		changed.Credential = model.NewPlaintextSecret("plaintext")
+		requireKind(t, repo.Update(ctx, &changed, nil), storage.ErrorKindValidation)
+		stored, err := repo.Get(ctx, serviceID, account.ID)
+		require.NoError(t, err)
+		assertSameAccount(t, account, stored)
+	})
+
 	t.Run("update of a missing or foreign account is not found", func(t *testing.T) {
 		st := newStorage(t)
 		repo := st.ServiceAccounts()

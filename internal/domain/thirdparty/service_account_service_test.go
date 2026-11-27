@@ -36,6 +36,17 @@ type fakeServiceAccountRepo struct {
 	updateErr  error
 	deleteErr  error
 	lastUpdate *model.ServiceAccount
+	// beforeWrite runs once at the start of the next Update or Delete, to interleave a
+	// concurrent writer between the service's read and its write.
+	beforeWrite func()
+	createHook  func()
+}
+
+func (r *fakeServiceAccountRepo) interleave() {
+	if hook := r.beforeWrite; hook != nil {
+		r.beforeWrite = nil
+		hook()
+	}
 }
 
 func newFakeServiceAccountRepo() *fakeServiceAccountRepo {
@@ -64,6 +75,9 @@ func (r *fakeServiceAccountRepo) nameTaken(account *model.ServiceAccount) bool {
 func (r *fakeServiceAccountRepo) Create(_ context.Context, account *model.ServiceAccount) error {
 	if r.createErr != nil {
 		return r.createErr
+	}
+	if r.createHook != nil {
+		r.createHook()
 	}
 	if r.nameTaken(account) {
 		return storage.NewStorageError("fake", storage.ErrorKindConflict, ports.ErrServiceAccountCanonicalIDConflict, "taken")
@@ -113,6 +127,7 @@ func (r *fakeServiceAccountRepo) Update(_ context.Context, account *model.Servic
 	if r.updateErr != nil {
 		return r.updateErr
 	}
+	r.interleave()
 	stored, ok := r.accounts[account.ID]
 	if !ok || stored.ServiceID != account.ServiceID {
 		return r.notFound()
@@ -134,6 +149,7 @@ func (r *fakeServiceAccountRepo) Delete(_ context.Context, serviceID id.ServiceI
 	if r.deleteErr != nil {
 		return r.deleteErr
 	}
+	r.interleave()
 	stored, ok := r.accounts[accountID]
 	if !ok || stored.ServiceID != serviceID {
 		return r.notFound()
@@ -154,6 +170,7 @@ func (r *fakeServiceAccountRepo) CountByService(_ context.Context, serviceID id.
 type recordingEncryption struct {
 	plaintexts [][]byte
 	contexts   []map[string]string
+	decrypts   int
 	err        error
 }
 
@@ -167,6 +184,7 @@ func (e *recordingEncryption) Encrypt(_ context.Context, plaintext []byte, encry
 }
 
 func (e *recordingEncryption) Decrypt(context.Context, []byte, map[string]string) ([]byte, error) {
+	e.decrypts++
 	return nil, errors.New("service accounts never decrypt in this feature")
 }
 
@@ -492,6 +510,7 @@ func TestServiceAccountService_ListGetResolve(t *testing.T) {
 	assert.True(t, ports.IsNotFoundErr(err), "an account of another service is not found")
 
 	assert.Empty(t, h.encryption.plaintexts, "reads never touch the encryption port")
+	assert.Zero(t, h.encryption.decrypts, "reads never decrypt")
 	h.assertLogsFreeOf(t, triageJWT)
 }
 
@@ -714,11 +733,12 @@ func TestServiceAccountService_UpdateOutcomes(t *testing.T) {
 			CanonicalID: "a", Kind: model.ServiceAccountKindJWTBearer, Scopes: []string{"read", "write"}, Credential: credentialInput(reordered.token(t, "k", reordered.now.Add(time.Hour))),
 		})
 		require.NoError(t, err)
+		reordered.resetLogs()
 		_, outcome, err := reordered.service.Update(ctx, saOperator, reordered.serviceID, account.Account.ID, ServiceAccountUpdate{Scopes: []string{"write", "read"}})
 		require.NoError(t, err)
 		assert.Equal(t, ServiceAccountUnchanged, outcome, "reordering the ceiling is not a change")
-		assert.Equal(t, 1, h.repo.writes)
-		assert.Empty(t, h.eventRecords(t, "service.service_account."))
+		assert.Equal(t, 1, reordered.repo.writes)
+		assert.Empty(t, reordered.eventRecords(t, "service.service_account."))
 	})
 }
 
@@ -898,5 +918,116 @@ func TestServiceAccountService_Delete(t *testing.T) {
 
 		assert.Len(t, h.repo.accounts, 1)
 		assert.Empty(t, h.eventRecords(t, "service.service_account.deleted"))
+	})
+}
+
+// ---- concurrent writers and response status ----
+
+// rotateConcurrently stores a rotation of the account, as a concurrent writer would, the next
+// time the service writes.
+func (h *saHarness) rotateConcurrently(accountID id.ServiceAccountID) {
+	h.repo.beforeWrite = func() {
+		rotated := cloneAccount(h.repo.accounts[accountID])
+		rotated.Credential = model.NewEncryptedSecret([]byte("rotated-ciphertext"))
+		rotated.Summary.Fingerprint = "SHA256:rotated"
+		rotated.Version++
+		h.repo.accounts[accountID] = rotated
+	}
+}
+
+func TestServiceAccountService_ConcurrentWriters(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an unconditional ceiling change keeps a credential rotated after its read", func(t *testing.T) {
+		h := newSAHarness(t)
+		created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+		h.rotateConcurrently(created.Account.ID)
+		h.resetLogs()
+
+		view, outcome, err := h.service.Update(ctx, saOperator, h.serviceID, created.Account.ID, ServiceAccountUpdate{Scopes: []string{"read", "write"}})
+
+		require.NoError(t, err)
+		assert.Equal(t, ServiceAccountUpdated, outcome)
+		stored := h.repo.accounts[created.Account.ID]
+		assert.Equal(t, "SHA256:rotated", stored.Summary.Fingerprint)
+		ciphertext, err := stored.Credential.GetCiphertext()
+		require.NoError(t, err)
+		assert.Equal(t, []byte("rotated-ciphertext"), ciphertext)
+		assert.Equal(t, []string{"read", "write"}, stored.Scopes)
+		assert.Equal(t, int64(3), view.Account.Version)
+		assert.Equal(t, "SHA256:rotated", view.Account.Summary.Fingerprint)
+		records := h.eventRecords(t, "service.service_account.")
+		require.Len(t, records, 1)
+		assert.Equal(t, "SHA256:rotated", records[0]["credential"].(map[string]any)["fingerprint"])
+	})
+
+	t.Run("an unconditional ceiling change keeps a rename committed after its read", func(t *testing.T) {
+		h := newSAHarness(t)
+		created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+		h.repo.beforeWrite = func() {
+			renamed := cloneAccount(h.repo.accounts[created.Account.ID])
+			renamed.CanonicalID = "renamed"
+			renamed.Version++
+			h.repo.accounts[created.Account.ID] = renamed
+		}
+
+		_, _, err := h.service.Update(ctx, saOperator, h.serviceID, created.Account.ID, ServiceAccountUpdate{Scopes: []string{"read", "write"}})
+
+		require.NoError(t, err)
+		assert.Equal(t, "renamed", h.repo.accounts[created.Account.ID].CanonicalID)
+		assert.Equal(t, []string{"read", "write"}, h.repo.accounts[created.Account.ID].Scopes)
+	})
+
+	t.Run("a stale If-Match is still refused when another writer intervenes", func(t *testing.T) {
+		h := newSAHarness(t)
+		created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+		h.rotateConcurrently(created.Account.ID)
+
+		_, _, err := h.service.Update(ctx, saOperator, h.serviceID, created.Account.ID, ServiceAccountUpdate{Scopes: []string{"read", "write"}, ExpectedVersion: new(int64(1))})
+
+		assert.ErrorIs(t, err, ports.ErrServiceAccountVersionMismatch)
+		assert.Equal(t, "SHA256:rotated", h.repo.accounts[created.Account.ID].Summary.Fingerprint)
+	})
+
+	t.Run("an unconditional delete audits the credential it erased", func(t *testing.T) {
+		h := newSAHarness(t)
+		created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+		h.rotateConcurrently(created.Account.ID)
+		h.resetLogs()
+
+		require.NoError(t, h.service.Delete(ctx, saOperator, h.serviceID, created.Account.ID, nil))
+
+		assert.Empty(t, h.repo.accounts)
+		records := h.eventRecords(t, "service.service_account.deleted")
+		require.Len(t, records, 1)
+		assert.Equal(t, "SHA256:rotated", records[0]["credential"].(map[string]any)["fingerprint"])
+	})
+}
+
+func TestServiceAccountService_ResponseStatusFollowsTheWrite(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("create reports failed when the credential expires while it is stored", func(t *testing.T) {
+		h := newSAHarness(t)
+		exp := h.now.Add(time.Second)
+		h.repo.createHook = func() { h.now = exp }
+
+		view, err := h.service.Create(ctx, saOperator, h.serviceID, h.createRequest("a", h.token(t, "k", exp)))
+
+		require.NoError(t, err)
+		assert.Equal(t, model.ServiceAccountStatusFailed, view.Status)
+		assert.Equal(t, h.now.Add(-time.Second), view.Account.CreatedAt, "write timestamps keep the validation time")
+	})
+
+	t.Run("update reports failed when the credential expires while it is stored", func(t *testing.T) {
+		h := newSAHarness(t)
+		exp := h.now.Add(time.Hour)
+		created := h.create(t, "a", h.token(t, "k", exp))
+		h.repo.beforeWrite = func() { h.now = exp }
+
+		view, _, err := h.service.Update(ctx, saOperator, h.serviceID, created.Account.ID, ServiceAccountUpdate{Scopes: []string{"read", "write"}})
+
+		require.NoError(t, err)
+		assert.Equal(t, model.ServiceAccountStatusFailed, view.Status)
 	})
 }

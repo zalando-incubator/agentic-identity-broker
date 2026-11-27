@@ -3186,7 +3186,11 @@ components:
         type: string
         enum: [Prefer]
     ServiceAccountETag:
-      description: Strong ETag of the account. Changes with every committed change to it.
+      description: >-
+        Strong ETag of the stored account version, used with If-Match. Changes with every
+        committed change to the account. `status` and `failure_reason` are derived from the
+        stored credential expiry at the time of the request, so they can change while the ETag
+        stays the same; do not cache them by ETag.
       schema:
         type: string
       example: '"1"'

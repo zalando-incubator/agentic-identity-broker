@@ -55,7 +55,7 @@ func copyServiceAccount(account *model.ServiceAccount) *model.ServiceAccount {
 	copied := *account
 	copied.Scopes = slices.Clone(account.Scopes)
 	if ciphertext, err := account.Credential.GetCiphertext(); err == nil {
-		copied.Credential = model.NewEncryptedSecret(ciphertext)
+		copied.Credential = model.NewEncryptedSecret(slices.Clone(ciphertext))
 	}
 	copied.Summary.Iss = clonePointer(account.Summary.Iss)
 	copied.Summary.Sub = clonePointer(account.Summary.Sub)
@@ -63,6 +63,14 @@ func copyServiceAccount(account *model.ServiceAccount) *model.ServiceAccount {
 	copied.Summary.Exp = clonePointer(account.Summary.Exp)
 	copied.CredentialExpiresAt = clonePointer(account.CredentialExpiresAt)
 	return &copied
+}
+
+// requireCiphertext mirrors the PostgreSQL adapter: the repository stores opaque encrypted bytes only.
+func requireCiphertext(operation string, account *model.ServiceAccount) error {
+	if _, err := account.Credential.GetCiphertext(); err != nil {
+		return serviceAccountError(operation, storage.ErrorKindValidation, nil, "service account credential must be encrypted")
+	}
+	return nil
 }
 
 func clonePointer[T any](value *T) *T {
@@ -77,6 +85,9 @@ func (r *ServiceAccountRepository) Create(_ context.Context, account *model.Serv
 	const operation = "CreateServiceAccount"
 	if account == nil || account.ID.IsZero() {
 		return serviceAccountError(operation, storage.ErrorKindValidation, nil, "service account ID is required")
+	}
+	if err := requireCiphertext(operation, account); err != nil {
+		return err
 	}
 	if r.providers == nil {
 		return serviceAccountError(operation, storage.ErrorKindUnknown, nil, "service repository is not configured")
@@ -156,6 +167,9 @@ func (r *ServiceAccountRepository) Update(_ context.Context, account *model.Serv
 	const operation = "UpdateServiceAccount"
 	if account == nil {
 		return serviceAccountError(operation, storage.ErrorKindValidation, nil, "service account is required")
+	}
+	if err := requireCiphertext(operation, account); err != nil {
+		return err
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

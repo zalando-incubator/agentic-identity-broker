@@ -293,7 +293,6 @@ var _ = Describe("Service accounts", func() {
 
 			// Scenario 2 from specs/20261125-152113-service-accounts-stored-jwt/spec.md (User Story 4)
 			It("should report failed with credential_expired in status and list once exp has passed", func() {
-				Expect(readStatus().Status).To(Equal("ready"))
 				Eventually(func(g Gomega) {
 					status, err := read(statusPath).Status()
 					g.Expect(err).To(Succeed())

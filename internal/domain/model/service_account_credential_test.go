@@ -108,6 +108,8 @@ func TestValidateServiceAccountCredential_Rules(t *testing.T) {
 		{"boolean exp", signedInput(signTestJWT(t, "k", `{"exp":true}`)), CredentialRejectionMalformed, "credential.jwt must be a compact JWS with valid JWT claims"},
 		{"exp beyond the date range", signedInput(signTestJWT(t, "k", `{"exp":1e300}`)), CredentialRejectionMalformed, "credential.jwt must be a compact JWS with valid JWT claims"},
 		{"numeric sub", signedInput(signTestJWT(t, "k", `{"sub":5}`)), CredentialRejectionMalformed, "credential.jwt must be a compact JWS with valid JWT claims"},
+		{"payload a nested compact JWS", signedInput(signTestJWT(t, "outer", signTestJWT(t, "inner", t1Payload(future)))), CredentialRejectionMalformed, "credential.jwt must be a compact JWS with valid JWT claims"},
+		{"payload a nested JWS of an unsigned token", signedInput(signTestJWT(t, "outer", segment(`{"alg":"none"}`)+"."+claims+".")), CredentialRejectionMalformed, "credential.jwt must be a compact JWS with valid JWT claims"},
 		{"alg none", signedInput(segment(`{"alg":"none"}`) + "." + claims + "."), CredentialRejectionUnsigned, "credential.jwt must be a signed compact JWS"},
 		{"no alg", signedInput(segment(`{"typ":"JWT"}`) + "." + claims + "." + validSegments[2]), CredentialRejectionUnsigned, "credential.jwt must be a signed compact JWS"},
 		{"exp before the request time", signedInput(signTestJWT(t, "k", t1Payload(credentialTestNow.Unix()-1))), CredentialRejectionExpired, "credential.jwt is expired"},

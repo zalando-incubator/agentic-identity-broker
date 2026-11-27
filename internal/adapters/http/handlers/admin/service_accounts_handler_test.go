@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,7 @@ import (
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/id"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/model"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/principal"
+	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/storage"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/domain/thirdparty"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/ports"
 	"github.com/agentic-identity-broker/agentic-identity-broker/internal/testutil"
@@ -38,7 +40,8 @@ import (
 // authentication.
 type countingServiceAccountRepo struct {
 	ports.ServiceAccountRepository
-	calls int
+	calls   int
+	readErr error
 }
 
 func (r *countingServiceAccountRepo) Create(ctx context.Context, a *model.ServiceAccount) error {
@@ -48,16 +51,25 @@ func (r *countingServiceAccountRepo) Create(ctx context.Context, a *model.Servic
 
 func (r *countingServiceAccountRepo) Get(ctx context.Context, s id.ServiceID, a id.ServiceAccountID) (*model.ServiceAccount, error) {
 	r.calls++
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
 	return r.ServiceAccountRepository.Get(ctx, s, a)
 }
 
 func (r *countingServiceAccountRepo) GetByCanonicalID(ctx context.Context, s id.ServiceID, c string) (*model.ServiceAccount, error) {
 	r.calls++
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
 	return r.ServiceAccountRepository.GetByCanonicalID(ctx, s, c)
 }
 
 func (r *countingServiceAccountRepo) ListByService(ctx context.Context, s id.ServiceID) ([]*model.ServiceAccount, error) {
 	r.calls++
+	if r.readErr != nil {
+		return nil, r.readErr
+	}
 	return r.ServiceAccountRepository.ListByService(ctx, s)
 }
 
@@ -493,4 +505,31 @@ func TestServiceAccountsHandler_Delete(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, h.do(t, http.MethodDelete, path, saTestOperator, nil, "").Code)
 	assert.Equal(t, http.StatusNotFound, h.do(t, http.MethodGet, path, saTestOperator, nil, "").Code)
 	h.assertNoCredential(t, malformed, stale, bound, deleted)
+}
+
+func TestServiceAccountsHandler_ReadFailureIsLoggedOnceByKind(t *testing.T) {
+	h := newSAHandlerHarness(t)
+	created, _ := h.create(t, "platform-triage-bot")
+	h.repo.readErr = storage.NewStorageError("GetServiceAccount", storage.ErrorKindConnection, errors.New("dial tcp 10.0.0.5:5432: stored-value"), "database unavailable")
+	for _, path := range []string{
+		h.path("company-platform"),
+		h.path("company-platform", "/"+created["id"].(string)),
+		h.path("company-platform", "/platform-triage-bot"),
+		h.path("company-platform", "/"+created["id"].(string)+"/status"),
+	} {
+		h.logs.Reset()
+		w := h.do(t, http.MethodGet, path, saTestOperator, nil, "")
+		assertErrorBody(t, w, http.StatusInternalServerError, "internal server error", "")
+		var failures []map[string]any
+		for _, line := range strings.Split(strings.TrimSpace(h.logs.String()), "\n") {
+			var record map[string]any
+			if json.Unmarshal([]byte(line), &record) == nil && record["msg"] == "service account read failed" {
+				failures = append(failures, record)
+			}
+		}
+		require.Len(t, failures, 1, path)
+		assert.Equal(t, "ERROR", failures[0]["level"])
+		assert.Equal(t, string(storage.ErrorKindConnection), failures[0]["error_kind"])
+		assert.NotContains(t, h.logs.String(), "stored-value")
+	}
 }

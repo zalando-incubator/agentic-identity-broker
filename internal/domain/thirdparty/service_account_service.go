@@ -140,7 +140,7 @@ func (s *ServiceAccountService) Create(ctx context.Context, operator id.Principa
 		return nil, err
 	}
 	s.logger.InfoContext(ctx, "service account created", s.auditArgs("service.service_account.created", operator, account)...)
-	return s.view(account, now), nil
+	return s.view(account, s.now().UTC()), nil
 }
 
 // List returns the service's accounts in canonical_id byte order.
@@ -202,14 +202,13 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 			return nil, "", &model.ServiceAccountValidationError{Message: "kind cannot be changed"}
 		}
 	}
-	candidate := *stored
 	if request.CanonicalID != nil {
 		if err := model.ValidateServiceAccountCanonicalID(*request.CanonicalID); err != nil {
 			return nil, "", err
 		}
-		candidate.CanonicalID = *request.CanonicalID
 	}
-	if candidate.Scopes, err = model.NormalizeServiceAccountScopes(request.Scopes); err != nil {
+	scopes, err := model.NormalizeServiceAccountScopes(request.Scopes)
+	if err != nil {
 		return nil, "", err
 	}
 	now := s.now().UTC()
@@ -219,8 +218,32 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 			return nil, "", err
 		}
 	}
-	if request.ExpectedVersion != nil && *request.ExpectedVersion != stored.Version {
+	for attempt := 1; ; attempt++ {
+		view, outcome, err := s.applyUpdate(ctx, operator, stored, request.CanonicalID, scopes, validated, request.ExpectedVersion, now)
+		if request.ExpectedVersion != nil || attempt == unconditionalWriteAttempts || !errors.Is(err, ports.ErrServiceAccountVersionMismatch) {
+			return view, outcome, err
+		}
+		if stored, err = s.repo.Get(ctx, serviceID, accountID); err != nil {
+			return nil, "", err
+		}
+	}
+}
+
+// unconditionalWriteAttempts bounds how often an update or delete without If-Match re-reads an
+// account that another writer changed between its read and its write.
+const unconditionalWriteAttempts = 3
+
+// applyUpdate writes the requested state over stored. The write is always conditional on the
+// version that was read, so a concurrent change is never overwritten with stale members; without
+// If-Match the caller re-reads and applies the request again.
+func (s *ServiceAccountService) applyUpdate(ctx context.Context, operator id.Principal, stored *model.ServiceAccount, canonicalID *string, scopes []string, validated *model.ValidatedCredential, expectedVersion *int64, now time.Time) (*ServiceAccountView, ServiceAccountUpdateOutcome, error) {
+	if expectedVersion != nil && *expectedVersion != stored.Version {
 		return nil, "", storage.NewStorageError("UpdateServiceAccount", storage.ErrorKindConflict, ports.ErrServiceAccountVersionMismatch, "service account version mismatch")
+	}
+	candidate := *stored
+	candidate.Scopes = scopes
+	if canonicalID != nil {
+		candidate.CanonicalID = *canonicalID
 	}
 
 	changes := []string{}
@@ -236,9 +259,10 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 		changes = append(changes, changeCanonicalID)
 	}
 	if len(changes) == 0 {
-		return s.view(stored, now), ServiceAccountUnchanged, nil
+		return s.view(stored, s.now().UTC()), ServiceAccountUnchanged, nil
 	}
 
+	var err error
 	if rotated {
 		candidate.Summary, candidate.CredentialExpiresAt = validated.Summary, validated.ExpiresAt
 		if candidate.Credential, err = s.encrypt(ctx, operator, &candidate, operationUpdate, validated.Document); err != nil {
@@ -246,8 +270,9 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 		}
 	}
 	candidate.UpdatedAt = now
-	if err := s.repo.Update(ctx, &candidate, request.ExpectedVersion); err != nil {
-		s.logWriteFailure(ctx, operator, serviceID, &accountID, operationUpdate, err)
+	readVersion := stored.Version
+	if err := s.repo.Update(ctx, &candidate, &readVersion); err != nil {
+		s.logWriteFailure(ctx, operator, stored.ServiceID, &stored.ID, operationUpdate, err)
 		return nil, "", err
 	}
 
@@ -263,32 +288,39 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 		args = append(args, "previous_observed_credential", stored.Summary)
 	}
 	s.logger.InfoContext(ctx, "service account updated", args...)
-	return s.view(&candidate, now), ServiceAccountUpdated, nil
+	return s.view(&candidate, s.now().UTC()), ServiceAccountUpdated, nil
 }
 
 // Delete erases the account and its credential. It is refused while an agent grant binds the
 // account.
 func (s *ServiceAccountService) Delete(ctx context.Context, operator id.Principal, serviceID id.ServiceID, accountID id.ServiceAccountID, expectedVersion *int64) error {
-	stored, err := s.repo.Get(ctx, serviceID, accountID)
-	if err != nil {
-		return err
-	}
-	if expectedVersion != nil && *expectedVersion != stored.Version {
-		return storage.NewStorageError("DeleteServiceAccount", storage.ErrorKindConflict, ports.ErrServiceAccountVersionMismatch, "service account version mismatch")
-	}
-	bound, err := s.bindings.IsBound(ctx, accountID)
-	if err != nil {
-		return fmt.Errorf("check service account bindings: %w", err)
-	}
-	if bound {
-		return storage.NewStorageError("DeleteServiceAccount", storage.ErrorKindConflict, ErrServiceAccountBound, ErrServiceAccountBound.Error())
-	}
-	if err := s.repo.Delete(ctx, serviceID, accountID, expectedVersion); err != nil {
+	for attempt := 1; ; attempt++ {
+		stored, err := s.repo.Get(ctx, serviceID, accountID)
+		if err != nil {
+			return err
+		}
+		if expectedVersion != nil && *expectedVersion != stored.Version {
+			return storage.NewStorageError("DeleteServiceAccount", storage.ErrorKindConflict, ports.ErrServiceAccountVersionMismatch, "service account version mismatch")
+		}
+		bound, err := s.bindings.IsBound(ctx, accountID)
+		if err != nil {
+			return fmt.Errorf("check service account bindings: %w", err)
+		}
+		if bound {
+			return storage.NewStorageError("DeleteServiceAccount", storage.ErrorKindConflict, ErrServiceAccountBound, ErrServiceAccountBound.Error())
+		}
+		readVersion := stored.Version
+		err = s.repo.Delete(ctx, serviceID, accountID, &readVersion)
+		if err == nil {
+			s.logger.InfoContext(ctx, "service account deleted", s.auditArgs("service.service_account.deleted", operator, stored)...)
+			return nil
+		}
+		if expectedVersion == nil && attempt < unconditionalWriteAttempts && errors.Is(err, ports.ErrServiceAccountVersionMismatch) {
+			continue
+		}
 		s.logWriteFailure(ctx, operator, serviceID, &accountID, operationDelete, err)
 		return err
 	}
-	s.logger.InfoContext(ctx, "service account deleted", s.auditArgs("service.service_account.deleted", operator, stored)...)
-	return nil
 }
 
 const (
