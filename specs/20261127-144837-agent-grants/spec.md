@@ -32,14 +32,14 @@ Answered from the settled design and from the merged step 1. The source is named
 - Q: Does this feature change what token exchange or the delegation check decide for an agent subject? → A: No. An agent-subject token is still rejected under ADR 045 decision 6. The machine branch in the shared `tokenexchange.GrantResolver` belongs to #473 (#473 Requirements). Recorded in FR-018, FR-020, SR-005, User Story 5 Scenario 3.
 - Q: Does the active-session requirement of user consent apply? → A: No. An agent has no user session; its credential at the service is the bound account (#478 "Problem", point 2). Recorded in FR-005.
 
-### Open questions for the maintainer
+### Session 2026-11-27 (maintainer answers)
 
-Issues #472, #478 and #471 do not decide these points. They are marked `[NEEDS CLARIFICATION]` where they apply and wait for the maintainer.
+Issues #472, #478 and #471 do not decide these points. The maintainer answered them on 2026-11-27, relayed by the orchestrating session.
 
-- **Q1**: Is the principal kind part of a grant's and a session's identity, or only a filter? #472 says "`principal_kind` column or view". The Repo Assist comment on #472 points out that the uniqueness keys `(principal, agent_id)` and `(principal, service_id)` let a human whose principal text equals an agent UUID collide with that agent's own grant. Recommended: a stored column that takes part in both uniqueness keys and in every lookup, with existing rows `human`, never inferred from the principal's text. (FR-016)
-- **Q2**: Does the request name the services each permission set covers, using the consent API's map `{permission_set_id: [service_id]}`, or only list permission sets that then cover all their services? Recommended: the consent API's map. It keeps the agent grant the same record as a user grant ("stored and evaluated exactly like a user's consent", #478), and a covered service is then explicit too. (FR-004, API-002, Journeys)
-- **Q3**: Must an agent grant contain the agent's mandatory permission sets, as consent requires? Recommended: no. #478 makes the declared sets an upper bound only, and an administrator may grant less, for least privilege. (FR-004)
-- **Q4**: Does the agent grant carry a strong ETag with an optional `If-Match` on `PUT` and `DELETE`, like service accounts (#471 maintainer answer)? Recommended: yes, the same posture as #471: a stale `If-Match` gets `412`, and without one the last writer wins. (FR-003, API-003, Edge Cases)
+- Q: Is the principal kind part of a grant's and a session's identity, or only a filter? → A: Part of the identity. A stored kind takes part in the uniqueness of grants (principal kind, principal, agent) and sessions (principal kind, principal, service) and in every lookup. Existing rows are `human`. The kind is never inferred from the principal's text. Recorded in FR-016, DB-002, User Story 5 Scenarios 2, 4 and 6, and Edge Cases.
+- Q: Does the request name the services each permission set covers, or only list permission sets? → A: It names them, with the consent API's map `{permission_set_id: [service_id]}`, plus `service_account_bindings`. Recorded in FR-002, API-002 and the Journeys.
+- Q: Must an agent grant contain the agent's mandatory permission sets, as consent requires? → A: Yes, the same rule as user consent. A write that omits one is refused. Recorded in FR-004, User Story 1 Scenarios 10–11, Journey 2 Step 1. What follows from it is recorded in FR-004a and FR-004b.
+- Q: Does the agent grant carry a strong ETag with an optional `If-Match`? → A: Yes, as service accounts do (#471). A stale `If-Match` on `PUT` or `DELETE` gets `412` and nothing changes; without `If-Match` the last writer wins. Recorded in FR-003, API-003, User Story 1 Scenario 12, and Edge Cases.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -62,6 +62,9 @@ A platform administrator wants *triage-bot* to read the company platform as itse
 7. **Given** a grant that lists a permission set covering a service the permission set does not scope, **When** it is written, **Then** the broker answers `400` and stores nothing.
 8. **Given** a grant with a `valid_until` in the past, **When** it is written, **Then** the broker answers `400` and stores nothing; **given** one in the future, **then** it is stored and returned with that `valid_until`.
 9. **Given** an existing grant, **When** an administrator writes the identical grant again, **Then** the broker answers `200` with the unchanged representation and ETag and writes no audit record.
+10. **Given** an agent that declares *Platform reader* as mandatory, **When** an administrator writes a grant without *Platform reader*, **Then** the broker answers `400` naming the missing permission set and stores nothing.
+11. **Given** a granted permission set that is mandatory for the agent, or that marks a service as mandatory, **When** the grant lists the permission set without any covered service, or without that mandatory service, **Then** the broker answers `400` and stores nothing, as consent does.
+12. **Given** a grant whose current ETag is `"2"`, **When** a write or a delete carries `If-Match: "1"`, **Then** the broker answers `412` and the grant is unchanged. **When** the same request carries `If-Match: "2"` or no `If-Match`, **Then** it is carried out.
 
 ---
 
@@ -136,6 +139,7 @@ Agent grants live in the same records as users' consents. A person on the consen
 3. **Given** an agent grant for agent A, **When** A exchanges its self token for a service token or the gateway's delegation check is asked about A as subject, **Then** the answer is the same denial as without the grant (ADR 045 decision 6; the machine branch comes with #473).
 4. **Given** an agent grant for agent A, **When** a human exchange or delegation check runs for any principal, including one whose text equals A's UUID, **Then** the agent grant is never read as that human's consent.
 5. **Given** existing grants and sessions from before this feature, **When** the feature is deployed, **Then** every one of them is recorded as having a human principal and behaves exactly as before.
+6. **Given** an agent grant for agent A and a consent to A from a person whose principal text equals A's UUID, **When** an administrator deletes A's agent grant, **Then** the person's consent is unchanged; **when** the person revokes their consent instead, **then** A's agent grant is unchanged.
 
 ---
 
@@ -150,14 +154,16 @@ Agent grants live in the same records as users' consents. A person on the consen
 - **Empty grant**: a grant must list at least one permission set; revocation is the delete operation, not an empty write.
 - **Duplicate entries**: a permission set listed twice, or a service listed twice in one entry, is refused.
 - **Scope case and whitespace**: compared byte for byte; `Read` is not `read`.
-- **Agent with a user grant from a person whose principal text equals the agent's UUID**: both records coexist and neither is visible from or applied to the other's path [NEEDS CLARIFICATION: Q1].
-- **Concurrent writes of one agent's grant**: each write is applied whole or not at all, and the agent never holds two agent grants.
+- **Agent with a user grant from a person whose principal text equals the agent's UUID**: both records coexist, because the principal kind is part of each record's identity. Neither is visible from or applied to the other's path, and deleting either leaves the other intact.
+- **Concurrent writes of one agent's grant**: each write is applied whole or not at all, and the agent never holds two agent grants. A writer that sends a stale `If-Match` is refused with `412`. Writers that send none overwrite each other, and the last writer wins.
+- **Agent gains a mandatory permission set later**: the agent update is accepted as it is for user consents. The stored agent grant is unchanged, and its next write is refused until it contains the new set. Request-time handling belongs to #473.
+- **Mandatory service covered but unbound**: accepted (FR-004b). The grant is complete, but once #473 is delivered the agent obtains no token for that service.
 
 ## Concrete Example Journeys *(mandatory)*
 
-All journeys share one cast. **Operator**: `ops-admin@example.com`, authenticated by the trusted proxy in front of the admin server and forwarded as `X-Remote-User`. **Agents**: *triage-bot* (`550e8400-e29b-41d4-a716-446655440041`, canonical ID `triage-bot`) and *planner-bot* (`550e8400-e29b-41d4-a716-446655440042`, canonical ID `planner-bot`); both declare permission sets *Platform reader* and *Platform operator*, and *planner-bot* also declares *Platform admin*. **Service**: *Company Platform* (`880e8400-e29b-41d4-a716-446655440020`, canonical ID `company-platform`), the service users already hold sessions with. **Service accounts on it** (#471, both `jwt_bearer` with a stored JWT, narrowing `none`): `platform-triage-bot` (`990e8400-e29b-41d4-a716-446655440031`, ceiling `["read"]`) and `platform-planner-bot` (`990e8400-e29b-41d4-a716-446655440032`, ceiling `["read", "write"]`). **Permission sets**: *Platform reader* (`770e8400-e29b-41d4-a716-446655440051`, `company-platform: [read]`), *Platform operator* (`770e8400-e29b-41d4-a716-446655440052`, `company-platform: [read, write]`), *Platform admin* (`770e8400-e29b-41d4-a716-446655440053`, `company-platform: [read, write, admin]`). Neither agent has an agent grant. Neither agent declares a service requirement for *Company Platform* that narrows its scopes. Admin API host: `broker-admin.example.com`. All times are 2026-11-27 UTC. All IDs and tokens are synthetic. No broker configuration changes any step, so no configuration block is shown.
+All journeys share one cast. **Operator**: `ops-admin@example.com`, authenticated by the trusted proxy in front of the admin server and forwarded as `X-Remote-User`. **Agents**: *triage-bot* (`550e8400-e29b-41d4-a716-446655440041`, canonical ID `triage-bot`) and *planner-bot* (`550e8400-e29b-41d4-a716-446655440042`, canonical ID `planner-bot`); both declare *Platform reader* as mandatory and *Platform operator* as optional, and *planner-bot* also declares *Platform admin* as optional. No permission set marks *Company Platform* as a mandatory service, apart from the rule that a mandatory permission set must cover at least one service. **Service**: *Company Platform* (`880e8400-e29b-41d4-a716-446655440020`, canonical ID `company-platform`), the service users already hold sessions with. **Service accounts on it** (#471, both `jwt_bearer` with a stored JWT, narrowing `none`): `platform-triage-bot` (`990e8400-e29b-41d4-a716-446655440031`, ceiling `["read"]`) and `platform-planner-bot` (`990e8400-e29b-41d4-a716-446655440032`, ceiling `["read", "write"]`). **Permission sets**: *Platform reader* (`770e8400-e29b-41d4-a716-446655440051`, `company-platform: [read]`), *Platform operator* (`770e8400-e29b-41d4-a716-446655440052`, `company-platform: [read, write]`), *Platform admin* (`770e8400-e29b-41d4-a716-446655440053`, `company-platform: [read, write, admin]`). Neither agent has an agent grant. Neither agent declares a service requirement for *Company Platform* that narrows its scopes. Admin API host: `broker-admin.example.com`. All times are 2026-11-27 UTC. All IDs and tokens are synthetic. No broker configuration changes any step, so no configuration block is shown.
 
-The request shape below follows the consent API's `granted_permission_sets` map (permission set → covered services) [NEEDS CLARIFICATION: Q2].
+The request shape follows the consent API's `granted_permission_sets` map (permission set → covered services), plus `service_account_bindings`.
 
 ### Journey 1 — Two agents on one service, each bound to its own account (User Story 1, Scenarios 1–2; User Story 2, Scenario 1; User Story 3, Scenario 3; User Story 4, Scenarios 1, 3–4)
 
@@ -282,7 +288,7 @@ The `DELETE` of Step 3 repeated now answers `204 No Content`.
 
 **Observable result**: planner-bot's grant is unchanged and still binds `platform-planner-bot`; triage-bot has no grant and its account is gone. Three audit records exist for grant writes and deletions (two created, one deleted), plus #471's record for the account deletion. No exchange or delegation-check answer changed at any step.
 
-### Journey 2 — Refusals at write time (User Story 2, Scenarios 1–3; User Story 3, Scenarios 1–2)
+### Journey 2 — Refusals at write time (User Story 1, Scenario 10; User Story 2, Scenarios 1–3; User Story 3, Scenarios 1–2)
 
 Starts from the state after Journey 1 Step 2. This is Case 5 of #478.
 
@@ -296,6 +302,7 @@ Content-Type: application/json
 
 {
   "granted_permission_sets": {
+    "770e8400-e29b-41d4-a716-446655440051": ["880e8400-e29b-41d4-a716-446655440020"],
     "770e8400-e29b-41d4-a716-446655440053": ["880e8400-e29b-41d4-a716-446655440020"]
   },
   "service_account_bindings": {
@@ -311,6 +318,8 @@ Content-Type: application/json
   "message": "service_account_bindings[880e8400-e29b-41d4-a716-446655440020]: scopes [admin] exceed the ceiling of service account 990e8400-e29b-41d4-a716-446655440032"
 }
 ```
+
+*Platform reader* is listed because it is mandatory for planner-bot. Without it, the same request is refused before the ceiling check with `400` and `"message": "missing mandatory permission sets: [770e8400-e29b-41d4-a716-446655440051]"`. The effective scopes are the union `["read", "write", "admin"]`.
 
 **Step 2 — 11:01:00: a binding for a service the grant does not cover**
 
@@ -371,8 +380,10 @@ Content-Type: application/json
 
 - **FR-001**: Administrators MUST be able to create, replace, read and delete one agent grant per agent through the admin API only. An agent grant is a delegation of permission sets to the agent for its own use; its principal is the agent itself. No end-user operation can create, change, read or delete it, and no approval workflow applies.
 - **FR-002**: An agent grant MUST be stored and represented so that the existing grant model applies to it unchanged: the same granted permission sets with their covered services, the same optional `valid_until`, the same effective-scope definition. The principal of an agent grant MUST be the agent's UUID and MUST be marked as an agent principal (FR-016).
-- **FR-003**: A write MUST replace the whole grant. The first write creates it (`201`); later writes replace it (`200`). Identical content MUST succeed without a change, without a new ETag and without an audit record.
-- **FR-004**: Every granted permission set MUST be one the agent declares; the agent's declared permission sets are the most an agent grant may contain (#478 "What already exists"). Every covered service MUST be one that the permission set scopes. At least one permission set MUST be granted. [NEEDS CLARIFICATION: Q3 — whether the agent's mandatory permission sets must be present, as on the consent screen]
+- **FR-003**: A write MUST replace the whole grant. The first write creates it (`201`); later writes replace it (`200`). Identical content MUST succeed without a change, without a new ETag and without an audit record. Every committed change MUST change the grant's strong ETag. `PUT` and `DELETE` MUST accept an optional `If-Match`: when it is supplied and does not equal the current ETag, the broker MUST answer `412` and change nothing; when it is absent, the request is carried out and the last writer wins (maintainer answer, the same posture as #471 FR-019).
+- **FR-004**: Every granted permission set MUST be one the agent declares; the agent's declared permission sets are the most an agent grant may contain (#478 "What already exists"). Every covered service MUST be one that the permission set scopes. At least one permission set MUST be granted. Every permission set the agent declares as mandatory MUST be granted; a write that omits one MUST be refused, as consent refuses it (maintainer answer).
+- **FR-004a**: The rest of consent's structural rules MUST apply unchanged, because the maintainer chose "the same rule as for users". A granted permission set that is mandatory for the agent MUST cover at least one service. Covered services MUST lie within the permission set's services intersected with the agent's service requirements, where it declares any. Every effectively mandatory service of a granted permission set MUST be covered: a service the agent's service requirements mark mandatory, or one the permission set marks mandatory, within that intersection. These are the rules of the consent service today.
+- **FR-004b**: A mandatory service MUST NOT need a binding. A covered service without a binding stays allowed whether or not it is mandatory, and gives the agent no token once #473 is delivered (#472: "A service the grant covers but does not bind gives the agent no token"). This follows from #472 and the maintainer's answer and is not a separate decision. Requiring a binding for every mandatory service would be a new rule that neither source states.
 - **FR-005**: Coverage MUST NOT depend on the agent's principal having a session with the service; the active-session requirement of user consent does not apply to agent grants.
 - **FR-006**: A `valid_until`, when given, MUST lie in the future. An expired agent grant is treated as absent by every reader, as an expired user grant is.
 
@@ -396,7 +407,7 @@ Content-Type: application/json
 
 **Principal kind and separation from human paths**
 
-- **FR-016**: Every grant and every session record MUST state whether its principal is a `human` or an `agent`. Existing records MUST be recorded as `human`. The kind MUST be set by the operation that writes the record (consent and session writes: `human`; agent-grant writes: `agent`) and MUST NOT be inferred from the principal's text or from whether it matches an agent's UUID. [NEEDS CLARIFICATION: Q1 — whether the kind is part of the record's identity, so that a human principal whose text equals an agent's UUID and that agent's own grant can coexist]
+- **FR-016**: Every grant and every session record MUST state whether its principal is a `human` or an `agent`. Existing records MUST be recorded as `human`. The kind MUST be set by the operation that writes the record (consent and session writes: `human`; agent-grant writes: `agent`) and MUST NOT be inferred from the principal's text or from whether it matches an agent's UUID. The kind MUST be part of each record's identity: grants are unique per (principal kind, principal, agent) and sessions per (principal kind, principal, service), and every lookup, write and delete names the kind (maintainer answer). A human principal whose text equals an agent's UUID and that agent's own grant MUST therefore coexist, and revoking either MUST leave the other intact.
 - **FR-017**: Every end-user operation that lists, reads, counts, writes or deletes grants or sessions (the consent screens, delegation listings, the agents affected by ending a session, session listings and counts) MUST read and change only records whose principal kind is `human`.
 - **FR-018**: Every existing human decision path, token exchange, the gateway's delegation check (`POST /access/v1/evaluation`) and approval authentication, MUST read only `human` grants and sessions. The shared grant resolution MUST decide exactly as before this feature for every request: an agent-subject token is still rejected (ADR 045 decision 6) whether or not an agent grant exists.
 
@@ -475,7 +486,7 @@ The terms Agent Grant, Binding (service-account binding) and Principal Kind are 
 
 - **API-001**: The operations are defined in `api/admin/openapi.yaml` before implementation, on the admin server only: `PUT`, `GET` and `DELETE /api/agents/{agent-id}/self-grant`. `{agent-id}` keeps its existing meaning (UUID or canonical ID).
 - **API-002**: The request and representation carry `granted_permission_sets`, `service_account_bindings` (service ID → service-account ID) and an optional `valid_until`; the representation adds `id`, `agent_id`, `created_at` and `updated_at`. IDs in bindings are UUIDs.
-- **API-003**: Errors use the existing envelope and the existing meanings of `400`, `401`, `404`, `409` and `500`. The `409` of #471's service-account delete is now reachable; its contract text is updated accordingly.
+- **API-003**: Errors use the existing envelope and the existing meanings of `400`, `401`, `404`, `409`, `412` and `500`. Responses that return the grant carry its strong ETag, and `If-Match` is optional on `PUT` and `DELETE` (FR-003). The `409` of #471's service-account delete is now reachable; its contract text is updated accordingly.
 - **API-004**: No end-user API path or schema changes. End-user responses only stop being able to contain agent grants, which they never did by design.
 - **API-005**: The contract includes examples matching the journeys of this specification, including the refusals of Journey 2.
 - **API-006**: The change is additive; the Admin API version is raised by a minor step. The contract change is confirmed by the maintainer before implementation begins (Constitution Principle X).
@@ -483,7 +494,7 @@ The terms Agent Grant, Binding (service-account binding) and Principal Kind are 
 ### Database Requirements
 
 - **DB-001**: Bindings and principal kind are persisted through repository ports with both an in-memory and a PostgreSQL implementation that behave identically for every acceptance scenario (Constitution Principle IX).
-- **DB-002**: The schema change is one atomic migration pair under the next free number (`051`), tested in both directions against PostgreSQL. It records principal kind on grants and sessions with existing rows `human`, stores bindings so that the database itself prevents deleting a bound service account and prevents a binding to an account of another service, and removes an agent's bindings with its grant.
+- **DB-002**: The schema change is one atomic migration pair under the next free number (`051`), tested in both directions against PostgreSQL. It records principal kind on grants and sessions with existing rows `human`, makes it part of both uniqueness constraints, stores bindings so that the database itself prevents deleting a bound service account and prevents a binding to an account of another service, and removes an agent's bindings with its grant.
 - **DB-003**: Queries list explicit columns; no `SELECT *`.
 
 ### Security Requirements *(mandatory for security-critical features)*

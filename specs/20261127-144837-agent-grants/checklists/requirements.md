@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,4 +32,4 @@
 ## Notes
 
 - API paths, the admin OpenAPI file and migration numbering appear because the repository's spec template and Constitution Principles IV, IX, X and XIV require API, database and HTTP-exchange sections in every spec; they are the contract, not implementation choices.
-- Three [NEEDS CLARIFICATION] markers remain (Q1 principal kind in record identity, Q2 request shape, Q3 mandatory permission sets). Issues #472 and #478 do not decide them; they go to `/speckit-clarify` and the maintainer.
+- The three [NEEDS CLARIFICATION] markers (Q1 principal kind in record identity, Q2 request shape, Q3 mandatory permission sets) and the ETag question (Q4) were answered by the maintainer on 2026-11-27 and recorded in the spec's Clarifications.
