@@ -207,7 +207,7 @@ Service with and without metadata, and read both back (US3.1–US3.5).
 - [X] T052 Verify that every task and change traces to a requirement, scenario, or binding principle, and that no out-of-scope work was added (Feature Scope).
 - [X] T053 [P] Verify the Object Metadata, Label, and Annotation glossary entries in `ARCHITECTURE.md` and root `AGENTS.md` (Constitution V).
 - [X] T054 [P] Verify that `examples/config/`, `examples/config/README.md`, `internal/ports/config.go`, and `charts/agentic-identity-broker/` are unchanged, as no configuration was added (Constitution VII).
-- [ ] T055 Verify that `api/admin/openapi.yaml` is 3.1.0 with the confirmed fragments, that `api/enduser/openapi.yaml` is unchanged at 1.3.0, and that the T006 confirmation is recorded in plan.md and referenced in the PR description (Constitution IV, X).
+- [X] T055 Verify that `api/admin/openapi.yaml` is 3.1.0 with the confirmed fragments, that `api/enduser/openapi.yaml` is unchanged at 1.3.0, and that the T006 confirmation is recorded in plan.md and referenced in the PR description (Constitution IV, X).
 - [X] T056 [P] Verify that the migration design in data-model.md matches `migrations/050_object_metadata.{up,down}.sql` (Constitution IX).
 - [X] T057 [P] Verify that no frontend change was made, so no design-system review, Playwright test, or screenshot applies (Constitution XI).
 - [X] T058 Verify that spec.md Journeys 1–4 link their scenarios and match the published contract (Constitution XIV).
