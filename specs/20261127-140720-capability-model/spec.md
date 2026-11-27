@@ -18,6 +18,7 @@ Users see no change in this feature. The consent screen and the end-user grant r
 ### Session 2026-11-27
 
 - Q: How should the migration record old grants in which the user left out an optional service, so that no grant gains access it didn't have before? → A: Split each legacy permission set into one capability per service scope entry. Each capability keeps that entry's `requirement_type`, and a left-out service becomes a capability that the grant does not hold.
+- Q: Should the list of granted capability IDs reach ExtProc policy through the token-exchange response, through the ADR 048 delegation permit, or through both? → A: Only through the ADR `048-authzen-delegation-pip` delegation permit. Capability-based policy requires `grant_context.enabled: true`, and disabled mode and the token-exchange response stay unchanged.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -60,11 +61,11 @@ No user loses access they granted, and no user gains access they did not grant.
 ### User Story 3 - Policy Receives the Granted Capabilities (Priority: P1)
 
 The operator maps each MCP tool to one capability canonical ID in Rego.
-ExtProc gives policy the grant's capability canonical IDs as a flat list next to today's inputs.
+In grant-context mode (`grant_context.enabled: true`, ADR `048-authzen-delegation-pip`), ExtProc gives policy the grant's capability canonical IDs as a flat list next to today's inputs.
 
 **Why this priority**: Operators can write and test capability-based policy before users can narrow, and Feature 2 then only changes which capabilities a grant holds.
 
-**Independent Test**: Use the ExtProc E2E suite with the sample policy under `examples/`. Exchange a token for a migrated grant and send `tools/call` requests.
+**Independent Test**: Use the ExtProc E2E suite with grant-context mode enabled and the sample policy under `examples/`. Exchange a token for a migrated grant and send `tools/call` requests. Repeat with grant-context mode disabled to confirm the policy input carries no capability list.
 
 **Acceptance Scenarios**:
 
@@ -72,7 +73,8 @@ ExtProc gives policy the grant's capability canonical IDs as a flat list next to
 2. **US3.2 — Unmapped capability denies the tool**: **Given** the same grant, **When** the agent calls `drive_share_file`, which the sample policy maps to `google-drive-share`, **Then** ExtProc denies the call before it reaches the MCP target server.
 3. **US3.3 — Union across sets**: **Given** a grant in which two granted sets both include `google-drive-view`, **When** policy input is built, **Then** `google-drive-view` appears exactly once in the sorted list. The input does not identify which set granted it.
 4. **US3.4 — Stale capability fails closed**: **Given** a stored grant that references a capability its set no longer includes, **When** token exchange or permit resolution runs for that grant, **Then** it fails closed. The response matches the existing handling for a missing permission set, and the caller receives the consent-page error URI.
-5. **US3.5 — Existing policies keep working**: **Given** a deployed policy that reads only today's `granted_permission_sets` input, **When** the feature ships, **Then** that policy produces the same decisions for an upgraded grant as before the upgrade.
+5. **US3.5 — Existing policies keep working**: **Given** a deployed policy that reads only today's `granted_permission_sets` input, **When** the feature ships, **Then** that policy produces the same decisions for an upgraded grant as before the upgrade, in both grant-context modes.
+6. **US3.6 — Disabled mode carries no capabilities**: **Given** grant-context mode is disabled, **When** the agent calls a tool, **Then** the policy input has no `granted_capabilities` member, and the token-exchange response is unchanged. The sample policy therefore denies every capability-mapped tool.
 
 ### Edge Cases
 
@@ -81,7 +83,7 @@ ExtProc gives policy the grant's capability canonical IDs as a flat list next to
 - **A capability needs two services**: Under FR-010, today's included-service request grants it only when both services are included.
 - **A capability is deleted while a grant references it**: The broker blocks the deletion with `409` (US1.5). If a set stops including a capability that a grant references, exchange fails closed (US3.4).
 - **A policy maps a tool to a canonical ID that no capability uses**: The tool is denied for every grant. This is operator policy, not a broker error.
-- **Disabled versus enabled grant-context mode** (ADR `048-authzen-delegation-pip`): See FR-016.
+- **Disabled versus enabled grant-context mode** (ADR `048-authzen-delegation-pip`): Only enabled mode carries `granted_capabilities` (FR-016). In disabled mode the member is absent, so a capability-based policy denies its mapped tools (US3.6).
 - **Two legacy sets migrated under the same name**: Each gets its own group. Generated canonical IDs stay unique (FR-019).
 
 ## Concrete Example Journeys *(mandatory)*
@@ -172,7 +174,7 @@ The agent entry makes *View events* mandatory for Workspace Assistant (US1.4):
 
 **Step 3 — 09:30:00: Alice consents through today's screen**. Today's request includes Google for the set. Both capabilities need only Google, so the grant holds both (FR-010).
 
-**Step 4 — 09:40:00: the agent calls tools through the gateway**. Policy receives, abbreviated:
+**Step 4 — 09:40:00: the agent calls tools through the gateway**. ExtProc runs with `grant_context.enabled: true` and builds the capability list from the delegation permit. Policy receives, abbreviated:
 
 ```json
 {
@@ -251,9 +253,9 @@ The grant entry now holds the GitHub capability only. Migration cannot know whet
 
 **Policy input**
 
-- **FR-014**: ExtProc policy input MUST carry a flat, de-duplicated, sorted list of the granted capabilities' canonical IDs, unioned across all granted sets, as `input.context.granted_capabilities`.
+- **FR-014**: In grant-context mode, ExtProc policy input MUST carry a flat, de-duplicated, sorted list of the granted capabilities' canonical IDs, unioned across all granted sets, as `input.context.granted_capabilities`.
 - **FR-015**: Today's `granted_permission_sets` and enabled-mode `permission_sets` inputs MUST remain populated with unchanged meaning. For a set, the included services are the union of the services of its granted capabilities.
-- **FR-016**: The capability list MUST reach policy through the source that ADR `048-authzen-delegation-pip` assigns to the mode. [NEEDS CLARIFICATION: ADR 048 deprecates `TokenExchangeResponse.granted_permission_sets` and makes the AuthZEN permit the enabled-mode source of policy context. Should the capability list (A) travel in both the token-exchange response (disabled mode) and the delegation permit (enabled mode), (B) travel only in the permit, so capability enforcement requires `grant_context.enabled`, or (C) travel only in the token-exchange response?]
+- **FR-016**: The capability list MUST reach policy only through the ADR `048-authzen-delegation-pip` delegation permit, and ExtProc MUST take it from the permit, never from the token-exchange response. The token-exchange response MUST NOT gain a capability field. When `grant_context.enabled` is `false`, the policy input MUST NOT contain `granted_capabilities`, and disabled mode stays unchanged byte for byte.
 - **FR-017**: The broker MUST NOT learn or store MCP tool names. A sample policy under `examples/` MUST map tools to capability canonical IDs and deny by default.
 
 **Migration**
@@ -329,9 +331,9 @@ classDiagram
 ```mermaid
 flowchart LR
   B["Broker: UserGrant holds granted capabilities"] --> T["Token exchange: scopes from granted capabilities"]
-  B --> G["Delegation permit (grant-context mode)"]
+  B --> G["Delegation permit (grant-context mode): granted capabilities"]
   T --> E["ExtProc: context input"]
-  G --> E
+  G -- "granted_capabilities" --> E
   E --> O["OPA: input.context.granted_capabilities"]
   P["Operator policy: tool to capability canonical ID"] -.-> O
   O --> M["MCP target server (allow only)"]
@@ -358,7 +360,7 @@ flowchart LR
 ### API Requirements
 
 - **API-001**: The Admin API (`api/admin/openapi.yaml`) MUST add capability-group resources with nested capabilities, replace permission-set `service_scopes` with `capabilities[]`, and add optional `capabilities[]` to agent permission-set entries. This is a breaking change to the released Admin API `3.0.0`, so the version bump and its compatibility handling MUST be settled in `/speckit-plan`.
-- **API-002**: The token-exchange response and/or the AuthZEN permit MUST carry the granted capability canonical IDs as FR-016 decides. Existing fields keep their meaning.
+- **API-002**: The AuthZEN delegation permit MUST carry the granted capability canonical IDs (FR-016). The token-exchange response MUST stay unchanged. Existing permit members keep their meaning.
 - **API-003**: The end-user grant request and response MUST stay unchanged (FR-010, FR-013).
 - **API-004**: All API changes MUST follow the Zalando RESTful API Guidelines and receive stakeholder approval before implementation (Constitution IV, X).
 
@@ -388,13 +390,13 @@ flowchart LR
 - **SC-001**: After upgrade, 100% of pre-existing grants in the migration test fixtures yield identical effective scopes and identical `granted_permission_sets` policy input.
 - **SC-002**: Deployed policies that use only today's inputs make the same decisions before and after the upgrade.
 - **SC-003**: In the ExtProc E2E suite, every tool that the sample policy maps to a capability the grant does not hold is denied, and every tool mapped to a held capability is allowed (100% of mapped tools).
-- **SC-004**: An operator can define a capability group, compose a set from it and see the result in policy input without any consent-screen or end-user API change.
+- **SC-004**: An operator with grant-context mode enabled can define a capability group, compose a set from it and see the result in policy input without any consent-screen or end-user grant API change.
 
 ## Assumptions
 
 - Capability enforcement is only as strong as the operator's policy. A tool without a mapping falls to the policy's default, which is deny in the sample.
 - The upstream provider token keeps the OAuth2 scopes that the granted capabilities imply. The broker does not downscope further, and the gateway is the enforcement point.
 - Capability labels and descriptions are operator-supplied plain text, as permission-set names are today.
-- ADR `048-authzen-delegation-pip`'s permit freshness, result binding and deprecation timeline remain in force. This feature adds a member to policy context and changes no existing member.
+- ADR `048-authzen-delegation-pip`'s permit freshness, result binding and deprecation timeline remain in force. This feature adds a member to the permit and to enabled-mode policy context, and changes no existing member.
 - A new ADR for the capability model, its invariants and the gateway-only enforcement assumption accompanies the plan of this feature.
 - Feature 2 depends on this feature and can start planning once this feature's API contracts are approved.
