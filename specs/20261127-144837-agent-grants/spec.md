@@ -45,6 +45,7 @@ Issues #472, #478 and #471 do not decide these points. The maintainer answered t
 - Q: What do the admin API and the service-account delete guard do with an agent grant whose `valid_until` has passed? → A: It stays visible and keeps protecting its accounts. The admin `GET` returns it (`200`, with its `valid_until`). Its bindings still block deletion of the accounts it binds until the grant is deleted or rewritten without them. A `PUT` replaces it (`200`), keeping its `id` and `created_at`, as consent renewal does. Expiry makes the grant absent only for decision paths (#473). Recorded in FR-006, FR-015, User Story 1 Scenario 13, User Story 4 Scenario 6, and Edge Cases.
 - Q: What does a `PUT` or `DELETE` that carries `If-Match` get when the agent has no agent grant? → A: `412`, and nothing is created or deleted, because `If-Match` evaluates false when no current representation exists (RFC 9110 §13.1.1). A stale writer therefore cannot re-create a grant that was just revoked. Without `If-Match`, `PUT` creates (`201`) and `DELETE` answers `404`. Recorded in FR-003, User Story 1 Scenario 14, and Edge Cases.
 - Q: When deleting a service account is refused because an agent grant binds it, how does the administrator find the binding agents? → A: The `409` body adds `bound_by_agents`, the sorted UUIDs of every agent whose grant binds the account, expired grants included. `error` and `message` stay as #471 defined them. The admin API is administrator-only, so naming the agents exposes nothing new. Recorded in FR-015, API-003, User Story 4 Scenarios 3 and 6, and Journey 1 Step 3.
+- Q: Does an agent grant block deletion of a permission set it contains, and does an expired one? → A: The existing rule applies unchanged, as it does to consents. Deletion is refused while an agent declares the set or any unexpired grant contains it, agent grants included. An expired agent grant does not block it; its admin `GET` may then list the deleted set's ID until the next write, which drops it because only declared sets can be granted. Recorded in FR-015 and Edge Cases.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -169,6 +170,7 @@ Agent grants live in the same records as users' consents. A person on the consen
 - **Concurrent writes of one agent's grant**: each write is applied whole or not at all, and the agent never holds two agent grants. A writer that sends a stale `If-Match` is refused with `412`. Writers that send none overwrite each other, and the last writer wins. A writer holding an ETag from a grant that another administrator has since deleted gets `412`, so it cannot re-create the revoked grant.
 - **Agent's mandatory permission sets change later**: the agent update is accepted as it is for user consents. The stored agent grant is unchanged until it is next written, and that write includes the current mandatory sets (FR-004c). Editing an agent never widens its own access without a grant write and its audit record. Request-time handling belongs to #473.
 - **Expired agent grant**: absent for every decision path, but still the agent's grant for the admin API. `GET` returns it, its bindings still block deletion of the bound accounts, and a `PUT` renews it in place (`200`) (FR-006, FR-015).
+- **Permission set deleted while an expired agent grant contains it**: allowed, as for an expired consent. The admin `GET` still lists the deleted set's ID until the grant is next written, and that write cannot keep it because the set is no longer declared (FR-004, FR-015).
 - **Mandatory service without an account**: a grant cannot be written until the service holds an account to bind (FR-004b).
 
 ## Concrete Example Journeys *(mandatory)*
@@ -414,7 +416,7 @@ Content-Type: application/json
 
 **Deletion and lifecycle**
 
-- **FR-015**: Deleting a service account MUST be refused with the `409` conflict defined by #471 while any agent grant binds it, including an expired one. The response MUST carry `bound_by_agents`: the UUIDs of all agents whose grants bind the account, sorted ascending, without duplicates. `error` and `message` stay as #471 defined them. Deleting an agent MUST delete its agent grant with it. Deleting a permission set keeps the existing rule (refused while an agent declares it).
+- **FR-015**: Deleting a service account MUST be refused with the `409` conflict defined by #471 while any agent grant binds it, including an expired one. The response MUST carry `bound_by_agents`: the UUIDs of all agents whose grants bind the account, sorted ascending, without duplicates. `error` and `message` stay as #471 defined them. Deleting an agent MUST delete its agent grant with it. Deleting a permission set MUST keep the existing rule unchanged: it is refused while an agent declares the set or while any unexpired grant contains it, agent grants included. An expired agent grant MUST NOT block it.
 
 **Principal kind and separation from human paths**
 
