@@ -13,6 +13,12 @@ Permission sets include capabilities instead of carrying service scopes directly
 Grants store the granted capabilities. At token exchange, the broker derives each service's scopes from them, and ExtProc policy receives their canonical IDs, so operator Rego can map MCP tools to capabilities.
 Users see no change in this feature. The consent screen and the end-user grant request keep their current shape, and every existing permission set, agent, grant and policy behaves as before the upgrade.
 
+## Clarifications
+
+### Session 2026-11-27
+
+- Q: How should the migration record old grants in which the user left out an optional service, so that no grant gains access it didn't have before? → A: Split each legacy permission set into one capability per service scope entry. Each capability keeps that entry's `requirement_type`, and a left-out service becomes a capability that the grant does not hold.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Each numbered acceptance scenario requires one corresponding E2E scenario under `tests/e2e/` (Constitution XIII).
@@ -46,8 +52,8 @@ No user loses access they granted, and no user gains access they did not grant.
 
 **Acceptance Scenarios**:
 
-1. **US2.1 — Sets become capabilities**: **Given** a permission set with service scopes before the upgrade, **When** the migration runs, **Then** the set includes capabilities that together carry exactly its former service scopes, in a capability group named after the set. The agents that reference the set remain valid without changes.
-2. **US2.2 — Grants are not broadened**: **Given** a pre-upgrade grant that omitted an optional service of a set, **When** the migration runs and the agent exchanges a token, **Then** the effective scopes and the `granted_permission_sets` policy input are identical to those before the upgrade. [NEEDS CLARIFICATION: How should the migration represent legacy grants that excluded an optional service? (A, recommended) Split each legacy set into one capability per service scope, carrying that scope entry's `requirement_type`, so that an excluded service maps to an ungranted capability. (B) Keep a legacy per-service inclusion mask on migrated grants. (C) Mark such grants for re-consent.]
+1. **US2.1 — Sets become capabilities**: **Given** a permission set with service scopes before the upgrade, **When** the migration runs, **Then** the set includes one capability per former service scope entry, each carrying that entry's scopes and `requirement_type`, in a capability group named after the set. The agents that reference the set remain valid without changes.
+2. **US2.2 — Grants are not broadened**: **Given** a pre-upgrade grant that omitted an optional service of a set, **When** the migration runs and the agent exchanges a token, **Then** the grant holds only the capabilities generated for its included services, and the capability generated for the omitted service is not granted (FR-018). The effective scopes and the `granted_permission_sets` policy input are identical to those before the upgrade.
 3. **US2.3 — Down migration**: **Given** an upgraded database whose capabilities, sets and grants are still the ones the migration created, **When** the down migration runs, **Then** permission sets and grants return to their pre-upgrade shape and values.
 4. **US2.4 — Consent is unchanged for users**: **Given** an upgraded broker, **When** Alice consents to an agent through today's consent screen and grant request, **Then** the request and response shapes are unchanged. The broker stores the capabilities that match her included services (FR-010), and token exchange yields the same scopes as before the upgrade.
 
@@ -198,8 +204,6 @@ allow contains {"reason": "capability granted"} if {
 
 ### Journey 2 — Upgrade preserves a grant that excluded an optional service (User Story 2, Scenarios US2.1–US2.2)
 
-This journey shows clarification option A, which US2.2 recommends. It changes if the clarification selects B or C.
-
 **Cast**: Legacy set *Ops Tools* `770e8400-e29b-41d4-a716-446655440002` (canonical `ops-tools`), whose service scopes are GitHub Production `880e8400-e29b-41d4-a716-446655440011` (mandatory, `repo:read`) and Slack `880e8400-e29b-41d4-a716-446655440012` (optional, `chat:write`). Alice's grant for agent *Ops Copilot* `550e8400-e29b-41d4-a716-446655440001` includes GitHub only.
 
 **Step 1 — before the upgrade**: The stored grant entry is:
@@ -254,7 +258,7 @@ The grant entry now holds the GitHub capability only. Migration cannot know whet
 
 **Migration**
 
-- **FR-018**: The migration MUST convert each existing permission set into capabilities that together carry exactly its former service scopes, in a capability group named after the set, with `read_only: false`. Existing agents MUST stay valid without operator action.
+- **FR-018**: The migration MUST convert each existing permission set into one capability per former service scope entry, in a capability group named after the set. Each capability MUST carry exactly that entry's service and scopes, have `read_only: false`, and be included by the set with that entry's `requirement_type`. Each migrated grant entry MUST hold exactly the capabilities whose service was in its included-service list. The migration MUST NOT keep a legacy inclusion mask or mark grants for re-consent. Existing agents MUST stay valid without operator action.
 - **FR-019**: Generated canonical IDs MUST be unique, valid under FR-002, and derived deterministically from the set's canonical ID, or from its UUID when it has none. The mapping is designed in `/speckit-plan`.
 - **FR-020**: For every existing grant, the effective scopes and policy-visible permission-set contents after migration MUST equal those before migration. The migration MUST NOT broaden any grant (US2.2).
 
