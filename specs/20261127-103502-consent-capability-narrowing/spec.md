@@ -13,6 +13,12 @@ The grant stores the user's choice, and the accounts to connect follow from it.
 Feature 1's model then requests only the chosen capabilities' scopes and gives their canonical IDs to ExtProc policy, so tools behind withheld capabilities are denied at the gateway.
 After approval, users can review what they granted and withheld, and change it.
 
+## Clarifications
+
+### Session 2026-11-27
+
+- Q: When Alice approves a permission set at **Full**, should the grant store "everything the agent's entry lists" as a standing choice, or a fixed list of the capability IDs she saw? → A: Intent (option B). A Full selection is stored as a per-set Full marker. Every time it is read, it resolves to the capabilities that the agent's entry lists then, so capabilities that an operator adds later, including ones that write, are granted without new consent. This adds a grant field to Feature 1's model and is the one stored preset. Read-only and Custom selections stay explicit capability IDs.
+
 ## User Scenarios & Testing *(mandatory)*
 
 Each numbered acceptance scenario requires one corresponding E2E scenario under `tests/e2e/` (Constitution XIII).
@@ -92,7 +98,8 @@ Alice reopens an agent from *My Agent Delegations*. She sees what the agent may 
 
 ### Edge Cases
 
-- **Operator adds a capability to a set after Alice consented**: The outcome depends on whether **Full** is stored as intent or as a snapshot. See FR-004.
+- **Operator adds a capability to the agent's entry after Alice consented**: If Alice's entry for that set is stored as Full intent, the new capability is granted at the next token exchange, without new consent, even if it writes. Its scopes are requested, and policy receives its canonical ID. If the entry holds explicit IDs (Read-only or Custom), the new capability is not granted. See FR-004 and FR-011.
+- **Operator removes a capability from the agent's entry or the set after Alice consented to Full**: A Full intent entry resolves without it, and token exchange does not fail closed. An explicit-ID entry that references it fails closed, as Feature 1 specifies for stale IDs.
 - **A capability that is mandatory and writes, inside a mandatory set**: Read-only mode cannot remove it, and the set cannot be switched off. The row shows **Keeps write access**, and the global switch shows **Partly** instead of on (FR-002, FR-005).
 - **Every optional capability of a set is unchecked**: The set's entry still contains its mandatory capabilities. An optional set with no mandatory capabilities and nothing checked counts as switched off and has no entry.
 - **A capability needs two services**: Both services appear in Connect Your Accounts while the capability is checked.
@@ -219,7 +226,7 @@ annotation "Follows the switch.\nAlice can still change a single set." target="l
 
 </details>
 
-**Step 3 — 09:31:05: Alice approves**. The request field name and shape follow the decision in FR-004 and the end-user OpenAPI design (API-001). This journey shows the explicit-ID form.
+**Step 3 — 09:31:05: Alice approves**. The request field names follow the end-user OpenAPI design (API-001). A Read-only selection is stored as explicit IDs (FR-004), so this journey shows the explicit-ID form.
 
 ```http
 POST /api/consent/agents/550e8400-e29b-41d4-a716-446655440000/grants HTTP/1.1
@@ -459,7 +466,7 @@ annotation "Disappears if Alice switches\nSlack Notifications off." target="slac
 - **FR-001**: The permissions card MUST NOT show OAuth2 service names or scopes. It shows permission sets and, in the expanded row, capability labels under group-name headings. It shows only the capabilities that the agent's entry lists.
 - **FR-002**: The consent screen MUST provide one global **Read-only mode** switch. Switching it on unchecks every optional capability that is not read-only in every included set. Switching it off restores each set's Full preset. Its displayed state is derived: on when every included set is exactly at its read-only preset, off when every included set is at its Full preset, and **Partly** otherwise.
 - **FR-003**: Each included set MUST show a **Read-only / Full** preset control. The read-only preset is the read-only capabilities plus the mandatory ones. The Full preset is every capability that the agent's entry lists. The control shows **Custom** when the selection matches neither preset. Optional sets keep today's include toggle, and switching a set off withholds all its capabilities, mandatory ones included.
-- **FR-004**: On first consent, the capabilities in the agent entry's list MUST start checked, and mandatory ones MUST be locked on. [NEEDS CLARIFICATION: Is a Full selection stored as intent ("all capabilities the agent entry lists", so capabilities that an operator adds later are granted automatically) or as a snapshot of explicit IDs (so a later addition requires new consent)? Issue #285 asks for intent, but it also says that presets are never stored. Feature 1 stores explicit IDs, so intent would add a grant field.]
+- **FR-004**: On first consent, the capabilities in the agent entry's list MUST start checked, and mandatory ones MUST be locked on. When a set is approved at its Full preset, the grant MUST store that set's entry as Full intent, not as explicit capability IDs. A Read-only or Custom selection MUST be stored as explicit capability IDs.
 - **FR-005**: When a mandatory capability that writes remains granted under Read-only mode, its set's row MUST show **Keeps write access** and name that capability.
 - **FR-006**: Connect Your Accounts MUST list exactly the services in the union of the selected capabilities' service scopes. Approve MUST require a connection only for those services.
 - **FR-007**: The delegation detail page MUST summarise granted capabilities by group for each set, show the derived preset state, list withheld capabilities, and show connected accounts separately. **Change permissions** MUST rebuild the consent screen's selection from the stored grant.
@@ -469,14 +476,16 @@ annotation "Disappears if Alice switches\nSlack Notifications off." target="slac
 - **FR-008**: The end-user grant request MUST carry the per-set capability selection, and the broker MUST store it as Feature 1's granted capabilities. The broker MUST reject, with `400` and no change, a grant that omits a capability mandatory for the agent, includes a capability outside the agent entry's list, or repeats a capability.
 - **FR-009**: Whether Feature 1's included-service request shape remains accepted next to the new shape MUST be decided with the end-user API version in `/speckit-plan`. If it remains, it keeps Feature 1's meaning.
 - **FR-010**: The agent detail returned to the consent screen MUST expose, for each set, the capability entries that the agent may request, with group name, label, description, effective requirement, read-only flag, and the services each capability needs.
+- **FR-011**: Every reader of a Full intent entry MUST resolve it to the capabilities that the agent's entry lists at the time of reading. This covers token exchange, permit resolution, policy input, the delegation detail and the consent screen. An agent entry without a capability list resolves to every capability in the set, as Feature 1 specifies. Capabilities added later are therefore granted without new consent, and capabilities removed later drop out without failing closed.
 
 ### Domain Model
 
-This feature adds no entity. It uses Feature 1's Capability, Capability Group, Capability Entry and granted capabilities.
+This feature adds no entity. It uses Feature 1's Capability, Capability Group, Capability Entry and granted capabilities. It adds the Full intent marker to Feature 1's granted permission set entry: an entry holds either Full intent or explicit capability IDs, never both.
 
 **Value Objects**:
 
-- **Capability Preset** (Read-only, Full, Custom): Derived per set from the read-only flags, the effective requirements and the selection. It is never stored as such, subject to FR-004.
+- **Capability Preset** (Read-only, Full, Custom): Derived per set from the read-only flags, the effective requirements and the selection. Read-only and Custom are never stored. Full is stored as Full intent (FR-004).
+- **Full intent**: A granted set entry's marker meaning "every capability that the agent's entry lists". It resolves at read time (FR-011).
 - **Read-only Mode state** (on, off, Partly): Derived across all included sets.
 
 ```mermaid
@@ -490,19 +499,20 @@ stateDiagram-v2
   Custom --> Full: selection equals Full preset
 ```
 
-*New glossary terms for `ARCHITECTURE.md`: Read-only Mode, Capability Preset.*
+*New glossary terms for `ARCHITECTURE.md`: Read-only Mode, Capability Preset, Full intent.*
 
 ### API Requirements
 
 - **API-001**: The end-user API (`api/enduser/openapi.yaml`) grant request and response MUST carry each set's capability selection (FR-008, FR-009). Agent detail MUST carry the data in FR-010. Delegation detail MUST expose granted and withheld capabilities.
-- **API-002**: The Admin API, the token-exchange response and the permit are unchanged from Feature 1.
+- **API-002**: The Admin API, the token-exchange response and the permit are unchanged from Feature 1. They carry the resolved capabilities of a Full intent entry and do not expose the marker.
 - **API-003**: All API changes MUST follow the Zalando RESTful API Guidelines and receive stakeholder approval before implementation (Constitution IV, X).
 
 ### Security Requirements
 
 - **SR-001**: Unchecked optional capabilities MUST NOT be granted, so their scopes are not requested and policy denies their tools.
 - **SR-002**: The consent screen's claims, such as "Read-only mode", MUST NOT exceed what Feature 1's ADR states about the deployment controls behind gateway enforcement.
-- **SR-003**: Every validation failure in FR-008 MUST fail closed. The broker MUST NOT widen a selection to "all capabilities" on bad data.
+- **SR-003**: Every validation failure in FR-008 MUST fail closed. The broker MUST NOT widen a selection to "all capabilities" on bad data. Only an explicit Full selection produces Full intent.
+- **SR-004**: Full intent lets a grant widen when an operator changes an agent's entry, without the user acting. This feature's ADR MUST record that exception to Feature 1's "no user gains access they did not grant" and make the operator's agent-entry change the authorizing act. Grant audit events MUST record Full intent as such.
 
 ### Frontend/Design System Requirements
 
@@ -512,7 +522,7 @@ stateDiagram-v2
 
 ### Key Entities
 
-- **Granted capabilities** (from Feature 1): Now chosen by the user instead of derived from included services.
+- **Granted capabilities** (from Feature 1): Now chosen by the user instead of derived from included services. A granted set entry holds either explicit capability IDs or Full intent (FR-004, FR-011).
 
 ## Success Criteria *(mandatory)*
 
