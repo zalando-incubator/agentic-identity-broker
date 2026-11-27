@@ -754,7 +754,9 @@ audience, and it does not contact the issuer. It checks only the form of the tok
 - When the token states an `exp`, that time lies in the future. A token without `exp` is
   accepted.
 
-Leading or trailing spaces are not trimmed, and a token with them is refused. Every refusal names
+Leading or trailing spaces are not trimmed, and a token with them, or with a line break
+anywhere, is refused. The broker verifies no signature, so a token whose signature was cut short
+can still be accepted; it then fails at the downstream service. Every refusal names
 the failed rule and never repeats the token.
 
 ### Register a service account

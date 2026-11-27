@@ -60,7 +60,7 @@ Evaluated in order; the first failed rule decides the reason ([research R4](./re
 | 1 | `format` is `signed_jwt` | `unsupported_format` | `credential.format must be signed_jwt` |
 | 2 | `use` is absent or `access_token` | `unsupported_use` | `credential.use must be access_token` |
 | 3 | `jwt` is present and at most 16384 bytes | `missing_jwt` / `too_large` | `credential.jwt is required` / `credential.jwt must be at most 16384 bytes` |
-| 4 | `jws.Parse` with `jws.WithCompact()` and `jwt.ParseInsecure` both succeed | `malformed` | `credential.jwt must be a compact JWS with valid JWT claims` |
+| 4 | No CR or LF anywhere; `jws.Parse` with `jws.WithCompact()` yields one signature and its payload decodes as a JWT claims set | `malformed` | `credential.jwt must be a compact JWS with valid JWT claims` |
 | 5 | The parsed header states an `alg` that is not `none` | `unsigned` | `credential.jwt must be a signed compact JWS` |
 | 6 | The parsed expiration, when stated, is after the request time | `expired` | `credential.jwt is expired` |
 

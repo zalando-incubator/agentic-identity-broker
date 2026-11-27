@@ -72,7 +72,7 @@ against the admin server with a JWT signed by any key you hold.
 
 | Step | Request | Expected |
 |---|---|---|
-| Register | `POST /api/services/{service}/service-accounts` | `201`, `ETag: "1"`, `status: ready`, summary with `iss`, `sub`, `kid`, `exp`, fingerprint; no `credential` member |
+| Register | `POST /api/services/{service}/service-accounts` | `201`, `ETag: "1"`, summary with `iss`, `sub`, `kid`, `exp`, fingerprint; no `credential` member |
 | List | `GET /api/services/{service}/service-accounts` | One entry, same representation |
 | Status | `GET .../{account}/status` | `ready`, `failure_reason: null`, the token's expiry |
 | Rotate | `PUT .../{account}` with a second JWT and `If-Match: "1"` | `200`, `ETag: "2"`, new `kid`, `exp` and fingerprint, same `id` |

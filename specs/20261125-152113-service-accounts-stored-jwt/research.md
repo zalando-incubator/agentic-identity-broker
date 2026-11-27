@@ -82,9 +82,10 @@ add only the broker's own rules around it. A function in `internal/domain/model`
 submitted string in this order and stops at the first failed rule:
 
 1. Length at most 16384 bytes, checked before the library sees the input (SR-007; the library
-   leaves input bounds to the caller).
-2. `jws.Parse(token, jws.WithCompact())` succeeds, and `jwt.ParseInsecure(token)` succeeds. No key
-   is passed and no signature is verified. Either failure is one rule, reason `malformed`.
+   leaves input bounds to the caller). Then no CR or LF anywhere (reason `malformed`).
+2. `jws.Parse(token, jws.WithCompact())` succeeds with one signature, and the outer payload
+   decodes directly as a JWT claims set (so a nested compact JWS is refused). No key is passed and
+   no signature is verified. Either failure is one rule, reason `malformed`.
 3. The parsed protected header states an `alg`, and it is not `jwa.NoSignature()` (reason
    `unsigned`).
 4. If the parsed token has an expiration, it is after the request time (reason `expired`).
@@ -102,7 +103,9 @@ What the library accepts, checked against v4.6.0 on 2026-11-26:
 | Empty header or payload, payload not a JSON object | Refused | `malformed` |
 | `alg: none`, or no `alg` | Parsed | `unsigned` (rule 3) |
 | `alg` it does not know, such as `NONE` or `XYZ` | Refused | `malformed` |
-| Padded or standard-alphabet base64, trailing line break | Parsed | Accepted, stored as submitted |
+| Padded or standard-alphabet base64 | Parsed | Accepted, stored as submitted |
+| A line break anywhere (CR or LF) | Parsed | `malformed`: refused before parsing (rule 1) |
+| Signature segment cut short but still decodable | Parsed | Accepted; no signature is verified, so it fails only downstream |
 | Leading or trailing space | Refused | `malformed` |
 | `exp` as numeric string or fractional | Parsed, whole seconds | Accepted |
 | `exp` boolean, or beyond the date range | Refused | `malformed` |
@@ -113,16 +116,18 @@ What the library accepts, checked against v4.6.0 on 2026-11-26:
 than hand-written parsing, and to relax the spec's rules where the library differs. This follows
 Constitution Principle III for a security-relevant parser, and the library is already vetted and
 used for every other JWT the broker handles. The broker keeps only the rules that are its own
-decisions: the size bound, refusing unsigned tokens (SR-004) and refusing expired ones.
+decisions: the size bound, refusing unsigned tokens (SR-004), refusing expired ones, and refusing
+line breaks. The last was added in review: a line break passes the decoder but can never be sent
+in an `Authorization` header, so it is a hand-out rule, not a parsing rule.
 
 **Alternatives considered**:
 
 - A standard-library parser with strict raw base64url and exact segment checks (the earlier
   design): stricter on encodings and whitespace, but it is a second, hand-written JWT parser next
   to the library the broker already uses.
-- Adding broker checks to restore the stricter rules, such as rejecting line breaks: each one
-  re-creates part of a parser; the stored token is opaque and handed out unchanged, so the
-  library's notion of a valid compact JWS is enough.
+- Adding broker checks to restore the stricter encoding rules, such as raw base64url only: each
+  one re-creates part of a parser; the stored token is opaque and handed out unchanged, so the
+  library's notion of a valid compact JWS is enough. Line breaks are the exception above.
 
 ## R5 — Credential summary and fingerprint
 

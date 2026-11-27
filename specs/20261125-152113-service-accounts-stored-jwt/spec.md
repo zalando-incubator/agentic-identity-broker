@@ -66,7 +66,7 @@ A platform administrator has a JWT that company infrastructure (the identity pro
 
 ### User Story 2 - Refuse credentials that cannot work (Priority: P1)
 
-An administrator pastes the wrong thing: a truncated token, an unsigned token, an encrypted token, a token that has already expired, or a file that is far too large. The broker refuses it at the moment of writing, says which rule failed without repeating the pasted value, and stores nothing.
+An administrator pastes the wrong thing: a token truncated so that it no longer decodes, an unsigned token, an encrypted token, a token that has already expired, or a file that is far too large. The broker refuses it at the moment of writing, says which rule failed without repeating the pasted value, and stores nothing.
 
 **Why this priority**: A stored credential that can never work would surface only later, as a failed exchange for an agent, far from the person who can fix it. Refusing unsigned tokens is also a security control (Constitution Principle I).
 
@@ -149,7 +149,8 @@ An administrator removes an account that is no longer needed. The stored credent
 - **Unrecognised `alg`**: an `alg` value the JOSE library does not know, including `NONE` or `None`, is refused because the token does not parse.
 - **Absent `iss`, `sub` or `kid`**: accepted. The summary omits what the token does not state.
 - **Encrypted JWT (JWE, five segments)**: refused as not a compact JWS.
-- **Whitespace and base64 variants**: leading or trailing spaces are refused. Padded or standard-alphabet base64 segments, and a trailing line break, are accepted because the JOSE library's decoder accepts them. Nothing is trimmed: the token is stored and fingerprinted exactly as submitted.
+- **Truncated signature**: a token cut off inside its signature segment is accepted when the rest still decodes, because the broker verifies no signature. It fails only at the downstream service.
+- **Whitespace and base64 variants**: leading or trailing spaces and any line break are refused. Padded or standard-alphabet base64 segments are accepted because the JOSE library's decoder accepts them. Nothing is trimmed: the token is stored and fingerprinted exactly as submitted.
 - **Rotation to a token from another issuer or for another subject**: accepted. The token is opaque; the summary shows the change, and the audit event records the previous and new summaries.
 - **Ceiling wider or narrower than the token's own `scope` claim**: not compared. The ceiling is declared by the administrator; the token's content never drives a decision.
 - **Two accounts holding the same JWT**: accepted. They show the same fingerprint.
@@ -451,7 +452,7 @@ Content-Type: application/json
 **Changing and removing**
 
 - **FR-017**: An update that carries a credential MUST replace the stored credential in place: the account keeps its ID and service, and its `canonical_id` unless the same update renames it (FR-005); the summary, fingerprint and status are recomputed from the new credential; the previous credential MUST no longer be stored.
-- **FR-018**: An update without a credential MUST keep the stored credential and MAY change the ceiling. Changing the ceiling MUST NOT alter the stored credential or its summary.
+- **FR-018**: An update without a credential MUST keep the stored credential and MAY change the ceiling. Changing the ceiling MUST NOT alter the stored credential or its summary. A ceiling change MUST be accepted even when it lowers the ceiling below what a bound agent grant uses; an update is never refused because of a grant (#471).
 - **FR-019**: Every committed change to an account MUST change its strong ETag. Update and delete MUST accept an optional `If-Match`: when it is supplied and does not equal the account's current ETag, the broker MUST answer `412` and change nothing; when it is absent, the request is carried out and the last writer wins. An update that changes nothing MUST succeed, MUST keep the ETag and last-change time, and MUST NOT write an audit record.
 - **FR-020**: Deleting an account MUST erase its stored credential. Deletion MUST be refused with a conflict while any agent grant binds the account; that check is enforced from the delivery of agent grants (#472), and this feature MUST define the conflict response in the API contract now.
 - **FR-021**: Operations on an account MUST address it through its service. An account addressed under a service it does not belong to MUST be reported as not found.
@@ -536,7 +537,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 ### API Requirements
 
 - **API-001**: The operations are defined in `api/admin/openapi.yaml` before implementation, on the admin server only: create and list under `/api/services/{service-id}/service-accounts`; read, update and delete under `/api/services/{service-id}/service-accounts/{service-account-id}`; status under `.../{service-account-id}/status`. No end-user API changes.
-- **API-002**: The create and update request is one schema with `kind` as an enumerated member and `credential` a `oneOf` discriminated by `format` and marked write-only; an update may omit `kind`. The representation schema has no `credential` property and requires `credential_summary`, `status`, `narrowing` and `scopes`.
+- **API-002**: The create and update request is one schema with `kind` as an enumerated member and `credential` a `oneOf` discriminated by `format` and marked write-only; an update may omit `kind`. The representation schema has no `credential`, `status` or `failure_reason` property and requires `credential_summary`, `narrowing` and `scopes`; status is only on the status resource (FR-014, FR-015).
 - **API-003**: `{service-id}` keeps its existing meaning (UUID or canonical service identifier). `{service-account-id}` accepts the account's UUID or its `canonical_id` within the addressed service.
 - **API-004**: Responses that return one account carry its strong ETag. Errors use the existing error envelope and the existing meanings of `400`, `401`, `404`, `409`, `412` and `500`. `If-Match` is optional on update and delete (FR-019).
 - **API-005**: The contract includes examples that match the journeys of this specification, including the refusals of Journey 3, and documents the delete conflict of FR-020 and the new conflict on service deletion of FR-025.
@@ -553,7 +554,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 - **SR-001**: The stored JWT MUST be encrypted before it is persisted, through the broker's existing envelope encryption, under the encryption context of the owning service (`service_id`, as defined by `adrs/008-encryption-context-optimization.md`). A credential encrypted for one service MUST NOT decrypt under another service's context.
 - **SR-002**: There MUST be no plaintext fallback. If encryption fails or is unavailable, the write fails and nothing is stored (Constitution Principle I).
 - **SR-003**: The fingerprint MUST be computed with a vetted hash from the Go standard library over the submitted JWT (Constitution Principle III). The JWT MUST be parsed with the broker's JOSE library (`lestrrat-go/jwx`), without verification; the broker adds no parser of its own. No custom cryptography is introduced. The broker performs no signature operation in this feature.
-- **SR-004**: Storing a JWT without verifying it is not an exception to Constitution Principle I's signature rule: the broker never accepts the stored JWT as proof of anything. It authenticates nobody with it, authorizes nothing from it (FR-013), and only displays metadata read from it. Refusing `alg: none` guarantees the broker never stores, for later hand-out, a token that no party could verify.
+- **SR-004**: Storing a JWT without verifying it is not an exception to Constitution Principle I's signature rule: the broker never accepts the stored JWT as proof of anything. It authenticates nobody with it, authorizes nothing from it (FR-013), and only displays metadata read from it. Refusing `alg: none` guarantees the broker never stores, for later hand-out, a token that declares itself unsigned; because no signature is verified, an intact signature is not guaranteed (see Edge Cases, truncated signature).
 - **SR-005**: The administrator access boundary is the existing one of the admin server: the trusted proxy authenticates and authorizes the administrator, and a request without an operator principal is refused with `401` before any account is read.
 - **SR-006**: Tests MUST assert, for every path that handles the JWT (create, rotation, refused write, list, status, delete), that the token under test appears in no response body, log buffer, span attribute, span event or metric attribute, as the coding standards require.
 - **SR-007**: Decoding the JWT for the summary MUST be bounded by the size limit of FR-009 and MUST fail closed: a token whose header or payload cannot be decoded is refused, never stored with an empty summary.
@@ -569,7 +570,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 
 ### Measurable Outcomes
 
-- **SC-001**: An administrator can register a ready-signed JWT on an existing service and see it listed as ready in one request each, without changing any broker configuration.
+- **SC-001**: An administrator can register a ready-signed JWT on an existing service, see it listed and read its status as ready, in one request each, without changing any broker configuration.
 - **SC-002**: In 100% of responses, log records, spans and metrics produced by this feature's operations, the registered JWT is absent; this is proven by automated tests for every operation.
 - **SC-003**: 100% of the invalid credentials enumerated in User Story 2 are refused at write time with a reason, and none leaves a stored record.
 - **SC-004**: From the instant a stored JWT's stated expiry passes, every status read reports the account as failed with the reason, with no operator action and no delay an administrator could observe.

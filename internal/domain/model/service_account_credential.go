@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -180,6 +181,10 @@ func ValidateServiceAccountCredential(input ServiceAccountCredentialInput, now t
 	}
 	if len(token) > ServiceAccountJWTMaxBytes {
 		return rejectCredential(CredentialRejectionTooLarge)
+	}
+	// A line break passes the JOSE decoder but can never be sent in an Authorization header.
+	if strings.ContainsAny(token, "\r\n") {
+		return rejectCredential(CredentialRejectionMalformed)
 	}
 	message, err := jws.Parse([]byte(token), jws.WithCompact())
 	if err != nil || len(message.Signatures()) != 1 {

@@ -146,6 +146,7 @@ func MalformedServiceAccountTokens() map[string]string {
 		"five segments":             valid + "." + segments[1] + "." + segments[2],
 		"undecodable segment":       segments[0] + ".!!not-base64!!." + segments[2],
 		"leading space":             " " + valid,
+		"trailing line break":       valid + "\n",
 		"payload not a JSON object": signServiceAccountPayload(ServiceAccountT1KeyID, []byte(`["read","write"]`)),
 		"header not a JSON object":  encodeSegment(`["ES256"]`) + "." + segments[1] + "." + segments[2],
 		"boolean exp":               signServiceAccountPayload(ServiceAccountT1KeyID, []byte(`{"iss":"https://idp.example.com","exp":true}`)),
