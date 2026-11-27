@@ -54,15 +54,18 @@ Error status: whether the span can end with status `Error`.
 | [`storage.approve.tool_approval`](#storageapprovetool_approval) | Client | `storage` | Yes | Transitions a pending tool approval to approved in PostgreSQL. |
 | [`storage.consume.client_assertion_replay`](#storageconsumeclient_assertion_replay) | Client | `storage` | Yes | Records the `jti` of a client assertion, or reports a conflict when it is already recorded. |
 | [`storage.consume.tool_approval`](#storageconsumetool_approval) | Client | `storage` | Yes | Marks an approved tool approval with persistence `once` as consumed in PostgreSQL. |
+| [`storage.count.service_account`](#storagecountservice_account) | Client | `storage` | Yes | Counts the service accounts a third-party service holds. |
 | [`storage.count_pending.tool_approval`](#storagecount_pendingtool_approval) | Client | `storage` | Yes | Counts the pending approvals of a principal and agent pair that are not expired. |
 | [`storage.create.authorization_code`](#storagecreateauthorization_code) | Client | `storage` | Yes | Inserts an authorization code. |
 | [`storage.create.client_credential`](#storagecreateclient_credential) | Client | `storage` | Yes | Inserts the client credential of an agent. |
 | [`storage.create.pkce_session`](#storagecreatepkce_session) | Client | `storage` | Yes | Inserts a PKCE session. |
 | [`storage.create.refresh_token_session`](#storagecreaterefresh_token_session) | Client | `storage` | Yes | Inserts a refresh token session. |
+| [`storage.create.service_account`](#storagecreateservice_account) | Client | `storage` | Yes | Inserts a service account with its encrypted credential; a missing service is not found and a taken canonical ID is a conflict. |
 | [`storage.create.tool_approval`](#storagecreatetool_approval) | Client | `storage` | Yes | Inserts a tool approval, or returns the existing pending duplicate. |
 | [`storage.create.user_grant`](#storagecreateuser_grant) | Client | `storage` | Yes | Creates a user grant, or updates the grant of the same principal and agent. |
 | [`storage.delete.client_credential`](#storagedeleteclient_credential) | Client | `storage` | Yes | Deletes the client credential of an agent. |
 | [`storage.delete.pkce_session`](#storagedeletepkce_session) | Client | `storage` | Yes | Deletes a PKCE session by its signature. |
+| [`storage.delete.service_account`](#storagedeleteservice_account) | Client | `storage` | Yes | Deletes a service account and its credential, optionally only at an expected version. |
 | [`storage.delete_expired.authorization_code`](#storagedelete_expiredauthorization_code) | Client | `storage` | Yes | Deletes the expired authorization codes. |
 | [`storage.delete_expired.client_assertion_replay`](#storagedelete_expiredclient_assertion_replay) | Client | `storage` | Yes | Deletes the expired client assertion replay records. |
 | [`storage.delete_expired.pkce_session`](#storagedelete_expiredpkce_session) | Client | `storage` | Yes | Deletes the expired PKCE sessions. |
@@ -73,9 +76,12 @@ Error status: whether the span can end with status `Error`.
 | [`storage.find.refresh_token_session`](#storagefindrefresh_token_session) | Client | `storage` | Yes | Retrieves a refresh token session by its signature. |
 | [`storage.get.agent`](#storagegetagent) | Client | `storage` | Yes | Retrieves an agent by ID from PostgreSQL. |
 | [`storage.get.client_credential`](#storagegetclient_credential) | Client | `storage` | Yes | Retrieves the client credential of an agent. |
+| [`storage.get.service_account`](#storagegetservice_account) | Client | `storage` | Yes | Reads one service account of a service by its ID. |
 | [`storage.get.tool_approval`](#storagegettool_approval) | Client | `storage` | Yes | Retrieves a tool approval by ID from PostgreSQL. |
+| [`storage.get_by_canonical_id.service_account`](#storageget_by_canonical_idservice_account) | Client | `storage` | Yes | Reads one service account of a service by its canonical ID. |
 | [`storage.get_version.approval_sync`](#storageget_versionapproval_sync) | Client | `storage` | Yes | Retrieves the current approval sync version. |
 | [`storage.increment_version.approval_sync`](#storageincrement_versionapproval_sync) | Client | `storage` | Yes | Increments the approval sync version and issues `NOTIFY`. With the PostgreSQL approval repository, a trigger increments the version and this span is absent. |
+| [`storage.list.service_account`](#storagelistservice_account) | Client | `storage` | Yes | Lists the service accounts of a service in canonical ID byte order. |
 | [`storage.list.user_grants_by_principal`](#storagelistuser_grants_by_principal) | Client | `storage` | Yes | Retrieves the active grants of a principal across all agents. |
 | [`storage.list_active.tool_approval`](#storagelist_activetool_approval) | Client | `storage` | Yes | Lists the approvals and denials that are not consumed. A pending approval must not be expired, and a session-scoped one must belong to an active agent session. |
 | [`storage.list_permanent.tool_approval`](#storagelist_permanenttool_approval) | Client | `storage` | Yes | Lists the permanent approvals and denials of a principal. |
@@ -86,6 +92,7 @@ Error status: whether the span can end with status `Error`.
 | [`storage.revoke_by_request.refresh_token_session`](#storagerevoke_by_requestrefresh_token_session) | Client | `storage` | Yes | Revokes the unused refresh token sessions of a token request. |
 | [`storage.revoke_permanent.tool_approval`](#storagerevoke_permanenttool_approval) | Client | `storage` | Yes | Revokes a permanent approval or a permanent denial in PostgreSQL. It becomes denied, with no persistence. |
 | [`storage.rotate.client_credential`](#storagerotateclient_credential) | Client | `storage` | Yes | Replaces the client credential of an agent in one transaction. |
+| [`storage.update.service_account`](#storageupdateservice_account) | Client | `storage` | Yes | Updates a service account and increments its version, optionally only at an expected version. |
 | [`tokenexchange.access_evaluation`](#tokenexchangeaccess_evaluation) | Internal | `tokenexchange` | Yes | Answers an AuthZEN access evaluation request, such as one from ExtProc's grant context. It checks whether the user's grant lets the agent access the requested resource, and does not issue a token. |
 | [`tokenexchange.exchange`](#tokenexchangeexchange) | Internal | `tokenexchange` | Yes | RFC 8693 token exchange request in the broker. |
 | [`tokenexchange.get_valid_access_token`](#tokenexchangeget_valid_access_token) | Internal | `tokenexchange` | No | Returns the access token of the session. Refreshes it during the request when it has expired, and starts a background refresh when it expires within the refresh lookahead. |
@@ -419,6 +426,19 @@ Started in `internal/adapters/storage/postgres/tool_approval_repository.go`.
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 
+### storage.count.service_account
+
+Counts the service accounts a third-party service holds.
+
+Started in `internal/adapters/storage/postgres/service_account_repository.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `CountByService` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
 ### storage.count_pending.tool_approval
 
 Counts the pending approvals of a principal and agent pair that are not expired.
@@ -484,6 +504,19 @@ Started in `internal/adapters/storage/postgres/refresh_token_session_repo.go`.
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 
+### storage.create.service_account
+
+Inserts a service account with its encrypted credential; a missing service is not found and a taken canonical ID is a conflict.
+
+Started in `internal/adapters/storage/postgres/service_account_repository.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `Create` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
 ### storage.create.tool_approval
 
 Inserts a tool approval, or returns the existing pending duplicate.
@@ -532,6 +565,19 @@ Started in `internal/adapters/storage/postgres/pkce_session_repo.go`.
 | Attribute | Values |
 |---|---|
 | `db.operation` | `PKCESessionRepo.Delete` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
+### storage.delete.service_account
+
+Deletes a service account and its credential, optionally only at an expected version.
+
+Started in `internal/adapters/storage/postgres/service_account_repository.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `Delete` |
 | `db.system` | `postgresql` |
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
@@ -666,6 +712,19 @@ Started in `internal/adapters/storage/postgres/client_credential_repo.go`.
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 
+### storage.get.service_account
+
+Reads one service account of a service by its ID.
+
+Started in `internal/adapters/storage/postgres/service_account_repository.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `Get` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
 ### storage.get.tool_approval
 
 Retrieves a tool approval by ID from PostgreSQL.
@@ -675,6 +734,19 @@ Started in `internal/adapters/storage/postgres/tool_approval_repository.go`.
 | Attribute | Values |
 |---|---|
 | `db.operation` | `GetToolApproval` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
+### storage.get_by_canonical_id.service_account
+
+Reads one service account of a service by its canonical ID.
+
+Started in `internal/adapters/storage/postgres/service_account_repository.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `GetByCanonicalID` |
 | `db.system` | `postgresql` |
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
@@ -701,6 +773,19 @@ Started in `internal/adapters/storage/postgres/approval_sync_state_repository.go
 | Attribute | Values |
 |---|---|
 | `db.operation` | `IncrementApprovalSyncVersion` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
+### storage.list.service_account
+
+Lists the service accounts of a service in canonical ID byte order.
+
+Started in `internal/adapters/storage/postgres/service_account_repository.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `ListByService` |
 | `db.system` | `postgresql` |
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
@@ -831,6 +916,19 @@ Started in `internal/adapters/storage/postgres/client_credential_repo.go`.
 | Attribute | Values |
 |---|---|
 | `db.operation` | `ClientCredentialRepo.Rotate` |
+| `db.system` | `postgresql` |
+| `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+| `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
+
+### storage.update.service_account
+
+Updates a service account and increments its version, optionally only at an expected version.
+
+Started in `internal/adapters/storage/postgres/service_account_repository.go`.
+
+| Attribute | Values |
+|---|---|
+| `db.operation` | `Update` |
 | `db.system` | `postgresql` |
 | `error.type` | [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |
 | `storage.outcome` | `canceled`, [`internal/domain/storage.ErrorKind`](#internaldomainstorageerrorkind) |

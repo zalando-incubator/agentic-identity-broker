@@ -47,6 +47,7 @@ type ThirdpartyOAuth2ProviderService struct {
 	dcrClientName        string
 	permissionSetRepo    ports.PermissionSetRepository // may be nil
 	userSessions         ports.UserSessionRepository
+	serviceAccounts      ServiceAccountCounter
 	skipHTTPSValidation  bool
 	logger               *slog.Logger
 }
@@ -112,6 +113,12 @@ func (s *ThirdpartyOAuth2ProviderService) WithDCRClientName(name string) *Thirdp
 // WithUserSessions supplies the session count required before an issuer or audience change.
 func (s *ThirdpartyOAuth2ProviderService) WithUserSessions(repo ports.UserSessionRepository) *ThirdpartyOAuth2ProviderService {
 	s.userSessions = repo
+	return s
+}
+
+// WithServiceAccounts makes Delete refuse a service that holds service accounts.
+func (s *ThirdpartyOAuth2ProviderService) WithServiceAccounts(counter ServiceAccountCounter) *ThirdpartyOAuth2ProviderService {
+	s.serviceAccounts = counter
 	return s
 }
 
@@ -964,7 +971,7 @@ func (s *ThirdpartyOAuth2ProviderService) List(
 }
 
 // Delete removes a provider by ID.
-// Returns a conflict error if permission sets reference this service.
+// Returns a conflict error if permission sets reference this service or it holds service accounts.
 func (s *ThirdpartyOAuth2ProviderService) Delete(
 	ctx context.Context,
 	serviceID id.ServiceID,
@@ -982,6 +989,21 @@ func (s *ThirdpartyOAuth2ProviderService) Delete(
 				storage.ErrorKindConflict,
 				nil,
 				fmt.Sprintf("cannot delete service: %d permission set(s) reference it", count),
+			)
+		}
+	}
+
+	if s.serviceAccounts != nil {
+		count, err := s.serviceAccounts.CountByService(ctx, serviceID)
+		if err != nil {
+			return fmt.Errorf("failed to check service accounts: %w", err)
+		}
+		if count > 0 {
+			return storage.NewStorageError(
+				"DeleteService",
+				storage.ErrorKindConflict,
+				nil,
+				fmt.Sprintf("cannot delete service: %d service account(s) are attached to it", count),
 			)
 		}
 	}

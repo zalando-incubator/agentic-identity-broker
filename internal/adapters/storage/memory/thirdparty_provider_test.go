@@ -1037,3 +1037,45 @@ func TestInMemoryThirdpartyOAuth2ProviderRepository_ManualCutoverKeepsOmittedPar
 	assert.Nil(t, stored.Discovery.ResourceURL)
 	assert.Nil(t, stored.DiscoveryStatus.LastAttemptAt)
 }
+
+type stubServiceAccountCounter struct {
+	count int
+	err   error
+}
+
+func (c stubServiceAccountCounter) CountByService(context.Context, id.ServiceID) (int, error) {
+	return c.count, c.err
+}
+
+func TestInMemoryThirdpartyOAuth2ProviderRepository_DeleteRefusedWhileServiceAccountsExist(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name    string
+		counter stubServiceAccountCounter
+		kind    storage.ErrorKind
+		message string
+	}{
+		{"accounts attached", stubServiceAccountCounter{count: 2}, storage.ErrorKindConflict, "cannot delete service: 2 service account(s) are attached to it"},
+		{"counter failure", stubServiceAccountCounter{err: errors.New("count failed")}, storage.ErrorKindUnknown, "failed to check provider service accounts"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithServiceAccountRepository(tc.counter)
+			provider := testProvider(id.NewServiceID())
+			require.NoError(t, repo.Create(ctx, provider))
+
+			err := repo.Delete(ctx, provider.ID)
+
+			requireStorageKind(t, err, tc.kind)
+			var storageErr *storage.StorageError
+			require.ErrorAs(t, err, &storageErr)
+			assert.Equal(t, tc.message, storageErr.Message)
+			_, err = repo.Get(ctx, provider.ID)
+			require.NoError(t, err)
+		})
+	}
+
+	repo := NewInMemoryThirdpartyOAuth2ProviderRepository().WithServiceAccountRepository(stubServiceAccountCounter{})
+	provider := testProvider(id.NewServiceID())
+	require.NoError(t, repo.Create(ctx, provider))
+	require.NoError(t, repo.Delete(ctx, provider.ID))
+}

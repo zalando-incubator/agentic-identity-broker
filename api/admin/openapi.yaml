@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Agentic Identity Broker - Admin Server API
-  version: 3.0.0
+  version: 3.1.0
   description: |
     Administrative REST APIs for the Agentic Identity Broker running on Port 14000.
 
@@ -11,6 +11,26 @@ info:
     - **AI Agents**: Registry of agents that can request delegated user permissions
     - **Third-Party OAuth2 Services**: External OAuth2 providers (GitHub, Google, Databricks, etc.)
     - **System Health**: Monitoring and health check endpoints
+
+    ### Service Accounts (Admin API 3.1.0)
+
+    Admin API 3.1.0 adds service accounts to third-party services. The change is additive:
+    no existing operation changes its request or its successful response.
+    `DELETE /api/services/{service-id}` gains one more cause for its existing `409`.
+
+    A service account is a machine credential that a third-party service issued to software,
+    attached to exactly one service and bounded by a scope ceiling. This version offers one
+    kind, `jwt_bearer`, with one credential format, `signed_jwt`: a JWT signed outside the
+    broker. The broker stores it encrypted, never verifies or rebuilds it, and never returns it.
+    Every representation carries a `credential_summary` instead.
+
+    | `kind` | `credential.format` | `narrowing` |
+    |---|---|---|
+    | `jwt_bearer` | `signed_jwt` | `none` |
+
+    Values in `credential_summary` are read from the token without verification. They are for
+    display and status only. A service account has no effect on any user or agent request in
+    this version.
 
     ### External ID Contract (Admin API 3.0.0)
 
@@ -205,6 +225,8 @@ tags:
     description: Administrative operations for AI agent registry management
   - name: Services
     description: Administrative operations for third-party OAuth2 service configurations
+  - name: Service Accounts
+    description: Machine credentials attached to a third-party service, bounded by a scope ceiling
   - name: PermissionSets
     description: CRUD operations for permission set management
   - name: Client Credentials
@@ -1654,6 +1676,7 @@ paths:
 
         **Referential Integrity Check**:
         - Operation fails with 409 Conflict if user grants reference this service
+        - Operation fails with 409 Conflict while the service holds a service account
         - Administrators must revoke or modify grants before deletion
         - This prevents breaking active user permissions
 
@@ -1677,7 +1700,10 @@ paths:
         '404':
           $ref: '#/components/responses/NotFoundError'
         '409':
-          description: Cannot delete service with active grants
+          description: |
+            Cannot delete a service that is still referenced. A service that holds at least one
+            service account is not deleted, and the service and its accounts are unchanged; remove
+            the accounts first.
           content:
             application/json:
               schema:
@@ -1688,6 +1714,11 @@ paths:
                   value:
                     error: conflict
                     message: Cannot delete service 'GitHub Production' - 15 user grants reference it. Revoke grants first.
+                service_accounts_attached:
+                  summary: Service holds service accounts
+                  value:
+                    error: conflict
+                    message: 'cannot delete service: 1 service account(s) are attached to it'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -1940,6 +1971,270 @@ paths:
                 $ref: '#/components/schemas/ProtectedResourceMutationResult'
         '400':
           $ref: '#/components/responses/BadRequestError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/services/{service-id}/service-accounts:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+    get:
+      summary: List a service's service accounts
+      description: |
+        Returns a direct array (no envelope, no pagination), ordered by `canonical_id` in
+        ascending byte order. Accounts carry no status; read whether one is usable from its
+        status resource, like service discovery status.
+      operationId: listServiceAccounts
+      tags: [Service Accounts]
+      responses:
+        '200':
+          description: The service's accounts. `[]` when it has none.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceAccount'
+              examples:
+                one_account:
+                  value:
+                    - id: 990e8400-e29b-41d4-a716-446655440031
+                      service_id: 880e8400-e29b-41d4-a716-446655440020
+                      canonical_id: platform-triage-bot
+                      kind: jwt_bearer
+                      scopes: [read]
+                      narrowing: none
+                      credential_summary:
+                        format: signed_jwt
+                        use: access_token
+                        iss: https://idp.example.com
+                        sub: triage-bot
+                        kid: 2026-11
+                        exp: 1798675200
+                        fingerprint: 'SHA256:fhbwk8g0dDlEiuXzadc7Ytx+R1pSlxRBBNgzBxN+3UQ'
+                      created_at: '2026-11-25T10:00:00Z'
+                      updated_at: '2026-11-25T10:00:00Z'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      summary: Attach a service account to a service
+      description: |
+        Stores the credential encrypted under the service and answers with the account's
+        representation. The credential is validated on write; a refused request stores nothing
+        and its error message never contains the submitted JWT.
+
+        `credential.jwt` must be at most 16384 bytes long and must parse, without verification,
+        as a compact JWS whose payload is a JWT claims set. Its header must state an `alg` other
+        than `none`, and, when it states an `exp`, the token must not be expired. A JWT without
+        `exp` is accepted. The token is stored exactly as submitted.
+      operationId: createServiceAccount
+      tags: [Service Accounts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceAccountCreateRequest'
+            examples:
+              signed_jwt:
+                value:
+                  canonical_id: platform-triage-bot
+                  kind: jwt_bearer
+                  scopes: [read]
+                  credential:
+                    format: signed_jwt
+                    use: access_token
+                    jwt: eyJ...T1
+      responses:
+        '201':
+          description: "Account created. Its credential was not expired at the time of the request."
+          headers:
+            Location:
+              description: UUID-addressed path of the new account.
+              schema:
+                type: string
+              example: /api/services/880e8400-e29b-41d4-a716-446655440020/service-accounts/990e8400-e29b-41d4-a716-446655440031
+            ETag:
+              $ref: '#/components/headers/ServiceAccountETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccount'
+        '400':
+          $ref: '#/components/responses/ServiceAccountValidationError'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ServiceAccountNameConflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/services/{service-id}/service-accounts/{service-account-id}:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+      - $ref: '#/components/parameters/ServiceAccountId'
+    get:
+      summary: Read one service account
+      operationId: getServiceAccount
+      tags: [Service Accounts]
+      responses:
+        '200':
+          description: The same representation the list shows for this account.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ServiceAccountETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccount'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      summary: Rotate the credential, change the ceiling or rename
+      description: |
+        - `scopes` is required and replaces the ceiling.
+        - `credential`, when present, replaces the stored credential in place; the summary,
+          fingerprint and status are recomputed. When omitted, the stored credential is kept.
+        - `canonical_id`, when present and different, renames the account within the service.
+          When omitted, it is kept.
+        - `kind`, when present, must equal the account's kind.
+        - `null` is not accepted for any member.
+
+        The account's `id` and `service_id` never change. A request that changes nothing answers
+        `200` with the unchanged representation and the same ETag.
+
+        `If-Match` is optional. When supplied and not equal to the current ETag, the answer is
+        `412` and nothing changes. Without it, the last writer wins. A request that is invalid
+        answers `400` even when `If-Match` is stale.
+      operationId: updateServiceAccount
+      tags: [Service Accounts]
+      parameters:
+        - $ref: '#/components/parameters/ServiceAccountIfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceAccountUpdateRequest'
+            examples:
+              rotate_and_widen:
+                value:
+                  scopes: [read, write]
+                  credential:
+                    format: signed_jwt
+                    jwt: eyJ...T2
+              ceiling_only:
+                value:
+                  scopes: [read]
+              rename:
+                value:
+                  canonical_id: platform-triage
+                  scopes: [read]
+      responses:
+        '200':
+          description: The account after the update, or unchanged when nothing differed.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ServiceAccountETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccount'
+        '400':
+          $ref: '#/components/responses/ServiceAccountValidationError'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ServiceAccountNameConflict'
+        '412':
+          $ref: '#/components/responses/ServiceAccountPreconditionFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      summary: Remove a service account
+      description: |
+        Erases the account and its stored credential. `If-Match` is optional, as on update.
+        Removal is refused with `409` while an agent grant binds the account; no binding can
+        exist before agent grants are delivered (#472).
+      operationId: deleteServiceAccount
+      tags: [Service Accounts]
+      parameters:
+        - $ref: '#/components/parameters/ServiceAccountIfMatch'
+      responses:
+        '204':
+          description: Account removed.
+        '400':
+          description: Malformed `If-Match`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          description: An agent grant binds the account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: conflict
+                message: service account is bound by an agent grant
+        '412':
+          $ref: '#/components/responses/ServiceAccountPreconditionFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/services/{service-id}/service-accounts/{service-account-id}/status:
+    parameters:
+      - $ref: '#/components/parameters/ServiceId'
+      - $ref: '#/components/parameters/ServiceAccountId'
+    get:
+      summary: Read whether a service account is usable
+      operationId: getServiceAccountStatus
+      tags: [Service Accounts]
+      responses:
+        '200':
+          description: >-
+            The account's status at the time of the request. Derived at read time from the
+            stored credential expiry, so it carries no ETag, like service discovery status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccountStatus'
+              examples:
+                ready:
+                  value:
+                    status: ready
+                    failure_reason: null
+                    credential_expires_at: '2026-12-31T00:00:00Z'
+                expired:
+                  value:
+                    status: failed
+                    failure_reason: credential_expired
+                    credential_expires_at: '2026-12-31T00:00:00Z'
+                no_expiry:
+                  value:
+                    status: ready
+                    failure_reason: null
+                    credential_expires_at: null
+        '401':
+          $ref: '#/components/responses/OperatorRequired'
         '404':
           $ref: '#/components/responses/NotFoundError'
         '500':
@@ -2852,6 +3147,31 @@ components:
         type: string
         example: cimd-key-2026-09-21-001
 
+    ServiceAccountId:
+      name: service-account-id
+      in: path
+      required: true
+      description: |
+        The account's UUID, or its `canonical_id` within the addressed service. An account of
+        another service is not found.
+      schema:
+        type: string
+      examples:
+        uuid:
+          value: 990e8400-e29b-41d4-a716-446655440031
+        canonical:
+          value: platform-triage-bot
+    ServiceAccountIfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        The account's current strong ETag. Optional. A stale value answers `412`; a weak or
+        malformed value answers `400`.
+      schema:
+        type: string
+      example: '"1"'
+
   headers:
     PreferenceApplied:
       description: "Sent only when Prefer: reference-id=canonical was honored."
@@ -2863,6 +3183,15 @@ components:
       schema:
         type: string
         enum: [Prefer]
+    ServiceAccountETag:
+      description: >-
+        Strong ETag of the stored account version, used with If-Match. Changes with every
+        committed change to the account. The account representation holds only stored state;
+        its derived status is on the status resource, which carries no ETag.
+      schema:
+        type: string
+      example: '"1"'
+
   schemas:
     HealthResponse:
       type: object
@@ -4838,6 +5167,159 @@ components:
           type: boolean
           description: Whether this sweep was a dry run.
 
+    ServiceAccountRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        Shared shape of the create and update request. `kind` selects which credential formats
+        are accepted (see the table in the API description). Members that a later kind adds
+        (#474-#477) extend this schema without changing the `jwt_bearer` shape.
+      properties:
+        canonical_id:
+          type: string
+          pattern: '^[A-Za-z0-9._-]{1,128}$'
+          description: Administrator-chosen name, unique within the service. Must not be UUID-shaped.
+          example: platform-triage-bot
+        kind:
+          type: string
+          enum: [jwt_bearer]
+        scopes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+          description: The ceiling. Not compared with anything inside the stored JWT.
+        credential:
+          $ref: '#/components/schemas/ServiceAccountCredential'
+    ServiceAccountCreateRequest:
+      allOf:
+        - $ref: '#/components/schemas/ServiceAccountRequest'
+        - type: object
+          required: [canonical_id, kind, scopes, credential]
+    ServiceAccountUpdateRequest:
+      allOf:
+        - $ref: '#/components/schemas/ServiceAccountRequest'
+        - type: object
+          required: [scopes]
+    ServiceAccountCredential:
+      writeOnly: true
+      oneOf:
+        - $ref: '#/components/schemas/SignedJwtCredential'
+      discriminator:
+        propertyName: format
+        mapping:
+          signed_jwt: '#/components/schemas/SignedJwtCredential'
+    SignedJwtCredential:
+      type: object
+      additionalProperties: false
+      required: [format, jwt]
+      description: A JWT signed outside the broker, for kind `jwt_bearer`.
+      properties:
+        format:
+          type: string
+          enum: [signed_jwt]
+        use:
+          type: string
+          enum: [access_token]
+          default: access_token
+          description: |
+            What the stored JWT is. Only `access_token` is offered. `assertion` is reserved for a
+            later version and is refused with `400`.
+        jwt:
+          type: string
+          writeOnly: true
+          maxLength: 16384
+          description: Compact JWS. Stored exactly as submitted; never returned.
+    ServiceAccount:
+      type: object
+      required: [id, service_id, canonical_id, kind, scopes, narrowing, credential_summary, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        service_id:
+          type: string
+          format: uuid
+          description: Always the service's UUID.
+        canonical_id:
+          type: string
+        kind:
+          type: string
+          enum: [jwt_bearer]
+        scopes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: The ceiling, in ascending byte order.
+        narrowing:
+          type: string
+          enum: [none]
+          readOnly: true
+          description: Derived from kind and format; not settable.
+        credential_summary:
+          $ref: '#/components/schemas/CredentialSummary'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CredentialSummary:
+      readOnly: true
+      oneOf:
+        - $ref: '#/components/schemas/SignedJwtCredentialSummary'
+      discriminator:
+        propertyName: format
+        mapping:
+          signed_jwt: '#/components/schemas/SignedJwtCredentialSummary'
+    SignedJwtCredentialSummary:
+      type: object
+      required: [format, use, fingerprint]
+      description: |
+        `iss`, `sub`, `kid` and `exp` are read from the JWT without verification and are omitted
+        when the token does not state them.
+      properties:
+        format:
+          type: string
+          enum: [signed_jwt]
+        use:
+          type: string
+          enum: [access_token]
+        iss:
+          type: string
+        sub:
+          type: string
+        kid:
+          type: string
+        exp:
+          type: integer
+          format: int64
+          description: The expiry the token states, in whole seconds since the epoch.
+        fingerprint:
+          type: string
+          pattern: '^SHA256:[A-Za-z0-9+/]{43}$'
+          description: |
+            `SHA256:` and the unpadded base64 SHA-256 digest of the exact stored JWT. Equal JWTs
+            have equal fingerprints; the JWT cannot be recovered from it.
+    ServiceAccountStatus:
+      type: object
+      required: [status, failure_reason, credential_expires_at]
+      properties:
+        status:
+          type: string
+          enum: [ready, failed]
+        failure_reason:
+          type: string
+          nullable: true
+          enum: [credential_expired, null]
+        credential_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: The expiry the stored credential states; `null` when it states none.
     ErrorResponse:
       type: object
       required:
@@ -5113,6 +5595,84 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+
+    OperatorRequired:
+      description: The request carries no operator principal. Nothing is read.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: unauthorized
+            message: authentication required
+    ServiceAccountValidationError:
+      description: |
+        The request is refused and nothing is stored or changed. `message` names the failed rule
+        and never contains the submitted JWT or a part of it.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            unsigned:
+              summary: alg none, or no alg
+              value:
+                error: validation failed
+                message: credential.jwt must be a signed compact JWS
+            malformed:
+              value:
+                error: validation failed
+                message: credential.jwt must be a compact JWS with valid JWT claims
+            too_large:
+              value:
+                error: validation failed
+                message: credential.jwt must be at most 16384 bytes
+            expired:
+              value:
+                error: validation failed
+                message: credential.jwt is expired
+            use_not_offered:
+              value:
+                error: validation failed
+                message: credential.use must be access_token
+            unknown_format:
+              value:
+                error: validation failed
+                message: credential.format must be signed_jwt
+            unknown_kind:
+              value:
+                error: validation failed
+                message: kind must be jwt_bearer
+            kind_changed:
+              value:
+                error: validation failed
+                message: kind cannot be changed
+            scopes:
+              value:
+                error: validation failed
+                message: scopes must be a non-empty list of unique, non-empty values
+            credential_missing:
+              value:
+                error: validation failed
+                message: credential is required
+    ServiceAccountNameConflict:
+      description: Another account of this service holds the `canonical_id`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: conflict
+            message: service account canonical_id already exists on this service
+    ServiceAccountPreconditionFailed:
+      description: The supplied `If-Match` does not equal the account's current ETag. Nothing changed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: precondition failed
+            message: service account was changed; read it again and retry
 
     InternalServerError:
       description: Internal server error

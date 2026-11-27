@@ -282,10 +282,10 @@ internal/adapters/storage/postgres/
 
 - **[api/admin/openapi.yaml](api/admin/openapi.yaml)** - Admin server (Port 14000)
   - Canonical OpenAPI documentation for all administrative APIs
-  - Endpoints: Health check, agent management (CRUD), service management (CRUD), and operator-triggered session sweep
+  - Endpoints: Health check, agent management (CRUD), service management (CRUD), service accounts of a service (CRUD and status), and operator-triggered session sweep
   - Authentication: Reverse-proxy pre-authentication (plain principal header or configured JWT); admin access controlled upstream
-  - Security emphasis: Client secrets always redacted in responses (SR-003)
-  - Referential integrity: 409 Conflict responses when deleting services with active grants
+  - Security emphasis: Client secrets always redacted in responses (SR-003); service-account credentials never returned, only a credential summary
+  - Referential integrity: 409 Conflict responses when deleting services with active grants or with service accounts
   - OAuth2 support: Service metadata for OIDC discovery
 
 **Key Features**:
@@ -608,6 +608,7 @@ Exactly one backend must be configured: `encryption.aws_kms` or `encryption.memo
 - **Upstream provider HTTP**: The builder shares one transport cloned from Go's defaults across session refresh, authorization-code exchange, proxied token grants, and JWKS fetches. It allows 100 idle connections per host. The configured upstream timeout and optional OTel transport apply to these calls. After background workers stop, app shutdown closes the shared transport's idle connections.
 - **Upstream response limits and retries**: The OAuth2 library already limits code-exchange responses to 1 MiB. The broker also rejects JWKS, refresh, and buffered proxy responses over 1 MiB. Unverified proxied responses stream unchanged. Authorization-code exchange and refresh retry transient failures, but not permanent OAuth errors.
 - **ThirdpartyOAuth2ProviderService** (`internal/domain/thirdparty/`): Exclusively owns encryption and decryption of stored confidential provider `client_secret` values via the `Secret` value object. Filesystem, public, and CIMD services use an absent secret. No other layer touches `EncryptionPort` for provider secrets.
+- **ServiceAccountService** (`internal/domain/thirdparty/service_account_service.go`): Owns the Service Account workflow of a third-party service ([20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md)). It checks a `signed_jwt` credential for form only with `jwx` (no verification), encrypts the format-discriminated credential document under the owning service's `service_id` context, derives status on read from the stated expiry, detects no-op updates, enforces the optional version precondition and the binding check on delete, and writes one `service.service_account.*` audit record per committed write. It never decrypts in this release. `admin.ServiceAccountsHandler` parses input and maps results; `ports.ServiceAccountRepository` has memory and PostgreSQL adapters. `ThirdpartyOAuth2ProviderService.Delete` refuses a service that holds service accounts.
 - Protected-resource resolution leaves stored confidential secrets encrypted and filesystem/public/CIMD secrets absent. Token exchange uses only the provider ID and display name. Refresh retrieves the service through `ThirdpartyOAuth2ProviderService.Get()` and selects operation credentials in the session domain. Successful stored-secret decryption is logged at Info with structured fields.
 - No manual encryption steps required in calling code - encryption is transparent
 
@@ -1213,9 +1214,9 @@ Name: Broker transactional store
 
 Type: PostgreSQL, accessed through sqlx repositories
 
-Purpose: Persists agents, services, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
+Purpose: Persists agents, services, encrypted service-account credentials, permission sets, user grants, encrypted third-party sessions, hashed agent credentials, encrypted signing keys, authorization codes, and tool approvals. The runtime account has data permissions; the separate migration job has schema permissions.
 
-Key tables: `agents`, `thirdparty_oauth2_services`, `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
+Key tables: `agents`, `thirdparty_oauth2_services`, `service_accounts` (migration `050`; `ON DELETE RESTRICT` to its service), `permission_sets`, `user_grants`, `user_sessions`, `client_credentials`, `signing_keys`, `authorization_codes`, `tool_approvals`, `approval_sync_state`.
 
 ### 4.2. DynamoDB branch-key store
 
@@ -1254,6 +1255,17 @@ the whole-second presentation of 2.1.0. No versioned compatibility route is adde
 unchanged. Migration `047` and consumer adaptation precede deployment. The contract version is
 not a broker release announcement. [ADR 047](adrs/047-unique-agent-external-id-reconcile.md) cites the
 maintainer approval.
+
+**Admin API 3.1.0 (issue #471)** is additive. It adds create, list, read, update, delete and
+status for service accounts under `/api/services/{service-id}/service-accounts`, with strong
+ETags of the stored version and an optional `If-Match`. The ETag versions the stored account,
+not the derived `status`, which can change at credential expiry without a write. As with
+discovery status, status and failure reason appear only on the service-account status resource,
+which has no ETag; the account representation holds stored state only. `DELETE /api/services/{service-id}` gains one cause for its
+existing `409`: a service that holds a service account. No existing request or successful
+response changes, and the end-user and ExtProc contracts are unchanged. The maintainer confirms
+the contract in the review of the PR that introduces it
+([20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md)).
 
 ## 6. Deployment & Infrastructure
 
@@ -1366,6 +1378,7 @@ Partial supersessions and amendments apply only to the subjects named in those d
 | [047-unique-agent-external-id-reconcile.md](adrs/047-unique-agent-external-id-reconcile.md) | Accepted | Unique Agent external IDs, domain reconciliation, atomic migration `047`, and Admin API `3.0.0` |
 | [048-authzen-delegation-pip.md](adrs/048-authzen-delegation-pip.md) | Accepted | AuthZEN discovery and Access Evaluation sharing exchange resolution, bounded permit freshness, the opt-in ExtProc grant-context resolver, and permit-bound token reuse |
 | [20261119-211813-service-icons-image-mode.md](adrs/20261119-211813-service-icons-image-mode.md) | Accepted | Exact service-owned SVG metadata, authenticated JSON, named upload checks, and browser image-mode isolation |
+| [20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md) | Accepted | Service accounts on third-party services: repository port, stored-JWT posture (not a Constitution I exception), `service_id` encryption, derived status, optional `If-Match`, `RESTRICT` service deletion, migration `050`, Admin API `3.1.0` |
 
 ## 11. Project Identification
 
@@ -1617,6 +1630,20 @@ Every third-party authorization request uses PKCE with `code_challenge_method=S2
 **OAuth2SessionService**: Domain service that orchestrates OAuth2 authorization flows and session lifecycle. Handles PKCE generation, JWE state token management, authorization URL construction, callback processing, token exchange with retry logic, session encryption/storage, and termination with dependent agent warnings.
 
 **Encryption Context**: Additional authenticated data (AAD) included in token encryption. Binds ciphertext to principal, service_id, session_id, and purpose ("oauth2_token"). Stored as JSONB in PostgreSQL. Used for auditing and prevents cross-context token usage (tokens encrypted for one session cannot be decrypted for another).
+
+### Service Accounts
+
+**Service Account**: A machine credential that a third-party service issued to software, registered with the broker by an administrator, attached to exactly one `ThirdpartyOAuth2Service` for its whole life and bounded by a Ceiling. Identified by a broker-generated `ServiceAccountID` and named by a `canonical_id` unique within its service; the name can be renamed, the ID and Kind cannot. Its credential is stored encrypted under the owning service's `service_id` context and never returned. A service may hold any number of accounts; a service that holds one cannot be deleted. In this release an account has no effect on any user or agent request ([20261125-154231-service-accounts-stored-jwt.md](adrs/20261125-154231-service-accounts-stored-jwt.md)).
+
+**Kind**: How a Service Account obtains tokens. It selects which Credential Formats are accepted and never changes after creation. The first kind is `jwt_bearer`.
+
+**Credential Format**: The shape of a Service Account's secret within its Kind; the credential document is discriminated by it. The first format is `signed_jwt`: a JWT signed outside the broker, stored exactly as submitted, checked for form only (at most 16384 bytes, a compact JWS parsed by `jwx` without verification, `alg` not `none`, not expired when it states `exp`) and never verified. Its `use` is `access_token`.
+
+**Ceiling**: The non-empty set of unique scope values that bounds what a Service Account may ever obtain. The administrator declares it; the broker never compares it with anything inside the stored credential.
+
+**Narrowing**: Whether the broker can ask for less than the Ceiling when obtaining a token for a Service Account. A fact about Kind and Credential Format, derived and never settable; `none` for `jwt_bearer` with `signed_jwt`.
+
+**Credential Summary**: The non-secret recognition data that every Service Account representation carries instead of the credential, computed on each write that carries a credential. For `signed_jwt`: `format`, `use`, the `iss`, `sub`, `kid` and `exp` read from the token without verification (each omitted when absent), and a `SHA256:` fingerprint of the exact stored token. Its values are for display and status only, never for an authorization decision. Status is derived on read: `failed` with `credential_expired` from the instant a stated `exp` has passed, otherwise `ready`.
 
 ### RFC 8693 Token Exchange
 

@@ -138,7 +138,7 @@ ptr/               Pointer helper
 
 ### Handler Structs
 
-**AdminHandlers**: `Agents`, `Services`, `ProtectedResources`, `PermissionSets`, `ClientCredentials`, `SigningKeys`, `CIMDClientKeys`.
+**AdminHandlers**: `Agents`, `Services`, `ProtectedResources`, `ServiceAccounts`, `PermissionSets`, `ClientCredentials`, `SigningKeys`, `CIMDClientKeys`, `SessionSweep`.
 
 **EnduserHandlers**: consent, session, OAuth2, JWKS, CIMD metadata, approval, and SPA handlers.
 
@@ -178,6 +178,7 @@ Keep adapter records in adapter packages.
 |---|---|---|
 | `Agent` | `domain/storage/` | ID, ClientID, DisplayName, Description, ServiceRequirements |
 | `ThirdpartyOAuth2ProviderEntity` | `domain/model/` | ID, DisplayName, ClientID, Secret, Scopes, ProtectedResources |
+| `ServiceAccount` | `domain/model/` | ID, ServiceID, CanonicalID, Kind, Scopes (ceiling), encrypted Credential, Summary, CredentialExpiresAt, Version |
 | `UserGrant` | `domain/storage/` | ID, principal, agent ID, permission sets, validity |
 | `UserSession` | `domain/storage/` | ID, principal, service ID, encrypted tokens, expiry |
 

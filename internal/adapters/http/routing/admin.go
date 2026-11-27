@@ -34,6 +34,13 @@ type AdminRouteConfig struct {
 //	GET    /api/services/{service-id}/discovery-status - Read stored discovery status
 //	PUT    /api/services/{service-id}  - Update service
 //	DELETE /api/services/{service-id}  - Delete service
+//
+//	POST   /api/services/{service-id}/service-accounts                             - Create service account
+//	GET    /api/services/{service-id}/service-accounts                             - List service accounts
+//	GET    /api/services/{service-id}/service-accounts/{service-account-id}        - Get service account
+//	PUT    /api/services/{service-id}/service-accounts/{service-account-id}        - Update service account
+//	DELETE /api/services/{service-id}/service-accounts/{service-account-id}        - Delete service account
+//	GET    /api/services/{service-id}/service-accounts/{service-account-id}/status - Read service account status
 func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) {
 
 	r.Route("/api", func(r chi.Router) {
@@ -69,6 +76,14 @@ func SetupAdminRoutes(r chi.Router, h *app.AdminHandlers, cfg AdminRouteConfig) 
 				r.Put("/{resource:.*}", h.ProtectedResources.Add)
 				r.Patch("/{resource:.*}", h.ProtectedResources.Rename)
 				r.Delete("/{resource:.*}", h.ProtectedResources.Remove)
+			})
+			r.Route("/{service-id}/service-accounts", func(r chi.Router) {
+				r.Post("/", h.ServiceAccounts.Create)
+				r.Get("/", h.ServiceAccounts.List)
+				r.Get("/{service-account-id}", h.ServiceAccounts.Get)
+				r.Put("/{service-account-id}", h.ServiceAccounts.Update)
+				r.Delete("/{service-account-id}", h.ServiceAccounts.Delete)
+				r.Get("/{service-account-id}/status", h.ServiceAccounts.Status)
 			})
 		})
 

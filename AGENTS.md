@@ -215,6 +215,7 @@ See Principle II in `.specify/memory/constitution.md`.
 | 046 | `adrs/046-observed-refresh-token-rejection.md` | Observed provider refresh rejection replaces predicted refresh expiry; `requires_reauthentication`; no schema change |
 | 047 | `adrs/047-unique-agent-external-id-reconcile.md` | Unique Agent external IDs, collection PUT reconciliation, safe migration 047, and Admin API 3.0.0 |
 | 048 | `adrs/048-authzen-delegation-pip.md` | AuthZEN delegation PDP sharing exchange resolution; opt-in ExtProc grant-context resolver with bounded permit freshness and identity-safe permit-bound result reuse; `granted_permission_sets` deprecation |
+| 20261125-154231 | `adrs/20261125-154231-service-accounts-stored-jwt.md` | Service accounts on third-party services: stored JWT checked for form only and never verified (not a Principle I exception), `service_id` encryption, derived status, optional `If-Match`, `RESTRICT` service deletion, migration `050` |
 
 ## Domain Glossary
 
@@ -249,6 +250,12 @@ Read `ARCHITECTURE.md` for the full glossary and relationships.
 | **PermitResolver** | ExtProc port and permit-cache implementation (`server.PermitResolver`, `grantcontext.PermitResolver`), distinct from the broker's invariant-enforcing `tokenexchange.GrantResolver`. The permit's wire `subject.id` becomes the principal for OPA. Enabled mode checks it against the exchange-response approval identity under ADR 036; it does not replace that identity. |
 | **PDP identifier** | AuthZEN `policy_decision_point`: the end-user public URL without a trailing slash, compared exactly by consumers before sending credentials. |
 | **Refresh Rejection** | Observed terminal provider `invalid_grant` for a stored refresh token (`UserSession.RefreshRejectedAt`). The broker never predicts refresh-token expiry. |
+| **Service Account** | Provider-issued machine credential attached to one ThirdpartyOAuth2Service for life, with a Ceiling; ID and Kind fixed, `canonical_id` unique within the service and renamable. Stored encrypted under the service's `service_id` context, never returned; a service holding one cannot be deleted. |
+| **Kind** | How a Service Account obtains tokens; selects the accepted Credential Formats; fixed after creation. First kind: `jwt_bearer`. |
+| **Credential Format** | Shape of a Service Account secret within its Kind; discriminates the encrypted credential document. First format: `signed_jwt`, a JWT signed outside the broker, checked for form only and never verified. |
+| **Ceiling** | Non-empty set of unique scopes bounding what a Service Account may ever obtain; never compared with the stored credential. |
+| **Narrowing** | Whether the broker can ask for less than the Ceiling; derived from Kind and Credential Format, never settable; `none` for `signed_jwt`. |
+| **Credential Summary** | Non-secret recognition data shown instead of a Service Account credential: format, use, unverified `iss`/`sub`/`kid`/`exp`, and a `SHA256:` fingerprint. Display and status only, never authorization. |
 
 ## Development Workflow
 

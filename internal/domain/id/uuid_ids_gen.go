@@ -288,3 +288,32 @@ func (id AuthorizationCodeID) MarshalText() ([]byte, error) { return uuid.UUID(i
 func (id *AuthorizationCodeID) UnmarshalText(b []byte) error {
 	return (*uuid.UUID)(id).UnmarshalText(b)
 }
+
+// ServiceAccountID uniquely identifies a service account entity.
+type ServiceAccountID uuid.UUID
+
+func NewServiceAccountID() ServiceAccountID { return ServiceAccountID(uuid.New()) }
+func ParseServiceAccountID(s string) (ServiceAccountID, error) {
+	id, err := uuid.Parse(s)
+	return ServiceAccountID(id), err
+}
+func MustParseServiceAccountID(s string) ServiceAccountID { return ServiceAccountID(uuid.MustParse(s)) }
+func (id ServiceAccountID) String() string                { return uuid.UUID(id).String() }
+func (id ServiceAccountID) IsZero() bool                  { return uuid.UUID(id) == uuid.Nil }
+func (id ServiceAccountID) MarshalJSON() ([]byte, error)  { return json.Marshal(uuid.UUID(id).String()) }
+func (id *ServiceAccountID) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	parsed, err := uuid.Parse(s)
+	if err != nil {
+		return err
+	}
+	*id = ServiceAccountID(parsed)
+	return nil
+}
+func (id ServiceAccountID) Value() (driver.Value, error)  { return uuid.UUID(id).String(), nil }
+func (id *ServiceAccountID) Scan(src interface{}) error   { return (*uuid.UUID)(id).Scan(src) }
+func (id ServiceAccountID) MarshalText() ([]byte, error)  { return uuid.UUID(id).MarshalText() }
+func (id *ServiceAccountID) UnmarshalText(b []byte) error { return (*uuid.UUID)(id).UnmarshalText(b) }

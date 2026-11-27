@@ -1045,3 +1045,25 @@ func TestPostgresUserSessionRepository_StaleAudienceCannotInsertOrReplaceSession
 	assert.Empty(t, stored.ExpectedIssuerURI)
 	assert.Empty(t, stored.ExpectedResource)
 }
+
+func TestPostgresThirdpartyOAuth2ProviderRepository_DeleteRestrictedByServiceAccount(t *testing.T) {
+	adapter, cleanup := setupMigratedAdapter(t)
+	defer cleanup()
+	ctx := context.Background()
+	providers := NewPostgresThirdpartyOAuth2ProviderRepository(adapter)
+	service := &model.ThirdpartyOAuth2ProviderEntity{
+		ID: id.NewServiceID(), DisplayName: "Company Platform", ClientID: "restricted-client",
+		Secret: model.NewEncryptedSecret([]byte("secret")), IssuerURI: "https://idp.example.test",
+		Endpoints: model.OAuth2Endpoints{TokenEndpoint: "https://idp.example.test/token", AuthorizeEndpoint: "https://idp.example.test/authorize"},
+	}
+	require.NoError(t, providers.Create(ctx, service))
+	require.NoError(t, NewServiceAccountRepository(adapter).Create(ctx, serviceAccountIntegrationFixture(service.ID, "platform-triage-bot")))
+
+	err := providers.Delete(ctx, service.ID)
+
+	var storageErr *storage.StorageError
+	require.ErrorAs(t, err, &storageErr)
+	require.Equal(t, storage.ErrorKindConflict, storageErr.Kind)
+	_, err = providers.Get(ctx, service.ID)
+	require.NoError(t, err, "the service is unchanged")
+}

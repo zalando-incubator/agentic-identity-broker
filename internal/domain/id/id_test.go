@@ -220,6 +220,51 @@ func TestUserID_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestServiceAccountID_ParseAndSerialization(t *testing.T) {
+	const raw = "990e8400-e29b-41d4-a716-446655440031"
+	parsed, err := ParseServiceAccountID(raw)
+	if err != nil || parsed.String() != raw || parsed.IsZero() {
+		t.Fatalf("ParseServiceAccountID(%q) = %v, %v", raw, parsed, err)
+	}
+	if _, err := ParseServiceAccountID("platform-triage-bot"); err == nil {
+		t.Fatal("ParseServiceAccountID accepted a canonical ID")
+	}
+	if !(ServiceAccountID{}).IsZero() {
+		t.Fatal("zero ServiceAccountID does not report IsZero()")
+	}
+
+	encoded, err := json.Marshal(parsed)
+	if err != nil || string(encoded) != `"`+raw+`"` {
+		t.Fatalf("MarshalJSON = %s, %v", encoded, err)
+	}
+	var decoded ServiceAccountID
+	if err := json.Unmarshal(encoded, &decoded); err != nil || decoded != parsed {
+		t.Fatalf("UnmarshalJSON = %v, %v", decoded, err)
+	}
+
+	value, err := parsed.Value()
+	if err != nil || value != raw {
+		t.Fatalf("Value = %v, %v", value, err)
+	}
+	var scanned ServiceAccountID
+	if err := scanned.Scan(raw); err != nil || scanned != parsed {
+		t.Fatalf("Scan = %v, %v", scanned, err)
+	}
+
+	text, err := parsed.MarshalText()
+	if err != nil {
+		t.Fatalf("MarshalText: %v", err)
+	}
+	var fromText ServiceAccountID
+	if err := fromText.UnmarshalText(text); err != nil || fromText != parsed {
+		t.Fatalf("UnmarshalText = %v, %v", fromText, err)
+	}
+	first, second := NewServiceAccountID(), NewServiceAccountID()
+	if first == second {
+		t.Fatal("NewServiceAccountID returned the same ID twice")
+	}
+}
+
 // ---- UUID types implement driver.Valuer ----
 
 func TestUUIDTypes_ImplementDriverValuer(t *testing.T) {
@@ -228,6 +273,7 @@ func TestUUIDTypes_ImplementDriverValuer(t *testing.T) {
 	var _ driver.Valuer = GrantID{}
 	var _ driver.Valuer = SessionID{}
 	var _ driver.Valuer = UserID{}
+	var _ driver.Valuer = ServiceAccountID{}
 }
 
 // ---- String-based ID tests ----
