@@ -56,8 +56,6 @@ type serviceAccountResponse struct {
 	Kind              string                  `json:"kind"`
 	Scopes            []string                `json:"scopes"`
 	Narrowing         string                  `json:"narrowing"`
-	Status            string                  `json:"status"`
-	FailureReason     *string                 `json:"failure_reason"`
 	CredentialSummary model.CredentialSummary `json:"credential_summary"`
 	CreatedAt         string                  `json:"created_at"`
 	UpdatedAt         string                  `json:"updated_at"`
@@ -387,13 +385,10 @@ func toServiceAccountResponse(view *thirdparty.ServiceAccountView) serviceAccoun
 	account := view.Account
 	response := serviceAccountResponse{
 		ID: account.ID.String(), ServiceID: account.ServiceID.String(), CanonicalID: account.CanonicalID,
-		Kind: string(account.Kind), Scopes: account.Scopes, Narrowing: string(view.Narrowing), Status: string(view.Status),
+		Kind: string(account.Kind), Scopes: account.Scopes, Narrowing: string(view.Narrowing),
 		CredentialSummary: account.Summary,
 		CreatedAt:         account.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:         account.UpdatedAt.UTC().Format(time.RFC3339),
-	}
-	if view.FailureReason != nil {
-		response.FailureReason = new(string(*view.FailureReason))
 	}
 	return response
 }

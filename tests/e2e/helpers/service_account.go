@@ -34,8 +34,6 @@ type ServiceAccount struct {
 	Kind              string                          `json:"kind"`
 	Scopes            []string                        `json:"scopes"`
 	Narrowing         string                          `json:"narrowing"`
-	Status            string                          `json:"status"`
-	FailureReason     *string                         `json:"failure_reason"`
 	CredentialSummary ServiceAccountCredentialSummary `json:"credential_summary"`
 	CreatedAt         string                          `json:"created_at"`
 	UpdatedAt         string                          `json:"updated_at"`

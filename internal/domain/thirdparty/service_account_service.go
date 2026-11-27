@@ -192,6 +192,7 @@ func (s *ServiceAccountService) Status(ctx context.Context, serviceID id.Service
 func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principal, serviceID id.ServiceID, accountID id.ServiceAccountID, request ServiceAccountUpdate) (*ServiceAccountView, ServiceAccountUpdateOutcome, error) {
 	stored, err := s.repo.Get(ctx, serviceID, accountID)
 	if err != nil {
+		s.logWriteFailure(ctx, operator, serviceID, &accountID, operationUpdate, err)
 		return nil, "", err
 	}
 	if request.Kind != nil {
@@ -224,6 +225,7 @@ func (s *ServiceAccountService) Update(ctx context.Context, operator id.Principa
 			return view, outcome, err
 		}
 		if stored, err = s.repo.Get(ctx, serviceID, accountID); err != nil {
+			s.logWriteFailure(ctx, operator, serviceID, &accountID, operationUpdate, err)
 			return nil, "", err
 		}
 	}
@@ -297,6 +299,7 @@ func (s *ServiceAccountService) Delete(ctx context.Context, operator id.Principa
 	for attempt := 1; ; attempt++ {
 		stored, err := s.repo.Get(ctx, serviceID, accountID)
 		if err != nil {
+			s.logWriteFailure(ctx, operator, serviceID, &accountID, operationDelete, err)
 			return err
 		}
 		if expectedVersion != nil && *expectedVersion != stored.Version {

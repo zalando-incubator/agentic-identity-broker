@@ -1983,8 +1983,8 @@ paths:
       summary: List a service's service accounts
       description: |
         Returns a direct array (no envelope, no pagination), ordered by `canonical_id` in
-        ascending byte order. An account whose stored JWT's stated `exp` has passed is reported
-        with `status: failed` and `failure_reason: credential_expired`.
+        ascending byte order. Accounts carry no status; read whether one is usable from its
+        status resource, like service discovery status.
       operationId: listServiceAccounts
       tags: [Service Accounts]
       responses:
@@ -2005,8 +2005,6 @@ paths:
                       kind: jwt_bearer
                       scopes: [read]
                       narrowing: none
-                      status: ready
-                      failure_reason: null
                       credential_summary:
                         format: signed_jwt
                         use: access_token
@@ -2054,7 +2052,7 @@ paths:
                     jwt: eyJ...T1
       responses:
         '201':
-          description: "Account created with `status: ready`."
+          description: "Account created. Its credential was not expired at the time of the request."
           headers:
             Location:
               description: UUID-addressed path of the new account.
@@ -3188,9 +3186,8 @@ components:
     ServiceAccountETag:
       description: >-
         Strong ETag of the stored account version, used with If-Match. Changes with every
-        committed change to the account. `status` and `failure_reason` are derived from the
-        stored credential expiry at the time of the request, so they can change while the ETag
-        stays the same; do not cache them by ETag. The status resource carries no ETag.
+        committed change to the account. The account representation holds only stored state;
+        its derived status is on the status resource, which carries no ETag.
       schema:
         type: string
       example: '"1"'
@@ -5237,7 +5234,7 @@ components:
           description: Compact JWS. Stored exactly as submitted; never returned.
     ServiceAccount:
       type: object
-      required: [id, service_id, canonical_id, kind, scopes, narrowing, status, failure_reason, credential_summary, created_at, updated_at]
+      required: [id, service_id, canonical_id, kind, scopes, narrowing, credential_summary, created_at, updated_at]
       properties:
         id:
           type: string
@@ -5262,16 +5259,6 @@ components:
           enum: [none]
           readOnly: true
           description: Derived from kind and format; not settable.
-        status:
-          type: string
-          enum: [ready, failed]
-          readOnly: true
-        failure_reason:
-          type: string
-          nullable: true
-          enum: [credential_expired, null]
-          readOnly: true
-          description: Why `status` is `failed`; `null` while the account is `ready`.
         credential_summary:
           $ref: '#/components/schemas/CredentialSummary'
         created_at:

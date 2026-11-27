@@ -40,6 +40,7 @@ type fakeServiceAccountRepo struct {
 	// concurrent writer between the service's read and its write.
 	beforeWrite func()
 	createHook  func()
+	getErr      error
 }
 
 func (r *fakeServiceAccountRepo) interleave() {
@@ -89,6 +90,9 @@ func (r *fakeServiceAccountRepo) Create(_ context.Context, account *model.Servic
 }
 
 func (r *fakeServiceAccountRepo) Get(_ context.Context, serviceID id.ServiceID, accountID id.ServiceAccountID) (*model.ServiceAccount, error) {
+	if r.getErr != nil {
+		return nil, r.getErr
+	}
 	account, ok := r.accounts[accountID]
 	if !ok || account.ServiceID != serviceID {
 		return nil, r.notFound()
@@ -1029,5 +1033,59 @@ func TestServiceAccountService_ResponseStatusFollowsTheWrite(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.Equal(t, model.ServiceAccountStatusFailed, view.Status)
+	})
+}
+
+func TestServiceAccountService_ReadFailureDuringWriteLogsWriteFailedOnce(t *testing.T) {
+	ctx := context.Background()
+	down := storage.NewStorageError("fake", storage.ErrorKindConnection, errors.New("dial tcp 10.0.0.5: stored-value"), "down")
+	assertOneWriteFailed := func(t *testing.T, h *saHarness, operation string) {
+		t.Helper()
+		records := h.eventRecords(t, "service.service_account.")
+		require.Len(t, records, 1)
+		assert.Equal(t, "service.service_account.write_failed", records[0]["event"])
+		assert.Equal(t, operation, records[0]["operation"])
+		assert.Equal(t, "connection", records[0]["error_kind"])
+		assert.NotContains(t, h.logs.String(), "stored-value")
+	}
+
+	t.Run("update whose first read fails", func(t *testing.T) {
+		h := newSAHarness(t)
+		created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+		h.resetLogs()
+		h.repo.getErr = down
+		_, _, err := h.service.Update(ctx, saOperator, h.serviceID, created.Account.ID, ServiceAccountUpdate{Scopes: []string{"read", "write"}})
+		require.ErrorIs(t, err, down)
+		assertOneWriteFailed(t, h, "update")
+	})
+
+	t.Run("update whose re-read after a concurrent write fails", func(t *testing.T) {
+		h := newSAHarness(t)
+		created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+		h.resetLogs()
+		h.repo.beforeWrite = func() {
+			h.repo.accounts[created.Account.ID].Version++
+			h.repo.getErr = down
+		}
+		_, _, err := h.service.Update(ctx, saOperator, h.serviceID, created.Account.ID, ServiceAccountUpdate{Scopes: []string{"read", "write"}})
+		require.ErrorIs(t, err, down)
+		assertOneWriteFailed(t, h, "update")
+	})
+
+	t.Run("delete whose read fails", func(t *testing.T) {
+		h := newSAHarness(t)
+		created := h.create(t, "a", h.token(t, "k", h.now.Add(time.Hour)))
+		h.resetLogs()
+		h.repo.getErr = down
+		require.ErrorIs(t, h.service.Delete(ctx, saOperator, h.serviceID, created.Account.ID, nil), down)
+		assertOneWriteFailed(t, h, "delete")
+	})
+
+	t.Run("a missing account is not a write failure", func(t *testing.T) {
+		h := newSAHarness(t)
+		_, _, err := h.service.Update(ctx, saOperator, h.serviceID, id.NewServiceAccountID(), ServiceAccountUpdate{Scopes: []string{"read"}})
+		require.True(t, ports.IsNotFoundErr(err))
+		require.True(t, ports.IsNotFoundErr(h.service.Delete(ctx, saOperator, h.serviceID, id.NewServiceAccountID(), nil)))
+		assert.Empty(t, h.eventRecords(t, "service.service_account."))
 	})
 }

@@ -50,14 +50,14 @@ A platform administrator has a JWT that company infrastructure (the identity pro
 
 **Why this priority**: Nothing else in the design for agents acting on their own behalf (#478) can exist without a stored machine credential. This story alone delivers a reviewable, auditable inventory of machine credentials per service.
 
-**Independent Test**: Create a service account on an existing service through the admin API, then list the service's accounts. The account appears with its summary, status `ready` and narrowing `none`, and the JWT appears in no response.
+**Independent Test**: Create a service account on an existing service through the admin API, then list the service's accounts. The account appears with its summary and narrowing `none`, its status reads `ready`, and the JWT appears in no response.
 
 **Acceptance Scenarios**:
 
-1. **Given** an existing third-party service with no service accounts, **When** an administrator creates a service account with `canonical_id`, `kind: jwt_bearer`, a non-empty `scopes` ceiling and a `signed_jwt` credential whose JWT states an `exp` in the future, **Then** the broker answers `201` with the account's generated ID, `status: ready`, `narrowing: none`, a strong ETag, and a `credential_summary` showing `format`, `use: access_token`, and the `iss`, `sub`, `kid` and `exp` read from the JWT plus a fingerprint; the response does not contain the JWT.
-2. **Given** a service with two service accounts, **When** an administrator lists the service's accounts, **Then** both are returned with their summaries, status and narrowing, and neither entry contains a JWT or any other credential material.
+1. **Given** an existing third-party service with no service accounts, **When** an administrator creates a service account with `canonical_id`, `kind: jwt_bearer`, a non-empty `scopes` ceiling and a `signed_jwt` credential whose JWT states an `exp` in the future, **Then** the broker answers `201` with the account's generated ID, `narrowing: none`, a strong ETag, and a `credential_summary` showing `format`, `use: access_token`, and the `iss`, `sub`, `kid` and `exp` read from the JWT plus a fingerprint; the response does not contain the JWT, and the account's status reads `ready`.
+2. **Given** a service with two service accounts, **When** an administrator lists the service's accounts, **Then** both are returned with their summaries and narrowing, and neither entry contains a JWT or any other credential material.
 3. **Given** a valid create request whose credential omits `use`, **When** it is submitted, **Then** the account is created and its summary reports `use: access_token`.
-4. **Given** a JWT that states no `exp`, **When** an administrator registers it, **Then** the account is created with `status: ready` and its summary reports no expiry.
+4. **Given** a JWT that states no `exp`, **When** an administrator registers it, **Then** the account is created, its status reads `ready` and its summary reports no expiry.
 5. **Given** a service that already has an account with `canonical_id` `platform-triage-bot`, **When** an administrator creates another account with the same `canonical_id` on that service, **Then** the broker answers `409` and stores nothing; the same `canonical_id` on a different service is accepted.
 6. **Given** a service identifier that matches no service, **When** an administrator creates or lists service accounts under it, **Then** the broker answers `404`.
 7. **Given** an existing account, **When** an administrator reads it on its own by ID or by `canonical_id`, **Then** the broker answers `200` with the same representation the list shows for it and its strong ETag, and without the JWT.
@@ -117,7 +117,7 @@ An administrator or a monitoring job asks for an account's status. A stored JWT 
 **Acceptance Scenarios**:
 
 1. **Given** a `ready` account whose JWT states an `exp` in the future, **When** an administrator reads its status, **Then** the answer is `ready` with no failure reason and the expiry the token states.
-2. **Given** an account whose JWT's stated `exp` has passed, **When** an administrator reads its status or lists the service's accounts, **Then** the account is `failed` with failure reason `credential_expired`.
+2. **Given** an account whose JWT's stated `exp` has passed, **When** an administrator reads its status, **Then** the account is `failed` with failure reason `credential_expired`; it is still listed, unchanged.
 3. **Given** an account whose JWT states no `exp`, **When** any amount of time passes, **Then** its status stays `ready`.
 4. **Given** an account identifier that matches no account of the addressed service, **When** its status is read, **Then** the broker answers `404`.
 
@@ -210,8 +210,6 @@ Content-Type: application/json
   "kind": "jwt_bearer",
   "scopes": ["read"],
   "narrowing": "none",
-  "status": "ready",
-  "failure_reason": null,
   "credential_summary": {
     "format": "signed_jwt",
     "use": "access_token",
@@ -246,8 +244,6 @@ Content-Type: application/json
     "kind": "jwt_bearer",
     "scopes": ["read"],
     "narrowing": "none",
-    "status": "ready",
-    "failure_reason": null,
     "credential_summary": { "format": "signed_jwt", "use": "access_token", "iss": "https://idp.example.com", "sub": "triage-bot", "kid": "2026-11", "exp": 1798675200, "fingerprint": "SHA256:fhbwk8g0dDlEiuXzadc7Ytx+R1pSlxRBBNgzBxN+3UQ" },
     "created_at": "2026-11-25T10:00:00Z",
     "updated_at": "2026-11-25T10:00:00Z"
@@ -293,8 +289,6 @@ Content-Type: application/json
   "kind": "jwt_bearer",
   "scopes": ["read", "write"],
   "narrowing": "none",
-  "status": "ready",
-  "failure_reason": null,
   "credential_summary": {
     "format": "signed_jwt",
     "use": "access_token",
@@ -349,7 +343,7 @@ Content-Type: application/json
 { "status": "failed", "failure_reason": "credential_expired", "credential_expires_at": "2026-12-31T00:00:00Z" }
 ```
 
-The list from Journey 1 Step 2 now shows `"status": "failed"` for this account; everything else in its entry is unchanged.
+The list from Journey 1 Step 2 is unchanged: an account representation carries no status.
 
 **Step 3 — 2026-12-31 08:00:00: the operator pastes T1 again by mistake**
 
@@ -372,9 +366,9 @@ The account is unchanged and still `failed`.
 
 **Step 4 — 2026-12-31 08:05:00: the operator submits T2**
 
-The request of Step 3 with `"jwt": "eyJ...T2"` answers `200` with `"status": "ready"`, `kid` `2026-12`, `exp` 1801353600 and ETag `"2"`, as in Journey 1 Step 4 but with `"scopes": ["read"]`.
+The request of Step 3 with `"jwt": "eyJ...T2"` answers `200` with `kid` `2026-12`, `exp` 1801353600 and ETag `"2"`, as in Journey 1 Step 4 but with `"scopes": ["read"]`; the status then reads `"status": "ready"`.
 
-**Observable result**: between 2026-12-31T00:00:00Z and 08:05:00Z every status read and listing reported `failed` with `credential_expired`; from 08:05:00Z the account is `ready` again under the same ID.
+**Observable result**: between 2026-12-31T00:00:00Z and 08:05:00Z every status read reported `failed` with `credential_expired`; from 08:05:00Z the account is `ready` again under the same ID.
 
 ### Journey 3 — Refused credentials leave nothing behind (User Story 2, Scenarios 1–2, 5, 7; User Story 1, Scenario 5)
 
@@ -432,7 +426,7 @@ Content-Type: application/json
 **Entity and ownership**
 
 - **FR-001**: Administrators MUST be able to attach service accounts to any existing third-party service. A service account belongs to exactly one service for its whole life; a service MAY hold any number of them. The service is the same record users hold sessions with; no separate service is created for machines.
-- **FR-002**: Each service account MUST have a broker-generated ID, an administrator-chosen `canonical_id` that is unique within its service and follows the validation rules of existing canonical IDs, a `kind`, a non-empty `scopes` ceiling, a write-only `credential`, a `status`, a derived `narrowing`, and creation and last-change times.
+- **FR-002**: Each service account MUST have a broker-generated ID, an administrator-chosen `canonical_id` that is unique within its service and follows the validation rules of existing canonical IDs, a `kind`, a non-empty `scopes` ceiling, a write-only `credential`, a derived `status`, a derived `narrowing`, and creation and last-change times.
 - **FR-003**: `narrowing` MUST be derived from the kind and format and MUST NOT be settable. For `jwt_bearer` with `signed_jwt` it is `none`.
 - **FR-004**: The ceiling MUST be a non-empty list of unique, non-empty scope values in the flat scope vocabulary of the service's identity provider. The broker MUST NOT compare the ceiling with anything inside the stored JWT.
 - **FR-005**: `kind` MUST NOT change after creation; an update that states a different kind MUST be refused. `canonical_id` MAY change: an update that states a different value renames the account if that value is free within the service and MUST be refused with a conflict otherwise; an update that omits `canonical_id` keeps it. The account's ID MUST NOT change.
@@ -450,7 +444,7 @@ Content-Type: application/json
 - **FR-011**: No response, on any operation, MUST contain the credential. Every representation of an account MUST carry a `credential_summary` instead.
 - **FR-012**: For `signed_jwt` the summary MUST contain the `format`, the effective `use`, the `iss`, `sub`, `kid` and `exp` read from the JWT without verification (each omitted when the token does not state it), and a fingerprint that changes whenever the stored JWT changes and from which the JWT cannot be recovered.
 - **FR-013**: Values read from the stored JWT MUST be used for display and for the account's status only. They MUST NOT take part in any authorization decision, in this feature or in those that build on it.
-- **FR-014**: Every representation MUST carry the account's `status`. An account MUST be `ready` when created. It MUST be `failed` with failure reason `credential_expired` from the instant its stored JWT's stated `exp` has passed, on every read, until its credential is replaced. An account whose JWT states no `exp` MUST stay `ready`.
+- **FR-014**: The account's `status` MUST be read from its status resource (FR-015); like service discovery status, the account representation does not carry it. An account MUST be `ready` when created. It MUST be `failed` with failure reason `credential_expired` from the instant its stored JWT's stated `exp` has passed, on every read, until its credential is replaced. An account whose JWT states no `exp` MUST stay `ready`.
 - **FR-015**: Administrators MUST be able to read an account's status on its own: the status, the failure reason when failed, and the expiry the stored credential states, when it states one. The status model MUST leave room for the later values of #478 (waiting for bootstrap, last mint error class, observed ceiling) without changing the meaning of `ready` and `failed`.
 - **FR-016**: Administrators MUST be able to list all service accounts of one service and to read a single account. Both return the same representation of an account; the single read also returns its strong ETag.
 
@@ -578,7 +572,7 @@ The terms Service Account, Kind, Credential Format, Ceiling, Narrowing and Crede
 - **SC-001**: An administrator can register a ready-signed JWT on an existing service and see it listed as ready in one request each, without changing any broker configuration.
 - **SC-002**: In 100% of responses, log records, spans and metrics produced by this feature's operations, the registered JWT is absent; this is proven by automated tests for every operation.
 - **SC-003**: 100% of the invalid credentials enumerated in User Story 2 are refused at write time with a reason, and none leaves a stored record.
-- **SC-004**: From the instant a stored JWT's stated expiry passes, every status read and listing reports the account as failed with the reason, with no operator action and no delay an administrator could observe.
+- **SC-004**: From the instant a stored JWT's stated expiry passes, every status read reports the account as failed with the reason, with no operator action and no delay an administrator could observe.
 - **SC-005**: An administrator can tell from the summary alone, without access to the token, whether a rotation took place: every rotation changes the fingerprint, and identical tokens show identical fingerprints.
 - **SC-006**: Every creation, rotation, ceiling change, rename and deletion can be attributed afterwards to the administrator who performed it and to the account and service it affected.
 - **SC-007**: Existing behaviour is unchanged: every existing user-facing flow, admin operation and token exchange behaves identically with and without service accounts present.

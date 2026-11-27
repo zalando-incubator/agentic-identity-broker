@@ -63,11 +63,11 @@ var _ = Describe("Service accounts", func() {
 				Expect(err).To(Succeed())
 				Expect(uuid.Parse(account.ID)).Error().To(Succeed())
 				Expect(response.Header.Get("Location")).To(Equal(helpers.ServiceAccountPath(service.ID.String(), account.ID)))
-				Expect([]string{account.ServiceID, account.CanonicalID, account.Kind, account.Narrowing, account.Status}).
-					To(Equal([]string{service.ID.String(), "platform-triage-bot", "jwt_bearer", "none", "ready"}))
+				Expect([]string{account.ServiceID, account.CanonicalID, account.Kind, account.Narrowing}).
+					To(Equal([]string{service.ID.String(), "platform-triage-bot", "jwt_bearer", "none"}))
 				Expect(account.Scopes).To(Equal([]string{"read"}))
-				Expect(account.FailureReason).To(BeNil())
-				Expect(response.Object()).To(HaveKeyWithValue("failure_reason", BeNil()), "failure_reason is always present, null while ready")
+				Expect(response.Object()).NotTo(Or(HaveKey("status"), HaveKey("failure_reason")), "status is read from the status resource only, like discovery status")
+				expectReadyStatus(server, servicePath, account.ID)
 				Expect(account.CredentialSummary).To(Equal(helpers.ServiceAccountCredentialSummary{
 					Format: "signed_jwt", Use: "access_token", Iss: new(fixtures.ServiceAccountTokenIssuer), Sub: new(fixtures.ServiceAccountTokenSubject),
 					Kid: new(fixtures.ServiceAccountT1KeyID), Exp: &exp, Fingerprint: helpers.ServiceAccountFingerprint(token),
@@ -101,8 +101,8 @@ var _ = Describe("Service accounts", func() {
 				Expect(response.StatusCode).To(Equal(http.StatusCreated), string(response.Body))
 				account, err := response.ServiceAccount()
 				Expect(err).To(Succeed())
-				Expect(account.Status).To(Equal("ready"))
 				Expect(account.CredentialSummary.Exp).To(BeNil())
+				expectReadyStatus(server, servicePath, account.ID)
 				object, err := response.Object()
 				Expect(err).To(Succeed())
 				Expect(object["credential_summary"]).NotTo(HaveKey("exp"))
@@ -131,7 +131,6 @@ var _ = Describe("Service accounts", func() {
 				Expect(accounts[0].CredentialSummary.Fingerprint).To(Equal(helpers.ServiceAccountFingerprint(plannerToken)))
 				Expect(accounts[1].CredentialSummary.Fingerprint).To(Equal(helpers.ServiceAccountFingerprint(triageToken)))
 				for _, account := range accounts {
-					Expect(account.Status).To(Equal("ready"))
 					Expect(account.Narrowing).To(Equal("none"))
 					Expect(account.CredentialSummary.Kid).NotTo(BeNil())
 				}
@@ -331,3 +330,12 @@ var _ = Describe("Service accounts", func() {
 		})
 	})
 })
+
+// expectReadyStatus reads an account's status resource and expects ready without a failure reason.
+func expectReadyStatus(server *bootstrap.TestServer, servicePath, accountID string) {
+	GinkgoHelper()
+	status, err := serviceAccountCall(server, http.MethodGet, servicePath+"/"+accountID+"/status", "", nil).Status()
+	Expect(err).To(Succeed())
+	Expect(status.Status).To(Equal("ready"))
+	Expect(status.FailureReason).To(BeNil())
+}

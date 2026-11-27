@@ -105,7 +105,7 @@ var _ = Describe("Service accounts", func() {
 				Expect(response.Header.Get("ETag")).To(Equal(`"2"`))
 				rotated, err := response.ServiceAccount()
 				Expect(err).To(Succeed())
-				Expect([]string{rotated.ID, rotated.CanonicalID, rotated.Status}).To(Equal([]string{created.ID, created.CanonicalID, "ready"}))
+				Expect([]string{rotated.ID, rotated.CanonicalID}).To(Equal([]string{created.ID, created.CanonicalID}))
 				Expect(rotated.CredentialSummary.Kid).To(Equal(new(fixtures.ServiceAccountT2KeyID)))
 				Expect(rotated.CredentialSummary.Exp).To(Equal(&exp))
 				Expect(rotated.CredentialSummary.Fingerprint).To(Equal(helpers.ServiceAccountFingerprint(replacement)))
@@ -205,10 +205,10 @@ var _ = Describe("Service accounts", func() {
 				Expect(response.StatusCode).To(Equal(http.StatusOK), string(response.Body))
 				rotated, err := response.ServiceAccount()
 				Expect(err).To(Succeed())
-				Expect(rotated.Status).To(Equal("ready"))
-				Expect(rotated.FailureReason).To(BeNil())
 				Expect(rotated.ID).To(Equal(created.ID))
-				Expect(readStatus().Status).To(Equal("ready"))
+				status := readStatus()
+				Expect(status.Status).To(Equal("ready"))
+				Expect(status.FailureReason).To(BeNil())
 				expectNoJWTMaterial(replacement, response)
 			})
 		})
@@ -292,21 +292,17 @@ var _ = Describe("Service accounts", func() {
 			})
 
 			// Scenario 2 from specs/20261125-152113-service-accounts-stored-jwt/spec.md (User Story 4)
-			It("should report failed with credential_expired in status and list once exp has passed", func() {
+			It("should report failed with credential_expired in status once exp has passed", func() {
 				Eventually(func(g Gomega) {
 					status, err := read(statusPath).Status()
 					g.Expect(err).To(Succeed())
 					g.Expect(status.Status).To(Equal("failed"))
 					g.Expect(status.FailureReason).To(Equal(new("credential_expired")))
 				}, expiryTimeout, expiryPolling).Should(Succeed())
-				Eventually(func(g Gomega) {
-					accounts, err := read(helpers.ServiceAccountsPath(fixtures.CompanyPlatformCanonicalID)).ServiceAccounts()
-					g.Expect(err).To(Succeed())
-					g.Expect(accounts).To(HaveLen(1))
-					g.Expect(accounts[0].Status).To(Equal("failed"))
-					g.Expect(accounts[0].FailureReason).To(Equal(new("credential_expired")))
-					g.Expect(accounts[0].CredentialSummary).To(Equal(created.CredentialSummary))
-				}, expiryTimeout, expiryPolling).Should(Succeed())
+				accounts, err := read(helpers.ServiceAccountsPath(fixtures.CompanyPlatformCanonicalID)).ServiceAccounts()
+				Expect(err).To(Succeed())
+				Expect(accounts).To(HaveLen(1), "an expired account is still listed")
+				Expect(accounts[0].CredentialSummary).To(Equal(created.CredentialSummary))
 			})
 		})
 
@@ -321,7 +317,6 @@ var _ = Describe("Service accounts", func() {
 
 				Expect(response.StatusCode).To(Equal(http.StatusOK))
 				Expect(response.Object()).To(Equal(map[string]any{"status": "ready", "failure_reason": nil, "credential_expires_at": nil}))
-				Expect(listServiceAccounts(server, fixtures.CompanyPlatformCanonicalID)[0].Status).To(Equal("ready"))
 				expectNoJWTMaterial(token, response)
 			})
 		})

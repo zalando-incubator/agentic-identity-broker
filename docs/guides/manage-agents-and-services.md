@@ -812,10 +812,10 @@ curl http://localhost:14000/api/services/company-platform/service-accounts/platf
 ```
 
 Like the discovery-status read, the status read has no `ETag`: the status is worked out at the
-time of the request. Account representations always include `failure_reason`, which is `null`
-while the account is ready.
+time of the request. Account representations in create, read, update and list responses do not
+include the status; read it here.
 
-From the instant the stored token's `exp` passes, every status read and listing reports
+From the instant the stored token's `exp` passes, every status read reports
 `"status": "failed"` with `"failure_reason": "credential_expired"`. The account stays failed until
 you replace the token. The broker does not renew tokens or send reminders, so whoever issues the
 token must replace it before it expires. An account whose token states no `exp` stays `ready`.
