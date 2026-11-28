@@ -104,7 +104,7 @@ All IDs, tokens and accounts are synthetic. All times are 2026-11-27 UTC. Scope 
 **Step 1 — 09:00:00: the operator creates the Calendar group**
 
 ```http
-POST /admin/v1/capability-groups HTTP/1.1
+POST /api/capability-groups HTTP/1.1
 Host: broker-admin.example.com
 Content-Type: application/json
 
@@ -150,7 +150,7 @@ Content-Type: application/json
 }
 ```
 
-The resource path and exact schema are designed in `/speckit-plan` (API-001). This exchange shows the information that the operator supplies.
+The full request and response schemas are in the Admin API 4.0.0 contract (`contracts/admin-api.md`, API-001). This exchange shows the information that the operator supplies.
 
 **Step 2 — 09:01:00: the operator composes the *Google Calendar* set and the agent entry**
 
