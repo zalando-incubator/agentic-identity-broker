@@ -17,7 +17,7 @@ ADR `048-authzen-delegation-pip` makes the AuthZEN permit the source of enabled-
 
 1. **Capability and Capability Group.**
    - A capability group is an aggregate root that owns capabilities.
-   - A capability has a required, globally unique canonical ID (canonical-ID format), a label, a description, a `read_only` flag, and at least one service scope `{service_id, scopes[]}`.
+   - A capability has a required, globally unique canonical ID (canonical-ID format), a name, a description, a `read_only` flag, and at least one service scope `{service_id, scopes[]}`.
    - Its canonical ID is the policy key and never replaces its UUID in storage or references.
 2. **Composition.**
    - A permission set includes one or more capability entries `{capability_id, requirement_type}`, with no upper bound. These entries replace its service scopes.
@@ -34,7 +34,7 @@ ADR `048-authzen-delegation-pip` makes the AuthZEN permit the source of enabled-
    - Until #580, the end-user grant request keeps its included-service shape. The broker stores every effective capability whose services are all included. It rejects the request when a mandatory capability needs an excluded service, or when an included service would yield no capability.
 5. **Token exchange.** A service's scopes are the union of the granted capabilities' scopes for that service, capped by the agent's service-requirement ceiling as today.
 6. **Policy input.**
-   - The AuthZEN permit gains the required member `context.granted_capabilities`: the sorted, de-duplicated canonical IDs of all granted capabilities.
+   - The AuthZEN permit gains the required member `context.granted_capabilities`: one `{id, canonical_id}` reference per granted capability, de-duplicated and sorted by `canonical_id`, in the reference shape of the permit's `agent` and `permission_sets` entries.
    - Enabled-mode ExtProc copies it to `input.context.granted_capabilities`.
    - The token-exchange response does not change.
    - Disabled-mode input stays unchanged byte for byte and carries no capability list.
@@ -67,6 +67,7 @@ ADR `048-authzen-delegation-pip` makes the AuthZEN permit the source of enabled-
 ## Alternatives considered
 
 - **Inclusion mask or re-consent for legacy grants.** These were rejected in clarification. A mask keeps a second scope model alive, and re-consent interrupts every user.
+- **Canonical ID strings instead of references.** Rejected in document review: it deviates from the `{id, canonical_id}` shape that the permit's other references use.
 - **Capability list in the token-exchange response.** Rejected: it extends a deprecated field's response and duplicates the ADR 048 source.
 - **Optional permit member.** Rejected: a version mismatch would silently drop all capabilities.
 - **New denial codes for stale capabilities.** Rejected: they change the AuthZEN denial enum without a user-visible need.

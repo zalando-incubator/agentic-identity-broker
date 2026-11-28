@@ -41,11 +41,11 @@ CapabilityGroupRequest:          # POST and PUT (full replacement)
 
 CapabilityRequest:
   type: object
-  required: [canonical_id, label, description, read_only, service_scopes]
+  required: [canonical_id, name, description, read_only, service_scopes]
   properties:
     id:           { type: string, format: uuid, description: "PUT only: keeps this capability's identity. Unknown or foreign IDs are 400." }
     canonical_id: { $ref: '#/components/schemas/CanonicalId' }   # required, globally unique across capabilities
-    label:        { type: string, minLength: 1, maxLength: 255 }
+    name:         { type: string, minLength: 1, maxLength: 255 }
     description:  { type: string, minLength: 1 }
     read_only:    { type: boolean }
     service_scopes:

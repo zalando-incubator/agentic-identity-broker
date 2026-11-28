@@ -14,7 +14,7 @@ Both directions run in one transaction (Principle IX). Neither carries `-- migra
    - `created_at`, `updated_at`: the migration time.
 3. **Capabilities**: Insert one `capabilities` row per `permission_set_service_scopes` row `(ps, svc)`, joined to its group:
    - `position`: `row_number()` over `(PARTITION BY ps ORDER BY svc)`, starting at 0;
-   - `label`: `thirdparty_oauth2_services.display_name`;
+   - `name`: `thirdparty_oauth2_services.display_name`;
    - `description`: `'Migrated from permission set ' || permission_sets.name`;
    - `read_only`: `FALSE`;
    - `canonical_id`: as specified below.
@@ -61,7 +61,7 @@ Journey 2 example: the set `ops-tools` and the services `github-production` and 
 
 ### What the down migration loses
 
-Capability labels, descriptions, `read_only` flags, generated canonical IDs and groups are lost. None of these affects a grant's effective scopes. Re-running `up` regenerates the same canonical IDs from the same data, but with new UUIDs.
+Capability names, descriptions, `read_only` flags, generated canonical IDs and groups are lost. None of these affects a grant's effective scopes. Re-running `up` regenerates the same canonical IDs from the same data, but with new UUIDs.
 
 ## Integration tests (`tests/integration/migrations/capability_model_migration_test.go`)
 

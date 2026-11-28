@@ -37,7 +37,7 @@ Add both to `uuidTypes` in `internal/domain/id/gen_ids.go`, regenerate `uuid_ids
 | `ID` | `id.CapabilityID` | Generated when absent from a create or `PUT` |
 | `GroupID` | `id.CapabilityGroupID` | Set by the aggregate |
 | `CanonicalID` | `string` | **Required**; `canonical.Validate` (1–128, `[A-Za-z0-9._-]`, not UUID-shaped); globally unique |
-| `Label` | `string` | Required, ≤255 |
+| `Name` | `string` | Required, ≤255 |
 | `Description` | `string` | Required |
 | `ReadOnly` | `bool` | Required in the API (no default) |
 | `ServiceScopes` | `[]CapabilityServiceScope` | At least one; no duplicate `ServiceID` |
@@ -100,9 +100,9 @@ For a grant entry, the included services are the union of the services of its gr
 - the end-user grant read model;
 - the AuthZEN `permission_sets[].services`, whose scopes are the union over the granted capabilities for that set.
 
-### Granted capability canonical IDs (FR-014)
+### Granted capability references (FR-014)
 
-The canonical IDs of every granted capability in a grant, unioned across entries, sorted bytewise and deduplicated.
+One `{id, canonical_id}` reference per granted capability in a grant, unioned across entries, de-duplicated by `id` and sorted bytewise by `canonical_id`. This is the reference shape that the permit's `agent` and `permission_sets` entries use, with `canonical_id` always present because capabilities require it.
 
 ## Relationships and lifecycle
 
@@ -146,7 +146,7 @@ CREATE TABLE capabilities (
     group_id     UUID NOT NULL REFERENCES capability_groups (id) ON DELETE CASCADE,
     position     INTEGER NOT NULL,
     canonical_id VARCHAR(128) NOT NULL,
-    label        VARCHAR(255) NOT NULL,
+    name         VARCHAR(255) NOT NULL,
     description  TEXT NOT NULL,
     read_only    BOOLEAN NOT NULL,
     created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -73,7 +73,7 @@ just test-e2e-extproc
 
 The tests run with the real broker, ExtProc with `grant_context.enabled: true`, and `examples/policies/capability-tool-map.rego`. Expected:
 
-- US3.1: `calendar_create_event` is forwarded. The captured OPA input holds `["google-calendar-edit","google-calendar-view"]`.
+- US3.1: `calendar_create_event` is forwarded. The captured OPA input holds `{id, canonical_id}` references for `google-calendar-edit` and `google-calendar-view`, in that order.
 - US3.2: `drive_share_file` is denied before the mock MCP target receives it.
 - US3.3: a capability shared by two granted sets appears once.
 - US3.4: after the operator removes a granted capability from the set, exchange returns `403 access_denied` with the consent `error_uri`, and the permit is a denial with the consent URL.

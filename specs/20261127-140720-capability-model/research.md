@@ -95,9 +95,9 @@ The grant read model's `granted_permission_sets` map is derived as the union of 
 
 **Decision**:
 
-- **Broker**: `tokenexchange.GrantContext` gains `granted_capabilities []string`. It holds the canonical IDs of all granted capabilities across all granted sets, sorted and deduplicated, with no set attribution. The `/access/v1/evaluation` permit carries it.
+- **Broker**: `tokenexchange.GrantContext` gains `granted_capabilities []GrantEntityRef`. It holds one `{id, canonical_id}` reference per granted capability across all granted sets, de-duplicated and sorted by `canonical_id`, with no set attribution. The `/access/v1/evaluation` permit carries it.
 - **ExtProc decode**: `grantcontext` decodes it into `Context.GrantedCapabilities`. The member is **required** with at least one item, so a permit without it fails closed like any other malformed permit (terminal 503).
-- **OPA input**: `authorization.ContextInput` gains `GrantedCapabilities []string` with `json:"granted_capabilities,omitempty"`. Only `contextInputFromGrantContext` sets it.
+- **OPA input**: `authorization.ContextInput` gains `GrantedCapabilities []CapabilityContext` (`{id, canonical_id}`) with `json:"granted_capabilities,omitempty"`. Only `contextInputFromGrantContext` sets it.
 - **Disabled mode**: The disabled-mode paths never set the member, so disabled-mode JSON stays byte for byte identical, and `TestGrantContext_DisabledModeMakesNoResolverCallsAndKeepsInput` stays unchanged.
 - **Token-exchange response**: `TokenExchangeResponse` is unchanged.
 
@@ -107,14 +107,16 @@ The grant read model's `granted_permission_sets` map is derived as the union of 
 
 **Binding and caches**: Neither `ExchangeResultBinding` nor the permit and token cache keys depend on permit content (`exchange_result_binding.go`, lines 13–18; `resolver.go`, lines 21–24). The new member therefore changes neither result reuse nor cache identity.
 
-**Alternatives considered**: An optional member is rejected for the reasons above. Per-set capability lists in `permission_sets[]` would let policy see which set granted a capability, which US3.3 forbids.
+**Shape**: Each entry follows the `{id, canonical_id}` reference shape of the permit's `agent` and `permission_sets` entries, so policies use one style for every reference and may key on either identifier. Unlike those entries, `canonical_id` is always present, because capabilities require it.
+
+**Alternatives considered**: A flat list of canonical ID strings was the first draft. Document review rejected it because it deviates from the existing reference shape. An optional member is rejected for the reasons above. Per-set capability lists in `permission_sets[]` would let policy see which set granted a capability, which US3.3 forbids.
 
 ## R9. Migration `050` (FR-018 – FR-020, clarification 1)
 
 **Decision**: One atomic migration pair, `050_capability_model.{up,down}.sql`. The SQL is designed in [contracts/migration-050.md](contracts/migration-050.md). Summary:
 
 - **Groups**: One capability group per permission set, with the same name and description and `canonical_id` = the set's canonical ID.
-- **Capabilities**: One capability per `permission_set_service_scopes` row. It carries that row's scopes, `read_only = false`, and label = the service's display name. Its set entry carries that row's `requirement_type`.
+- **Capabilities**: One capability per `permission_set_service_scopes` row. It carries that row's scopes, `read_only = false`, and name = the service's display name. Its set entry carries that row's `requirement_type`.
 - **Grants**: Each grant entry's `included_service_ids` become the capability IDs for those `(set, service)` pairs.
 - **Agents**: Agent JSONB is untouched (FR-007).
 - **Down migration**: The down migration runs only when the data is still representable without loss of security meaning:
@@ -194,7 +196,7 @@ The broker cannot verify these controls, so the guide states that without them c
 
 - **New spans and metrics**: None.
 - **Audit log events**:
-  - Capability groups get `capability.capability_group.created`, `.updated` and `.deleted`, following the `permissionset.permission_set.*` pattern. Fields are IDs, canonical IDs, labels and service scopes.
+  - Capability groups get `capability.capability_group.created`, `.updated` and `.deleted`, following the `permissionset.permission_set.*` pattern. Fields are IDs, canonical IDs, names and service scopes.
   - Permission-set events replace `service_scopes` with `capabilities`.
   - Grant events log `granted_permission_sets` entries with `granted_capability_ids` (spec: Domain Events).
 - **Principals**: Principals appear only as `id.Principal`.

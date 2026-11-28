@@ -208,7 +208,7 @@ tests/e2e/extproc/bootstrap/authzen_broker.go            # mock permit carries g
 | US2.2 | `tests/e2e/capability_model_upgrade_test.go` | `It("keeps effective scopes and granted_permission_sets for a grant that omitted an optional service")` |
 | US2.3 | `tests/integration/migrations/capability_model_migration_test.go` | `TestMigration050DownRestoresPreUpgradeShape` (a migration-level scenario: E2E cannot run a down migration against a live server; DB-003 requires the integration test) |
 | US2.4 | `tests/e2e/capability_model_upgrade_test.go` | `It("accepts today's consent request unchanged and yields the pre-upgrade scopes")` |
-| US3.1 | `tests/e2e/capability_policy_journey_test.go` | `It("passes granted capability canonical IDs to policy and forwards a mapped tool")` |
+| US3.1 | `tests/e2e/capability_policy_journey_test.go` | `It("passes granted capability references to policy and forwards a mapped tool")` |
 | US3.2 | `tests/e2e/capability_policy_journey_test.go` | `It("denies a tool mapped to a capability the grant does not hold before it reaches the MCP target")` |
 | US3.3 | `tests/e2e/capability_policy_journey_test.go` | `It("lists a capability included by two granted sets exactly once")` |
 | US3.4 | `tests/e2e/capability_policy_journey_test.go` | `It("fails closed with the consent error URI when a granted capability leaves its set")` |

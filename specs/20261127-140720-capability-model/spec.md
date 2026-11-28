@@ -10,7 +10,7 @@
 
 Operators define **capabilities** in **capability groups**. Each capability has a canonical ID, a read-only flag, and the service scopes it needs.
 Permission sets include capabilities instead of carrying service scopes directly, and an agent's permission-set entry can tighten the set's capability entries.
-Grants store the granted capabilities. At token exchange, the broker derives each service's scopes from them, and ExtProc policy receives their canonical IDs, so operator Rego can map MCP tools to capabilities.
+Grants store the granted capabilities. At token exchange, the broker derives each service's scopes from them, and ExtProc policy receives them as `{id, canonical_id}` references, so operator Rego can map MCP tools to capabilities.
 Users see no change in this feature. The consent screen and the end-user grant request keep their current shape, and every existing permission set, agent, grant and policy behaves as before the upgrade.
 
 ## Clarifications
@@ -21,6 +21,11 @@ Users see no change in this feature. The consent screen and the end-user grant r
 - Q: Should the list of granted capability IDs reach ExtProc policy through the token-exchange response, through the ADR 048 delegation permit, or through both? → A: Only through the ADR `048-authzen-delegation-pip` delegation permit. Capability-based policy requires `grant_context.enabled: true`, and disabled mode and the token-exchange response stay unchanged.
 - Q: How should the Admin API version and compatibility handle permission sets switching from `service_scopes` to `capabilities[]`? → A: Bump the Admin API to `4.0.0` on the existing routes and replace `service_scopes` cleanly. Requests that still send `service_scopes` are rejected with `400`, and there is no deprecated read-only field.
 - Q: On its branch, #580 has resolved its open question as "Full is stored as intent", which adds a per-set Full-intent marker to this feature's grant entry. Should this feature add that marker, or should #580 add it? → A: #580 adds it, with its own migration and reader changes. In this feature, every granted permission set entry holds explicit capability IDs only.
+
+### Session 2026-11-28 (document review)
+
+- Q: Should a capability's display field be `label`, or `name` as for capability groups and permission sets? → A: `name`, everywhere (API, domain, schema).
+- Q: Should `granted_capabilities` be a list of canonical ID strings, or follow the `{id, canonical_id}` reference shape that `permission_sets` entries already use? → A: The reference shape. Each entry is `{id, canonical_id}`, both always present, sorted by `canonical_id`.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -63,7 +68,7 @@ No user loses access they granted, and no user gains access they did not grant.
 ### User Story 3 - Policy Receives the Granted Capabilities (Priority: P1)
 
 The operator maps each MCP tool to one capability canonical ID in Rego.
-In grant-context mode (`grant_context.enabled: true`, ADR `048-authzen-delegation-pip`), ExtProc gives policy the grant's capability canonical IDs as a flat list next to today's inputs.
+In grant-context mode (`grant_context.enabled: true`, ADR `048-authzen-delegation-pip`), ExtProc gives policy the grant's capabilities as a flat list of `{id, canonical_id}` references, the shape that `permission_sets` entries already use, next to today's inputs.
 
 **Why this priority**: Operators can write and test capability-based policy before users can narrow, and Feature 2 then only changes which capabilities a grant holds.
 
@@ -71,9 +76,9 @@ In grant-context mode (`grant_context.enabled: true`, ADR `048-authzen-delegatio
 
 **Acceptance Scenarios**:
 
-1. **US3.1 — Capabilities reach policy**: **Given** a grant that holds the capabilities `google-calendar-view` and `google-calendar-edit`, and the sample policy, **When** the agent calls `calendar_create_event`, **Then** OPA receives `input.context.granted_capabilities` containing both canonical IDs. The call is forwarded to the MCP target server.
+1. **US3.1 — Capabilities reach policy**: **Given** a grant that holds the capabilities `google-calendar-view` and `google-calendar-edit`, and the sample policy, **When** the agent calls `calendar_create_event`, **Then** OPA receives `input.context.granted_capabilities` with one `{id, canonical_id}` reference for each. The call is forwarded to the MCP target server.
 2. **US3.2 — Unmapped capability denies the tool**: **Given** the same grant, **When** the agent calls `drive_share_file`, which the sample policy maps to `google-drive-share`, **Then** ExtProc denies the call before it reaches the MCP target server.
-3. **US3.3 — Union across sets**: **Given** a grant in which two granted sets both include `google-drive-view`, **When** policy input is built, **Then** `google-drive-view` appears exactly once in the sorted list. The input does not identify which set granted it.
+3. **US3.3 — Union across sets**: **Given** a grant in which two granted sets both include `google-drive-view`, **When** policy input is built, **Then** `google-drive-view` appears exactly once in the list, which is sorted by `canonical_id`. The input does not identify which set granted it.
 4. **US3.4 — Stale capability fails closed**: **Given** a stored grant that references a capability its set no longer includes, **When** token exchange or permit resolution runs for that grant, **Then** it fails closed. The response matches the existing handling for a missing permission set, and the caller receives the consent-page error URI.
 5. **US3.5 — Existing policies keep working**: **Given** a deployed policy that reads only today's `granted_permission_sets` input, **When** the feature ships, **Then** that policy produces the same decisions for an upgraded grant as before the upgrade, in both grant-context modes.
 6. **US3.6 — Disabled mode carries no capabilities**: **Given** grant-context mode is disabled, **When** the agent calls a tool, **Then** the policy input has no `granted_capabilities` member, and the token-exchange response is unchanged. The sample policy therefore denies every capability-mapped tool.
@@ -110,7 +115,7 @@ Content-Type: application/json
   "capabilities": [
     {
       "canonical_id": "google-calendar-view",
-      "label": "View events",
+      "name": "View events",
       "description": "See your calendars and events",
       "read_only": true,
       "service_scopes": [
@@ -120,7 +125,7 @@ Content-Type: application/json
     },
     {
       "canonical_id": "google-calendar-edit",
-      "label": "Create and edit events",
+      "name": "Create and edit events",
       "description": "Add events and change existing ones",
       "read_only": false,
       "service_scopes": [
@@ -183,11 +188,21 @@ The agent entry makes *View events* mandatory for Workspace Assistant (US1.4):
   "type": "mcp_tool_call",
   "mcp": { "tool_name": "drive_share_file" },
   "context": {
-    "granted_permission_sets": { "770e8400-e29b-41d4-a716-446655440003": ["880e8400-e29b-41d4-a716-446655440010"] },
-    "granted_capabilities": ["google-calendar-edit", "google-calendar-view"]
+    "principal": "alice@example.com",
+    "permission_sets": [
+      { "id": "770e8400-e29b-41d4-a716-446655440003", "canonical_id": "google-calendar",
+        "services": [ { "id": "880e8400-e29b-41d4-a716-446655440010",
+                        "scopes": ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.readonly"] } ] }
+    ],
+    "granted_capabilities": [
+      { "id": "9a7e0000-0000-4000-8000-000000000002", "canonical_id": "google-calendar-edit" },
+      { "id": "9a7e0000-0000-4000-8000-000000000001", "canonical_id": "google-calendar-view" }
+    ]
   }
 }
 ```
+
+The other enabled-mode members (`agent`, `resource`, `grant`, `granted_permission_sets`) are unchanged and omitted here.
 
 The sample policy under `examples/`:
 
@@ -198,9 +213,11 @@ tool_requirements := {
   "drive_share_file":      "google-drive-share",
 }
 
+granted := {c.canonical_id | some c in input.context.granted_capabilities}
+
 allow contains {"reason": "capability granted"} if {
   input.type == "mcp_tool_call"
-  tool_requirements[input.mcp.tool_name] in input.context.granted_capabilities
+  tool_requirements[input.mcp.tool_name] in granted
 }
 ```
 
@@ -228,7 +245,7 @@ The grant entry now holds the GitHub capability only. Migration cannot know whet
 
 **Step 3 — 10:00:00: the agent exchanges a token for GitHub**. The requested scopes are `repo:read`, as before.
 
-**Observable result**: No Slack scopes are requested. `granted_permission_sets` still maps the set to GitHub Production only, and `granted_capabilities` is `["ops-tools-github-production"]`.
+**Observable result**: No Slack scopes are requested. `granted_permission_sets` still maps the set to GitHub Production only, and in grant-context mode `granted_capabilities` holds one reference, with `canonical_id` `ops-tools-github-production`.
 
 ## Requirements *(mandatory)*
 
@@ -237,7 +254,7 @@ The grant entry now holds the GitHub capability only. Migration cannot know whet
 **Capability model**
 
 - **FR-001**: Operators MUST be able to create, read, update, list and delete **capability groups**. A group has a name, a description and an optional canonical ID, and it owns its capabilities.
-- **FR-002**: Each **capability** MUST belong to exactly one group. It has a required canonical ID that is unique across all capabilities and follows the existing canonical-ID rules (1–128 characters, URL-safe, not UUID-shaped). It also has a label, a description, a `read_only` flag, and at least one service scope `{service_id, scopes[]}`.
+- **FR-002**: Each **capability** MUST belong to exactly one group. It has a required canonical ID that is unique across all capabilities and follows the existing canonical-ID rules (1–128 characters, URL-safe, not UUID-shaped). It also has a name, a description, a `read_only` flag, and at least one service scope `{service_id, scopes[]}`.
 - **FR-003**: A permission set MUST include one or more capability entries `{capability_id, requirement_type}` with no duplicates, and the broker MUST set no upper bound on their number. These entries replace the set's direct service scopes.
 - **FR-004**: The same capability MAY be included by several permission sets.
 - **FR-005**: An agent's permission-set entry MAY list capability entries `{capability_id, requirement_type}`. They MUST be a subset of the set's entries with no duplicates. An agent entry MUST NOT mark optional a capability that the set marks mandatory, and the broker MUST reject such an entry with a validation error instead of silently overriding it.
@@ -255,7 +272,7 @@ The grant entry now holds the GitHub capability only. Migration cannot know whet
 
 **Policy input**
 
-- **FR-014**: In grant-context mode, ExtProc policy input MUST carry a flat, de-duplicated, sorted list of the granted capabilities' canonical IDs, unioned across all granted sets, as `input.context.granted_capabilities`.
+- **FR-014**: In grant-context mode, ExtProc policy input MUST carry the granted capabilities, unioned across all granted sets, as `input.context.granted_capabilities`. It is a flat list of `{id, canonical_id}` references in the shape that `permission_sets` entries already use, with both members always present, one entry per capability, sorted by `canonical_id`.
 - **FR-015**: Today's `granted_permission_sets` and enabled-mode `permission_sets` inputs MUST remain populated with unchanged meaning. For a set, the included services are the union of the services of its granted capabilities.
 - **FR-016**: The capability list MUST reach policy only through the ADR `048-authzen-delegation-pip` delegation permit, and ExtProc MUST take it from the permit, never from the token-exchange response. The token-exchange response MUST NOT gain a capability field. When `grant_context.enabled` is `false`, the policy input MUST NOT contain `granted_capabilities`, and disabled mode stays unchanged byte for byte.
 - **FR-017**: The broker MUST NOT learn or store MCP tool names. A sample policy under `examples/` MUST map tools to capability canonical IDs and deny by default.
@@ -300,7 +317,7 @@ classDiagram
   class Capability {
     UUID id
     String canonical_id
-    String label
+    String name
     String description
     bool read_only
     List~ServiceScope~ service_scopes
@@ -362,7 +379,7 @@ flowchart LR
 ### API Requirements
 
 - **API-001**: The Admin API (`api/admin/openapi.yaml`) MUST add capability-group resources with nested capabilities, replace permission-set `service_scopes` with `capabilities[]`, and add optional `capabilities[]` to agent permission-set entries. This breaks the released Admin API `3.0.0`, so the version MUST move to `4.0.0` on the existing routes, following the precedent of ADR `047-unique-agent-external-id-reconcile`. Permission-set responses MUST NOT include `service_scopes`, and a create or update request that sends `service_scopes` MUST be rejected with `400`. The API keeps no compatibility write path or deprecated read-only field.
-- **API-002**: The AuthZEN delegation permit MUST carry the granted capability canonical IDs (FR-016). The token-exchange response MUST stay unchanged. Existing permit members keep their meaning.
+- **API-002**: The AuthZEN delegation permit MUST carry the granted capabilities as `{id, canonical_id}` references (FR-014, FR-016). The token-exchange response MUST stay unchanged. Existing permit members keep their meaning.
 - **API-003**: The end-user grant request and response MUST stay unchanged (FR-010, FR-013).
 - **API-004**: All API changes MUST follow the Zalando RESTful API Guidelines and receive stakeholder approval before implementation (Constitution IV, X).
 
@@ -398,7 +415,7 @@ flowchart LR
 
 - Capability enforcement is only as strong as the operator's policy. A tool without a mapping falls to the policy's default, which is deny in the sample.
 - The upstream provider token keeps the OAuth2 scopes that the granted capabilities imply. The broker does not downscope further, and the gateway is the enforcement point.
-- Capability labels and descriptions are operator-supplied plain text, as permission-set names are today.
+- Capability names and descriptions are operator-supplied plain text, as permission-set names are today.
 - ADR `048-authzen-delegation-pip`'s permit freshness, result binding and deprecation timeline remain in force. This feature adds a member to the permit and to enabled-mode policy context, and changes no existing member.
 - A new ADR for the capability model, its invariants and the gateway-only enforcement assumption accompanies the plan of this feature.
 - Feature 2 depends on this feature and can start planning once this feature's API contracts are approved. Feature 2 extends the granted permission set entry with its Full-intent marker in its own migration (FR-009).

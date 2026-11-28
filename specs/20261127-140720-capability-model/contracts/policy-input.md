@@ -16,14 +16,23 @@ GrantContext:
     granted_capabilities:
       type: array
       minItems: 1
-      uniqueItems: true
-      items: { type: string, minLength: 1, maxLength: 128 }
+      items: { $ref: '#/components/schemas/GrantCapabilityRef' }
       description: >
-        Canonical IDs of every capability the grant holds, across all granted permission sets,
-        sorted by byte order and de-duplicated. The list does not identify which set granted a
-        capability. Reflects the grant and capability definitions at evaluation time within the
-        permit's max-age.
+        One reference per capability the grant holds, across all granted permission sets,
+        de-duplicated and sorted by canonical_id in byte order. The list does not identify which
+        set granted a capability. Reflects the grant and capability definitions at evaluation
+        time within the permit's max-age.
+
+GrantCapabilityRef:              # GrantEntityRef with canonical_id required
+  allOf:
+    - $ref: '#/components/schemas/GrantEntityRef'
+    - type: object
+      required: [id, canonical_id]
+      properties:
+        canonical_id: { type: string, minLength: 1, maxLength: 128 }
 ```
+
+The entries use the `{id, canonical_id}` reference shape of `agent` and `permission_sets` entries. `canonical_id` is always present because capabilities require one.
 
 **Example** (Journey 1, abbreviated):
 
@@ -36,7 +45,10 @@ GrantContext:
     "resource": { "service_id": "880e8400-e29b-41d4-a716-446655440010", "resource_uri": "https://mcp.example.com/calendar", "scopes": ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.readonly"] },
     "grant": { "id": "aa0e8400-e29b-41d4-a716-446655440020", "updated_at": "2026-11-27T09:30:00Z" },
     "permission_sets": [ { "id": "770e8400-e29b-41d4-a716-446655440003", "canonical_id": "google-calendar", "services": [ { "id": "880e8400-e29b-41d4-a716-446655440010", "scopes": ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/calendar.readonly"] } ] } ],
-    "granted_capabilities": ["google-calendar-edit", "google-calendar-view"]
+    "granted_capabilities": [
+      { "id": "9a7e0000-0000-4000-8000-000000000002", "canonical_id": "google-calendar-edit" },
+      { "id": "9a7e0000-0000-4000-8000-000000000001", "canonical_id": "google-calendar-view" }
+    ]
   }
 }
 ```
@@ -51,16 +63,22 @@ GrantContext:
 
 ## 3. ExtProc decode (`internal/extproc/grantcontext`)
 
-- `wireContext` gains `GrantedCapabilities *[]string` (`json:"granted_capabilities"`).
-- `parsePermitContext` rejects the permit when the member is absent, null, empty, or holds an empty string, a duplicate, or an unsorted list. The rejection uses the existing malformed-permit path: terminal 503, no cache entry.
-- `Context` gains `GrantedCapabilities []string`, and consumers copy the slice.
+- `wireContext` gains `GrantedCapabilities *[]*wireCapability` (`json:"granted_capabilities"`), where `wireCapability` has pointer `ID` and `CanonicalID` like `wireEntity`.
+- `parsePermitContext` rejects the permit when the member is absent, null or empty, or when an entry is null, lacks a non-empty `id` or `canonical_id`, repeats an `id` or `canonical_id`, or is out of `canonical_id` order. The rejection uses the existing malformed-permit path: terminal 503, no cache entry.
+- `Context` gains `GrantedCapabilities []EntityRef`, and consumers copy the slice. Unknown members inside an entry are dropped, as everywhere in the permit.
 - The permit cache key, singleflight key and `ExchangeResultBinding` are unchanged.
 
 ## 4. OPA input
 
 ```go
 // internal/extproc/authorization/input.go — ContextInput
-GrantedCapabilities []string `json:"granted_capabilities,omitempty"`
+GrantedCapabilities []CapabilityContext `json:"granted_capabilities,omitempty"`
+
+// CapabilityContext is one granted capability.
+type CapabilityContext struct {
+	ID          string `json:"id"`
+	CanonicalID string `json:"canonical_id"`
+}
 ```
 
 | Mode | `input.context.granted_capabilities` |
@@ -73,7 +91,7 @@ GrantedCapabilities []string `json:"granted_capabilities,omitempty"`
 ## 5. Sample policy (`examples/policies/capability-tool-map.rego`)
 
 - **Package**: The policy uses the package and rule names that the ExtProc OPA engine expects. It copies them from the existing ExtProc fixtures (`tests/e2e/extproc/fixtures/policies/`).
-- **Decisions**: It is deny by default and maps each tool name to one capability canonical ID (Journey 1). It allows `mcp_tool_call` only when the mapped ID is in `input.context.granted_capabilities`.
+- **Decisions**: It is deny by default and maps each tool name to one capability canonical ID (Journey 1). It allows `mcp_tool_call` only when the mapped ID equals the `canonical_id` of an entry in `input.context.granted_capabilities`.
 - **Other requests**: Non-tool-call MCP methods (`initialize`, `tools/list`) are allowed. This matches the existing ExtProc fixture policies, so the sample stays usable behind a real gateway.
 - **Tests**: The ExtProc E2E suite and an `opa test` unit run load this exact file.
 
