@@ -65,7 +65,15 @@ Each section records a decision, its rationale, and the alternatives considered.
 
 **Rationale**: The second rejection keeps "no silent narrowing" (SR-003). The user included a service, but no capability would carry it. For migrated data, every capability needs exactly one service, so every included service maps to exactly one capability, and today's consent journeys behave identically (US2.4).
 
-**Alternatives considered**: Silently storing an entry without that service would hide a narrowing from the user. Dropping the set entry would change which sets the user sees as granted.
+**Shared services** (document review, 2026-11-28): A service is required on today's screen when any capability mandatory for the agent needs it (R6). Including it grants every listed capability on it, so optional capabilities on a required service ride along, as optional scopes in a mandatory service do today. Today's card shows services, not scopes, so what the user approves is the service, and the grant never holds a capability that needs a service the user excluded.
+
+**Alternatives considered**:
+
+- Silently storing an entry without an included service would hide a narrowing from the user. Dropping the set entry would change which sets the user sees as granted.
+- **A — reject with `400`** when one service carries both a mandatory and an optional capability. Rejected: operators could not prepare capabilities on sets in use, because remodelling such a set would break consent for its agents until Feature 2 ships. That defeats the split into two features.
+- **A′ — grant only the mandatory capabilities** on a service that a mandatory capability forces on. Rejected: it fails safe but silently narrows the grant below what the user approved.
+- **C — at most one capability per service per set** until Feature 2. Rejected: it blocks capability modelling and capability-based policy (User Story 3).
+- **B — ship together with Feature 2**: not needed for correctness, so this feature can ship alone. Release coupling stays a release-management choice.
 
 ## R6. End-user consent view stays unchanged (FR-013, API-003)
 

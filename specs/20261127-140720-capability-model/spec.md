@@ -26,6 +26,7 @@ Users see no change in this feature. The consent screen and the end-user grant r
 
 - Q: Should a capability's display field be `label`, or `name` as for capability groups and permission sets? → A: `name`, everywhere (API, domain, schema).
 - Q: Should `granted_capabilities` be a list of canonical ID strings, or follow the `{id, canonical_id}` reference shape that `permission_sets` entries already use? → A: The reference shape. Each entry is `{id, canonical_id}`, both always present, sorted by `canonical_id`.
+- Q: When a set holds a mandatory and an optional capability on the same service, how does today's service-level consent behave? → A: It keeps today's service-level semantics. The service is required on today's screen, and approving it grants every listed capability whose services are all included. Optional capabilities on a required service ride along, as optional scopes in a mandatory service do today. Rejecting such grants, granting only the mandatory capabilities, and limiting sets to one capability per service were rejected (research R5).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -64,6 +65,7 @@ No user loses access they granted, and no user gains access they did not grant.
 2. **US2.2 — Grants are not broadened**: **Given** a pre-upgrade grant that omitted an optional service of a set, **When** the migration runs and the agent exchanges a token, **Then** the grant holds only the capabilities generated for its included services, and the capability generated for the omitted service is not granted (FR-018). The effective scopes and the `granted_permission_sets` policy input are identical to those before the upgrade.
 3. **US2.3 — Down migration**: **Given** an upgraded database whose capabilities, sets and grants are still the ones the migration created, **When** the down migration runs, **Then** permission sets and grants return to their pre-upgrade shape and values.
 4. **US2.4 — Consent is unchanged for users**: **Given** an upgraded broker, **When** Alice consents to an agent through today's consent screen and grant request, **Then** the request and response shapes are unchanged. The broker stores the capabilities that match her included services (FR-010), and token exchange yields the same scopes as before the upgrade.
+5. **US2.5 — A required service carries its optional capabilities**: **Given** an agent entry that marks *View events* mandatory and *Create and edit events* optional, both needing Google, **When** Alice opens today's consent screen and approves, **Then** Google is shown as required, and the grant holds both capabilities.
 
 ### User Story 3 - Policy Receives the Granted Capabilities (Priority: P1)
 
@@ -179,7 +181,7 @@ The agent entry makes *View events* mandatory for Workspace Assistant (US1.4):
 }
 ```
 
-**Step 3 — 09:30:00: Alice consents through today's screen**. Today's request includes Google for the set. Both capabilities need only Google, so the grant holds both (FR-010).
+**Step 3 — 09:30:00: Alice consents through today's screen**. The *Google Calendar* card lists Google as required, because the agent entry makes *View events* mandatory and it needs Google (FR-010). Today's card names services, not scopes or capabilities. Approving includes Google, so the grant holds both capabilities: *Create and edit events* rides along with the required service, as optional scopes in a mandatory service do today (US2.5).
 
 **Step 4 — 09:40:00: the agent calls tools through the gateway**. ExtProc runs with `grant_context.enabled: true` and builds the capability list from the delegation permit. Policy receives, abbreviated:
 
@@ -435,7 +437,7 @@ The request and response bodies are unchanged. The broker stores every capabilit
 **Grants and token exchange**
 
 - **FR-009**: For each granted set, the grant MUST store the granted capabilities as explicit capability IDs, and this replaces the stored included-service list. This feature MUST NOT add a Full-intent marker or any other stored preset; Feature 2 adds the marker with its own migration.
-- **FR-010**: Until Feature 2 ships capability selection, the end-user grant request MUST keep its current included-service shape. For each set, the broker MUST store every capability that the agent entry lists and whose services are all included. The request MUST be rejected with `400` when a capability that is mandatory for the agent needs a service that the request excludes. Every other grant validation stays as today.
+- **FR-010**: Until Feature 2 ships capability selection, the end-user grant request MUST keep its current included-service shape. For each set, the broker MUST store every capability that the agent entry lists and whose services are all included. The request MUST be rejected with `400` when a capability that is mandatory for the agent needs a service that the request excludes. Today's consent screen MUST show a service as mandatory when any capability that is mandatory for the agent needs it; optional capabilities on that service are then granted with it. A grant MUST never hold a capability that needs a service the user did not include. Every other grant validation stays as today.
 - **FR-011**: At token exchange, the scopes for each service MUST be the union of the granted capabilities' scopes for that service, capped by the agent's service-requirement ceiling as today.
 - **FR-012**: Token exchange and permit resolution MUST fail closed when a grant references a capability that its set no longer includes, with the same response and consent-page error URI as for a missing permission set.
 - **FR-013**: The end-user API and the consent screen MUST NOT expose capabilities in this feature. Feature 2 adds them.
