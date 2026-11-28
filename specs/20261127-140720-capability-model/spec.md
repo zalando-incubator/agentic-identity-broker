@@ -223,9 +223,9 @@ allow contains {"reason": "capability granted"} if {
 
 **Observable result**: `calendar_create_event` is forwarded. `drive_share_file` receives the existing ExtProc policy-denial response and never reaches the MCP target server.
 
-### Journey 2 — Upgrade preserves a grant that excluded an optional service (User Story 2, Scenarios US2.1–US2.2)
+### Journey 2 — Upgrade preserves a grant that excluded an optional service (User Story 2, Scenarios US2.1, US2.2, US2.4)
 
-**Cast**: Legacy set *Ops Tools* `770e8400-e29b-41d4-a716-446655440002` (canonical `ops-tools`), whose service scopes are GitHub Production `880e8400-e29b-41d4-a716-446655440011` (mandatory, `repo:read`) and Slack `880e8400-e29b-41d4-a716-446655440012` (optional, `chat:write`). Alice's grant for agent *Ops Copilot* `550e8400-e29b-41d4-a716-446655440001` includes GitHub only.
+**Cast**: User Alice, `alice@example.com`. Agent *Ops Copilot* `550e8400-e29b-41d4-a716-446655440001`, whose service requirements list GitHub Production as mandatory and Slack as optional. Legacy set *Ops Tools* `770e8400-e29b-41d4-a716-446655440002` (canonical `ops-tools`, "Repositories and team chat"), which Ops Copilot declares as mandatory. Its service scopes are GitHub Production `880e8400-e29b-41d4-a716-446655440011` (canonical `github-production`, mandatory, `repo:read`) and Slack `880e8400-e29b-41d4-a716-446655440012` (canonical `slack`, optional, `chat:write`). Before the upgrade, Alice consented with GitHub only.
 
 **Step 1 — before the upgrade**: The stored grant entry is:
 
@@ -236,16 +236,186 @@ allow contains {"reason": "capability granted"} if {
 
 **Step 2 — the migration runs**. It creates group *Ops Tools* with two capabilities:
 
-| Canonical ID | Service | Scopes | Set entry | `read_only` |
-|---|---|---|---|---|
-| `ops-tools-github-production` | GitHub Production | `repo:read` | mandatory | false |
-| `ops-tools-slack` | Slack | `chat:write` | optional | false |
+| Capability ID | Canonical ID | Name | Service | Scopes | Set entry | `read_only` |
+|---|---|---|---|---|---|---|
+| `9a7e0000-0000-4000-8000-000000000011` | `ops-tools-github-production` | GitHub Production | GitHub Production | `repo:read` | mandatory | false |
+| `9a7e0000-0000-4000-8000-000000000012` | `ops-tools-slack` | Slack | Slack | `chat:write` | optional | false |
 
-The grant entry now holds the GitHub capability only. Migration cannot know whether legacy scopes are read-only, so it sets `read_only: false` (FR-018).
+The grant entry now holds the GitHub capability only. Migration cannot know whether legacy scopes are read-only, so it sets `read_only: false` (FR-018). Each capability takes its service's display name as its name.
 
-**Step 3 — 10:00:00: the agent exchanges a token for GitHub**. The requested scopes are `repo:read`, as before.
+```json
+{ "permission_set_id": "770e8400-e29b-41d4-a716-446655440002",
+  "granted_capability_ids": ["9a7e0000-0000-4000-8000-000000000011"] }
+```
 
-**Observable result**: No Slack scopes are requested. `granted_permission_sets` still maps the set to GitHub Production only, and in grant-context mode `granted_capabilities` holds one reference, with `canonical_id` `ops-tools-github-production`.
+**Step 3 — 10:00:00: the gateway exchanges Alice's token for GitHub** (abbreviated, synthetic credentials):
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: broker.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+&subject_token=eyJhbGciOiJSUzI1NiJ9.alice.sig
+&subject_token_type=urn:ietf:params:oauth:token-type:jwt
+&resource=https://mcp.example.com/github
+&client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+&client_assertion=eyJhbGciOiJSUzI1NiJ9.gateway.sig
+
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "access_token": "gho_synthetic_0001",
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "granted_permission_sets": { "770e8400-e29b-41d4-a716-446655440002": ["880e8400-e29b-41d4-a716-446655440011"] },
+  "principal": "alice@example.com",
+  "agent_id": "550e8400-e29b-41d4-a716-446655440001"
+}
+```
+
+The broker requests `repo:read` from GitHub, as before the upgrade. The response is byte-for-byte the pre-upgrade shape (FR-016).
+
+**Step 4 — 10:30:00: Alice opens the consent screen for Ops Copilot**. `GET /api/consent/agents/550e8400-e29b-41d4-a716-446655440001` returns the permission set in today's shape. The broker derives `service_scopes` from the agent's capabilities: a service is listed when a capability needs it, and is mandatory when a mandatory capability needs it (research R6).
+
+```json
+{
+  "permission_sets": [
+    {
+      "permission_set": {
+        "id": "770e8400-e29b-41d4-a716-446655440002",
+        "name": "Ops Tools",
+        "description": "Repositories and team chat",
+        "service_scopes": [
+          { "service_id": "880e8400-e29b-41d4-a716-446655440011", "requirement_type": "mandatory" },
+          { "service_id": "880e8400-e29b-41d4-a716-446655440012", "requirement_type": "optional" }
+        ]
+      },
+      "requirement_type": "mandatory"
+    }
+  ]
+}
+```
+
+State A — the screen as loaded. It is the same as before the upgrade: Slack is off because her grant does not hold the Slack capability.
+
+![State A: consent screen after the upgrade, Slack off](wireframes/journey-2-a-after-upgrade.svg)
+
+<details><summary>Wireloom source</summary>
+
+```wireloom
+window "Consent Management":
+  header:
+    row:
+      text "Agentic Identity Broker" bold
+      spacer
+      text "alice@example.com" muted
+  panel:
+    text "Ops Copilot" bold size=large
+    text "Triages incidents across repositories and team chat" muted
+  section "Agent Permissions":
+    text "Review the permissions this agent is requesting." size=small
+    slot "Ops Tools" id="ps-card":
+      text "Repositories and team chat" muted
+      row:
+        chip "Required"
+      text "Services" size=small muted
+      row:
+        toggle "GitHub Production" on disabled label-right id="github"
+        spacer
+        toggle "Slack" off label-right id="slack"
+  section "Connect Your Accounts":
+    slot "GitHub Production":
+      row:
+        text "Connected" size=small
+    slot "Slack":
+      row:
+        text "Needed only if Slack is included" muted size=small
+        spacer
+        button "Login"
+  row align=right:
+    button "Approve & Delegate" primary
+
+annotation "Same card as before the upgrade.\nServices come from the set's capabilities." target="ps-card" position=left
+annotation "Locked: a mandatory capability needs it." target="github" position=right
+annotation "Off: the grant does not hold\nops-tools-slack." target="slack" position=right
+```
+
+</details>
+
+Action: Alice turns **Slack** on, logs in to Slack and selects **Approve & Delegate**.
+
+State B — Slack included:
+
+![State B: Slack included and connected](wireframes/journey-2-b-slack-included.svg)
+
+<details><summary>Wireloom source</summary>
+
+```wireloom
+window "Consent Management":
+  header:
+    row:
+      text "Agentic Identity Broker" bold
+      spacer
+      text "alice@example.com" muted
+  panel:
+    text "Ops Copilot" bold size=large
+    text "Triages incidents across repositories and team chat" muted
+  section "Agent Permissions":
+    text "Review the permissions this agent is requesting." size=small
+    slot "Ops Tools":
+      text "Repositories and team chat" muted
+      row:
+        chip "Required"
+      text "Services" size=small muted
+      row:
+        toggle "GitHub Production" on disabled label-right
+        spacer
+        toggle "Slack" on label-right id="slack"
+  section "Connect Your Accounts":
+    slot "GitHub Production":
+      row:
+        text "Connected" size=small
+    slot "Slack":
+      row:
+        text "Connected" size=small
+  row align=right:
+    button "Approve & Delegate" primary id="approve"
+
+annotation "Action: Alice selects Approve & Delegate" target="approve" position=left
+```
+
+</details>
+
+**Step 5 — 10:31:00: the screen sends today's grant request** (US2.4):
+
+```http
+POST /api/consent/agents/550e8400-e29b-41d4-a716-446655440001/grants HTTP/1.1
+Host: broker.example.com
+Content-Type: application/json
+
+{
+  "granted_permission_sets": {
+    "770e8400-e29b-41d4-a716-446655440002": [
+      "880e8400-e29b-41d4-a716-446655440011",
+      "880e8400-e29b-41d4-a716-446655440012"
+    ]
+  }
+}
+
+HTTP/1.1 200 OK
+```
+
+The request and response bodies are unchanged. The broker stores every capability whose services are all included (FR-010):
+
+```json
+{ "permission_set_id": "770e8400-e29b-41d4-a716-446655440002",
+  "granted_capability_ids": ["9a7e0000-0000-4000-8000-000000000011", "9a7e0000-0000-4000-8000-000000000012"] }
+```
+
+**Observable result**: Before Step 5, no Slack scopes are requested, and `granted_permission_sets` maps the set to GitHub Production only. In grant-context mode, `granted_capabilities` holds one reference, with `canonical_id` `ops-tools-github-production`. After Step 5, an exchange for Slack requests `chat:write`, and policy receives both `ops-tools-github-production` and `ops-tools-slack`.
 
 ## Requirements *(mandatory)*
 
